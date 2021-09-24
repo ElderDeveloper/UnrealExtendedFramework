@@ -25,7 +25,15 @@ public class UEExpandedFramework : ModuleRules
 		PublicDependencyModuleNames.AddRange(
 			new string[]
 			{
-				"Core", "GameplayAbilities",
+				"Core",	
+				"Engine",
+				"Slate",
+				"SlateCore",
+				"AIModule",
+				"GameplayAbilities",
+				"GameplayTasks",
+				"GameplayTasks",
+				"NavigationSystem"
 				// ... add other public dependencies that you statically link with here ...
 			}
 			);
@@ -38,7 +46,6 @@ public class UEExpandedFramework : ModuleRules
 				"Engine",
 				"Slate",
 				"SlateCore",
-				"GameplayAbilities",
 				"GameplayTags",
 				"GameplayTasks"
 				// ... add private dependencies that you statically link with here ...	
