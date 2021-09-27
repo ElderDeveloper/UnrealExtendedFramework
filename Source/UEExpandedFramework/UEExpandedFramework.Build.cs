@@ -27,6 +27,7 @@ public class UEExpandedFramework : ModuleRules
 			{
 				"Core",	
 				"Engine",
+				"EngineSettings",
 				"Slate",
 				"SlateCore",
 				"UMG",
