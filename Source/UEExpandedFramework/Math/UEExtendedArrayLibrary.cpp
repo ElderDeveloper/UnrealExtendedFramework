@@ -26,3 +26,24 @@ void UUEExtendedArrayLibrary::GetArrayLastElement(const TArray<FProperty*>& Targ
 		Item =  TargetArray.Last();
 	}
 }
+
+
+void UUEExtendedArrayLibrary::InsertionSortFloatArray(TArray<float> FloatArray, TArray<float>& SortedArray)
+{
+	float i , key , j;
+
+	for (i = 1 ; i<FloatArray.Num() ; i++ )
+	{
+		key = FloatArray[i];
+		j = i-1;
+
+		while ( j >= 0  && FloatArray[j] > key )
+		{
+			FloatArray[j +1] = FloatArray[j];
+			j = j-1;
+		}
+		FloatArray[j+1] = key;
+	}
+
+	SortedArray = FloatArray;
+}

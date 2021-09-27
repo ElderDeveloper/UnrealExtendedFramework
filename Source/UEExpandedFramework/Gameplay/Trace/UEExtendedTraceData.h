@@ -17,6 +17,10 @@ enum ETraceTypes
 	Box		UMETA(DisplayName = "Box Trace")
 };
 
+
+
+
+
 USTRUCT(BlueprintType)
 struct FLineTraceStruct
 {
@@ -89,6 +93,9 @@ public:
 	}
 	
 };
+
+
+
 
 
 USTRUCT(BlueprintType)
@@ -166,6 +173,9 @@ public:
 		DrawTime = 5.f;
 	}
 };
+
+
+
 
 
 USTRUCT(BlueprintType)
@@ -248,6 +258,8 @@ public:
 		DrawTime = 5.f;
 	}
 };
+
+
 
 
 

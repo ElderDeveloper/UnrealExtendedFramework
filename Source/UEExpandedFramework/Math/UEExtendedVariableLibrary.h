@@ -11,7 +11,8 @@ class UEEXPANDEDFRAMEWORK_API UUEExtendedVariableLibrary : public UBlueprintFunc
 {
 	GENERATED_BODY()
 
-	
+	public:
+	// <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< ROTATOR >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 	UFUNCTION(BlueprintPure, meta=(DisplayName = "Rotator + Rotator", CompactNodeTitle = "Rotator+", ScriptMethod = "Rotator+", ScriptOperator = "+"), Category="Math|Rotator" )
 	static FRotator Add_RotatorRotator(const FRotator A , const FRotator B);
 
@@ -22,11 +23,23 @@ class UEEXPANDEDFRAMEWORK_API UUEExtendedVariableLibrary : public UBlueprintFunc
 	static FRotator Minus_RotatorRotator(const FRotator A , const FRotator B);
 
 
+
 	
+	// <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< VECTOR >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+	UFUNCTION(BlueprintPure , meta=(DisplayName = "Compare Vector Sizes", CompactNodeTitle = ">", ScriptMethod = ">", ScriptOperator = ">"))
+	static bool CompareVectorSizes(const FVector IsBigger , const FVector IsLesser);
+
+
+	
+
+	// <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< TRANSFORM >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 	UFUNCTION(BlueprintPure, meta=(DisplayName = "Transform + Tranform", CompactNodeTitle = "Tranform+", ScriptMethod = "Tranform+", ScriptOperator = "+"), Category="Math|Tranform" )
 	static  FTransform Add_TransformTransform(const FTransform A , const FTransform B);
 
+	
 
+
+	// <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< FLOAT >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 	UFUNCTION(BlueprintCallable,Category="Math|Float")
 	static int32 IncrementFloatBy(UPARAM(ref) float& Float , float Value = 1 );
 
@@ -37,7 +50,9 @@ class UEEXPANDEDFRAMEWORK_API UUEExtendedVariableLibrary : public UBlueprintFunc
 	static float Average_Floats(const TArray<float> Array);
 
 
+	
 
+	// <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< INTEGER >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 	UFUNCTION(BlueprintCallable,Category="Math|Integer")
 	static int32 IncrementIntegerBy(UPARAM(ref) int32& Integer , int32 Value = 1 );
 	
@@ -46,5 +61,7 @@ class UEEXPANDEDFRAMEWORK_API UUEExtendedVariableLibrary : public UBlueprintFunc
 
 	UFUNCTION(BlueprintPure, meta=(DisplayName = "Average Integers", CompactNodeTitle = "IntegerArrayAverage", ScriptMethod = "IntegerArrayAverage", ScriptOperator = "/"), Category="Math|Integer")
 	static int32 Average_Integers(const TArray<int32> Array);
+
+	
 	
 };

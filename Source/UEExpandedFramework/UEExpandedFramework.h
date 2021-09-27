@@ -4,6 +4,15 @@
 
 #include "Modules/ModuleManager.h"
 
+
+UENUM(BlueprintType,Blueprintable)
+enum EHitDirection
+{
+	No , Front , Back , Left , Right
+};
+
+
+
 class FUEExpandedFrameworkModule : public IModuleInterface
 {
 public:
