@@ -28,6 +28,7 @@ public class UEExpandedFramework : ModuleRules
 				"Core",	
 				"Engine",
 				"EngineSettings",
+				"EditorSubsystem",
 				"Slate",
 				"SlateCore",
 				"UMG",

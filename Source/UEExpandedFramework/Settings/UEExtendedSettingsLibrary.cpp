@@ -3,10 +3,21 @@
 
 #include "UEExtendedSettingsLibrary.h"
 
+#include "Kismet/GameplayStatics.h"
+
 
 UUEExtendedSettingsSubsystem* UUEExtendedSettingsLibrary::GetSettingsSubsystem(const UObject* WorldContextObject)
 {
-	if()
+	
+	if(const auto GI = UGameplayStatics::GetGameInstance(WorldContextObject))
+	{
+		if (const auto Subsystem = GEngine->GetEngineSubsystem<UUEExtendedSettingsSubsystem>())
+		{
+			return Subsystem;
+		}
+	}
+	
+	return nullptr;
 }
 
 int32 UUEExtendedSettingsLibrary::GetDifficulty(const UObject* WorldContextObject)
