@@ -24,3 +24,10 @@ USceneComponent* UUEExtendedHitResult::GetHitComponentFromHitResult(FHitResult H
 	return HitResult.GetComponent();
 }
 
+float UUEExtendedHitResult::GetHitDistance(FHitResult HitResult)
+{
+	return FMath::Sqrt(
+	HitResult.TraceStart.X	* HitResult.Location.X +
+		HitResult.TraceStart.Y * HitResult.Location.Y +
+		HitResult.TraceStart.Z * HitResult.Location.Z);
+}

@@ -32,6 +32,8 @@ public class UEExpandedFramework : ModuleRules
 				"Slate",
 				"SlateCore",
 				"UMG",
+				"Networking" ,
+				"Http", "Json", "JsonUtilities" , "Sockets",
 				"Niagara",
 				"PhysicsCore",
 				"AIModule",

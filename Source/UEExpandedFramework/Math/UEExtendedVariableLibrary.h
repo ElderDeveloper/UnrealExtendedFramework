@@ -22,12 +22,30 @@ class UEEXPANDEDFRAMEWORK_API UUEExtendedVariableLibrary : public UBlueprintFunc
 	UFUNCTION(BlueprintPure, meta=(DisplayName = "Rotator - Rotator", CompactNodeTitle = "Rotator-", ScriptMethod = "Rotator-", ScriptOperator = "-"), Category="Math|Rotator" )
 	static FRotator Minus_RotatorRotator(const FRotator A , const FRotator B);
 
+	UFUNCTION(BlueprintPure, meta=(DisplayName = "Get Rotator Yaw", CompactNodeTitle = "Yaw", ScriptMethod = "Yaw", ScriptOperator = "Yaw"), Category="Math|Rotator" )
+	static float Rotator_GetYaw(const FRotator A) { return A.Yaw; }
+
+	UFUNCTION(BlueprintPure, meta=(DisplayName = "Get Rotator Pitch", CompactNodeTitle = "Pitch", ScriptMethod = "Pitch", ScriptOperator = "Pitch"), Category="Math|Rotator" )
+	static float Rotator_GetPitch(const FRotator A) { return A.Pitch; }
+
+	UFUNCTION(BlueprintPure, meta=(DisplayName = "Get Rotator Roll", CompactNodeTitle = "Roll", ScriptMethod = "Roll", ScriptOperator = "Roll"), Category="Math|Rotator" )
+	static float Rotator_GetRoll(const FRotator A) { return A.Roll; }
+
 
 
 	
 	// <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< VECTOR >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-	UFUNCTION(BlueprintPure , meta=(DisplayName = "Compare Vector Sizes", CompactNodeTitle = ">", ScriptMethod = ">", ScriptOperator = ">"))
+	UFUNCTION(BlueprintPure , meta=(DisplayName = "Compare Vector Sizes", CompactNodeTitle = ">", ScriptMethod = ">", ScriptOperator = ">"),Category="Math|Vector")
 	static bool CompareVectorSizes(const FVector IsBigger , const FVector IsLesser);
+
+	UFUNCTION(BlueprintPure, meta=(DisplayName = "Get Vector X", CompactNodeTitle = "X", ScriptMethod = "X", ScriptOperator = "X"), Category="Math|Vector" )
+	static float Vector_GetX(const FVector A) { return A.X; }
+
+	UFUNCTION(BlueprintPure, meta=(DisplayName = "Get Vector Y", CompactNodeTitle = "Y", ScriptMethod = "Y", ScriptOperator = "Y"), Category="Math|Vector" )
+	static float Vector_GetY(const FVector A) { return A.Y; }
+
+	UFUNCTION(BlueprintPure, meta=(DisplayName = "Get Vector Z", CompactNodeTitle = "Z", ScriptMethod = "Z", ScriptOperator = "Z"), Category="Math|Vector" )
+	static float Vector_GetZ(const FVector A) { return A.Z; }
 
 
 	

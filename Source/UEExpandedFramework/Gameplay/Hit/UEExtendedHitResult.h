@@ -23,4 +23,7 @@ public:
 
 	UFUNCTION(BlueprintPure, meta=(DisplayName = "Get Hit Component From Hit Result", CompactNodeTitle = "TraceEnd", ScriptMethod = "TraceEnd+", ScriptOperator = "="), Category="UEExtended|Hit Result")
 	static USceneComponent* GetHitComponentFromHitResult(FHitResult HitResult);
+
+	UFUNCTION(BlueprintPure, meta=(DisplayName = "Get Hit Distance From Hit Result", CompactNodeTitle = "Distance", ScriptMethod = "Distance", ScriptOperator = "="), Category="UEExtended|Hit Result")
+	static float GetHitDistance(FHitResult HitResult);
 };
