@@ -6,54 +6,43 @@
 
 UUEExtendedButtonHold* UUEExtendedButtonHold::ExtendedStartButtonAction(const UObject* WorldContextObject,float holdTime, int32 ActionIndex)
 {
-	if (LoopReferenceArray.IsValidIndex(ActionIndex))
-	{
-		if (LoopReferenceArray[ActionIndex])
-		{
-			return nullptr;
-		}
+	ButtonHolds.SetNum(256);
 
-		const auto ActionObject = NewObject<UUEExtendedButtonHold>();
-		if (ActionObject)
-		{
-			ActionObject->WorldContext=WorldContextObject;
-			ActionObject->HoldTime=holdTime;
-			LoopReferenceArray.Insert(ActionObject,ActionIndex);
-		}
+	if (ButtonHolds[ActionIndex].IsValid())
+	{
+		return nullptr;
+	}
+		
+	if (const auto ActionObject = NewObject<UUEExtendedButtonHold>())
+	{
+		ActionObject->WorldContext=WorldContextObject;
+		ActionObject->HoldTime=holdTime;
+		ButtonHolds.EmplaceAt(ActionIndex,ActionObject);
 		return ActionObject;
 	}
 
-		const auto ActionObject = NewObject<UUEExtendedButtonHold>();
-			if (ActionObject)
-			{
-				ActionObject->WorldContext=WorldContextObject;
-				ActionObject->HoldTime=holdTime;
-				LoopReferenceArray.Insert(ActionObject,ActionIndex);
-			}
-			return ActionObject;
 	
-
-	
+	return nullptr;
 	
 }
 
 void UUEExtendedButtonHold::ExtendedEndButtonAction(const UObject* WorldContextObject, int32 ActionIndex)
 {
-	if(LoopReferenceArray.IsValidIndex(ActionIndex))
+	if(ButtonHolds.IsValidIndex(ActionIndex))
 	{
-		if (LoopReferenceArray[ActionIndex])
+		if (ButtonHolds[ActionIndex].IsValid())
 		{
-			if(LoopReferenceArray[ActionIndex]->isHold)
+			if(ButtonHolds[ActionIndex].Get()->isHold)
 			{
-				LoopReferenceArray[ActionIndex]->BroadcastHold();
+				ButtonHolds[ActionIndex].Get()->BroadcastHold();
 			}
 			else
 			{
-				LoopReferenceArray[ActionIndex]->BroadcastPress();
+				ButtonHolds[ActionIndex].Get()->BroadcastPress();
 			}
 		}
 	}
-		LoopReferenceArray[ActionIndex] = nullptr;
+		ButtonHolds[ActionIndex] = nullptr;
 }
 
 

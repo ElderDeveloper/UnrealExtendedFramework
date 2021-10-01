@@ -18,6 +18,8 @@
 
 void UUEExtendedFootStepComponent::SpawnFootStepEvents(const FVector LegPosition)
 {
+	LineTraceInformation.Start = LegPosition+FVector(0,0,20);
+	LineTraceInformation.End = LegPosition+FVector(0,0,-500);
 	if(UUEExtendedTraceLibrary::ExtendedLineTraceSingle(GetWorld(),LineTraceInformation))
 	{
 		FFootStepStruct* FoundStruct;

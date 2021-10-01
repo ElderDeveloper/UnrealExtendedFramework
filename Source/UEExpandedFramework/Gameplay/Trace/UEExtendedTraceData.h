@@ -11,9 +11,9 @@
 UENUM(BlueprintType,Blueprintable)
 enum ETraceTypes
 {
-	TraceType		UMETA(DisplayName = "Line Trace"),
-	ProfileType		UMETA(DisplayName = "Sphere Trace"),
-	ObjectsType		UMETA(DisplayName = "Capsule Trace"),
+	TraceType		UMETA(DisplayName = "Channel"),
+	ProfileType		UMETA(DisplayName = "Profile"),
+	ObjectsType		UMETA(DisplayName = "Object"),
 };
 
 UENUM(BlueprintType,Blueprintable)

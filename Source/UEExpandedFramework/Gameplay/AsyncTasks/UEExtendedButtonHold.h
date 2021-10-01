@@ -16,7 +16,8 @@ enum EButtonAction
 };
 
 class UUEExtendedButtonHold;
-static TArray<UUEExtendedButtonHold*> LoopReferenceArray;
+
+static TArray<TWeakObjectPtr<UUEExtendedButtonHold>> ButtonHolds;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FButtonAction);
 UCLASS()
