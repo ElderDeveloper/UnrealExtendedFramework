@@ -11,6 +11,14 @@
 UENUM(BlueprintType,Blueprintable)
 enum ETraceTypes
 {
+	TraceType		UMETA(DisplayName = "Line Trace"),
+	ProfileType		UMETA(DisplayName = "Sphere Trace"),
+	ObjectsType		UMETA(DisplayName = "Capsule Trace"),
+};
+
+UENUM(BlueprintType,Blueprintable)
+enum ETraceShapes
+{
 	Line	UMETA(DisplayName = "Line Trace"),
 	Sphere  UMETA(DisplayName = "Sphere Trace"),
 	Capsule UMETA(DisplayName = "Capsule Trace"),
@@ -27,6 +35,8 @@ struct FLineTraceStruct
 	GENERATED_BODY()
 
 public:
+	UPROPERTY(EditAnywhere,BlueprintReadWrite)
+	TEnumAsByte<ETraceTypes> TraceType;
 	
 	UPROPERTY(EditAnywhere,BlueprintReadWrite)
 	FHitResult HitResult;
@@ -42,6 +52,12 @@ public:
 
 	UPROPERTY(EditAnywhere,BlueprintReadWrite)
 	TEnumAsByte<ETraceTypeQuery> TraceChannel;
+
+	UPROPERTY(EditAnywhere,BlueprintReadWrite)
+	FName TraceProfileName;
+
+	UPROPERTY(EditAnywhere,BlueprintReadWrite)
+	TArray<TEnumAsByte<EObjectTypeQuery>> TraceObjectTypes;
 
 	UPROPERTY(EditAnywhere,BlueprintReadWrite)
 	bool bTraceComplex;
@@ -104,6 +120,9 @@ struct FSphereTraceStruct
 	GENERATED_BODY()
 
 public:
+
+	UPROPERTY(EditAnywhere,BlueprintReadWrite)
+	TEnumAsByte<ETraceTypes> TraceType;
 	
 	UPROPERTY(EditAnywhere,BlueprintReadWrite)
 	FHitResult HitResult;
@@ -122,6 +141,12 @@ public:
 
 	UPROPERTY(EditAnywhere,BlueprintReadWrite)
 	TEnumAsByte<ETraceTypeQuery> TraceChannel;
+
+	UPROPERTY(EditAnywhere,BlueprintReadWrite)
+	FName TraceProfileName;
+
+	UPROPERTY(EditAnywhere,BlueprintReadWrite)
+	TArray<TEnumAsByte<EObjectTypeQuery>> TraceObjectTypes;
 
 	UPROPERTY(EditAnywhere,BlueprintReadWrite)
 	bool bTraceComplex;
@@ -179,11 +204,13 @@ public:
 
 
 USTRUCT(BlueprintType)
-struct FCapsuleTrace
+struct FCapsuleTraceStruct
 {
 	GENERATED_BODY()
 
 public:
+	UPROPERTY(EditAnywhere,BlueprintReadWrite)
+	TEnumAsByte<ETraceTypes> TraceType;
 	
 	UPROPERTY(EditAnywhere,BlueprintReadWrite)
 	FHitResult HitResult;
@@ -207,6 +234,12 @@ public:
 	TEnumAsByte<ETraceTypeQuery> TraceChannel;
 
 	UPROPERTY(EditAnywhere,BlueprintReadWrite)
+	FName TraceProfileName;
+
+	UPROPERTY(EditAnywhere,BlueprintReadWrite)
+	TArray<TEnumAsByte<EObjectTypeQuery>> TraceObjectTypes;
+
+	UPROPERTY(EditAnywhere,BlueprintReadWrite)
 	bool bTraceComplex;
 
 	UPROPERTY(EditAnywhere,BlueprintReadWrite)
@@ -226,37 +259,6 @@ public:
 
 	UPROPERTY(EditAnywhere,BlueprintReadWrite)
 	float DrawTime;
-	
-	FCapsuleTrace()
-	{
-		Start = FVector::ZeroVector;
-		End = FVector::ZeroVector;
-		Radius = 32.f;
-		HalfHeight = 32.f;
-		bTraceComplex = false;
-		bIgnoreSelf = true;
-		TraceChannel = ETraceTypeQuery::TraceTypeQuery1;
-		DrawDebugType = EDrawDebugTrace::Type::None;
-		TraceColor = FLinearColor::Red;
-		TraceHitColor = FLinearColor::Green;
-		DrawTime = 5.f;
-	}
-
-	FCapsuleTrace(FVector start , FVector end , float radius , float half )
-	{
-		Start =start;
-		End = end;
-		Radius = radius;
-		HalfHeight = half;
-
-		bTraceComplex = false;
-		bIgnoreSelf = true;
-		TraceChannel = ETraceTypeQuery::TraceTypeQuery1;
-		DrawDebugType = EDrawDebugTrace::Type::None;
-		TraceColor = FLinearColor::Red;
-		TraceHitColor = FLinearColor::Green;
-		DrawTime = 5.f;
-	}
 };
 
 
@@ -264,11 +266,13 @@ public:
 
 
 USTRUCT(BlueprintType)
-struct FBoxTrace
+struct FBoxTraceStruct
 {
 	GENERATED_BODY()
 
 public:
+	UPROPERTY(EditAnywhere,BlueprintReadWrite)
+	TEnumAsByte<ETraceTypes> TraceType;
 	
 	UPROPERTY(EditAnywhere,BlueprintReadWrite)
 	FHitResult HitResult;
@@ -284,9 +288,18 @@ public:
 	
 	UPROPERTY(EditAnywhere,BlueprintReadWrite)
 	FVector HalfSize;
+
+	UPROPERTY(EditAnywhere,BlueprintReadWrite)
+	FRotator Orientation;
 	
 	UPROPERTY(EditAnywhere,BlueprintReadWrite)
 	TEnumAsByte<ETraceTypeQuery> TraceChannel;
+
+	UPROPERTY(EditAnywhere,BlueprintReadWrite)
+	FName TraceProfileName;
+
+	UPROPERTY(EditAnywhere,BlueprintReadWrite)
+	TArray<TEnumAsByte<EObjectTypeQuery>> TraceObjectTypes;
 
 	UPROPERTY(EditAnywhere,BlueprintReadWrite)
 	bool bTraceComplex;
@@ -309,34 +322,6 @@ public:
 	UPROPERTY(EditAnywhere,BlueprintReadWrite)
 	float DrawTime;
 	
-	FBoxTrace()
-	{
-		Start = FVector::ZeroVector;
-		End = FVector::ZeroVector;
-		HalfSize = FVector(32,32,32);
-		bTraceComplex = false;
-		bIgnoreSelf = true;
-		TraceChannel = ETraceTypeQuery::TraceTypeQuery1;
-		DrawDebugType = EDrawDebugTrace::Type::None;
-		TraceColor = FLinearColor::Red;
-		TraceHitColor = FLinearColor::Green;
-		DrawTime = 5.f;
-	}
-
-	FBoxTrace(FVector start , FVector end , FVector half )
-	{
-		Start =start;
-		End = end;
-		HalfSize = half;
-
-		bTraceComplex = false;
-		bIgnoreSelf = true;
-		TraceChannel = ETraceTypeQuery::TraceTypeQuery1;
-		DrawDebugType = EDrawDebugTrace::Type::None;
-		TraceColor = FLinearColor::Red;
-		TraceHitColor = FLinearColor::Green;
-		DrawTime = 5.f;
-	}
 };
 
 

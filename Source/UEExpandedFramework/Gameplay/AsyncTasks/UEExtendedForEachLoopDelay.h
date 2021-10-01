@@ -61,7 +61,7 @@ class UEEXPANDEDFRAMEWORK_API UUEExtendedForEachLoopDelay : public UBlueprintAsy
 	/**
 	* InternalUseOnly to hide sync version in BPs
 	*/
-	UFUNCTION(BlueprintCallable, meta = (DisplayName=" Extended For Each Loop Delay", WorldContext = "WorldContextObject" ,  ArrayParm  = "TargetArray",BlueprintThreadSafe), Category = "AsyncNode")
+	UFUNCTION(BlueprintCallable, meta = (DisplayName=" Extended For Each Loop Delay", WorldContext = "WorldContextObject" ,  ArrayParm  = "TargetArray", BlueprintInternalUseOnly = "true"), Category = "AsyncNode")
 	static UUEExtendedForEachLoopDelay* ForEachLoopDelay(const TArray<UProperty*>& TargetArray ,const UObject* WorldContextObject , float Delay);
 
 	//Overriding BP async action base
