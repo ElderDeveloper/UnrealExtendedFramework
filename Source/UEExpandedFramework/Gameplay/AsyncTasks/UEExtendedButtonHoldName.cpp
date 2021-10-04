@@ -1,50 +1,53 @@
 ﻿// Fill out your copyright notice in the Description page of Project Settings.
 
 
+#include "UEExtendedButtonHoldName.h"
+
 #include "UEExtendedButtonHold.h"
 
 
-UUEExtendedButtonHold* UUEExtendedButtonHold::ExtendedStartButtonAction(const UObject* WorldContextObject,float holdTime, int32 ActionIndex)
+
+UUEExtendedButtonHoldName* UUEExtendedButtonHoldName::ExtendedStartButtonActionName(const UObject* WorldContextObject,FName ActionName, float holdTime)
 {
-	if (ButtonHolds.Num()>0)
+	if (ButtonHoldsName.Num()>0)
 	{
-		if (const auto Action = ButtonHolds.Find(ActionIndex) )
+		if (const auto Action = ButtonHoldsName.Find(ActionName) )
 		{
 			return Action->Get();
 		}
 		else
 		{
-			if (const auto ActionObject = NewObject<UUEExtendedButtonHold>())
+			if (const auto ActionObject = NewObject<UUEExtendedButtonHoldName>())
 			{
 				ActionObject->WorldContext=WorldContextObject;
 				ActionObject->HoldTime=holdTime;
-				ButtonHolds.Add(ActionIndex,ActionObject);
+				ButtonHoldsName.Add(ActionName,ActionObject);
 				return ActionObject;
 			}
 		}
 	}
 	else
 	{
-		if (const auto ActionObject = NewObject<UUEExtendedButtonHold>())
+		if (const auto ActionObject = NewObject<UUEExtendedButtonHoldName>())
 		{
 			ActionObject->WorldContext=WorldContextObject;
 			ActionObject->HoldTime=holdTime;
-			ButtonHolds.Add(ActionIndex,ActionObject);
+			ButtonHoldsName.Add(ActionName,ActionObject);
 			return ActionObject;
 		}
 	}
 
 	return nullptr;
-	
 }
 
 
 
-void UUEExtendedButtonHold::ExtendedEndButtonAction(const UObject* WorldContextObject, int32 ActionIndex)
+
+void UUEExtendedButtonHoldName::ExtendedEndButtonActionName(const UObject* WorldContextObject, FName ActionName)
 {
-	if(ButtonHolds.Num()>0)
+	if(ButtonHoldsName.Num()>0)
 	{
-		if(const auto Action = ButtonHolds.Find(ActionIndex))
+		if(const auto Action = ButtonHoldsName.Find(ActionName))
 		{
 			if (Action->Get()->isHold)
 			{
@@ -55,14 +58,15 @@ void UUEExtendedButtonHold::ExtendedEndButtonAction(const UObject* WorldContextO
 				Action->Get()->BroadcastPress();
 			}
 			Action->Get()->StopAction();
-			ButtonHolds.Remove(ActionIndex);
+			ButtonHoldsName.Remove(ActionName);
 		}
 	}
 }
 
 
 
-void UUEExtendedButtonHold::StopAction()
+
+void UUEExtendedButtonHoldName::StopAction()
 {
 	if (WorldContext)
 	{
@@ -76,7 +80,7 @@ void UUEExtendedButtonHold::StopAction()
 
 
 
-void UUEExtendedButtonHold::PassTime()
+void UUEExtendedButtonHoldName::PassTime()
 {
 	TimePassed +=0.02;
 	if (TimePassed >= HoldTime)
@@ -93,13 +97,13 @@ void UUEExtendedButtonHold::PassTime()
 
 
 
-void UUEExtendedButtonHold::Activate()
+void UUEExtendedButtonHoldName::Activate()
 {
 	Super::Activate();
 	TimePassed = 0;
 	isHold = false;
 	if (WorldContext)
 	{
-		WorldContext->GetWorld()->GetTimerManager().SetTimer(Handle,this,&UUEExtendedButtonHold::PassTime,0.02,true);
+		WorldContext->GetWorld()->GetTimerManager().SetTimer(Handle,this,&UUEExtendedButtonHoldName::PassTime,0.02,true);
 	}
 }

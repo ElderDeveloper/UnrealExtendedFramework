@@ -149,6 +149,31 @@ void UUEExtendedMathLibrary::GetActorForwardVectorPlus(AActor* Actor, float Dist
 }
 
 
+FVector UUEExtendedMathLibrary::FCalculateDirectionalLocation(const FVector targetLocation,const FVector startPosition, float distance, bool forward)
+{
+	const FVector minus = targetLocation - startPosition;
+	return forward ? (minus.GetSafeNormal()*distance) + startPosition : (minus.GetSafeNormal()*distance) - startPosition ;
+}
+
+
+bool UUEExtendedMathLibrary::FCalculateIsLookingAt(const FVector actorForward, const FVector target, const FVector start, float& returnAngle,float limit)
+{
+	const FVector minus = target-start;
+	const FVector plus ( actorForward.X*minus.X ,actorForward.Y*minus.Y ,actorForward.Z*minus.Z );
+	returnAngle = UKismetMathLibrary::Acos((plus.X + plus.Y + plus.Z)	/ (actorForward.Size() * minus.Size()));
+	return returnAngle < limit;
+}
+
+float UUEExtendedMathLibrary::FindLookAtRotationYaw(const FVector& Start, const FVector& Target)
+{
+	return FRotationMatrix::MakeFromX(Target - Start).Rotator().Yaw;
+}
+
+bool UUEExtendedMathLibrary::FCalculateIsTheSameDirection(const FVector firstForwardDirection,const FVector secondForwardDirection, const float tolerance=0.1)
+{
+	return UKismetMathLibrary::EqualEqual_VectorVector(firstForwardDirection.GetUnsafeNormal(),secondForwardDirection.GetUnsafeNormal(),tolerance);
+}
+
 
 
 
@@ -209,4 +234,51 @@ FVector2D UUEExtendedMathLibrary::GetObjectScreenPositionClamped(UObject* WorldC
 		);
 	}
 	return FVector2D();
+}
+
+
+
+
+// <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< LOCATION >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+FVector UUEExtendedMathLibrary::FindRandomCircleLocation(float innerRadius, float outerRadius, FVector centerPont,	FVector forwardVector)
+{
+	const float rndAngle = UKismetMathLibrary::RandomFloatInRange(0,360);
+
+	const float rndDistance = UKismetMathLibrary::RandomFloatInRange(innerRadius,outerRadius);
+
+	const FVector Direction = UKismetMathLibrary::GreaterGreater_VectorRotator(forwardVector,FRotator(0,rndAngle,0))*rndDistance;
+
+	return  centerPont+Direction;
+
+}
+
+FVector UUEExtendedMathLibrary::FindRandomCircleLocationWithDirection(float innerRadius, float outerRadius,FVector centerPont, FVector targetPoint, float angle)
+{
+	const float rndAngle = UKismetMathLibrary::RandomFloatInRange(angle*-1,angle);
+	const float rndDistance = UKismetMathLibrary::RandomFloatInRange(innerRadius,outerRadius);
+	const FVector Direction = UKismetMathLibrary::GreaterGreater_VectorRotator(FVector(targetPoint-centerPont).GetSafeNormal(),FRotator(0,rndAngle,0))*rndDistance;
+	return  centerPont+Direction;
+}
+
+
+
+
+
+
+// <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< PHYSICS >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+FVector UUEExtendedMathLibrary::FCalculateLaunchVelocity(const FVector targetLocation, const FVector startPosition, const float duration)
+{
+	FVector returnVector;
+
+	returnVector.X = (targetLocation.X - startPosition.X) / duration;
+	
+	returnVector.Y = (targetLocation.Y - startPosition.Y) / duration;
+	
+	const float zVelocity = (duration*duration) * -0.5 * 982;
+	
+	returnVector.Z = (targetLocation.Z - (startPosition.Z + zVelocity)) / duration;
+	
+	return returnVector;
 }

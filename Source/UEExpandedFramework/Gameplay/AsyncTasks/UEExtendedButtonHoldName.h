@@ -4,39 +4,42 @@
 
 #include "CoreMinimal.h"
 #include "Kismet/BlueprintAsyncActionBase.h"
-#include "UEExtendedButtonHold.generated.h"
+#include "UObject/Object.h"
+#include "UEExtendedButtonHoldName.generated.h"
+
+/**
+ * 
+ */
+
+class UUEExtendedButtonHoldName;
+static TMap<FName,TWeakObjectPtr<UUEExtendedButtonHoldName>> ButtonHoldsName;
 
 
-
-class UUEExtendedButtonHold;
-static TMap<int32,TWeakObjectPtr<UUEExtendedButtonHold>> ButtonHolds;
-
-
-
-DECLARE_DYNAMIC_MULTICAST_DELEGATE(FButtonActionName);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FButtonAction);
 UCLASS()
-class UEEXPANDEDFRAMEWORK_API UUEExtendedButtonHold : public UBlueprintAsyncActionBase
+class UEEXPANDEDFRAMEWORK_API UUEExtendedButtonHoldName : public UBlueprintAsyncActionBase
 {
 	GENERATED_BODY()
 
 
+	
 	public:
 
 	UFUNCTION(BlueprintCallable,meta=(WorldContext="WorldContextObject", BlueprintInternalUseOnly = "true"))
-	static UUEExtendedButtonHold* ExtendedStartButtonAction(const UObject* WorldContextObject, float holdTime = 1.f , int32 ActionIndex = 0);
+	static UUEExtendedButtonHoldName* ExtendedStartButtonActionName(const UObject* WorldContextObject, FName ActionName , float holdTime = 1.f);
 
 	UFUNCTION(BlueprintCallable,meta=(WorldContext="WorldContextObject"))
-	static void ExtendedEndButtonAction(const UObject* WorldContextObject, int32 ActionIndex = 0);
+	static void ExtendedEndButtonActionName(const UObject* WorldContextObject, FName ActionName);
 
 	
-protected:
+	protected:
 
 	UPROPERTY(BlueprintAssignable)
-	FButtonActionName Press;
+	FButtonAction Press;
 	UPROPERTY(BlueprintAssignable)
-	FButtonActionName Hold;
+	FButtonAction Hold;
 	UPROPERTY(BlueprintAssignable)
-	FButtonActionName HoldExceeded;
+	FButtonAction HoldExceeded;
 	
 	FTimerHandle Handle;
 	const UObject* WorldContext;
