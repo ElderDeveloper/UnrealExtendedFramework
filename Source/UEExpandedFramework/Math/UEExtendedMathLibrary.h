@@ -118,5 +118,48 @@ class UEEXPANDEDFRAMEWORK_API UUEExtendedMathLibrary : public UBlueprintFunction
 	*/
 	UFUNCTION(BlueprintCallable , Category = "Math Function Library")
 	static FVector FCalculateLaunchVelocity(const FVector targetLocation , const FVector startPosition ,const float duration);
+
+
+
+	//<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< VARIABLE >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+	UFUNCTION(BlueprintPure ,meta=(DisplayName = "+1", CompactNodeTitle = "+1", ScriptMethod = "+", ScriptOperator = "+") , Category="Math|Float")
+	static float FloatPlusOne(const float Value) {return Value + 1;}
+
+	UFUNCTION(BlueprintPure ,meta=(DisplayName = "-1", CompactNodeTitle = "-1", ScriptMethod = "-", ScriptOperator = "-") , Category="Math|Float")
+	static float FloatMinusOne(const float Value) {return Value - 1;}
+
+	UFUNCTION(BlueprintPure ,meta=(DisplayName = "*2", CompactNodeTitle = "*2", ScriptMethod = "*", ScriptOperator = "*") , Category="Math|Float")
+	static float FloatMultiplyByTwo(const float Value) {return Value + 1;}
+
+	UFUNCTION(BlueprintPure ,meta=(DisplayName = "/2", CompactNodeTitle = "/2", ScriptMethod = "/", ScriptOperator = "/") , Category="Math|Float")
+	static float FloatDivideByTwo(const float Value) {return Value + 1;}
+
+	UFUNCTION(BlueprintPure ,meta=(DisplayName = "Invert", CompactNodeTitle = "Invert", ScriptMethod = "*", ScriptOperator = "*") , Category="Math|Float")
+	static float FloatInvert(const float Value) {return Value*-1; }
+
+	UFUNCTION(BlueprintPure ,meta=(DisplayName = "-ABS", CompactNodeTitle = "-ABS", ScriptMethod = "-ABS", ScriptOperator = "-ABS") , Category="Math|Float")
+	static float FloatMinusABS(const float Value) {return Value>0 ? Value*-1 : Value;  }
+
+	
+
+	UFUNCTION(BlueprintPure ,meta=(DisplayName = "+1", CompactNodeTitle = "+1", ScriptMethod = "+", ScriptOperator = "+") , Category="Math|Int32")
+	static int32 IntPlusOne(const int32 Value) {return Value + 1;}
+
+	UFUNCTION(BlueprintPure ,meta=(DisplayName = "-1", CompactNodeTitle = "-1", ScriptMethod = "-", ScriptOperator = "-") , Category="Math|Int32")
+	static int32 IntMinusOne(const int32 Value) {return Value - 1;}
+
+	UFUNCTION(BlueprintPure ,meta=(DisplayName = "*2", CompactNodeTitle = "*2", ScriptMethod = "*", ScriptOperator = "*") , Category="Math|Int32")
+	static int32 IntMultiplyByTwo(const int32 Value) {return Value + 1;}
+
+	UFUNCTION(BlueprintPure ,meta=(DisplayName = "/2", CompactNodeTitle = "/2", ScriptMethod = "/", ScriptOperator = "/") , Category="Math|Int32")
+	static int32 IntDivideByTwo(const int32 Value) {return Value + 1;}
+
+	UFUNCTION(BlueprintPure ,meta=(DisplayName = "Invert", CompactNodeTitle = "Invert", ScriptMethod = "*", ScriptOperator = "*") , Category="Math|Int32")
+	static int32 IntInvert(const int32 Value) {return Value*-1; }
+
+	UFUNCTION(BlueprintPure ,meta=(DisplayName = "-ABS", CompactNodeTitle = "-ABS", ScriptMethod = "-ABS", ScriptOperator = "-ABS") , Category="Math|Int32")
+	static int32 IntMinusABS(const int32 Value) {return Value>0 ? Value*-1 : Value;  }
+
+	
 	
 };

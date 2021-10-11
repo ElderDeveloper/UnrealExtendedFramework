@@ -47,3 +47,43 @@ void UUEExtendedArrayLibrary::InsertionSortFloatArray(TArray<float> FloatArray, 
 
 	SortedArray = FloatArray;
 }
+
+TArray<FVector> UUEExtendedArrayLibrary::FloatArrayToVectorArray(const TArray<float> FArray)
+{
+	TArray<FVector> OutArray;
+	for (const auto i : FArray)
+	{OutArray.Add(FVector(i,i,i));}
+	return OutArray;
+}
+
+TArray<FVector> UUEExtendedArrayLibrary::IntArrayToVectorArray(const TArray<int32> FArray)
+{
+	TArray<FVector> OutArray;
+	for (const auto i : FArray)
+	{OutArray.Add(FVector(i,i,i));}
+	return OutArray;
+}
+
+TArray<FVector> UUEExtendedArrayLibrary::ByteArrayToVectorArray(const TArray<uint8> FArray)
+{
+	TArray<FVector> OutArray;
+	for (const auto i : FArray)
+	{OutArray.Add(FVector(i,i,i));}
+	return OutArray;
+}
+
+TArray<int32> UUEExtendedArrayLibrary::FloatArrayToIntArray(const TArray<float> FArray)
+{
+	TArray<int32> OutArray;
+	for (const auto i : FArray)
+	{OutArray.Add(i);}
+	return OutArray;
+}
+
+TArray<float> UUEExtendedArrayLibrary::IntArrayToFloatArray(const TArray<int32> FArray)
+{
+	TArray<float> OutArray;
+	for (const auto i : FArray)
+	{OutArray.Add(i);}
+	return OutArray;
+}

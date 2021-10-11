@@ -23,5 +23,24 @@ public:
 	
 	UFUNCTION(BlueprintCallable)
 	static void InsertionSortFloatArray(TArray<float> FloatArray , TArray<float>& SortedArray);
+
+
+	UFUNCTION(BlueprintPure, meta=(DisplayName = "Float Array To Vector Array", CompactNodeTitle = "***"), Category="Array|Vector")
+	static TArray<FVector> FloatArrayToVectorArray(const TArray<float> FArray);
+
+	UFUNCTION(BlueprintPure, meta=(DisplayName = "Int Array To Vector Array", CompactNodeTitle = "***"), Category="Array|Vector")
+	static TArray<FVector> IntArrayToVectorArray(const TArray<int32> FArray);
+
+	UFUNCTION(BlueprintPure, meta=(DisplayName = "Byte Array To Vector Array", CompactNodeTitle = "***"), Category="Array|Vector")
+	static TArray<FVector> ByteArrayToVectorArray(const TArray<uint8> FArray);
+
+
+	
+	UFUNCTION(BlueprintPure, meta=(DisplayName = "Float Array To Int Array", CompactNodeTitle = "***"), Category="Array|Int")
+	static TArray<int32> FloatArrayToIntArray(const TArray<float> FArray);
+
+	UFUNCTION(BlueprintPure, meta=(DisplayName = "Int Array To Float Array", CompactNodeTitle = "***"), Category="Array|Float")
+	static TArray<float> IntArrayToFloatArray(const TArray<int32> FArray);
+
 	
 };

@@ -5,6 +5,7 @@
 
 bool UUEExtendedTraceLibrary::ExtendedLineTraceSingle(const UObject* WorldContextObject,FLineTraceStruct& LineTraceStruct)
 {
+
 	switch (LineTraceStruct.TraceType)
 	{
 		case TraceType:

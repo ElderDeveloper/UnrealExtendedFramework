@@ -49,6 +49,16 @@ class UEEXPANDEDFRAMEWORK_API UUEExtendedVariableLibrary : public UBlueprintFunc
 
 
 	
+	UFUNCTION(BlueprintPure, meta=(DisplayName = "Int To Vector", CompactNodeTitle = "*", ScriptMethod = "*", ScriptOperator = "*"), Category="Math|Vector" )
+	static FVector IntToVector(const int32 Value) {	return FVector(Value,Value,Value);}
+
+	UFUNCTION(BlueprintPure, meta=(DisplayName = "Float To Vector", CompactNodeTitle = "*", ScriptMethod = "*", ScriptOperator = "*"), Category="Math|Vector" )
+	static FVector FloatToVector(const float Value) {	return FVector(Value,Value,Value);}
+
+	UFUNCTION(BlueprintPure, meta=(DisplayName = "Byte To Vector", CompactNodeTitle = "*", ScriptMethod = "*", ScriptOperator = "*"), Category="Math|Vector" )
+	static FVector ByteToVector(const uint8 Value) {	return FVector(Value,Value,Value);}
+	
+	
 
 	// <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< TRANSFORM >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 	UFUNCTION(BlueprintPure, meta=(DisplayName = "Transform + Tranform", CompactNodeTitle = "Tranform+", ScriptMethod = "Tranform+", ScriptOperator = "+"), Category="Math|Tranform" )
