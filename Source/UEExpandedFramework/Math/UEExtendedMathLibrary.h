@@ -40,10 +40,19 @@ class UEEXPANDEDFRAMEWORK_API UUEExtendedMathLibrary : public UBlueprintFunction
 	UFUNCTION(BlueprintPure ,meta=(DisplayName = "Get Distance Between Vectors No Square Root", CompactNodeTitle = "DistanceNoSqrt", ScriptMethod = "DistanceNoSqrt", ScriptOperator = "="))
 	static float GetDistanceBetweenVectorsNoSquareRoot(const FVector From, const FVector To);
 
+	UFUNCTION(BlueprintPure, meta=(DisplayName = "Actor Get Closest Actor", CompactNodeTitle = "Actor Closest Actor", BlueprintThreadSafe), Category="Math|Distance")
+	static void GetClosestActorFromActorArray(const AActor* OwnerActor ,UPARAM(ref) const TArray<AActor*>& TargetArray, AActor*& Item);
+
+	UFUNCTION(BlueprintPure, meta=(DisplayName = "Actor  Get Closest Component", CompactNodeTitle = "Actor Closest Component", BlueprintThreadSafe), Category="Math|Distance")
+	static void GetClosestComponentFromComponentArray(const AActor* OwnerActor ,UPARAM(ref) const TArray<USceneComponent*>& TargetArray, USceneComponent*& Item);
+
+	UFUNCTION(BlueprintPure, meta=(DisplayName = "Component Get Closest Actor", CompactNodeTitle = "Component Closest Actor", BlueprintThreadSafe), Category="Math|Distance")
+	static void ComponentGetClosestActorFromActorArray(const USceneComponent* OwnerComponent ,UPARAM(ref) const TArray<AActor*>& TargetArray, AActor*& Item);
+
+	UFUNCTION(BlueprintPure, meta=(DisplayName = "Component Get Closest Component", CompactNodeTitle = "Component Closest Component", BlueprintThreadSafe), Category="Math|Distance")
+	static void ComponentGetClosestComponentFromComponentArray(const USceneComponent* OwnerComponent ,UPARAM(ref) const TArray<USceneComponent*>& TargetArray, USceneComponent*& Item);
+
 	
-
-
-
 	// <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< DIRECTION >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 	UFUNCTION(BlueprintPure)
 	static FVector GetDirectionBetweenActors(const AActor* From , const AActor* To, float scaleVector = 1);

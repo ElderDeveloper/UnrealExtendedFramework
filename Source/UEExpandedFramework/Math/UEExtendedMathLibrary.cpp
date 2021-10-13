@@ -2,7 +2,7 @@
 
 
 #include "UEExtendedMathLibrary.h"
-
+#include "Components/SceneComponent.h"
 #include "Blueprint/WidgetLayoutLibrary.h"
 #include "Kismet/GameplayStatics.h"
 #include "Kismet/KismetMathLibrary.h"
@@ -80,10 +80,69 @@ float UUEExtendedMathLibrary::GetDistanceBetweenVectorsNoSquareRoot(const FVecto
 	return  (i.X*i.X + i.Y*i.Y + i.Z*i.Z);
 }
 
+void UUEExtendedMathLibrary::GetClosestActorFromActorArray(const AActor* OwnerActor ,UPARAM(ref) const TArray<AActor*>& TargetArray, AActor*& Item)
+{
+	float ClosestDistance = 999999999;
+	if (TargetArray.IsValidIndex(0))
+		Item = TargetArray[0];
+	
+	for (const auto i : TargetArray)
+	{
+		const float dist = GetDistanceBetweenActors(OwnerActor,i);
+		if (dist < ClosestDistance)
+		{
+			ClosestDistance = dist;		Item = i;
+		}
+	}
+}
 
+void UUEExtendedMathLibrary::GetClosestComponentFromComponentArray(const AActor* OwnerActor,const TArray<USceneComponent*>& TargetArray, USceneComponent*& Item)
+{
+	float ClosestDistance = 999999999;
+	if (TargetArray.IsValidIndex(0))
+		Item = TargetArray[0];
+	
+	for (const auto i : TargetArray)
+	{
+		const float dist = GetDistanceBetweenComponentAndActor(i,OwnerActor);
+		if (dist < ClosestDistance)
+		{
+			ClosestDistance = dist;		Item = i;
+		}
+	}
+}
 
+void UUEExtendedMathLibrary::ComponentGetClosestActorFromActorArray(const USceneComponent* OwnerComponent,const TArray<AActor*>& TargetArray, AActor*& Item)
+{
+	float ClosestDistance = 999999999;
+	if (TargetArray.IsValidIndex(0))
+		Item = TargetArray[0];
+	
+	for (const auto i : TargetArray)
+	{
+		const float dist = GetDistanceBetweenComponentAndActor(OwnerComponent,i);
+		if (dist < ClosestDistance)
+		{
+			ClosestDistance = dist;		Item = i;
+		}
+	}
+}
 
-
+void UUEExtendedMathLibrary::ComponentGetClosestComponentFromComponentArray(const USceneComponent* OwnerComponent,const TArray<USceneComponent*>& TargetArray, USceneComponent*& Item)
+{
+	float ClosestDistance = 999999999;
+	if (TargetArray.IsValidIndex(0))
+		Item = TargetArray[0];
+	
+	for (const auto i : TargetArray)
+	{
+		const float dist = GetDistanceBetweenComponents(OwnerComponent,i);
+		if (dist < ClosestDistance)
+		{
+			ClosestDistance = dist;		Item = i;
+		}
+	}
+}
 
 
 // <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< DIRECTION >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
