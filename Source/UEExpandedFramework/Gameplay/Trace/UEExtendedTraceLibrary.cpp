@@ -5,7 +5,7 @@
 
 bool UUEExtendedTraceLibrary::ExtendedLineTraceSingle(const UObject* WorldContextObject,FLineTraceStruct& LineTraceStruct)
 {
-
+	if (!WorldContextObject) return false;
 	switch (LineTraceStruct.TraceType)
 	{
 		case TraceType:
@@ -56,6 +56,7 @@ bool UUEExtendedTraceLibrary::ExtendedLineTraceSingle(const UObject* WorldContex
 
 bool UUEExtendedTraceLibrary::ExtendedLineTraceMulti(const UObject* WorldContextObject,FLineTraceStruct& LineTraceStruct)
 {
+	if (!WorldContextObject) return false;
 	switch (LineTraceStruct.TraceType)
 	{
 	case TraceType:
@@ -109,8 +110,10 @@ bool UUEExtendedTraceLibrary::ExtendedLineTraceMulti(const UObject* WorldContext
 
 
 
+
 bool UUEExtendedTraceLibrary::ExtendedBoxTraceSingle(const UObject* WorldContextObject, FBoxTraceStruct& BoxTraceStruct)
 {
+	if (!WorldContextObject) return false;
 	switch (BoxTraceStruct.TraceType)
 	{
 	case TraceType:
@@ -168,7 +171,7 @@ bool UUEExtendedTraceLibrary::ExtendedBoxTraceSingle(const UObject* WorldContext
 
 bool UUEExtendedTraceLibrary::ExtendedBoxTraceMulti(const UObject* WorldContextObject, FBoxTraceStruct& BoxTraceStruct)
 {
-
+	if (!WorldContextObject) return false;
 	switch (BoxTraceStruct.TraceType)
 	{
 	case TraceType:
@@ -227,9 +230,10 @@ bool UUEExtendedTraceLibrary::ExtendedBoxTraceMulti(const UObject* WorldContextO
 
 
 
+
 bool UUEExtendedTraceLibrary::ExtendedSphereTraceSingle(const UObject* WorldContextObject,FSphereTraceStruct& SphereTraceStruct)
 {
-
+	if (!WorldContextObject) return false;
 	switch (SphereTraceStruct.TraceType)
 	{
 	case TraceType:
@@ -283,6 +287,8 @@ bool UUEExtendedTraceLibrary::ExtendedSphereTraceSingle(const UObject* WorldCont
 
 bool UUEExtendedTraceLibrary::ExtendedSphereTraceMulti(const UObject* WorldContextObject,FSphereTraceStruct& SphereTraceStruct)
 {
+
+	if (!WorldContextObject) return false;
 	switch (SphereTraceStruct.TraceType)
 	{
 	case TraceType:
@@ -338,8 +344,10 @@ bool UUEExtendedTraceLibrary::ExtendedSphereTraceMulti(const UObject* WorldConte
 
 
 
+
 bool UUEExtendedTraceLibrary::ExtendedCapsuleTraceSingle(const UObject* WorldContextObject,FCapsuleTraceStruct& CapsuleTraceStruct)
 {
+	if (!WorldContextObject) return false;
 	switch (CapsuleTraceStruct.TraceType)
 	{
 	case TraceType:
@@ -392,8 +400,11 @@ bool UUEExtendedTraceLibrary::ExtendedCapsuleTraceSingle(const UObject* WorldCon
 	}
 }
 
+
+
 bool UUEExtendedTraceLibrary::ExtendedCapsuleTraceMulti(const UObject* WorldContextObject,FCapsuleTraceStruct& CapsuleTraceStruct)
 {
+	if (!WorldContextObject) return false;
 	switch (CapsuleTraceStruct.TraceType)
 	{
 	case TraceType:

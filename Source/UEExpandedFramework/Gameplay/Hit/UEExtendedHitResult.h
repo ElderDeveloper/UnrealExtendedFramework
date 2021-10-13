@@ -18,10 +18,10 @@ public:
 	UFUNCTION(BlueprintPure, meta=(DisplayName = "Get Trace End From Hit Result", CompactNodeTitle = "TraceEnd", ScriptMethod = "TraceEnd+", ScriptOperator = "="), Category="UEExtended|Hit Result")
 	static FVector GetTraceEndFromHitResult(FHitResult HitResult);
 
-	UFUNCTION(BlueprintPure, meta=(DisplayName = "Get Hit Actor From Hit Result", CompactNodeTitle = "TraceEnd", ScriptMethod = "TraceEnd+", ScriptOperator = "="), Category="UEExtended|Hit Result")
+	UFUNCTION(BlueprintPure, meta=(DisplayName = "Get Hit Actor From Hit Result", CompactNodeTitle = "HitActor"), Category="UEExtended|Hit Result")
 	static AActor* GetHitActorFromHitResult(FHitResult HitResult);
 
-	UFUNCTION(BlueprintPure, meta=(DisplayName = "Get Hit Component From Hit Result", CompactNodeTitle = "TraceEnd", ScriptMethod = "TraceEnd+", ScriptOperator = "="), Category="UEExtended|Hit Result")
+	UFUNCTION(BlueprintPure, meta=(DisplayName = "Get Hit Component From Hit Result", CompactNodeTitle = "HitComponent"), Category="UEExtended|Hit Result")
 	static USceneComponent* GetHitComponentFromHitResult(FHitResult HitResult);
 
 	UFUNCTION(BlueprintPure, meta=(DisplayName = "Get Hit Distance From Hit Result", CompactNodeTitle = "Distance", ScriptMethod = "Distance", ScriptOperator = "="), Category="UEExtended|Hit Result")

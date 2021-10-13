@@ -38,10 +38,10 @@ public:
 	UPROPERTY(EditAnywhere,BlueprintReadWrite)
 	TEnumAsByte<ETraceTypes> TraceType;
 	
-	UPROPERTY(EditAnywhere,BlueprintReadWrite)
+	UPROPERTY(BlueprintReadWrite)
 	FHitResult HitResult;
 
-	UPROPERTY(EditAnywhere,BlueprintReadWrite)
+	UPROPERTY(BlueprintReadWrite)
 	TArray<FHitResult> HitResults;
 
 	UPROPERTY(EditAnywhere,BlueprintReadWrite)
@@ -50,62 +50,47 @@ public:
 	UPROPERTY(EditAnywhere,BlueprintReadWrite)
 	FVector End ;
 
-	UPROPERTY(EditAnywhere,BlueprintReadWrite)
-	TEnumAsByte<ETraceTypeQuery> TraceChannel;
+	UPROPERTY(EditAnywhere,BlueprintReadWrite , meta = (EditCondition = "TraceType==ETraceTypes::TraceType"))
+	TEnumAsByte<ETraceTypeQuery> TraceChannel = ETraceTypeQuery::TraceTypeQuery1;
 
-	UPROPERTY(EditAnywhere,BlueprintReadWrite)
+	UPROPERTY(EditAnywhere,BlueprintReadWrite , meta = (EditCondition = "TraceType==ETraceTypes::ProfileType"))
 	FName TraceProfileName;
 
-	UPROPERTY(EditAnywhere,BlueprintReadWrite)
+	UPROPERTY(EditAnywhere,BlueprintReadWrite, meta = (EditCondition = "TraceType==ETraceTypes::ObjectsType"))
 	TArray<TEnumAsByte<EObjectTypeQuery>> TraceObjectTypes;
 
 	UPROPERTY(EditAnywhere,BlueprintReadWrite)
-	bool bTraceComplex;
+	bool bTraceComplex = false;
 
-	UPROPERTY(EditAnywhere,BlueprintReadWrite)
+	UPROPERTY(BlueprintReadWrite)
 	TArray<AActor*> ActorsToIgnore;
 
 	UPROPERTY(EditAnywhere,BlueprintReadWrite)
-	TEnumAsByte<EDrawDebugTrace::Type> DrawDebugType;
+	TEnumAsByte<EDrawDebugTrace::Type> DrawDebugType = EDrawDebugTrace::Type::None;
 
 	UPROPERTY(EditAnywhere,BlueprintReadWrite)
-	bool bIgnoreSelf;
+	bool bIgnoreSelf = true;
 
 	UPROPERTY(EditAnywhere,BlueprintReadWrite)
-	FLinearColor TraceColor;
+	FLinearColor TraceColor = FLinearColor::Red;
 
 	UPROPERTY(EditAnywhere,BlueprintReadWrite)
-	FLinearColor TraceHitColor;
+	FLinearColor TraceHitColor = FLinearColor::Green;
 
 	UPROPERTY(EditAnywhere,BlueprintReadWrite)
-	float DrawTime;
+	float DrawTime = 5.f;
 	
 
 	FLineTraceStruct()
 	{
 		Start = FVector::ZeroVector;
 		End = FVector::ZeroVector;
-		bTraceComplex = false;
-		bIgnoreSelf = true;
-		TraceChannel = ETraceTypeQuery::TraceTypeQuery1;
-		DrawDebugType = EDrawDebugTrace::Type::None;
-		TraceColor = FLinearColor::Red;
-		TraceHitColor = FLinearColor::Green;
-		DrawTime = 5.f;
 	}
 
 	FLineTraceStruct(FVector start , FVector end )
 	{
 		Start =start;
 		End = end;
-
-		bTraceComplex = false;
-		bIgnoreSelf = true;
-		TraceChannel = ETraceTypeQuery::TraceTypeQuery1;
-		DrawDebugType = EDrawDebugTrace::Type::None;
-		TraceColor = FLinearColor::Red;
-		TraceHitColor = FLinearColor::Green;
-		DrawTime = 5.f;
 	}
 	
 };
@@ -124,10 +109,10 @@ public:
 	UPROPERTY(EditAnywhere,BlueprintReadWrite)
 	TEnumAsByte<ETraceTypes> TraceType;
 	
-	UPROPERTY(EditAnywhere,BlueprintReadWrite)
+	UPROPERTY(BlueprintReadWrite)
 	FHitResult HitResult;
 
-	UPROPERTY(EditAnywhere,BlueprintReadWrite)
+	UPROPERTY(BlueprintReadWrite)
 	TArray<FHitResult> HitResults;
 
 	UPROPERTY(EditAnywhere,BlueprintReadWrite)
@@ -139,48 +124,41 @@ public:
 	UPROPERTY(EditAnywhere,BlueprintReadWrite)
 	float Radius;
 
-	UPROPERTY(EditAnywhere,BlueprintReadWrite)
-	TEnumAsByte<ETraceTypeQuery> TraceChannel;
+	UPROPERTY(EditAnywhere,BlueprintReadWrite , meta = (EditCondition = "TraceType==ETraceTypes::TraceType"))
+	TEnumAsByte<ETraceTypeQuery> TraceChannel = ETraceTypeQuery::TraceTypeQuery1;
 
-	UPROPERTY(EditAnywhere,BlueprintReadWrite)
+	UPROPERTY(EditAnywhere,BlueprintReadWrite , meta = (EditCondition = "TraceType==ETraceTypes::ProfileType"))
 	FName TraceProfileName;
 
-	UPROPERTY(EditAnywhere,BlueprintReadWrite)
+	UPROPERTY(EditAnywhere,BlueprintReadWrite, meta = (EditCondition = "TraceType==ETraceTypes::ObjectsType"))
 	TArray<TEnumAsByte<EObjectTypeQuery>> TraceObjectTypes;
 
 	UPROPERTY(EditAnywhere,BlueprintReadWrite)
-	bool bTraceComplex;
+	bool bTraceComplex = false;
 
-	UPROPERTY(EditAnywhere,BlueprintReadWrite)
+	UPROPERTY(BlueprintReadWrite)
 	TArray<AActor*> ActorsToIgnore;
 
 	UPROPERTY(EditAnywhere,BlueprintReadWrite)
-	TEnumAsByte<EDrawDebugTrace::Type> DrawDebugType;
+	TEnumAsByte<EDrawDebugTrace::Type> DrawDebugType = EDrawDebugTrace::Type::None;
 
 	UPROPERTY(EditAnywhere,BlueprintReadWrite)
-	bool bIgnoreSelf;
+	bool bIgnoreSelf = true;
 
 	UPROPERTY(EditAnywhere,BlueprintReadWrite)
-	FLinearColor TraceColor;
+	FLinearColor TraceColor = FLinearColor::Red;
 
 	UPROPERTY(EditAnywhere,BlueprintReadWrite)
-	FLinearColor TraceHitColor;
+	FLinearColor TraceHitColor = FLinearColor::Green;
 
 	UPROPERTY(EditAnywhere,BlueprintReadWrite)
-	float DrawTime;
+	float DrawTime = 5.f;
 	
 	FSphereTraceStruct()
 	{
 		Start = FVector::ZeroVector;
 		End = FVector::ZeroVector;
 		Radius = 32.f;
-		bTraceComplex = false;
-		bIgnoreSelf = true;
-		TraceChannel = ETraceTypeQuery::TraceTypeQuery1;
-		DrawDebugType = EDrawDebugTrace::Type::None;
-		TraceColor = FLinearColor::Red;
-		TraceHitColor = FLinearColor::Green;
-		DrawTime = 5.f;
 	}
 
 	FSphereTraceStruct(FVector start , FVector end , float radius )
@@ -188,14 +166,6 @@ public:
 		Start =start;
 		End = end;
 		Radius = radius;
-
-		bTraceComplex = false;
-		bIgnoreSelf = true;
-		TraceChannel = ETraceTypeQuery::TraceTypeQuery1;
-		DrawDebugType = EDrawDebugTrace::Type::None;
-		TraceColor = FLinearColor::Red;
-		TraceHitColor = FLinearColor::Green;
-		DrawTime = 5.f;
 	}
 };
 
@@ -212,16 +182,16 @@ public:
 	UPROPERTY(EditAnywhere,BlueprintReadWrite)
 	TEnumAsByte<ETraceTypes> TraceType;
 	
-	UPROPERTY(EditAnywhere,BlueprintReadWrite)
+	UPROPERTY(BlueprintReadWrite)
 	FHitResult HitResult;
 
-	UPROPERTY(EditAnywhere,BlueprintReadWrite)
+	UPROPERTY(BlueprintReadWrite)
 	TArray<FHitResult> HitResults;
 
-	UPROPERTY(EditAnywhere,BlueprintReadWrite)
+	UPROPERTY(BlueprintReadWrite)
 	FVector Start ;
 
-	UPROPERTY(EditAnywhere,BlueprintReadWrite)
+	UPROPERTY(BlueprintReadWrite)
 	FVector End ;
 
 	UPROPERTY(EditAnywhere,BlueprintReadWrite)
@@ -230,35 +200,35 @@ public:
 	UPROPERTY(EditAnywhere,BlueprintReadWrite)
 	float HalfHeight;
 	
-	UPROPERTY(EditAnywhere,BlueprintReadWrite)
-	TEnumAsByte<ETraceTypeQuery> TraceChannel;
+	UPROPERTY(EditDefaultsOnly, meta = (EditCondition = "TraceType==ETraceTypes::TraceType"))
+	TEnumAsByte<ETraceTypeQuery> TraceChannel = ETraceTypeQuery::TraceTypeQuery1;
 
-	UPROPERTY(EditAnywhere,BlueprintReadWrite)
+	UPROPERTY(EditDefaultsOnly , meta = (EditCondition = "TraceType==ETraceTypes::ProfileType"))
 	FName TraceProfileName;
 
-	UPROPERTY(EditAnywhere,BlueprintReadWrite)
+	UPROPERTY(EditDefaultsOnly, meta = (EditCondition = "TraceType==ETraceTypes::ObjectsType"))
 	TArray<TEnumAsByte<EObjectTypeQuery>> TraceObjectTypes;
 
 	UPROPERTY(EditAnywhere,BlueprintReadWrite)
-	bool bTraceComplex;
+	bool bTraceComplex = false;
 
-	UPROPERTY(EditAnywhere,BlueprintReadWrite)
+	UPROPERTY(BlueprintReadWrite)
 	TArray<AActor*> ActorsToIgnore;
 
 	UPROPERTY(EditAnywhere,BlueprintReadWrite)
-	TEnumAsByte<EDrawDebugTrace::Type> DrawDebugType;
+	TEnumAsByte<EDrawDebugTrace::Type> DrawDebugType = EDrawDebugTrace::Type::None;
 
 	UPROPERTY(EditAnywhere,BlueprintReadWrite)
-	bool bIgnoreSelf;
+	bool bIgnoreSelf = true;
 
 	UPROPERTY(EditAnywhere,BlueprintReadWrite)
-	FLinearColor TraceColor;
+	FLinearColor TraceColor = FLinearColor::Red;
 
 	UPROPERTY(EditAnywhere,BlueprintReadWrite)
-	FLinearColor TraceHitColor;
+	FLinearColor TraceHitColor = FLinearColor::Green;
 
 	UPROPERTY(EditAnywhere,BlueprintReadWrite)
-	float DrawTime;
+	float DrawTime = 5.f;
 };
 
 
@@ -274,10 +244,10 @@ public:
 	UPROPERTY(EditAnywhere,BlueprintReadWrite)
 	TEnumAsByte<ETraceTypes> TraceType;
 	
-	UPROPERTY(EditAnywhere,BlueprintReadWrite)
+	UPROPERTY(BlueprintReadOnly)
 	FHitResult HitResult;
 
-	UPROPERTY(EditAnywhere,BlueprintReadWrite)
+	UPROPERTY(BlueprintReadOnly)
 	TArray<FHitResult> HitResults;
 
 	UPROPERTY(EditAnywhere,BlueprintReadWrite)
@@ -292,35 +262,35 @@ public:
 	UPROPERTY(EditAnywhere,BlueprintReadWrite)
 	FRotator Orientation;
 	
-	UPROPERTY(EditAnywhere,BlueprintReadWrite)
-	TEnumAsByte<ETraceTypeQuery> TraceChannel;
+	UPROPERTY(EditDefaultsOnly, meta = (EditCondition = "TraceType==ETraceTypes::TraceType"))
+	TEnumAsByte<ETraceTypeQuery> TraceChannel = ETraceTypeQuery::TraceTypeQuery1;
 
-	UPROPERTY(EditAnywhere,BlueprintReadWrite)
+	UPROPERTY(EditDefaultsOnly , meta = (EditCondition = "TraceType==ETraceTypes::ProfileType"))
 	FName TraceProfileName;
 
-	UPROPERTY(EditAnywhere,BlueprintReadWrite)
+	UPROPERTY(EditDefaultsOnly, meta = (EditCondition = "TraceType==ETraceTypes::ObjectsType"))
 	TArray<TEnumAsByte<EObjectTypeQuery>> TraceObjectTypes;
 
 	UPROPERTY(EditAnywhere,BlueprintReadWrite)
-	bool bTraceComplex;
+	bool bTraceComplex = false;
 
-	UPROPERTY(EditAnywhere,BlueprintReadWrite)
+	UPROPERTY(BlueprintReadWrite)
 	TArray<AActor*> ActorsToIgnore;
 
 	UPROPERTY(EditAnywhere,BlueprintReadWrite)
-	TEnumAsByte<EDrawDebugTrace::Type> DrawDebugType;
+	TEnumAsByte<EDrawDebugTrace::Type> DrawDebugType = EDrawDebugTrace::Type::None;
 
 	UPROPERTY(EditAnywhere,BlueprintReadWrite)
-	bool bIgnoreSelf;
+	bool bIgnoreSelf = true;
 
 	UPROPERTY(EditAnywhere,BlueprintReadWrite)
-	FLinearColor TraceColor;
+	FLinearColor TraceColor = FLinearColor::Red;
 
 	UPROPERTY(EditAnywhere,BlueprintReadWrite)
-	FLinearColor TraceHitColor;
+	FLinearColor TraceHitColor = FLinearColor::Green;
 
 	UPROPERTY(EditAnywhere,BlueprintReadWrite)
-	float DrawTime;
+	float DrawTime = 5.f;
 	
 };
 
