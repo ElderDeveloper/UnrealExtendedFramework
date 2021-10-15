@@ -3,6 +3,8 @@
 
 #include "UEExtendedVariableLibrary.h"
 
+#include "Kismet/KismetSystemLibrary.h"
+
 
 FRotator UUEExtendedVariableLibrary::Add_RotatorRotator(const FRotator A, const FRotator B)
 {
@@ -22,10 +24,6 @@ FRotator UUEExtendedVariableLibrary::Minus_RotatorRotator(const FRotator A, cons
 {
 	return A-B;
 }
-
-
-
-
 
 
 
@@ -116,3 +114,6 @@ int32 UUEExtendedVariableLibrary::Average_Integers(const TArray<int32> Array)
 	}
 	return A/2;
 }
+
+
+

@@ -9,9 +9,9 @@
 
 FString UUEExtendedMobileLibrary::GetOnlineAccountID(APlayerController* PlayerController)
 {
-	if (PlayerController && PlayerController->PlayerState && PlayerController->PlayerState->UniqueId.IsValid())
+	if (PlayerController && PlayerController->PlayerState && PlayerController->PlayerState->GetUniqueId().IsValid())
 	{
-		return PlayerController->PlayerState->UniqueId->GetHexEncodedString();
+		return PlayerController->PlayerState->GetUniqueId()->GetHexEncodedString();
 	}
 	return FString();
 }

@@ -80,20 +80,22 @@ float UUEExtendedMathLibrary::GetDistanceBetweenVectorsNoSquareRoot(const FVecto
 	return  (i.X*i.X + i.Y*i.Y + i.Z*i.Z);
 }
 
-void UUEExtendedMathLibrary::GetClosestActorFromActorArray(const AActor* OwnerActor ,UPARAM(ref) const TArray<AActor*>& TargetArray, AActor*& Item)
+AActor* UUEExtendedMathLibrary::GetClosestActorFromActorArray(const AActor* OwnerActor ,UPARAM(ref) const TArray<AActor*>& TargetArray)
 {
 	float ClosestDistance = 999999999;
+	AActor* ClosestActor = nullptr;
 	if (TargetArray.IsValidIndex(0))
-		Item = TargetArray[0];
+		ClosestActor = TargetArray[0];
 	
 	for (const auto i : TargetArray)
 	{
 		const float dist = GetDistanceBetweenActors(OwnerActor,i);
 		if (dist < ClosestDistance)
 		{
-			ClosestDistance = dist;		Item = i;
+			ClosestDistance = dist;		ClosestActor = i;
 		}
 	}
+	return ClosestActor;
 }
 
 void UUEExtendedMathLibrary::GetClosestComponentFromComponentArray(const AActor* OwnerActor,const TArray<USceneComponent*>& TargetArray, USceneComponent*& Item)

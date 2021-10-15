@@ -29,25 +29,16 @@ class UEEXPANDEDFRAMEWORK_API UUEExtendedForEachLoopDelay : public UBlueprintAsy
 	/**
 	* Static property to prevent restarting the async node multiple times before execution has finished
 	*/
-	static bool bActive;
-
-	float LoopTime;
-
+	
+	float LoopTime = 0.1;
 	int32 LoopIndex = 0;
-	
-	TArray<FProperty*> Array;
-	
-	/**
-	* World context object to grab a reference of the world 
-	*/
-	const UObject* WorldContext;
 
-	/**
-	* Timer handle of internal tick
-	*/
+	UPROPERTY()
+	TArray<UObject*> Array;
+	const UObject* WorldContext;
 	FTimerHandle TimerHandle;
 
-	public:
+public:
 	
 	UPROPERTY(BlueprintAssignable)
 	FArrayOutputPin Loop;
@@ -55,15 +46,16 @@ class UEEXPANDEDFRAMEWORK_API UUEExtendedForEachLoopDelay : public UBlueprintAsy
 	UPROPERTY(BlueprintAssignable)
 	FArrayOutputPin Completed;
 
-	UFUNCTION(BlueprintImplementableEvent)
-	void OnTookTake(int32 aaa);
 
+	
 	/**
 	* InternalUseOnly to hide sync version in BPs
 	*/
-	UFUNCTION(BlueprintCallable, meta = (DisplayName=" Extended For Each Loop Delay", WorldContext = "WorldContextObject" ,  ArrayParm  = "TargetArray", BlueprintInternalUseOnly = "true"), Category = "AsyncNode")
-	static UUEExtendedForEachLoopDelay* ForEachLoopDelay(const TArray<UProperty*>& TargetArray ,const UObject* WorldContextObject , float Delay);
+	UFUNCTION(BlueprintCallable, meta = (DisplayName=" Extended For Each Loop Delay", WorldContext = "WorldContextObject" , BlueprintInternalUseOnly = "true"), Category = "AsyncNode")
+	static UUEExtendedForEachLoopDelay* ForEachLoopDelayObject(const TArray<UObject*>& TargetArray ,const UObject* WorldContextObject , float Delay = 0.1);
 
+
+	
 	//Overriding BP async action base
 	virtual void Activate() override;
 	

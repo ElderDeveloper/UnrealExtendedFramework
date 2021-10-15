@@ -48,7 +48,53 @@ void UUEExtendedArrayLibrary::InsertionSortFloatArray(TArray<float> FloatArray, 
 	SortedArray = FloatArray;
 }
 
-TArray<FVector> UUEExtendedArrayLibrary::FloatArrayToVectorArray(const TArray<float> FArray)
+
+
+void UUEExtendedArrayLibrary::Generic_SortUserDefinedStructArray(void* TargetArray, const FArrayProperty* ArrayProp,UObject* OwnerObject, UFunction* SortRuleFunc)
+{
+	if (!SortRuleFunc || !OwnerObject || !TargetArray)
+	{
+		return;
+	}
+	UBoolProperty* ReturnParam = CastField<UBoolProperty>(SortRuleFunc->GetReturnProperty());
+	if (!ReturnParam)
+	{
+		return;
+	}
+	// Begin sort array
+	FScriptArrayHelper ArrayHelper(ArrayProp, TargetArray);
+	UProperty* InnerProp = ArrayProp->Inner;
+
+	const int32 Len = ArrayHelper.Num();
+	const int32 PropertySize = InnerProp->ElementSize * InnerProp->ArrayDim;
+
+	uint8* Parameters = (uint8*)FMemory::Malloc(PropertySize * 2 + 1);
+
+	for (int32 i = 0; i < Len; i++)
+	{
+		for (int32 j = 0; j < Len - i - 1; j++)
+		{
+			FMemory::Memzero(Parameters, PropertySize * 2 + 1);
+			InnerProp->CopyCompleteValueFromScriptVM(Parameters, ArrayHelper.GetRawPtr(j));
+			InnerProp->CopyCompleteValueFromScriptVM(Parameters + PropertySize, ArrayHelper.GetRawPtr(j + 1));
+			OwnerObject->ProcessEvent(SortRuleFunc, Parameters);
+			if (ReturnParam && ReturnParam->GetPropertyValue(Parameters + PropertySize * 2))
+			{
+				ArrayHelper.SwapValues(j, j + 1);
+			}
+		}
+
+	}
+	FMemory::Free(Parameters);
+	// end sort array
+}
+
+
+
+
+
+
+TArray<FVector> UUEExtendedArrayLibrary::FloatArrayToVectorArray(UPARAM(ref) const TArray<float>& FArray)
 {
 	TArray<FVector> OutArray;
 	for (const auto i : FArray)
@@ -56,7 +102,7 @@ TArray<FVector> UUEExtendedArrayLibrary::FloatArrayToVectorArray(const TArray<fl
 	return OutArray;
 }
 
-TArray<FVector> UUEExtendedArrayLibrary::IntArrayToVectorArray(const TArray<int32> FArray)
+TArray<FVector> UUEExtendedArrayLibrary::IntArrayToVectorArray(UPARAM(ref) const TArray<int32>& FArray)
 {
 	TArray<FVector> OutArray;
 	for (const auto i : FArray)
@@ -64,7 +110,7 @@ TArray<FVector> UUEExtendedArrayLibrary::IntArrayToVectorArray(const TArray<int3
 	return OutArray;
 }
 
-TArray<FVector> UUEExtendedArrayLibrary::ByteArrayToVectorArray(const TArray<uint8> FArray)
+TArray<FVector> UUEExtendedArrayLibrary::ByteArrayToVectorArray(UPARAM(ref) const TArray<uint8>& FArray)
 {
 	TArray<FVector> OutArray;
 	for (const auto i : FArray)
@@ -72,7 +118,7 @@ TArray<FVector> UUEExtendedArrayLibrary::ByteArrayToVectorArray(const TArray<uin
 	return OutArray;
 }
 
-TArray<int32> UUEExtendedArrayLibrary::FloatArrayToIntArray(const TArray<float> FArray)
+TArray<int32> UUEExtendedArrayLibrary::FloatArrayToIntArray(UPARAM(ref) const TArray<float>& FArray)
 {
 	TArray<int32> OutArray;
 	for (const auto i : FArray)
@@ -80,7 +126,7 @@ TArray<int32> UUEExtendedArrayLibrary::FloatArrayToIntArray(const TArray<float> 
 	return OutArray;
 }
 
-TArray<float> UUEExtendedArrayLibrary::IntArrayToFloatArray(const TArray<int32> FArray)
+TArray<float> UUEExtendedArrayLibrary::IntArrayToFloatArray(UPARAM(ref) const TArray<int32>& FArray)
 {
 	TArray<float> OutArray;
 	for (const auto i : FArray)

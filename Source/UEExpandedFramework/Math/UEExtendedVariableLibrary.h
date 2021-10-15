@@ -6,6 +6,10 @@
 #include "GameFramework/Actor.h"
 #include "UEExtendedVariableLibrary.generated.h"
 
+
+
+
+
 UCLASS()
 class UEEXPANDEDFRAMEWORK_API UUEExtendedVariableLibrary : public UBlueprintFunctionLibrary
 {
@@ -90,10 +94,32 @@ class UEEXPANDEDFRAMEWORK_API UUEExtendedVariableLibrary : public UBlueprintFunc
 	UFUNCTION(BlueprintPure, meta=(DisplayName = "Average Integers", CompactNodeTitle = "IntegerArrayAverage", ScriptMethod = "IntegerArrayAverage", ScriptOperator = "/"), Category="Math|Integer")
 	static int32 Average_Integers(const TArray<int32> Array);
 
-	
+
+
+
+
 	
 	// <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< STRING >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-};	template<typename TEnum> static FORCEINLINE FString GetEnumValueAsString(const FString& Name, TEnum Value)
+
+
+
+	// <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< Experiment >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+	//Struct To Json String;
+
+
+
+
+		// <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< Access Every Property >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+};
+
+
+
+
+
+
+template<typename TEnum> static FORCEINLINE FString GetEnumValueAsString(const FString& Name, TEnum Value)
 	{
 
 		const UEnum* enumPtr = FindObject<UEnum>(ANY_PACKAGE, *Name, true);

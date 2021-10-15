@@ -41,7 +41,7 @@ class UEEXPANDEDFRAMEWORK_API UUEExtendedMathLibrary : public UBlueprintFunction
 	static float GetDistanceBetweenVectorsNoSquareRoot(const FVector From, const FVector To);
 
 	UFUNCTION(BlueprintPure, meta=(DisplayName = "Actor Get Closest Actor", CompactNodeTitle = "Actor Closest Actor", BlueprintThreadSafe), Category="Math|Distance")
-	static void GetClosestActorFromActorArray(const AActor* OwnerActor ,UPARAM(ref) const TArray<AActor*>& TargetArray, AActor*& Item);
+	static AActor* GetClosestActorFromActorArray(const AActor* OwnerActor ,UPARAM(ref) const TArray<AActor*>& TargetArray);
 
 	UFUNCTION(BlueprintPure, meta=(DisplayName = "Actor  Get Closest Component", CompactNodeTitle = "Actor Closest Component", BlueprintThreadSafe), Category="Math|Distance")
 	static void GetClosestComponentFromComponentArray(const AActor* OwnerActor ,UPARAM(ref) const TArray<USceneComponent*>& TargetArray, USceneComponent*& Item);

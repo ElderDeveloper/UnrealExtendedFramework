@@ -36,7 +36,7 @@ struct FLineTraceStruct
 
 public:
 	UPROPERTY(EditAnywhere,BlueprintReadWrite)
-	TEnumAsByte<ETraceTypes> TraceType;
+	TEnumAsByte<ETraceTypes> TraceType = ETraceTypes::TraceType;
 	
 	UPROPERTY(BlueprintReadWrite)
 	FHitResult HitResult;
@@ -45,16 +45,16 @@ public:
 	TArray<FHitResult> HitResults;
 
 	UPROPERTY(EditAnywhere,BlueprintReadWrite)
-	FVector Start;
+	FVector Start = FVector::ZeroVector;
 
 	UPROPERTY(EditAnywhere,BlueprintReadWrite)
-	FVector End ;
+	FVector End = FVector::ZeroVector ;
 
 	UPROPERTY(EditAnywhere,BlueprintReadWrite , meta = (EditCondition = "TraceType==ETraceTypes::TraceType"))
 	TEnumAsByte<ETraceTypeQuery> TraceChannel = ETraceTypeQuery::TraceTypeQuery1;
 
 	UPROPERTY(EditAnywhere,BlueprintReadWrite , meta = (EditCondition = "TraceType==ETraceTypes::ProfileType"))
-	FName TraceProfileName;
+	FName TraceProfileName = FName();
 
 	UPROPERTY(EditAnywhere,BlueprintReadWrite, meta = (EditCondition = "TraceType==ETraceTypes::ObjectsType"))
 	TArray<TEnumAsByte<EObjectTypeQuery>> TraceObjectTypes;
@@ -79,12 +79,10 @@ public:
 
 	UPROPERTY(EditAnywhere,BlueprintReadWrite)
 	float DrawTime = 5.f;
-	
 
 	FLineTraceStruct()
 	{
-		Start = FVector::ZeroVector;
-		End = FVector::ZeroVector;
+		
 	}
 
 	FLineTraceStruct(FVector start , FVector end )
@@ -107,7 +105,7 @@ struct FSphereTraceStruct
 public:
 
 	UPROPERTY(EditAnywhere,BlueprintReadWrite)
-	TEnumAsByte<ETraceTypes> TraceType;
+	TEnumAsByte<ETraceTypes> TraceType = ETraceTypes::TraceType;
 	
 	UPROPERTY(BlueprintReadWrite)
 	FHitResult HitResult;
@@ -116,19 +114,19 @@ public:
 	TArray<FHitResult> HitResults;
 
 	UPROPERTY(EditAnywhere,BlueprintReadWrite)
-	FVector Start;
+	FVector Start = FVector::ZeroVector;
 
 	UPROPERTY(EditAnywhere,BlueprintReadWrite)
-	FVector End ;
+	FVector End = FVector::ZeroVector ;
 
 	UPROPERTY(EditAnywhere,BlueprintReadWrite)
-	float Radius;
+	float Radius = 0.f;
 
 	UPROPERTY(EditAnywhere,BlueprintReadWrite , meta = (EditCondition = "TraceType==ETraceTypes::TraceType"))
 	TEnumAsByte<ETraceTypeQuery> TraceChannel = ETraceTypeQuery::TraceTypeQuery1;
 
 	UPROPERTY(EditAnywhere,BlueprintReadWrite , meta = (EditCondition = "TraceType==ETraceTypes::ProfileType"))
-	FName TraceProfileName;
+	FName TraceProfileName = FName();
 
 	UPROPERTY(EditAnywhere,BlueprintReadWrite, meta = (EditCondition = "TraceType==ETraceTypes::ObjectsType"))
 	TArray<TEnumAsByte<EObjectTypeQuery>> TraceObjectTypes;
@@ -157,10 +155,8 @@ public:
 	FSphereTraceStruct()
 	{
 		Start = FVector::ZeroVector;
-		End = FVector::ZeroVector;
-		Radius = 32.f;
+		End  = FVector::ZeroVector;
 	}
-
 	FSphereTraceStruct(FVector start , FVector end , float radius )
 	{
 		Start =start;
@@ -180,7 +176,7 @@ struct FCapsuleTraceStruct
 
 public:
 	UPROPERTY(EditAnywhere,BlueprintReadWrite)
-	TEnumAsByte<ETraceTypes> TraceType;
+	TEnumAsByte<ETraceTypes> TraceType = ETraceTypes::TraceType;
 	
 	UPROPERTY(BlueprintReadWrite)
 	FHitResult HitResult;
@@ -189,22 +185,22 @@ public:
 	TArray<FHitResult> HitResults;
 
 	UPROPERTY(BlueprintReadWrite)
-	FVector Start ;
+	FVector Start = FVector::ZeroVector ;
 
 	UPROPERTY(BlueprintReadWrite)
-	FVector End ;
+	FVector End  = FVector::ZeroVector;
 
 	UPROPERTY(EditAnywhere,BlueprintReadWrite)
-	float Radius;
+	float Radius = 0.f;
 
 	UPROPERTY(EditAnywhere,BlueprintReadWrite)
-	float HalfHeight;
+	float HalfHeight = 0.f;
 	
 	UPROPERTY(EditDefaultsOnly, meta = (EditCondition = "TraceType==ETraceTypes::TraceType"))
 	TEnumAsByte<ETraceTypeQuery> TraceChannel = ETraceTypeQuery::TraceTypeQuery1;
 
 	UPROPERTY(EditDefaultsOnly , meta = (EditCondition = "TraceType==ETraceTypes::ProfileType"))
-	FName TraceProfileName;
+	FName TraceProfileName = FName();
 
 	UPROPERTY(EditDefaultsOnly, meta = (EditCondition = "TraceType==ETraceTypes::ObjectsType"))
 	TArray<TEnumAsByte<EObjectTypeQuery>> TraceObjectTypes;
@@ -229,6 +225,17 @@ public:
 
 	UPROPERTY(EditAnywhere,BlueprintReadWrite)
 	float DrawTime = 5.f;
+
+	FCapsuleTraceStruct()
+	{
+	}
+	FCapsuleTraceStruct(FVector start , FVector end , float radius , float halfHeight )
+	{
+		Start =start;
+		End = end;
+		Radius = radius;
+		HalfHeight = halfHeight;
+	}
 };
 
 
@@ -242,7 +249,7 @@ struct FBoxTraceStruct
 
 public:
 	UPROPERTY(EditAnywhere,BlueprintReadWrite)
-	TEnumAsByte<ETraceTypes> TraceType;
+	TEnumAsByte<ETraceTypes> TraceType = ETraceTypes::TraceType;
 	
 	UPROPERTY(BlueprintReadOnly)
 	FHitResult HitResult;
@@ -251,22 +258,22 @@ public:
 	TArray<FHitResult> HitResults;
 
 	UPROPERTY(EditAnywhere,BlueprintReadWrite)
-	FVector Start ;
+	FVector Start = FVector::ZeroVector ;
 
 	UPROPERTY(EditAnywhere,BlueprintReadWrite)
-	FVector End ;
+	FVector End = FVector::ZeroVector ;
 	
 	UPROPERTY(EditAnywhere,BlueprintReadWrite)
-	FVector HalfSize;
+	FVector HalfSize = FVector::ZeroVector;
 
 	UPROPERTY(EditAnywhere,BlueprintReadWrite)
-	FRotator Orientation;
+	FRotator Orientation = FRotator::ZeroRotator;
 	
 	UPROPERTY(EditDefaultsOnly, meta = (EditCondition = "TraceType==ETraceTypes::TraceType"))
 	TEnumAsByte<ETraceTypeQuery> TraceChannel = ETraceTypeQuery::TraceTypeQuery1;
 
 	UPROPERTY(EditDefaultsOnly , meta = (EditCondition = "TraceType==ETraceTypes::ProfileType"))
-	FName TraceProfileName;
+	FName TraceProfileName = FName();
 
 	UPROPERTY(EditDefaultsOnly, meta = (EditCondition = "TraceType==ETraceTypes::ObjectsType"))
 	TArray<TEnumAsByte<EObjectTypeQuery>> TraceObjectTypes;
@@ -291,6 +298,18 @@ public:
 
 	UPROPERTY(EditAnywhere,BlueprintReadWrite)
 	float DrawTime = 5.f;
+
+	FBoxTraceStruct()
+	{
+		
+	}
+	FBoxTraceStruct(FVector start , FVector end , FVector halfSize , FRotator orientation )
+	{
+		Start =start;
+		End = end;
+		HalfSize = halfSize;
+		Orientation = orientation;
+	}
 	
 };
 
@@ -302,5 +321,4 @@ UCLASS()
 class UEEXPANDEDFRAMEWORK_API UUEExtendedTraceData : public UObject
 {
 	GENERATED_BODY()
-
 };
