@@ -10,7 +10,7 @@ class UEEXPANDEDFRAMEWORK_API UUEExtendedAILibrary : public UBlueprintFunctionLi
 {
 	GENERATED_BODY()
 
-
+public:
 	//<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< BLACKBOARD GETTERS >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 	UFUNCTION(BlueprintPure, meta=(DisplayName = "Extended Get Blackboard Bool", CompactNodeTitle = "Board Bool", BlueprintThreadSafe),Category="AI|Blackboard|Get")
 	static bool ExtendedGetBlackboardBool(AActor* OwningActor , FName KeyName);
