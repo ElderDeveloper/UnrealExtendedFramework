@@ -20,6 +20,7 @@ class UEEXPANDEDFRAMEWORK_API UUEExtendedSoftLockNotify : public UAnimNotifyStat
 	UPROPERTY(EditAnywhere)
 	float SoftLockInterpSpeed;
 
+	
 protected:
 	virtual void NotifyBegin(USkeletalMeshComponent * MeshComp, UAnimSequenceBase * Animation, float TotalDuration);
 	virtual void NotifyTick(USkeletalMeshComponent * MeshComp, UAnimSequenceBase * Animation, float FrameDeltaTime);

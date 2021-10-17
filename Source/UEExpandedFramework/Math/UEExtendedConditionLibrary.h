@@ -9,12 +9,22 @@
 /**
  * 
  */
+
+UENUM()
+enum EConditionOutput
+{
+	OutTrue,
+	OutIsFalse
+};
+
 UCLASS()
 class UEEXPANDEDFRAMEWORK_API UUEExtendedConditionLibrary : public UBlueprintFunctionLibrary
 {
 	GENERATED_BODY()
 
 public:
+	UFUNCTION(BlueprintCallable,meta = (CompactNodeTitle = ">0",CustomStructureParam = "Value" , ExpandEnumAsExecs = "OutPins"))
+	static void IsBiggerThanZero(const float& Value , TEnumAsByte<EConditionOutput>& OutPins);
 
 	//<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< Float >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 	UFUNCTION(BlueprintPure ,meta=(DisplayName = ">0", CompactNodeTitle = ">0", ScriptMethod = ">", ScriptOperator = ">") , Category="Condition|Float")

@@ -2,8 +2,6 @@
 
 
 #include "UEExtendedSoftLockNotify.h"
-
-#include "../../../../../KontraGamePlugin/Source/KontraGamePlugin/Module/KontraGamePlugin.h"
 #include "Kismet/KismetMathLibrary.h"
 #include "UEExpandedFramework/Gameplay/Trace/UEExtendedTraceLibrary.h"
 #include "UEExpandedFramework/Math/UEExtendedMathLibrary.h"
@@ -62,18 +60,6 @@ void UUEExtendedSoftLockNotify::FindSoftLockActor(USkeletalMeshComponent* MeshCo
 				HitActorArray.Add(hit.GetActor());
 			}
 			SoftLockActor= UUEExtendedMathLibrary::GetClosestActorFromActorArray(MeshComp->GetOwner(),HitActorArray);
-
-
-			if (SoftLockActor)
-			{
-				PRINT_STRING(2.f,Red,SoftLockActor->GetName());
-			}
 		}
 	}
-	else
-	{
-		PRINT_STRING(2.f,Red,"Softlock Actor Valid = " + SoftLockActor->GetName());
-	}
-
-	
 }

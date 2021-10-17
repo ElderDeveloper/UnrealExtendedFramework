@@ -7,12 +7,18 @@
 #include "UEExtendedArrayLibrary.generated.h"
 
 
+
 UCLASS()
 class UEEXPANDEDFRAMEWORK_API UUEExtendedArrayLibrary : public UBlueprintFunctionLibrary
 {
 	GENERATED_BODY()
 public:
 
+	/*
+	UFUNCTION(BlueprintPure, meta=(DisplayName = "Get Random Array Member", CompactNodeTitle = "Random Member", ArrayParm = "TargetArray", ArrayTypeDependentParams = "Item", BlueprintThreadSafe), Category="Math|Library")
+	static void ExtendedForEachLoop(const TArray<UProperty*>& TargetArray, UProperty*& Item);
+	*/
+	
 	UFUNCTION(BlueprintPure, meta=(DisplayName = "Get Random Array Member", CompactNodeTitle = "Random Member", ArrayParm = "TargetArray", ArrayTypeDependentParams = "Item", BlueprintThreadSafe), Category="Math|Library")
 	static int32 GetRandomArrayMember(const TArray<UProperty*>& TargetArray, UProperty*& Item);
 
