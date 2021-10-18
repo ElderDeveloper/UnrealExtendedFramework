@@ -5,6 +5,20 @@
 #include "Kismet/KismetMathLibrary.h"
 
 
+void UUEExtendedArrayLibrary::ExtendedForEachLoop(const TArray<FProperty*>& TargetArray,TEnumAsByte<EExtendedLoopOutput>& Outputs, int32& index, FProperty*& Item)
+{
+	for (int32 i = 0 ; i<TargetArray.Num() ; i++)
+	{
+		if (TargetArray.IsValidIndex(i))
+		{
+			index = i;
+			Item = TargetArray[i];
+			Outputs = ExtendedLoop;
+		}
+	}
+	Outputs = ExtendedComplete;
+}
+
 int32 UUEExtendedArrayLibrary::GetRandomArrayMember(const TArray<UProperty*>& TargetArray, UProperty*& Item)
 {
 	if(TargetArray.Num()>0)

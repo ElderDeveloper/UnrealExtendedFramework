@@ -29,6 +29,6 @@ protected:
 	void FindSoftLockActor(USkeletalMeshComponent* MeshComp);
 private:
 
-	AActor* SoftLockActor;
+	AActor* SoftLockActor = nullptr;
 };
 

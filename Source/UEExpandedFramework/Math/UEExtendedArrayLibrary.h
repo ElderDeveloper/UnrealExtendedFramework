@@ -7,6 +7,13 @@
 #include "UEExtendedArrayLibrary.generated.h"
 
 
+UENUM()
+enum EExtendedLoopOutput
+{
+	ExtendedLoop,
+	ExtendedComplete
+};
+
 
 UCLASS()
 class UEEXPANDEDFRAMEWORK_API UUEExtendedArrayLibrary : public UBlueprintFunctionLibrary
@@ -14,10 +21,10 @@ class UEEXPANDEDFRAMEWORK_API UUEExtendedArrayLibrary : public UBlueprintFunctio
 	GENERATED_BODY()
 public:
 
-	/*
-	UFUNCTION(BlueprintPure, meta=(DisplayName = "Get Random Array Member", CompactNodeTitle = "Random Member", ArrayParm = "TargetArray", ArrayTypeDependentParams = "Item", BlueprintThreadSafe), Category="Math|Library")
-	static void ExtendedForEachLoop(const TArray<UProperty*>& TargetArray, UProperty*& Item);
-	*/
+	
+	UFUNCTION(BlueprintCallable, meta=(DisplayName = "Extended For Each Loop ", ArrayParm = "TargetArray", ArrayTypeDependentParams = "Item", BlueprintThreadSafe , ExpandEnumAsExecs = "Outputs"), Category="Math|Library")
+	static void ExtendedForEachLoop(const TArray<UProperty*>& TargetArray, TEnumAsByte<EExtendedLoopOutput>& Outputs, int32& index ,  UProperty*& Item );
+	
 	
 	UFUNCTION(BlueprintPure, meta=(DisplayName = "Get Random Array Member", CompactNodeTitle = "Random Member", ArrayParm = "TargetArray", ArrayTypeDependentParams = "Item", BlueprintThreadSafe), Category="Math|Library")
 	static int32 GetRandomArrayMember(const TArray<UProperty*>& TargetArray, UProperty*& Item);

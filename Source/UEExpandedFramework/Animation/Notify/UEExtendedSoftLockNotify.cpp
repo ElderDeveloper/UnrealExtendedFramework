@@ -18,7 +18,7 @@ void UUEExtendedSoftLockNotify::NotifyBegin(USkeletalMeshComponent* MeshComp, UA
 void UUEExtendedSoftLockNotify::NotifyTick(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation,float FrameDeltaTime)
 {
 	Super::NotifyTick(MeshComp, Animation, FrameDeltaTime);
-	if (!SoftLockActor)
+	if (SoftLockActor == nullptr)
 	{
 		FindSoftLockActor(MeshComp);
 		return;
@@ -47,19 +47,20 @@ void UUEExtendedSoftLockNotify::NotifyEnd(USkeletalMeshComponent* MeshComp, UAni
 
 void UUEExtendedSoftLockNotify::FindSoftLockActor(USkeletalMeshComponent* MeshComp)
 {
-	if (!SoftLockActor)
+	if (SoftLockActor == nullptr)
 	{
 		SoftLockActorTrace.Start = MeshComp->GetOwner()->GetActorLocation();
 		
-		if(UUEExtendedTraceLibrary::ExtendedSphereTraceMulti(MeshComp->GetWorld(),SoftLockActorTrace))
-		{
-			TArray<AActor*> HitActorArray;
+		UUEExtendedTraceLibrary::ExtendedSphereTraceMulti(MeshComp->GetWorld(),SoftLockActorTrace);
+		TArray<AActor*> HitActorArray;
 			
-			for ( const auto hit : SoftLockActorTrace.HitResults)
-			{
-				HitActorArray.Add(hit.GetActor());
-			}
-			SoftLockActor= UUEExtendedMathLibrary::GetClosestActorFromActorArray(MeshComp->GetOwner(),HitActorArray);
+		for ( const auto hit : SoftLockActorTrace.HitResults)
+		{
+			HitActorArray.Add(hit.GetActor());
 		}
+		
+		SoftLockActor= UUEExtendedMathLibrary::GetClosestActorFromActorArray(MeshComp->GetOwner(),HitActorArray);
 	}
 }
+	
+
