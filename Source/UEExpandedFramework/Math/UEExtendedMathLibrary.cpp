@@ -235,8 +235,25 @@ bool UUEExtendedMathLibrary::FCalculateIsTheSameDirection(const FVector firstFor
 	return UKismetMathLibrary::EqualEqual_VectorVector(firstForwardDirection.GetUnsafeNormal(),secondForwardDirection.GetUnsafeNormal(),tolerance);
 }
 
-
-
+uint8 UUEExtendedMathLibrary::CalculateDirectionBetweenActors(const AActor* Target, const AActor* From , const float ForwardTolerance)
+{
+	if (Target && From)
+	{
+		const float FrontDirection = Target->GetDotProductTo(From);
+		
+		if (FrontDirection > ForwardTolerance* -1 && FrontDirection < ForwardTolerance)
+		{
+			// 2 = LEFT , 3 = RIGHT
+			return 	FVector::DotProduct(Target->GetActorRightVector(), From->GetActorForwardVector()) > 0 ?  2 : 3;
+		}
+		else
+		{
+			// 0 = FRONT , 1 = BACK
+			return FrontDirection > 0 ? 0 : 1 ;
+		}
+	}
+	return -1;
+}
 
 
 // <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< SCREEN >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>

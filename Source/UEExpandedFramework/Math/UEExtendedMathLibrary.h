@@ -6,6 +6,11 @@
 #include "UEExpandedFramework/UEExpandedFramework.h"
 #include "UEExtendedMathLibrary.generated.h"
 
+
+
+
+
+
 UCLASS()
 class UEEXPANDEDFRAMEWORK_API UUEExtendedMathLibrary : public UBlueprintFunctionLibrary
 {
@@ -91,6 +96,15 @@ class UEEXPANDEDFRAMEWORK_API UUEExtendedMathLibrary : public UBlueprintFunction
 	UFUNCTION(BlueprintPure , Category = "Math Function Library")
 	static bool FCalculateIsTheSameDirection(const FVector firstForwardDirection , const FVector secondForwardDirection , const float tolerance);
 
+	/**
+	 * 0: FRONT
+	 * 1: BACK
+	 * 2: LEFT
+	 * 3: RIGHT
+	 * -1: ERROR
+	 **/
+	UFUNCTION(BlueprintPure , Category = "Math Function Library")
+	static uint8 CalculateDirectionBetweenActors(const AActor* Target , const AActor* From , const float ForwardTolerance = 0.5 );
 
 
 
