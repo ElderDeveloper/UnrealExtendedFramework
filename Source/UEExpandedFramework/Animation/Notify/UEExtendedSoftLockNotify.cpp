@@ -50,6 +50,7 @@ void UUEExtendedSoftLockNotify::FindSoftLockActor(USkeletalMeshComponent* MeshCo
 	if (SoftLockActor == nullptr)
 	{
 		SoftLockActorTrace.Start = MeshComp->GetOwner()->GetActorLocation();
+		SoftLockActorTrace.End = MeshComp->GetOwner()->GetActorLocation();
 		
 		UUEExtendedTraceLibrary::ExtendedSphereTraceMulti(MeshComp->GetWorld(),SoftLockActorTrace);
 		TArray<AActor*> HitActorArray;
