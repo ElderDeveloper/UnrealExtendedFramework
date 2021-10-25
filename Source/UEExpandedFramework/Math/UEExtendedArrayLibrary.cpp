@@ -33,6 +33,11 @@ int32 UUEExtendedArrayLibrary::GetRandomArrayMember(const TArray<UProperty*>& Ta
 	return false;
 }
 
+int32 UUEExtendedArrayLibrary::GetRandomArrayIndex(const int32 ArrayLenght, const int32 StartIndex)
+{
+	return UKismetMathLibrary::RandomIntegerInRange(StartIndex,ArrayLenght);
+}
+
 void UUEExtendedArrayLibrary::GetArrayLastElement(const TArray<FProperty*>& TargetArray, FProperty*& Item)
 {
 	if(TargetArray.Num()>0)

@@ -28,7 +28,7 @@ public:
 	
 	UFUNCTION(BlueprintPure, meta=(DisplayName = "Get Random Array Member", CompactNodeTitle = "Random Member", ArrayParm = "TargetArray", ArrayTypeDependentParams = "Item", BlueprintThreadSafe), Category="Math|Library")
 	static int32 GetRandomArrayMember(const TArray<UProperty*>& TargetArray, UProperty*& Item);
-
+	static int32 GetRandomArrayIndex(const int32 ArrayLenght , const int32 StartIndex = 0);
 	
 	UFUNCTION(BlueprintPure, meta=(DisplayName = "Get Array Last Element", CompactNodeTitle = "Last Element", ArrayParm = "TargetArray", ArrayTypeDependentParams = "Item", BlueprintThreadSafe), Category="Math|Library")
 	static void GetArrayLastElement(const TArray<UProperty*>& TargetArray, UProperty*& Item);
