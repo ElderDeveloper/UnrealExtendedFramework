@@ -22,10 +22,6 @@ class UEEXPANDEDFRAMEWORK_API UUEExtendedArrayLibrary : public UBlueprintFunctio
 public:
 
 	
-	UFUNCTION(BlueprintCallable, meta=(DisplayName = "Extended For Each Loop ", ArrayParm = "TargetArray", ArrayTypeDependentParams = "Item", BlueprintThreadSafe , ExpandEnumAsExecs = "Outputs"), Category="Math|Library")
-	static void ExtendedForEachLoop(const TArray<UProperty*>& TargetArray, TEnumAsByte<EExtendedLoopOutput>& Outputs, int32& index ,  UProperty*& Item );
-	
-	
 	UFUNCTION(BlueprintPure, meta=(DisplayName = "Get Random Array Member", CompactNodeTitle = "Random Member", ArrayParm = "TargetArray", ArrayTypeDependentParams = "Item", BlueprintThreadSafe), Category="Math|Library")
 	static int32 GetRandomArrayMember(const TArray<UProperty*>& TargetArray, UProperty*& Item);
 	static int32 GetRandomArrayIndex(const int32 ArrayLenght , const int32 StartIndex = 0);
@@ -33,13 +29,10 @@ public:
 	UFUNCTION(BlueprintPure, meta=(DisplayName = "Get Array Last Element", CompactNodeTitle = "Last Element", ArrayParm = "TargetArray", ArrayTypeDependentParams = "Item", BlueprintThreadSafe), Category="Math|Library")
 	static void GetArrayLastElement(const TArray<UProperty*>& TargetArray, UProperty*& Item);
 
-
-
-
+	
 	//<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< SORTING >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 	UFUNCTION(BlueprintCallable, Category = "Array|Sort")
 	static void InsertionSortFloatArray(TArray<float> FloatArray , TArray<float>& SortedArray);
-
 
 	/**
 	 *	FunctionName is a function resided in calling object that needs to have two struct input and bool return for sorting like Health variables in structs
