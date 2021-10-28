@@ -4,10 +4,10 @@
 
 #include "CoreMinimal.h"
 
-#include "UEExtendedHitResult.generated.h"
+#include "UEExtendedHitResultLibrary.generated.h"
 
 UCLASS()
-class UEEXPANDEDFRAMEWORK_API UUEExtendedHitResult : public UBlueprintFunctionLibrary
+class UEEXPANDEDFRAMEWORK_API UUEExtendedHitResultLibrary : public UBlueprintFunctionLibrary
 {
 	GENERATED_BODY()
 

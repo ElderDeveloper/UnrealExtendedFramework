@@ -20,8 +20,10 @@ class UEEXPANDEDFRAMEWORK_API UUEExtendedGameplayLibrary : public UObject
 	UFUNCTION(BlueprintCallable, Category = "Reflection" , meta=(DefaultToSelf="RequestOwner" , HidePin="RequestOwner"))
 	static void ExecuteFunction(UObject* RequestOwner , UObject* TargetObject , const FString FunctionToExecute);
 
+	UFUNCTION(BlueprintCallable)
 	static void RotateToObjectYaw(AActor* From , AActor* To);
 
+	UFUNCTION(BlueprintCallable)
 	static void RotateToObject(AActor* From , AActor* To);
 
 	UFUNCTION(BlueprintCallable, meta = (WorldContext = "WorldContextObject"))

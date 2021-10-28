@@ -18,6 +18,10 @@ class UEEXPANDEDFRAMEWORK_API UUEExtendedMathLibrary : public UBlueprintFunction
 
 	public:
 
+
+
+
+	
 	// <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< ROTATION >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 	UFUNCTION(BlueprintPure)
 	static FRotator GetRotationBetweenActors(const AActor* From, const AActor* To, const FRotator PlusRotator = FRotator::ZeroRotator);
@@ -57,6 +61,9 @@ class UEEXPANDEDFRAMEWORK_API UUEExtendedMathLibrary : public UBlueprintFunction
 	UFUNCTION(BlueprintPure, meta=(DisplayName = "Component Get Closest Component", CompactNodeTitle = "Component Closest Component", BlueprintThreadSafe), Category="Math|Distance")
 	static void ComponentGetClosestComponentFromComponentArray(const USceneComponent* OwnerComponent ,UPARAM(ref) const TArray<USceneComponent*>& TargetArray, USceneComponent*& Item);
 
+
+	
+	
 	
 	// <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< DIRECTION >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 	UFUNCTION(BlueprintPure)
@@ -107,6 +114,8 @@ class UEEXPANDEDFRAMEWORK_API UUEExtendedMathLibrary : public UBlueprintFunction
 	static uint8 CalculateDirectionBetweenActors(const AActor* Target , const AActor* From , const float ForwardTolerance = 0.5 );
 
 
+	
+	
 
 	// <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< SCREEN >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 	UFUNCTION(BlueprintPure, meta=(DisplayName = "Get Actor In The Center Of The Screen", CompactNodeTitle = "CenterActor", ScriptMethod = "CenterActor+", ScriptOperator = "+"), Category="Math|Screen")
@@ -118,6 +127,7 @@ class UEEXPANDEDFRAMEWORK_API UUEExtendedMathLibrary : public UBlueprintFunction
 
 
 
+	
 	// <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< LOCATION >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 	/*
 	Find a location close to center point in a circle with given min-max radius
@@ -133,6 +143,7 @@ class UEEXPANDEDFRAMEWORK_API UUEExtendedMathLibrary : public UBlueprintFunction
 
 
 
+	
 
 	// <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< PHYSICS >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 	
@@ -144,6 +155,8 @@ class UEEXPANDEDFRAMEWORK_API UUEExtendedMathLibrary : public UBlueprintFunction
 
 
 
+	
+
 	//<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< VARIABLE >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 	UFUNCTION(BlueprintPure ,meta=(DisplayName = "+1", CompactNodeTitle = "+1", ScriptMethod = "+", ScriptOperator = "+") , Category="Math|Float")
 	static float FloatPlusOne(const float Value) {return Value + 1;}
@@ -152,13 +165,13 @@ class UEEXPANDEDFRAMEWORK_API UUEExtendedMathLibrary : public UBlueprintFunction
 	static float FloatMinusOne(const float Value) {return Value - 1;}
 
 	UFUNCTION(BlueprintPure ,meta=(DisplayName = "*2", CompactNodeTitle = "*2", ScriptMethod = "*", ScriptOperator = "*") , Category="Math|Float")
-	static float FloatMultiplyByTwo(const float Value) {return Value + 1;}
+	static float FloatMultiplyByTwo(const float Value) {return Value * 2 ;}
 
 	UFUNCTION(BlueprintPure ,meta=(DisplayName = "/2", CompactNodeTitle = "/2", ScriptMethod = "/", ScriptOperator = "/") , Category="Math|Float")
-	static float FloatDivideByTwo(const float Value) {return Value + 1;}
+	static float FloatDivideByTwo(const float Value) {return Value / 2 ;}
 
 	UFUNCTION(BlueprintPure ,meta=(DisplayName = "Invert", CompactNodeTitle = "Invert", ScriptMethod = "*", ScriptOperator = "*") , Category="Math|Float")
-	static float FloatInvert(const float Value) {return Value*-1; }
+	static float FloatInvert(const float Value) {return Value * -1; }
 
 	UFUNCTION(BlueprintPure ,meta=(DisplayName = "-ABS", CompactNodeTitle = "-ABS", ScriptMethod = "-ABS", ScriptOperator = "-ABS") , Category="Math|Float")
 	static float FloatMinusABS(const float Value) {return Value>0 ? Value*-1 : Value;  }
@@ -172,10 +185,10 @@ class UEEXPANDEDFRAMEWORK_API UUEExtendedMathLibrary : public UBlueprintFunction
 	static int32 IntMinusOne(const int32 Value) {return Value - 1;}
 
 	UFUNCTION(BlueprintPure ,meta=(DisplayName = "*2", CompactNodeTitle = "*2", ScriptMethod = "*", ScriptOperator = "*") , Category="Math|Int32")
-	static int32 IntMultiplyByTwo(const int32 Value) {return Value + 1;}
+	static int32 IntMultiplyByTwo(const int32 Value) {return Value * 2 ;}
 
 	UFUNCTION(BlueprintPure ,meta=(DisplayName = "/2", CompactNodeTitle = "/2", ScriptMethod = "/", ScriptOperator = "/") , Category="Math|Int32")
-	static int32 IntDivideByTwo(const int32 Value) {return Value + 1;}
+	static int32 IntDivideByTwo(const int32 Value) {return Value / 2 ;}
 
 	UFUNCTION(BlueprintPure ,meta=(DisplayName = "Invert", CompactNodeTitle = "Invert", ScriptMethod = "*", ScriptOperator = "*") , Category="Math|Int32")
 	static int32 IntInvert(const int32 Value) {return Value*-1; }
@@ -183,6 +196,18 @@ class UEEXPANDEDFRAMEWORK_API UUEExtendedMathLibrary : public UBlueprintFunction
 	UFUNCTION(BlueprintPure ,meta=(DisplayName = "-ABS", CompactNodeTitle = "-ABS", ScriptMethod = "-ABS", ScriptOperator = "-ABS") , Category="Math|Int32")
 	static int32 IntMinusABS(const int32 Value) {return Value>0 ? Value*-1 : Value;  }
 
+
+
 	
 	
+	//<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< MATH >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+	UFUNCTION(BlueprintPure ,meta=(DisplayName = "RotatorToQuad", CompactNodeTitle = "RotToQuad", ScriptMethod = "RotatorToQuad", ScriptOperator = "RotatorToQuad") , Category="Math")
+	static FQuat RotatorToQuad(const FRotator Rotator);
+
+	UFUNCTION(BlueprintPure ,meta=(DisplayName = "Clamp 2D", ScriptOperator = "Clamp 2D") , Category="Math")
+	static FVector2D ClampVector2D(const FVector2D Vector , const float Min , const float Max);
+
+	UFUNCTION(BlueprintPure ,meta=(DisplayName = "Map Range Clamp 2D") , Category="Math")
+	static FVector2D MapRangeClampVector2D(const FVector2D Value , const FVector2D InRangeA ,  const FVector2D InRangeB , const FVector2D OutRangeA , const FVector2D OutRangeB );
 };

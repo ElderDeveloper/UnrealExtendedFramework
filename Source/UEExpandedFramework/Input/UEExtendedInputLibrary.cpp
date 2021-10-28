@@ -2,7 +2,8 @@
 
 
 #include "UEExtendedInputLibrary.h"
-
+#include "GameFramework/InputSettings.h"
+#include "UEExpandedFramework/UEExpandedFramework.h"
 
 
 bool UUEExtendedInputLibrary::DoesKeyExistInActionMapping(UInputSettings* InputSettings,FKey Key ,FInputActionKeyMapping& FoundMapping)
@@ -92,3 +93,109 @@ FName UUEExtendedInputLibrary::GetKeyBindingName(UInputSettings* InputSettings, 
 	}
 	return FName();
 }
+
+bool UUEExtendedInputLibrary::UpdateKeyBindingAction(FInputActionKeyMapping ChangeActionMapping)
+{
+	if(const auto Settings = GetMutableDefault<UInputSettings>())
+	{
+		for(const auto key : Settings->GetActionMappings())
+		{
+			if (key.ActionName == ChangeActionMapping.ActionName)
+			{
+				Settings->RemoveActionMapping(key);
+				Settings->AddActionMapping(ChangeActionMapping);
+				Settings->SaveKeyMappings();
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
+bool UUEExtendedInputLibrary::AddKeyBindingAction(FInputActionKeyMapping ChangeActionMapping)
+{
+	if(const auto Settings = GetMutableDefault<UInputSettings>())
+	{
+		for(const auto key : Settings->GetActionMappings())
+		{
+			if (key.ActionName == ChangeActionMapping.ActionName)
+				return false;
+		}
+		Settings->AddActionMapping(ChangeActionMapping);
+		Settings->SaveKeyMappings();
+		return true;
+	}
+	return false;
+}
+
+bool UUEExtendedInputLibrary::RemoveKeyBindingAction(FInputActionKeyMapping ChangeActionMapping)
+{
+	if(const auto Settings = GetMutableDefault<UInputSettings>())
+	{
+		for(const auto key : Settings->GetActionMappings())
+		{
+			if (key.ActionName == ChangeActionMapping.ActionName)
+			{
+				Settings->RemoveActionMapping(key);
+				Settings->SaveKeyMappings();
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
+
+
+
+bool UUEExtendedInputLibrary::UpdateKeyBindingAxis(FInputAxisKeyMapping ChangeAxisMapping)
+{
+	if(const auto Settings = GetMutableDefault<UInputSettings>())
+	{
+		for(const auto key : Settings->GetAxisMappings())
+		{
+			if (key.AxisName == ChangeAxisMapping.AxisName)
+			{
+				Settings->RemoveAxisMapping(key);
+				Settings->AddAxisMapping(ChangeAxisMapping);
+				Settings->SaveKeyMappings();
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
+bool UUEExtendedInputLibrary::AddKeyBindingAxis(FInputAxisKeyMapping ChangeAxisMapping)
+{
+	if(const auto Settings = GetMutableDefault<UInputSettings>())
+	{
+		for(const auto key : Settings->GetAxisMappings())
+		{
+			if (key.AxisName == ChangeAxisMapping.AxisName)
+				return false;
+		}
+		Settings->AddAxisMapping(ChangeAxisMapping);
+		Settings->SaveKeyMappings();
+		return true;
+	}
+	return false;
+}
+
+bool UUEExtendedInputLibrary::RemoveKeyBindingAxis(FInputAxisKeyMapping ChangeAxisMapping)
+{
+	if(const auto Settings = GetMutableDefault<UInputSettings>())
+	{
+		for(const auto key : Settings->GetAxisMappings())
+		{
+			if (key.AxisName == ChangeAxisMapping.AxisName)
+			{
+				Settings->RemoveAxisMapping(key);
+				Settings->SaveKeyMappings();
+				return true;
+			}
+		}
+	}
+	return false;
+}
+

@@ -360,3 +360,43 @@ FVector UUEExtendedMathLibrary::FCalculateLaunchVelocity(const FVector targetLoc
 	
 	return returnVector;
 }
+
+
+FQuat UUEExtendedMathLibrary::RotatorToQuad(const FRotator Rotator)
+{
+	
+	const float SinRoll =	FMath::Sin(FMath::DegreesToRadians(Rotator.Roll) / 2);
+	const float CosRoll =	FMath::Cos(FMath::DegreesToRadians(Rotator.Roll) / 2);
+	
+	const float SinPitch =  FMath::Sin(FMath::DegreesToRadians(Rotator.Pitch) / 2);
+	const float CosPitch =  FMath::Cos(FMath::DegreesToRadians(Rotator.Pitch) / 2);
+
+	const float SinYaw =	FMath::Sin(FMath::DegreesToRadians(Rotator.Yaw) / 2);
+	const float CosYaw =	FMath::Cos(FMath::DegreesToRadians(Rotator.Yaw) / 2);
+
+	const float X = (CosRoll * SinPitch * SinYaw) - (SinRoll * CosPitch * CosYaw);
+	
+	const float Y = (CosRoll * SinPitch * CosYaw * -1) - (SinRoll * CosPitch * SinYaw);
+	
+	const float Z = (CosRoll * CosPitch * SinYaw) - (SinRoll * SinPitch * CosYaw);
+	
+	const float W = (CosRoll * CosPitch * CosYaw) + (SinRoll * SinPitch * SinYaw);
+	
+
+	return FQuat(X,Y,Z,W);
+}
+
+//<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< MATH >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+FVector2D UUEExtendedMathLibrary::ClampVector2D(const FVector2D Vector , const float Min, const float Max)
+{
+	return FVector2D(FMath::Clamp(Vector.X , Min , Max) , FMath::Clamp(Vector.Y,Min,Max));
+}
+
+FVector2D UUEExtendedMathLibrary::MapRangeClampVector2D(const FVector2D Value, const FVector2D InRangeA,const FVector2D InRangeB, const FVector2D OutRangeA, const FVector2D OutRangeB)
+{
+	return FVector2D
+	(
+		UKismetMathLibrary::MapRangeClamped(Value.X , InRangeA.X,InRangeB.X , OutRangeA.X,OutRangeB.X),
+		UKismetMathLibrary::MapRangeClamped(Value.Y , InRangeA.Y,InRangeB.Y , OutRangeA.Y,OutRangeB.Y)
+	);
+}

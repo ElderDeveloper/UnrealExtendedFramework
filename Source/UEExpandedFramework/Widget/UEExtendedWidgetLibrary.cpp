@@ -3,6 +3,7 @@
 
 #include "UEExtendedWidgetLibrary.h"
 
+#include "Blueprint/WidgetLayoutLibrary.h"
 #include "Components/Overlay.h"
 #include "Components/OverlaySlot.h"
 #include "Components/ProgressBar.h"
@@ -69,6 +70,31 @@ UOverlaySlot* UUEExtendedWidgetLibrary::AddChildToOverlay(UOverlay* Overlay, UUs
 		return Slot;
 	}	return nullptr;
 }
+
+void UUEExtendedWidgetLibrary::SetOverlayPaddingTop(UWidget* Slot , const float PaddingTop)
+{
+	if (const auto overlay = UWidgetLayoutLibrary::SlotAsOverlaySlot(Slot))
+		overlay->SetPadding(FMargin(	overlay->Padding.Left,	PaddingTop,		overlay->Padding.Right,	overlay->Padding.Bottom));
+}
+
+void UUEExtendedWidgetLibrary::SetOverlayPaddingBottom(UWidget* Slot, const float PaddingBottom)
+{
+	if (const auto overlay = UWidgetLayoutLibrary::SlotAsOverlaySlot(Slot))
+		overlay->SetPadding(FMargin(	overlay->Padding.Left,	overlay->Padding.Top,	overlay->Padding.Right,	PaddingBottom));
+}
+
+void UUEExtendedWidgetLibrary::SetOverlayPaddingLeft(UWidget* Slot, const float PaddingLeft)
+{
+	if (const auto overlay = UWidgetLayoutLibrary::SlotAsOverlaySlot(Slot))
+		overlay->SetPadding(FMargin(	PaddingLeft,	overlay->Padding.Top,	overlay->Padding.Right,	overlay->Padding.Bottom));
+}
+
+void UUEExtendedWidgetLibrary::SetOverlayPaddingRight(UWidget* Slot, const float PaddingRight)
+{
+	if (const auto overlay = UWidgetLayoutLibrary::SlotAsOverlaySlot(Slot))
+		overlay->SetPadding(FMargin(	overlay->Padding.Left,	overlay->Padding.Top,	PaddingRight,	overlay->Padding.Bottom));
+}
+
 
 UVerticalBoxSlot* UUEExtendedWidgetLibrary::AddChildToVerticalBox(UVerticalBox* VerticalBox, UUserWidget* Child,TEnumAsByte<EVerticalAlignment> InVerticalAlignment, TEnumAsByte<EHorizontalAlignment> InHorizontalAlignment)
 {
