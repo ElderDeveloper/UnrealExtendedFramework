@@ -72,8 +72,8 @@ class UEEXPANDEDFRAMEWORK_API UUEExtendedVariableLibrary : public UBlueprintFunc
 
 
 	// <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< FLOAT >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-	UFUNCTION(BlueprintCallable,Category="Math|Float")
-	static int32 IncrementFloatBy(UPARAM(ref) float& Float , float Value = 1 );
+	UFUNCTION(BlueprintCallable, meta=(DisplayName = "Increment Float", CompactNodeTitle = "Float +", ScriptMethod = "Float +", ScriptOperator = "+") ,Category="Math|Float")
+	static float IncrementFloatBy(UPARAM(ref) float& Float , float Value = 1 );
 
 	UFUNCTION(BlueprintPure, meta=(DisplayName = "Add Floats", CompactNodeTitle = "FloatArray+", ScriptMethod = "FloatArray+", ScriptOperator = "+"), Category="Math|Float")
 	static float Add_Floats(const TArray<float> Array);
@@ -81,6 +81,11 @@ class UEEXPANDEDFRAMEWORK_API UUEExtendedVariableLibrary : public UBlueprintFunc
 	UFUNCTION(BlueprintPure, meta=(DisplayName = "Average Floats", CompactNodeTitle = "FloatArrayAverage", ScriptMethod = "FloatArrayAverage", ScriptOperator = "/"), Category="Math|Float")
 	static float Average_Floats(const TArray<float> Array);
 
+	UFUNCTION(BlueprintPure, meta=(DisplayName = "Float / Int", CompactNodeTitle = "Float / Int", ScriptMethod = "Float / Int", ScriptOperator = "/"),  Category="Math|Float")
+	static float Divide_FloatInt(float Float , int32 divider = 1 );
+
+	UFUNCTION(BlueprintPure, meta=(DisplayName = "Float / Byte", CompactNodeTitle = "Float / Byte", ScriptMethod = "Float / Byte", ScriptOperator = "/"),  Category="Math|Float")
+	static float Divide_FloatByte(float Float , uint8 divider = 1 );
 
 	
 

@@ -5,6 +5,42 @@
 #include "Kismet/KismetMathLibrary.h"
 
 
+ float UUEExtendedGameplayLibrary::GetActorLocationX(AActor* Actor)
+{
+	 if (Actor) return Actor->GetActorLocation().X;
+	return 0;
+}
+
+ float UUEExtendedGameplayLibrary::GetActorLocationY(AActor* Actor)
+{
+	if (Actor) return Actor->GetActorLocation().Y;
+	return 0;
+}
+
+ float UUEExtendedGameplayLibrary::GetActorLocationZ(AActor* Actor)
+{
+	if (Actor) return Actor->GetActorLocation().Z;
+	return 0;
+}
+
+ float UUEExtendedGameplayLibrary::GetActorRotationYaw(AActor* Actor)
+{
+	if (Actor) return Actor->GetActorRotation().Yaw;
+	return 0;
+}
+
+ float UUEExtendedGameplayLibrary::GetActorRotationPitch(AActor* Actor)
+{
+	if (Actor) return Actor->GetActorRotation().Pitch;
+	return 0;
+}
+
+ float UUEExtendedGameplayLibrary::GetActorRotationRoll(AActor* Actor)
+{
+	if (Actor) return Actor->GetActorRotation().Roll;
+	return 0;
+}
+
 void UUEExtendedGameplayLibrary::ExecuteFunction(UObject* RequestOwner , UObject* TargetObject, const FString FunctionToExecute)
 {
 	if(TargetObject && RequestOwner)

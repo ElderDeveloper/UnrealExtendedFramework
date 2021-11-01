@@ -51,7 +51,7 @@ FTransform UUEExtendedVariableLibrary::Add_TransformTransform(const FTransform A
 
 
 
-int32 UUEExtendedVariableLibrary::IncrementFloatBy(float& Float, float Value)
+float UUEExtendedVariableLibrary::IncrementFloatBy(float& Float, float Value)
 {
 	return Float += Value; 
 }
@@ -80,10 +80,15 @@ float UUEExtendedVariableLibrary::Average_Floats(const TArray<float> Array)
 	return A/2;
 }
 
+float UUEExtendedVariableLibrary::Divide_FloatInt(float Float, int32 divider)
+{
+	return Float/divider;
+}
 
-
-
-
+float UUEExtendedVariableLibrary::Divide_FloatByte(float Float, uint8 divider)
+{
+	return Float/divider;
+}
 
 
 int32 UUEExtendedVariableLibrary::IncrementIntegerBy(UPARAM(ref) int32& Integer, int32 Value)
