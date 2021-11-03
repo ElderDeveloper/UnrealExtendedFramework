@@ -76,7 +76,7 @@ class UEEXPANDEDFRAMEWORK_API UUEExtendedMathLibrary : public UBlueprintFunction
 	static TEnumAsByte<EHitDirection> CalculateHitDirectionActors (AActor* From, AActor* To, float& Angle);
 	
 	UFUNCTION(BlueprintPure)
-	static void GetComponentForwardVectorPlus(USceneComponent* Component , float Distance , FVector& CurrentLocation , FVector& ForwardLocation);
+	static FVector GetComponentForwardVectorPlus(USceneComponent* Component , float Distance , FVector& CurrentLocation);
 	
 	UFUNCTION(BlueprintPure)
 	static void GetActorForwardVectorPlus(AActor* Actor , float Distance , FVector& CurrentLocation , FVector& ForwardLocation);

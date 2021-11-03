@@ -189,13 +189,14 @@ TEnumAsByte<EHitDirection> UUEExtendedMathLibrary::CalculateHitDirectionActors(A
 
 
 
-void UUEExtendedMathLibrary::GetComponentForwardVectorPlus(USceneComponent* Component, float Distance, FVector& CurrentLocation,FVector& ForwardLocation)
+FVector UUEExtendedMathLibrary::GetComponentForwardVectorPlus(USceneComponent* Component, float Distance, FVector& CurrentLocation)
 {
 	if (Component)
 	{
 		CurrentLocation = Component->GetComponentLocation();
-		ForwardLocation= CurrentLocation + Component->GetForwardVector()*Distance;
+		return  CurrentLocation + Component->GetForwardVector()*Distance;
 	}
+	return FVector::ZeroVector;
 }
 
 
