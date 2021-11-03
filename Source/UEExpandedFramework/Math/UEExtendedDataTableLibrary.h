@@ -60,21 +60,14 @@ public:
 
 	/*
 	static int32 GetRowNumber(UDataTable* DataTable);
-
 	static bool AddRow(UDataTable* DataTable, FName RowName , UStruct RowData);
 	
 	static bool AddRows(UDataTable* DataTable , TMap<FName,UStruct> RowMap);
-
 	static bool RemoveRow(UDataTable* DataTable, FName RowName);
-
 	static void ClearTable(UDataTable* DataTable);
-
 	static UProperty* GetSinglePropertyOfDataTable(UDataTable* DataTable , FName RowName , FName PropertyName );
-
 	static bool SetSinglePropertyOfDataTable(UDataTable* DataTable , FName RowName , FName PropertyName , UProperty* Value);
-
 	static void GetArrayPropertyOfDataTable(UDataTable* DataTable , FName RowName , FName PropertyName , TArray<UProperty*>& Values);
-
 	static void SetArrayPropertyOfDataTable(UDataTable* DataTable , FName RowName , FName PropertyName , TArray<UProperty*> Values);
 	*/
 	

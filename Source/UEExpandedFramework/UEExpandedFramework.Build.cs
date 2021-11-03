@@ -41,7 +41,9 @@ public class UEExpandedFramework : ModuleRules
 				"GameplayAbilities",
 				"GameplayTasks",
 				"GameplayTasks",
-				"NavigationSystem"
+				"NavigationSystem",
+				"JsonUtilities",
+				"Json"
 				// ... add other public dependencies that you statically link with here ...
 			}
 			);
@@ -55,8 +57,9 @@ public class UEExpandedFramework : ModuleRules
 				"Slate",
 				"SlateCore",
 				"GameplayTags",
-				"GameplayTasks"
-				// ... add private dependencies that you statically link with here ...	
+				"GameplayTasks",
+				"JsonUtilities",
+				"Json",
 			}
 			);
 		
