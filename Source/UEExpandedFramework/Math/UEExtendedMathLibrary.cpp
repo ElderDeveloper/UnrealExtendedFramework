@@ -258,7 +258,7 @@ uint8 UUEExtendedMathLibrary::CalculateDirectionBetweenActors(const AActor* Targ
 
 
 // <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< SCREEN >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-AActor* UUEExtendedMathLibrary::GetActorInTheCenterOfTheScreen(TMap<AActor*, float> ActorScreenMap, bool& Found)
+AActor* UUEExtendedMathLibrary::GetActorInTheCenterOfTheScreen(TMap<AActor*, float> ActorScreenMap)
 {
 
 	TArray<float> ValueArray;
@@ -288,11 +288,10 @@ AActor* UUEExtendedMathLibrary::GetActorInTheCenterOfTheScreen(TMap<AActor*, flo
 
 		if (ActorArray.IsValidIndex(ClosestIndex))
 		{
-			Found = true;
+	
 			return ActorArray[ClosestIndex];
 		}
 	}
-	Found = false;
 	return nullptr;
 	
 }

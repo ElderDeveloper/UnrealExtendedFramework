@@ -119,7 +119,7 @@ class UEEXPANDEDFRAMEWORK_API UUEExtendedMathLibrary : public UBlueprintFunction
 
 	// <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< SCREEN >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 	UFUNCTION(BlueprintPure, meta=(DisplayName = "Get Actor In The Center Of The Screen", CompactNodeTitle = "CenterActor", ScriptMethod = "CenterActor+", ScriptOperator = "+"), Category="Math|Screen")
-	static AActor* GetActorInTheCenterOfTheScreen(TMap<AActor*,float> ActorScreenMap , bool& Found);
+	static AActor* GetActorInTheCenterOfTheScreen(TMap<AActor*,float> ActorScreenMap);
 	
 	UFUNCTION(BlueprintPure, meta = (DisplayName = "Get Object Screen Position Clamped", CompactNodeTitle = "Screen Position", ScriptMethod = "Screen Position+", ScriptOperator = "=" , WorldContext = "WorldContextObject"))
 	static FVector2D GetObjectScreenPositionClamped(UObject* WorldContextObject , FVector Position);
