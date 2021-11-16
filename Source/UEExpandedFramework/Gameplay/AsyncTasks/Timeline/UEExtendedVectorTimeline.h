@@ -7,13 +7,15 @@
 #include "Kismet/BlueprintAsyncActionBase.h"
 #include "UEExtendedVectorTimeline.generated.h"
 
-/**
- * 
- */
+
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FTimelineVectorLoop,FVector,Vector);
-
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FTimelineVectorLoopComplete);
+
+
+class UUEExtendedVectorTimeline;
+static TMap<int32,TWeakObjectPtr<UUEExtendedVectorTimeline>> ExtendedVectorTimelines;
+
 
 UCLASS()
 class UEEXPANDEDFRAMEWORK_API UUEExtendedVectorTimeline : public UBlueprintAsyncActionBase
@@ -59,7 +61,7 @@ public:
 	* InternalUseOnly to hide sync version in BPs
 	*/
 	UFUNCTION(BlueprintCallable, meta = (DisplayName=" Extended Vector Curve Timeline", WorldContext = "WorldContextObject" , BlueprintInternalUseOnly = "true"), Category = "AsyncNode")
-	static UUEExtendedVectorTimeline* ExtendedFloatTimeline(UCurveVector* VectorCurve ,const UObject* WorldContextObject , float PassTime = 0.005);
+	static UUEExtendedVectorTimeline* ExtendedFloatTimeline(UCurveVector* VectorCurve ,const UObject* WorldContextObject , float PassTime = 0.005 );
 
 
 	
