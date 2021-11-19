@@ -37,16 +37,16 @@ class UEEXPANDEDFRAMEWORK_API UUEExtendedMathLibrary : public UBlueprintFunction
 	UFUNCTION(BlueprintPure)
 	static float GetDistanceBetweenActors(const AActor* From,const AActor* To);
 
-	UFUNCTION(BlueprintPure ,meta=(DisplayName = "Get Distance Between Components", CompactNodeTitle = "Distance", ScriptMethod = "Distance", ScriptOperator = "="))
+	UFUNCTION(BlueprintPure ,meta=(DisplayName = "Get Distance Between Components", CompactNodeTitle = "Distance"))
 	static float GetDistanceBetweenComponents(const USceneComponent* From,const USceneComponent* To);
 
-	UFUNCTION(BlueprintPure ,meta=(DisplayName = "Get Distance Between Component And Actor", CompactNodeTitle = "Distance", ScriptMethod = "Distance", ScriptOperator = "="))
+	UFUNCTION(BlueprintPure ,meta=(DisplayName = "Get Distance Between Component And Actor", CompactNodeTitle = "Distance"))
 	static float GetDistanceBetweenComponentAndActor(const USceneComponent* From,const AActor* To);
 
-	UFUNCTION(BlueprintPure ,meta=(DisplayName = "Get Distance Between Vectors", CompactNodeTitle = "Distance", ScriptMethod = "Distance", ScriptOperator = "="))
+	UFUNCTION(BlueprintPure ,meta=(DisplayName = "Get Distance Between Vectors", CompactNodeTitle = "Distance"))
 	static float GetDistanceBetweenVectors(const FVector From, const FVector To);
 
-	UFUNCTION(BlueprintPure ,meta=(DisplayName = "Get Distance Between Vectors No Square Root", CompactNodeTitle = "DistanceNoSqrt", ScriptMethod = "DistanceNoSqrt", ScriptOperator = "="))
+	UFUNCTION(BlueprintPure ,meta=(DisplayName = "Get Distance Between Vectors No Square Root", CompactNodeTitle = "DistanceNoSqrt"))
 	static float GetDistanceBetweenVectorsNoSquareRoot(const FVector From, const FVector To);
 
 	UFUNCTION(BlueprintPure, meta=(DisplayName = "Actor Get Closest Actor", CompactNodeTitle = "Actor Closest Actor", BlueprintThreadSafe), Category="Math|Distance")
@@ -118,10 +118,10 @@ class UEEXPANDEDFRAMEWORK_API UUEExtendedMathLibrary : public UBlueprintFunction
 	
 
 	// <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< SCREEN >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-	UFUNCTION(BlueprintPure, meta=(DisplayName = "Get Actor In The Center Of The Screen", CompactNodeTitle = "CenterActor", ScriptMethod = "CenterActor+", ScriptOperator = "+"), Category="Math|Screen")
-	static AActor* GetActorInTheCenterOfTheScreen(TMap<AActor*,float> ActorScreenMap);
+	UFUNCTION(BlueprintPure, meta=(DisplayName = "Get Actor In The Center Of The Screen", CompactNodeTitle = "CenterActor"), Category="Math|Screen")
+	static AActor* GetActorInTheCenterOfTheScreen(TMap<AActor*,float> ActorScreenMap , const FVector2D ClampMinMax = FVector2D(0,1));
 	
-	UFUNCTION(BlueprintPure, meta = (DisplayName = "Get Object Screen Position Clamped", CompactNodeTitle = "Screen Position", ScriptMethod = "Screen Position+", ScriptOperator = "=" , WorldContext = "WorldContextObject"))
+	UFUNCTION(BlueprintPure, meta = (DisplayName = "Get Object Screen Position Clamped", CompactNodeTitle = "Screen Position", WorldContext = "WorldContextObject"))
 	static FVector2D GetObjectScreenPositionClamped(UObject* WorldContextObject , FVector Position);
 
 
@@ -158,42 +158,42 @@ class UEEXPANDEDFRAMEWORK_API UUEExtendedMathLibrary : public UBlueprintFunction
 	
 
 	//<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< VARIABLE >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-	UFUNCTION(BlueprintPure ,meta=(DisplayName = "+1", CompactNodeTitle = "+1", ScriptMethod = "+", ScriptOperator = "+") , Category="Math|Float")
+	UFUNCTION(BlueprintPure ,meta=(DisplayName = "+1", CompactNodeTitle = "+1") , Category="Math|Float")
 	static float FloatPlusOne(const float Value) {return Value + 1;}
 
-	UFUNCTION(BlueprintPure ,meta=(DisplayName = "-1", CompactNodeTitle = "-1", ScriptMethod = "-", ScriptOperator = "-") , Category="Math|Float")
+	UFUNCTION(BlueprintPure ,meta=(DisplayName = "-1", CompactNodeTitle = "-1") , Category="Math|Float")
 	static float FloatMinusOne(const float Value) {return Value - 1;}
 
-	UFUNCTION(BlueprintPure ,meta=(DisplayName = "*2", CompactNodeTitle = "*2", ScriptMethod = "*", ScriptOperator = "*") , Category="Math|Float")
+	UFUNCTION(BlueprintPure ,meta=(DisplayName = "*2", CompactNodeTitle = "*2") , Category="Math|Float")
 	static float FloatMultiplyByTwo(const float Value) {return Value * 2 ;}
 
-	UFUNCTION(BlueprintPure ,meta=(DisplayName = "/2", CompactNodeTitle = "/2", ScriptMethod = "/", ScriptOperator = "/") , Category="Math|Float")
+	UFUNCTION(BlueprintPure ,meta=(DisplayName = "/2", CompactNodeTitle = "/2") , Category="Math|Float")
 	static float FloatDivideByTwo(const float Value) {return Value / 2 ;}
 
-	UFUNCTION(BlueprintPure ,meta=(DisplayName = "Invert", CompactNodeTitle = "Invert", ScriptMethod = "*", ScriptOperator = "*") , Category="Math|Float")
+	UFUNCTION(BlueprintPure ,meta=(DisplayName = "Invert", CompactNodeTitle = "Invert") , Category="Math|Float")
 	static float FloatInvert(const float Value) {return Value * -1; }
 
-	UFUNCTION(BlueprintPure ,meta=(DisplayName = "-ABS", CompactNodeTitle = "-ABS", ScriptMethod = "-ABS", ScriptOperator = "-ABS") , Category="Math|Float")
+	UFUNCTION(BlueprintPure ,meta=(DisplayName = "-ABS", CompactNodeTitle = "-ABS") , Category="Math|Float")
 	static float FloatMinusABS(const float Value) {return Value>0 ? Value*-1 : Value;  }
 
 	
 
-	UFUNCTION(BlueprintPure ,meta=(DisplayName = "+1", CompactNodeTitle = "+1", ScriptMethod = "+", ScriptOperator = "+") , Category="Math|Int32")
+	UFUNCTION(BlueprintPure ,meta=(DisplayName = "+1", CompactNodeTitle = "+1") , Category="Math|Int32")
 	static int32 IntPlusOne(const int32 Value) {return Value + 1;}
 
-	UFUNCTION(BlueprintPure ,meta=(DisplayName = "-1", CompactNodeTitle = "-1", ScriptMethod = "-", ScriptOperator = "-") , Category="Math|Int32")
+	UFUNCTION(BlueprintPure ,meta=(DisplayName = "-1", CompactNodeTitle = "-1") , Category="Math|Int32")
 	static int32 IntMinusOne(const int32 Value) {return Value - 1;}
 
-	UFUNCTION(BlueprintPure ,meta=(DisplayName = "*2", CompactNodeTitle = "*2", ScriptMethod = "*", ScriptOperator = "*") , Category="Math|Int32")
+	UFUNCTION(BlueprintPure ,meta=(DisplayName = "*2", CompactNodeTitle = "*2") , Category="Math|Int32")
 	static int32 IntMultiplyByTwo(const int32 Value) {return Value * 2 ;}
 
-	UFUNCTION(BlueprintPure ,meta=(DisplayName = "/2", CompactNodeTitle = "/2", ScriptMethod = "/", ScriptOperator = "/") , Category="Math|Int32")
+	UFUNCTION(BlueprintPure ,meta=(DisplayName = "/2", CompactNodeTitle = "/2") , Category="Math|Int32")
 	static int32 IntDivideByTwo(const int32 Value) {return Value / 2 ;}
 
-	UFUNCTION(BlueprintPure ,meta=(DisplayName = "Invert", CompactNodeTitle = "Invert", ScriptMethod = "*", ScriptOperator = "*") , Category="Math|Int32")
+	UFUNCTION(BlueprintPure ,meta=(DisplayName = "Invert", CompactNodeTitle = "Invert") , Category="Math|Int32")
 	static int32 IntInvert(const int32 Value) {return Value*-1; }
 
-	UFUNCTION(BlueprintPure ,meta=(DisplayName = "-ABS", CompactNodeTitle = "-ABS", ScriptMethod = "-ABS", ScriptOperator = "-ABS") , Category="Math|Int32")
+	UFUNCTION(BlueprintPure ,meta=(DisplayName = "-ABS", CompactNodeTitle = "-ABS") , Category="Math|Int32")
 	static int32 IntMinusABS(const int32 Value) {return Value>0 ? Value*-1 : Value;  }
 
 
@@ -202,10 +202,10 @@ class UEEXPANDEDFRAMEWORK_API UUEExtendedMathLibrary : public UBlueprintFunction
 	
 	//<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< MATH >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
-	UFUNCTION(BlueprintPure ,meta=(DisplayName = "RotatorToQuad", CompactNodeTitle = "RotToQuad", ScriptMethod = "RotatorToQuad", ScriptOperator = "RotatorToQuad") , Category="Math")
+	UFUNCTION(BlueprintPure ,meta=(DisplayName = "RotatorToQuad", CompactNodeTitle = "RotToQuad") , Category="Math")
 	static FQuat RotatorToQuad(const FRotator Rotator);
 
-	UFUNCTION(BlueprintPure ,meta=(DisplayName = "Clamp 2D", ScriptOperator = "Clamp 2D") , Category="Math")
+	UFUNCTION(BlueprintPure ,meta=(DisplayName = "Clamp 2D"), Category="Math")
 	static FVector2D ClampVector2D(const FVector2D Vector , const float Min , const float Max);
 
 	UFUNCTION(BlueprintPure ,meta=(DisplayName = "Map Range Clamp 2D") , Category="Math")

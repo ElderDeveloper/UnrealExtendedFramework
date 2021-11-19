@@ -258,7 +258,7 @@ uint8 UUEExtendedMathLibrary::CalculateDirectionBetweenActors(const AActor* Targ
 
 
 // <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< SCREEN >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-AActor* UUEExtendedMathLibrary::GetActorInTheCenterOfTheScreen(TMap<AActor*, float> ActorScreenMap)
+AActor* UUEExtendedMathLibrary::GetActorInTheCenterOfTheScreen(TMap<AActor*, float> ActorScreenMap , const FVector2D ClampMinMax)
 {
 
 	TArray<float> ValueArray;
@@ -266,6 +266,18 @@ AActor* UUEExtendedMathLibrary::GetActorInTheCenterOfTheScreen(TMap<AActor*, flo
 	ActorScreenMap.GetKeys(ActorArray);
 	ActorScreenMap.GenerateValueArray(ValueArray);
 
+	for (int32 i = 0 ; i<ActorArray.Num() ; i++)
+	{
+		if (ValueArray.IsValidIndex(i))
+		{
+			const bool Validation = ValueArray[i] > ClampMinMax.X && ValueArray[i] < ClampMinMax.Y;
+			if (!Validation)
+			{
+				ValueArray.RemoveAt(i);
+				ActorArray.RemoveAt(i);
+			}
+		}
+	}
 	
 	if (ValueArray.IsValidIndex(0))
 	{
