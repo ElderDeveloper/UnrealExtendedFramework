@@ -26,9 +26,6 @@ public:
 	static bool DoesKeyExistInAxisMapping(UInputSettings* InputSettings,FKey Key,FInputAxisKeyMapping& FoundMapping);
 
 	UFUNCTION(BlueprintPure , Category="Extended Input")
-	static bool DoesKeyBindingExist(UInputSettings* InputSettings,FKey Key);
-
-	UFUNCTION(BlueprintPure , Category="Extended Input")
 	static FName GetKeyBindingName(UInputSettings* InputSettings,FKey Key);
 
 

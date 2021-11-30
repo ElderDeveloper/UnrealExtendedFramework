@@ -62,22 +62,6 @@ bool UUEExtendedInputLibrary::DoesKeyExistInAxisMapping(UInputSettings* InputSet
 	return false;
 }
 
-bool UUEExtendedInputLibrary::DoesKeyBindingExist(UInputSettings* InputSettings, FKey Key)
-{
-	/*
-	auto Action = FInputActionKeyMapping();
-	if (DoesKeyExistInActionMapping(InputSettings,Key,Action))
-	{
-		return true;
-	}
-	auto Axis = FInputAxisKeyMapping();
-	if (DoesKeyExistInAxisMapping(InputSettings,Key,Axis))
-	{
-		return true;
-	}
-	*/
-	return false;
-}
 
 FName UUEExtendedInputLibrary::GetKeyBindingName(UInputSettings* InputSettings, FKey Key)
 {

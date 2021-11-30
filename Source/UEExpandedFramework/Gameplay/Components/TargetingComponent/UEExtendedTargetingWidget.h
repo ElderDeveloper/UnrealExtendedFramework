@@ -17,6 +17,7 @@ class UEEXPANDEDFRAMEWORK_API UUEExtendedTargetingWidget : public UUserWidget
 	GENERATED_BODY()
 
 public:
+	
 	void InitializeTargetWidget(UTexture2D* Image , FVector2D ImageSize)
 	{
 		if (!Image)
@@ -24,6 +25,7 @@ public:
 			UE_LOG(LogBlueprint,Error,TEXT("UEExtended Targeting Widget Texture Not Valid"));
 			return;
 		}
+		
 		if (WidgetTree)
 		{
 			if (const auto RootWidget = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass(), TEXT("TargetingImage")))
