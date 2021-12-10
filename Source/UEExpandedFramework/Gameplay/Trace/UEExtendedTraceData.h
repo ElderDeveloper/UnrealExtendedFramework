@@ -90,6 +90,68 @@ public:
 		Start =start;
 		End = end;
 	}
+
+
+	/**
+	 * Location in world space of the actual contact of the trace shape (box, sphere, ray, etc) with the impacted object.
+	 * Example: for a sphere trace test, this is the point where the surface of the sphere touches the other object.
+	 * @note: In the case of initial overlap (bStartPenetrating=true), ImpactPoint will be the same as Location because there is no meaningful single impact point to report.
+	 */
+	FVector GetHitImpactPoint() const { return HitResult.ImpactPoint; }
+
+	/**
+	 * Normal of the hit in world space, for the object that was hit by the sweep, if any.
+	 * For example if a sphere hits a flat plane, this is a normalized vector pointing out from the plane.
+	 * In the case of impact with a corner or edge of a surface, usually the "most opposing" normal (opposed to the query direction) is chosen.
+	 */
+	FVector GetHitImpactNormal() const { return HitResult.ImpactNormal; }
+
+	/**
+	 * The location in world space where the moving shape would end up against the impacted object, if there is a hit. Equal to the point of impact for line tests.
+	 * Example: for a sphere trace test, this is the point where the center of the sphere would be located when it touched the other object.
+	 * For swept movement (but not queries) this may not equal the final location of the shape since hits are pulled back slightly to prevent precision issues from overlapping another surface.
+	 */
+	FVector GetHitLocation() const { return HitResult.Location; }
+
+	/**
+	 * Normal of the hit in world space, for the object that was swept. Equal to ImpactNormal for line tests.
+	 * This is computed for capsules and spheres, otherwise it will be the same as ImpactNormal.
+	 * Example: for a sphere trace test, this is a normalized vector pointing in towards the center of the sphere at the point of impact.
+	 */
+	FVector GetHitNormal() const { return HitResult.Normal; }
+
+	/**
+	 * Start location of the trace.
+	 * For example if a sphere is swept against the world, this is the starting location of the center of the sphere.
+	 */
+	FVector GetHitTraceStart() const { return HitResult.TraceStart; }
+
+	/**
+	 * End location of the trace; this is NOT where the impact occurred (if any), but the furthest point in the attempted sweep.
+	 * For example if a sphere is swept against the world, this would be the center of the sphere if there was no blocking hit.
+	 */
+	FVector GetHitTraceEnd() const { return HitResult.TraceEnd; }
+
+	/** Actor hit by the trace. */
+	AActor* GetHitActor() const { return HitResult.Actor.Get(); }
+
+	/** PrimitiveComponent hit by the trace. */
+	UPrimitiveComponent* GetHitComponent() const { return HitResult.Component.Get(); }
+
+	/** The distance from the TraceStart to the Location in world space. This value is 0 if there was an initial overlap (trace started inside another colliding object). */
+	float GetHitDistance() const { return HitResult.Distance; }
+
+	/** Indicates if this hit was a result of blocking collision. If false, there was no hit or it was an overlap/touch instead. */
+	bool GetHitBlockingHit() const { return HitResult.bBlockingHit; }
+
+	/** Name of bone we hit (for skeletal meshes). */
+	FName GetHitBoneName() const { return HitResult.BoneName; }
+
+	/**
+	 * Physical material that was hit.
+	 * @note Must set bReturnPhysicalMaterial on the swept PrimitiveComponent or in the query params for this to be returned.
+	 */
+	UPhysicalMaterial* GetHitPhysMaterial() const { return HitResult.PhysMaterial.Get();}
 	
 };
 
@@ -163,6 +225,68 @@ public:
 		End = end;
 		Radius = radius;
 	}
+
+
+	/**
+	 * Location in world space of the actual contact of the trace shape (box, sphere, ray, etc) with the impacted object.
+	 * Example: for a sphere trace test, this is the point where the surface of the sphere touches the other object.
+	 * @note: In the case of initial overlap (bStartPenetrating=true), ImpactPoint will be the same as Location because there is no meaningful single impact point to report.
+	 */
+	FVector GetHitImpactPoint() const { return HitResult.ImpactPoint; }
+
+	/**
+	 * Normal of the hit in world space, for the object that was hit by the sweep, if any.
+	 * For example if a sphere hits a flat plane, this is a normalized vector pointing out from the plane.
+	 * In the case of impact with a corner or edge of a surface, usually the "most opposing" normal (opposed to the query direction) is chosen.
+	 */
+	FVector GetHitImpactNormal() const { return HitResult.ImpactNormal; }
+
+	/**
+	 * The location in world space where the moving shape would end up against the impacted object, if there is a hit. Equal to the point of impact for line tests.
+	 * Example: for a sphere trace test, this is the point where the center of the sphere would be located when it touched the other object.
+	 * For swept movement (but not queries) this may not equal the final location of the shape since hits are pulled back slightly to prevent precision issues from overlapping another surface.
+	 */
+	FVector GetHitLocation() const { return HitResult.Location; }
+
+	/**
+	 * Normal of the hit in world space, for the object that was swept. Equal to ImpactNormal for line tests.
+	 * This is computed for capsules and spheres, otherwise it will be the same as ImpactNormal.
+	 * Example: for a sphere trace test, this is a normalized vector pointing in towards the center of the sphere at the point of impact.
+	 */
+	FVector GetHitNormal() const { return HitResult.Normal; }
+
+	/**
+	 * Start location of the trace.
+	 * For example if a sphere is swept against the world, this is the starting location of the center of the sphere.
+	 */
+	FVector GetHitTraceStart() const { return HitResult.TraceStart; }
+
+	/**
+	 * End location of the trace; this is NOT where the impact occurred (if any), but the furthest point in the attempted sweep.
+	 * For example if a sphere is swept against the world, this would be the center of the sphere if there was no blocking hit.
+	 */
+	FVector GetHitTraceEnd() const { return HitResult.TraceEnd; }
+
+	/** Actor hit by the trace. */
+	AActor* GetHitActor() const { return HitResult.Actor.Get(); }
+
+	/** PrimitiveComponent hit by the trace. */
+	UPrimitiveComponent* GetHitComponent() const { return HitResult.Component.Get(); }
+
+	/** The distance from the TraceStart to the Location in world space. This value is 0 if there was an initial overlap (trace started inside another colliding object). */
+	float GetHitDistance() const { return HitResult.Distance; }
+
+	/** Indicates if this hit was a result of blocking collision. If false, there was no hit or it was an overlap/touch instead. */
+	bool GetHitBlockingHit() const { return HitResult.bBlockingHit; }
+
+	/** Name of bone we hit (for skeletal meshes). */
+	FName GetHitBoneName() const { return HitResult.BoneName; }
+
+	/**
+	 * Physical material that was hit.
+	 * @note Must set bReturnPhysicalMaterial on the swept PrimitiveComponent or in the query params for this to be returned.
+	 */
+	UPhysicalMaterial* GetHitPhysMaterial() const { return HitResult.PhysMaterial.Get();}
 };
 
 
@@ -236,6 +360,68 @@ public:
 		Radius = radius;
 		HalfHeight = halfHeight;
 	}
+
+
+	/**
+	 * Location in world space of the actual contact of the trace shape (box, sphere, ray, etc) with the impacted object.
+	 * Example: for a sphere trace test, this is the point where the surface of the sphere touches the other object.
+	 * @note: In the case of initial overlap (bStartPenetrating=true), ImpactPoint will be the same as Location because there is no meaningful single impact point to report.
+	 */
+	FVector GetHitImpactPoint() const { return HitResult.ImpactPoint; }
+
+	/**
+	 * Normal of the hit in world space, for the object that was hit by the sweep, if any.
+	 * For example if a sphere hits a flat plane, this is a normalized vector pointing out from the plane.
+	 * In the case of impact with a corner or edge of a surface, usually the "most opposing" normal (opposed to the query direction) is chosen.
+	 */
+	FVector GetHitImpactNormal() const { return HitResult.ImpactNormal; }
+
+	/**
+	 * The location in world space where the moving shape would end up against the impacted object, if there is a hit. Equal to the point of impact for line tests.
+	 * Example: for a sphere trace test, this is the point where the center of the sphere would be located when it touched the other object.
+	 * For swept movement (but not queries) this may not equal the final location of the shape since hits are pulled back slightly to prevent precision issues from overlapping another surface.
+	 */
+	FVector GetHitLocation() const { return HitResult.Location; }
+
+	/**
+	 * Normal of the hit in world space, for the object that was swept. Equal to ImpactNormal for line tests.
+	 * This is computed for capsules and spheres, otherwise it will be the same as ImpactNormal.
+	 * Example: for a sphere trace test, this is a normalized vector pointing in towards the center of the sphere at the point of impact.
+	 */
+	FVector GetHitNormal() const { return HitResult.Normal; }
+
+	/**
+	 * Start location of the trace.
+	 * For example if a sphere is swept against the world, this is the starting location of the center of the sphere.
+	 */
+	FVector GetHitTraceStart() const { return HitResult.TraceStart; }
+
+	/**
+	 * End location of the trace; this is NOT where the impact occurred (if any), but the furthest point in the attempted sweep.
+	 * For example if a sphere is swept against the world, this would be the center of the sphere if there was no blocking hit.
+	 */
+	FVector GetHitTraceEnd() const { return HitResult.TraceEnd; }
+
+	/** Actor hit by the trace. */
+	AActor* GetHitActor() const { return HitResult.Actor.Get(); }
+
+	/** PrimitiveComponent hit by the trace. */
+	UPrimitiveComponent* GetHitComponent() const { return HitResult.Component.Get(); }
+
+	/** The distance from the TraceStart to the Location in world space. This value is 0 if there was an initial overlap (trace started inside another colliding object). */
+	float GetHitDistance() const { return HitResult.Distance; }
+
+	/** Indicates if this hit was a result of blocking collision. If false, there was no hit or it was an overlap/touch instead. */
+	bool GetHitBlockingHit() const { return HitResult.bBlockingHit; }
+
+	/** Name of bone we hit (for skeletal meshes). */
+	FName GetHitBoneName() const { return HitResult.BoneName; }
+
+	/**
+	 * Physical material that was hit.
+	 * @note Must set bReturnPhysicalMaterial on the swept PrimitiveComponent or in the query params for this to be returned.
+	 */
+	UPhysicalMaterial* GetHitPhysMaterial() const { return HitResult.PhysMaterial.Get();}
 };
 
 
@@ -310,6 +496,68 @@ public:
 		HalfSize = halfSize;
 		Orientation = orientation;
 	}
+
+
+	/**
+	 * Location in world space of the actual contact of the trace shape (box, sphere, ray, etc) with the impacted object.
+	 * Example: for a sphere trace test, this is the point where the surface of the sphere touches the other object.
+	 * @note: In the case of initial overlap (bStartPenetrating=true), ImpactPoint will be the same as Location because there is no meaningful single impact point to report.
+	 */
+	FVector GetHitImpactPoint() const { return HitResult.ImpactPoint; }
+
+	/**
+	 * Normal of the hit in world space, for the object that was hit by the sweep, if any.
+	 * For example if a sphere hits a flat plane, this is a normalized vector pointing out from the plane.
+	 * In the case of impact with a corner or edge of a surface, usually the "most opposing" normal (opposed to the query direction) is chosen.
+	 */
+	FVector GetHitImpactNormal() const { return HitResult.ImpactNormal; }
+
+	/**
+	 * The location in world space where the moving shape would end up against the impacted object, if there is a hit. Equal to the point of impact for line tests.
+	 * Example: for a sphere trace test, this is the point where the center of the sphere would be located when it touched the other object.
+	 * For swept movement (but not queries) this may not equal the final location of the shape since hits are pulled back slightly to prevent precision issues from overlapping another surface.
+	 */
+	FVector GetHitLocation() const { return HitResult.Location; }
+
+	/**
+	 * Normal of the hit in world space, for the object that was swept. Equal to ImpactNormal for line tests.
+	 * This is computed for capsules and spheres, otherwise it will be the same as ImpactNormal.
+	 * Example: for a sphere trace test, this is a normalized vector pointing in towards the center of the sphere at the point of impact.
+	 */
+	FVector GetHitNormal() const { return HitResult.Normal; }
+
+	/**
+	 * Start location of the trace.
+	 * For example if a sphere is swept against the world, this is the starting location of the center of the sphere.
+	 */
+	FVector GetHitTraceStart() const { return HitResult.TraceStart; }
+
+	/**
+	 * End location of the trace; this is NOT where the impact occurred (if any), but the furthest point in the attempted sweep.
+	 * For example if a sphere is swept against the world, this would be the center of the sphere if there was no blocking hit.
+	 */
+	FVector GetHitTraceEnd() const { return HitResult.TraceEnd; }
+
+	/** Actor hit by the trace. */
+	AActor* GetHitActor() const { return HitResult.Actor.Get(); }
+
+	/** PrimitiveComponent hit by the trace. */
+	UPrimitiveComponent* GetHitComponent() const { return HitResult.Component.Get(); }
+
+	/** The distance from the TraceStart to the Location in world space. This value is 0 if there was an initial overlap (trace started inside another colliding object). */
+	float GetHitDistance() const { return HitResult.Distance; }
+
+	/** Indicates if this hit was a result of blocking collision. If false, there was no hit or it was an overlap/touch instead. */
+	bool GetHitBlockingHit() const { return HitResult.bBlockingHit; }
+
+	/** Name of bone we hit (for skeletal meshes). */
+	FName GetHitBoneName() const { return HitResult.BoneName; }
+
+	/**
+	 * Physical material that was hit.
+	 * @note Must set bReturnPhysicalMaterial on the swept PrimitiveComponent or in the query params for this to be returned.
+	 */
+	UPhysicalMaterial* GetHitPhysMaterial() const { return HitResult.PhysMaterial.Get();}
 	
 };
 
