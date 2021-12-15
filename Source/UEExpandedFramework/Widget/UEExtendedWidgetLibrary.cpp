@@ -13,6 +13,27 @@
 #include "Kismet/KismetMathLibrary.h"
 #include "Slate/SlateBrushAsset.h"
 
+FVector2D UUEExtendedWidgetLibrary::GetGameViewportSize()
+{
+	FVector2D Result = FVector2D( 1, 1 );
+ 
+	if ( GEngine && GEngine->GameViewport )
+	{
+		GEngine->GameViewport->GetViewportSize(Result );
+	}
+	return Result;
+}
+
+FVector2D UUEExtendedWidgetLibrary::GameGameResolution()
+{
+	FVector2D Result = FVector2D( 1, 1 );
+ 
+	Result.X = GSystemResolution.ResX;
+	Result.Y = GSystemResolution.ResY;
+ 
+	return Result;
+}
+
 FVector2D UUEExtendedWidgetLibrary::GetTexture2DSize(UTexture2D* Texture)
 {
 	if (Texture)

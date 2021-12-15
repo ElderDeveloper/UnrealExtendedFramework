@@ -24,6 +24,12 @@ class UEEXPANDEDFRAMEWORK_API UUEExtendedWidgetLibrary : public UBlueprintFuncti
 
 public:
 
+	UFUNCTION(BlueprintPure , Category="Extended Widget")
+	static FVector2D GetGameViewportSize();
+	
+	UFUNCTION(BlueprintPure , Category="Extended Widget")
+	static FVector2D GameGameResolution();
+
 	
 	//<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< Texture 2D >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 	UFUNCTION(BlueprintPure , Category="Extended Widget|Texture")

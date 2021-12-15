@@ -7,6 +7,10 @@ UUEExtendedFloatTimeline* UUEExtendedFloatTimeline::ExtendedFloatTimeline(const 
 {
 	if (!ensure(WorldContextObject) && !ensure(FloatCurve))	return nullptr;
 
+	if (!FloatCurve)
+	{
+		UE_LOG(LogBlueprint,Warning,TEXT("Float Curve Is Not Valid")); return nullptr;
+	}
 	if (FloatCurve->FloatCurve.IsEmpty())
 	{
 		UE_LOG(LogBlueprint,Warning,TEXT("Float Curve Is Valid But Its Empty")); return nullptr;
