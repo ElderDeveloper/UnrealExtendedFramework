@@ -21,6 +21,8 @@ class UEEXPANDEDFRAMEWORK_API UUEExtendedConversionLibrary : public UBlueprintFu
 {
 	GENERATED_BODY()
 
+public:
+
 #pragma region FString
 	 static std::string FStringToStdString(const FString in)     {  return  std::string(TCHAR_TO_UTF8(*in));   }
 
@@ -308,6 +310,9 @@ class UEEXPANDEDFRAMEWORK_API UUEExtendedConversionLibrary : public UBlueprintFu
 
 
 
+
+    
+
 #pragma region Rotator
 
     UFUNCTION(BlueprintPure, meta=(DisplayName = "Conversion Rotator To FString", CompactNodeTitle = "->", BlueprintAutocast), Category="ConversionLibrary|Rotator")
@@ -340,6 +345,8 @@ class UEEXPANDEDFRAMEWORK_API UUEExtendedConversionLibrary : public UBlueprintFu
 
 
 
+
+    
     
 #pragma region Transform
 

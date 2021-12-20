@@ -3,8 +3,7 @@
 
 #include "UEExtendedArrayLibrary.h"
 #include "Kismet/KismetMathLibrary.h"
-
-
+#include "Kismet/KismetSystemLibrary.h"
 
 
 int32 UUEExtendedArrayLibrary::GetRandomArrayMember(const TArray<UProperty*>& TargetArray, UProperty*& Item)
@@ -140,3 +139,26 @@ TArray<float> UUEExtendedArrayLibrary::IntArrayToFloatArray(UPARAM(ref) const TA
 	{OutArray.Add(i);}
 	return OutArray;
 }
+
+void UUEExtendedArrayLibrary::ExtendedIsValidIndex(const TArray<FProperty*>& Array, const int32 index, TEnumAsByte<EConditionOutput>& OutPins, UProperty*& Item)
+{
+	if (Array.IsValidIndex(index))
+	{
+		Item = Array[0];
+		OutPins = OutTrue;
+		return;
+	}
+	OutPins = OutIsFalse;
+}
+
+void UUEExtendedArrayLibrary::IsArrayNotEmpty(const TArray<FProperty*>& Array, TEnumAsByte<EConditionOutput>& OutPins)
+{
+	if (Array.IsValidIndex(0))
+	{
+		OutPins = OutTrue;
+		return;
+	}
+	OutPins = OutIsFalse;
+}
+
+

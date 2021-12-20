@@ -3,6 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "UEExpandedFramework/UEExpandedFramework.h"
 #include "UObject/Object.h"
 #include "UEExtendedConditionLibrary.generated.h"
 
@@ -10,12 +11,7 @@
  * 
  */
 
-UENUM()
-enum EConditionOutput
-{
-	OutTrue,
-	OutIsFalse
-};
+
 
 UCLASS()
 class UEEXPANDEDFRAMEWORK_API UUEExtendedConditionLibrary : public UBlueprintFunctionLibrary

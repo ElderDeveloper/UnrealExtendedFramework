@@ -11,6 +11,13 @@ enum EHitDirection
 	No , Front , Back , Left , Right
 };
 
+UENUM()
+enum EConditionOutput
+{
+	OutTrue,
+	OutIsFalse
+};
+
 #define PRINT_STRING(Time , Color , String) 	GEngine->AddOnScreenDebugMessage(-1, Time , FColor::Color , String);
 
 class FUEExpandedFrameworkModule : public IModuleInterface

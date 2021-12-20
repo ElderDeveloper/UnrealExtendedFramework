@@ -4,8 +4,8 @@
 #include "UEExtendedEQSConeGeneratorDirection.h"
 
 
+#include "UEExpandedFramework/Libraries/Math/UEExtendedMathLibrary.h"
 
-#include "UEExpandedFramework/Math/UEExtendedMathLibrary.h"
 
 
 void UUEExtendedEQSConeGeneratorDirection::GenerateItems(FEnvQueryInstance& QueryInstance) const

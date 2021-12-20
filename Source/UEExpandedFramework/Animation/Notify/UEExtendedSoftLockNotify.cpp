@@ -4,7 +4,8 @@
 #include "UEExtendedSoftLockNotify.h"
 #include "Kismet/KismetMathLibrary.h"
 #include "UEExpandedFramework/Gameplay/Trace/UEExtendedTraceLibrary.h"
-#include "UEExpandedFramework/Math/UEExtendedMathLibrary.h"
+#include "UEExpandedFramework/Libraries/Math/UEExtendedMathLibrary.h"
+
 
 
 

@@ -143,7 +143,7 @@ void UUEExtendedCoverComponent::ForwardTracer()
 
 		if (UUEExtendedTraceLibrary::ExtendedSphereTraceSingle(GetWorld(),SphereTraceStruct))
 		{
-			RightTracerHit = SphereTraceStruct.GetHitBlockingHit();
+			bRightTracerHit = SphereTraceStruct.GetHitBlockingHit();
 		}
 
 		SphereTraceStruct.Start = PlayerLocation + PlayerRightFromRot * -30;
@@ -151,10 +151,10 @@ void UUEExtendedCoverComponent::ForwardTracer()
 		
 		if (UUEExtendedTraceLibrary::ExtendedSphereTraceSingle(GetWorld(),SphereTraceStruct))
 		{
-			LeftTracerHit = SphereTraceStruct.GetHitBlockingHit();
+			bLeftTracerHit = SphereTraceStruct.GetHitBlockingHit();
 		}
 
-		bCanCover = RightTracerHit && LeftTracerHit;
+		bCanCover = bRightTracerHit && bLeftTracerHit;
 
 		if (bCanCover)
 		{
@@ -165,8 +165,8 @@ void UUEExtendedCoverComponent::ForwardTracer()
 	}
 	else
 	{
-		RightTracerHit = false;
-		LeftTracerHit = false;
+		bRightTracerHit = false;
+		bLeftTracerHit = false;
 		bCanCover = false;
 	}
 
@@ -252,12 +252,24 @@ void UUEExtendedCoverComponent::CameraEdgeZoom(const ECoverSide coverSide)
 
 void UUEExtendedCoverComponent::CameraMove()
 {
+	if (!bInCover) bCameraEdgeMove = false;
+
+	if(bCameraMoving)
+	{
+		const FVector ZoomSide = bCameraEdgeMove ?bCameraZoomRight ? FVector(200 , 100 , 50)  :  FVector(200 , -100 , 50) : FVector::ZeroVector;
+		
+		const FVector InterpMovement = UKismetMathLibrary::VInterpTo(PlayerCameraArm->SocketOffset , ZoomSide , GetWorld()->GetDeltaSeconds() , 0.3/GetWorld()->GetDeltaSeconds());
+
+		PlayerCameraArm->SocketOffset = InterpMovement;
+		
+		bCameraMoving = UKismetMathLibrary::NotEqual_VectorVector(PlayerCameraArm->SocketOffset , InterpMovement );
+	}
 }
 
 
 
 
-void UUEExtendedCoverComponent::SimulateArrows(const ECoverSide coverSide, FVector& Location, FVector& Forward,FVector& Right, FVector& Up)
+void UUEExtendedCoverComponent::SimulateArrows(const ECoverSide coverSide, FVector& Location, FVector& Forward,FVector& Right, FVector& Up) const
 {
 	const float forw = 42;
 	const float Side =  coverSide == ECoverSide::RightSide ? 1 : -1;
@@ -299,14 +311,14 @@ void UUEExtendedCoverComponent::MoveCoverRight()
 				if(Player->SetActorRotation(UKismetMathLibrary::RInterpTo(PlayerRotation ,MoveRotation,GetWorld()->GetDeltaSeconds() , 5 )))
 					CoverWallNormal  = SphereTrace.GetHitImpactNormal();
 				
-				bInCoverMoveRight	= false;
-				bInCoverMoveLeft	= true;
-				bInCoverIdleRight	= true;
+				bInCoverMoveRight	= true;
+				bInCoverMoveLeft	= false;
+				bInCoverIdleRight	= false;
 			}
-			else bInCoverMoveLeft = false;
+			else bInCoverMoveRight = false;
 		}
 	}
-	else bInCoverMoveLeft = false;
+	else bInCoverMoveRight = false;
 }
 
 
@@ -339,14 +351,14 @@ void UUEExtendedCoverComponent::MoveCoverLeft()
 				if(Player->SetActorRotation(UKismetMathLibrary::RInterpTo(PlayerRotation ,MoveRotation,GetWorld()->GetDeltaSeconds() , 5 )))
 					CoverWallNormal  = SphereTrace.GetHitImpactNormal();
 				
-				bInCoverMoveRight	= true;
-				bInCoverMoveLeft	= false;
-				bInCoverIdleRight	= false;
+				bInCoverMoveRight	= false;
+				bInCoverMoveLeft	= true;
+				bInCoverIdleRight	= true;
 			}
-			else bInCoverMoveRight = false;
+			else bInCoverMoveLeft = false;
 		}
 	}
-	else bInCoverMoveRight = false;
+	else bInCoverMoveLeft = false;
 }
 
 
@@ -354,6 +366,19 @@ void UUEExtendedCoverComponent::MoveCoverLeft()
 
 void UUEExtendedCoverComponent::MoveInCover()
 {
+	MoveCoverRight();
+	MoveCoverLeft();
+	
+	if (RightInputValue == 0)
+	{
+		bInCoverMoveRight = false;
+		bInCoverMoveLeft = true;
+		PlayerCameraArm->bDoCollisionTest = true;
+	}
+	else
+	{
+		PlayerCameraArm->bDoCollisionTest = false;
+	}
 }
 
 

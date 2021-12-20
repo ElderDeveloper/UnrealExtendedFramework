@@ -119,12 +119,12 @@ private:
 	UPROPERTY()
 	class USpringArmComponent* PlayerCameraArm;
 
-	bool CameraMoving;
-	bool CameraEdgeMove;
-	bool CameraZoomRight;
+	bool bCameraMoving;
+	bool bCameraEdgeMove;
+	bool bCameraZoomRight;
 
-	bool RightTracerHit;
-	bool LeftTracerHit;
+	bool bRightTracerHit;
+	bool bLeftTracerHit;
 	
 	bool bInCover;
 	bool bInCoverMoveRight;
@@ -185,7 +185,7 @@ private:
 
 
 	//<<<<<<<<<<<<<<<<<<<<< Arrow Functions >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-	void SimulateArrows(const ECoverSide coverSide, FVector& Location , FVector& Forward , FVector& Right ,FVector& Up );
+	void SimulateArrows(const ECoverSide coverSide, FVector& Location , FVector& Forward , FVector& Right ,FVector& Up ) const;
 
 
 	//<<<<<<<<<<<<<<<<<<<<<< Tick Cover Movement >>>>>>>>>>>>>>>>>>>>>>>>>

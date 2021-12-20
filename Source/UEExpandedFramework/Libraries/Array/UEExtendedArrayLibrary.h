@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Containers/Array.h"
+#include "UEExpandedFramework/UEExpandedFramework.h"
 #include "UEExtendedArrayLibrary.generated.h"
 
 
@@ -105,6 +106,12 @@ public:
 	static bool GetIsValidArray(const TArray<UProperty*>& TargetArray, UProperty*& Item);
 	*/
 
-	
-	
+	// <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< Condition >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+	UFUNCTION(BlueprintCallable, meta=(DisplayName = "Get Value If Index Valid", ArrayParm = "Array", ArrayTypeDependentParams = "Item" , ExpandEnumAsExecs = "OutPins"), Category="Math|Library")
+	static void ExtendedIsValidIndex(const TArray<UProperty*>& Array, const int32 index, TEnumAsByte<EConditionOutput>& OutPins, UProperty*& Item );
+
+	UFUNCTION(BlueprintCallable, meta=(DisplayName = "Is Array Not Empty", CompactNodeTitle = "Is Array Not Empty", ArrayParm = "Array" , ExpandEnumAsExecs = "OutPins"), Category="Math|Library")
+	static void IsArrayNotEmpty(const TArray<UProperty*>& Array, TEnumAsByte<EConditionOutput>& OutPins );
+
+
 };
