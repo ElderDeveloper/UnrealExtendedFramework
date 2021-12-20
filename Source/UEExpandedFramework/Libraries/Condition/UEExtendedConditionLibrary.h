@@ -36,6 +36,9 @@ public:
 
 	UFUNCTION(BlueprintCallable,meta = (DisplayName = "Exec ==-1",CompactNodeTitle = "==-1",CustomStructureParam = "Value" , ExpandEnumAsExecs = "OutPins"), Category="ConditionLibrary")
 	static void IsEqualToMinusOne(const float& Value , TEnumAsByte<EConditionOutput>& OutPins) {	if (Value == -1) OutPins = OutTrue; else OutPins = OutIsFalse; }
+
+	UFUNCTION(BlueprintCallable,meta = (DisplayName = "Exec ==-1",CompactNodeTitle = "==-1",CustomStructureParam = "Value" , ExpandEnumAsExecs = "OutPins"), Category="ConditionLibrary")
+	static void IsNotEqualToMinusOne(const float& Value , TEnumAsByte<EConditionOutput>& OutPins) {	if (Value != -1) OutPins = OutTrue; else OutPins = OutIsFalse; }
 	
 	UFUNCTION(BlueprintCallable,meta = (DisplayName = "Exec >input",CompactNodeTitle = ">input",CustomStructureParam = "Value" , ExpandEnumAsExecs = "OutPins") , Category="ConditionLibrary")
 	static void IsBiggerThan(const float& Value , TEnumAsByte<EConditionOutput>& OutPins , float input = 0) {	if (Value > input) OutPins = OutTrue; else OutPins = OutIsFalse; }
@@ -73,6 +76,11 @@ public:
 	UFUNCTION(BlueprintPure ,meta=(DisplayName = "<=0", CompactNodeTitle = "<=0") , Category="Condition|Float")
 	static bool FloatIsLesserThanAndEqualZero(const float Value) { return Value <= 0; }
 
+	UFUNCTION(BlueprintPure ,meta=(DisplayName = "=-1", CompactNodeTitle = "=-1") , Category="Condition|Int")
+	static bool FloatIsEqualToMinusOne(const float Value) { return Value == -1; }
+	
+	UFUNCTION(BlueprintPure ,meta=(DisplayName = "!=-1", CompactNodeTitle = "!=-1") , Category="Condition|Int")
+	static bool FloatIsNotEqualToMinusOne(const float Value) { return Value != -1; }
 
 
 
@@ -95,6 +103,11 @@ public:
 	UFUNCTION(BlueprintPure ,meta=(DisplayName = "<=0", CompactNodeTitle = "<=0") , Category="Condition|Float")
 	static bool IntIsLesserThanAndEqualZero(const int32 Value) { return Value <= 0; }
 
+	UFUNCTION(BlueprintPure ,meta=(DisplayName = "=-1", CompactNodeTitle = "=-1") , Category="Condition|Int")
+	static bool IntIsEqualToMinusOne(const int32 Value) { return Value == -1; }
+	
+	UFUNCTION(BlueprintPure ,meta=(DisplayName = "!=-1", CompactNodeTitle = "!=-1") , Category="Condition|Int")
+	static bool IntIsNotEqualToMinusOne(const int32 Value) { return Value != -1; }
 
 
 
@@ -116,5 +129,13 @@ public:
 	static bool ByteIsBiggerThanAndEqualZero(const uint8 Value) { return Value >= 0; }
 	
 	UFUNCTION(BlueprintPure ,meta=(DisplayName = "<=0", CompactNodeTitle = "<=0") , Category="Condition|Byte")
-	static bool ByteIsLesserThanAndEqualZero(const uint8 Value) { return Value <= 0; } 
+	static bool ByteIsLesserThanAndEqualZero(const uint8 Value) { return Value <= 0; }
+
+	UFUNCTION(BlueprintPure ,meta=(DisplayName = "=-1", CompactNodeTitle = "=-1") , Category="Condition|Int")
+	static bool ByteIsEqualToMinusOne(const uint8 Value) { return Value == -1; }
+	
+	UFUNCTION(BlueprintPure ,meta=(DisplayName = "!=-1", CompactNodeTitle = "!=-1") , Category="Condition|Int")
+	static bool ByteIsNotEqualToMinusOne(const uint8 Value) { return Value != -1; }
+
+	
 };
