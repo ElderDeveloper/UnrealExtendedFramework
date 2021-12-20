@@ -133,7 +133,7 @@ public:
 	FVector GetHitTraceEnd() const { return HitResult.TraceEnd; }
 
 	/** Actor hit by the trace. */
-	AActor* GetHitActor() const { return HitResult.Actor.Get(); }
+	AActor* GetHitActor() const { return HitResult.GetActor(); }
 
 	/** PrimitiveComponent hit by the trace. */
 	UPrimitiveComponent* GetHitComponent() const { return HitResult.Component.Get(); }
@@ -268,7 +268,7 @@ public:
 	FVector GetHitTraceEnd() const { return HitResult.TraceEnd; }
 
 	/** Actor hit by the trace. */
-	AActor* GetHitActor() const { return HitResult.Actor.Get(); }
+	AActor* GetHitActor() const { return HitResult.GetActor(); }
 
 	/** PrimitiveComponent hit by the trace. */
 	UPrimitiveComponent* GetHitComponent() const { return HitResult.Component.Get(); }
@@ -403,7 +403,7 @@ public:
 	FVector GetHitTraceEnd() const { return HitResult.TraceEnd; }
 
 	/** Actor hit by the trace. */
-	AActor* GetHitActor() const { return HitResult.Actor.Get(); }
+	AActor* GetHitActor() const { return HitResult.GetActor(); }
 
 	/** PrimitiveComponent hit by the trace. */
 	UPrimitiveComponent* GetHitComponent() const { return HitResult.Component.Get(); }
@@ -539,7 +539,7 @@ public:
 	FVector GetHitTraceEnd() const { return HitResult.TraceEnd; }
 
 	/** Actor hit by the trace. */
-	AActor* GetHitActor() const { return HitResult.Actor.Get(); }
+	AActor* GetHitActor() const { return HitResult.GetActor(); }
 
 	/** PrimitiveComponent hit by the trace. */
 	UPrimitiveComponent* GetHitComponent() const { return HitResult.Component.Get(); }

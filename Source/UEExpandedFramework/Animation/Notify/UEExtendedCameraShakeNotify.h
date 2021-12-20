@@ -8,6 +8,7 @@
 /**
  * 
  */
+class UCameraShakeBase;
 UCLASS()
 class UEEXPANDEDFRAMEWORK_API UUEExtendedCameraShakeNotify : public UAnimNotify
 {
@@ -22,7 +23,7 @@ public:
 
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="AnimNotify", meta=(ExposeOnSpawn = true))
-	TSubclassOf<UMatineeCameraShake> CameraShake;
+	TSubclassOf<UCameraShakeBase> CameraShake;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="AnimNotify", meta=(ExposeOnSpawn = true))
 	float InnerRadius;

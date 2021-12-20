@@ -16,7 +16,7 @@ FVector UUEExtendedHitResultLibrary::GetTraceEndFromHitResult(FHitResult HitResu
 
 AActor* UUEExtendedHitResultLibrary::GetHitActorFromHitResult(FHitResult HitResult)
 {
-	return HitResult.Actor.Get();
+	return HitResult.GetActor();
 }
 
 USceneComponent* UUEExtendedHitResultLibrary::GetHitComponentFromHitResult(FHitResult HitResult)
