@@ -31,6 +31,8 @@ public:
 	UPROPERTY(EditDefaultsOnly,BlueprintReadWrite , Category="Cover|Trace")
 	FCapsuleTraceStruct CapsuleTraceSettings;
 
+	UPROPERTY(EditDefaultsOnly,BlueprintReadWrite , Category="Cover|Trace")
+	FLineTraceStruct CoverHeightCheckSettings;
 
 	//<<<<<<<<<<<<<<<<<<<<< SETTINGS >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 	
@@ -95,12 +97,15 @@ public:
 	UAnimMontage* GetOutCoverCrouchedMontage = nullptr;
 
 
-
+	UFUNCTION(BlueprintPure , Category="Cover")
+	FORCEINLINE bool GetShouldCrouch() const { return bInCoverCrouched; }
+	UFUNCTION(BlueprintPure , Category="Cover")
+	FORCEINLINE bool GetInCover() const { return bInCover; }
 
 	//<<<<<<<<<<<<<<<<<<<<<< Public Functions >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 	void TakeCover();
 	void ProcessRightMovement(const float rightInput);
-	void ProcessForwardMovement(const float leftInput);
+	void ProcessForwardMovement(const float forwardInput);
 	void InputBlocked(const bool blocked);
 	
 
@@ -140,6 +145,7 @@ private:
 	bool bRightInput;
 	bool bCanStealthKill;
 	bool bIsInputBlocked;
+	
 
 	float RightInputValue;
 	float ForwardInputValue;

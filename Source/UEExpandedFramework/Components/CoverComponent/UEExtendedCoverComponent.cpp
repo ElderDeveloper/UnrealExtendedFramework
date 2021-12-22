@@ -3,6 +3,7 @@
 
 #include "UEExtendedCoverComponent.h"
 
+#include "Components/CapsuleComponent.h"
 #include "GameFramework/Character.h"
 #include "GameFramework/SpringArmComponent.h"
 #include "Kismet/KismetMathLibrary.h"
@@ -62,6 +63,29 @@ void UUEExtendedCoverComponent::TickComponent(float DeltaTime, ELevelTick TickTy
 	}
 
 	StorePlayerValues();
+
+	if (GetInCover())
+	{
+		SideTracers();
+		MoveInCover();
+
+		if (! bInCoverCanMoveRight && ! bJumpingCoverToCover)
+			CoverJumpRightTracer();
+
+		if (! bInCoverCanMoveLeft && ! bJumpingCoverToCover)
+			CoverJumpLeftTracer();
+
+
+		if (bInCoverCanMoveLeft && bInCoverCanMoveRight && ! bJumpingCoverToCover)
+
+			InCoverHeightCheck();
+		
+		
+	}
+	else
+	{
+		ForwardTracer();
+	}
 	
 }
 
@@ -77,13 +101,36 @@ void UUEExtendedCoverComponent::TakeCover()
 
 void UUEExtendedCoverComponent::ProcessRightMovement(const float rightInput)
 {
+	RightInputValue = 0;
+	if (!bIsInputBlocked)
+	{
+		RightInputValue = rightInput;
+		if (RightInputValue != 0)
+		{
+			if (!bRightInput)
+				bRightInput = true;
+		}
+		else
+			bRightInput = false;
+	}
 }
 
 
 
 
-void UUEExtendedCoverComponent::ProcessForwardMovement(const float leftInput)
+void UUEExtendedCoverComponent::ProcessForwardMovement(const float forwardInput)
 {
+	ForwardInputValue = 0;
+	if (!bIsInputBlocked)
+	{
+		ForwardInputValue = forwardInput;
+		
+		if (ForwardInputValue >= -1 || ForwardInputValue <= -0.9)
+		{
+			if (bInCover)
+				ExitCover();
+		}
+	}
 }
 
 
@@ -91,6 +138,7 @@ void UUEExtendedCoverComponent::ProcessForwardMovement(const float leftInput)
 
 void UUEExtendedCoverComponent::InputBlocked(const bool blocked)
 {
+	bIsInputBlocked = blocked;
 }
 
 
@@ -119,6 +167,12 @@ void UUEExtendedCoverComponent::SideTracers()
 
 void UUEExtendedCoverComponent::InCoverHeightCheck()
 {
+	const float Side =  bInCoverMoveRight ? 30 : -30;
+	CoverHeightCheckSettings.Start = PlayerLocation + PlayerUpFromRot*50 + PlayerRight * Side;
+	CoverHeightCheckSettings.End = CoverHeightCheckSettings.Start + PlayerForwardFromRot * -100;
+
+	const bool TraceHit = UUEExtendedTraceLibrary::ExtendedLineTraceSingle(GetWorld(),CoverHeightCheckSettings);
+	bInCoverCrouched = !TraceHit;
 }
 
 
@@ -178,9 +232,10 @@ void UUEExtendedCoverComponent::ForwardTracer()
 
 void UUEExtendedCoverComponent::CoverHeightTrace(FVector& Start, FVector& End)
 {
-	const float Side =  bInCoverMoveRight ? 30 : -30;
-	Start = PlayerLocation + PlayerUpFromRot*50 + PlayerRight * Side;
-	End = Start + PlayerForwardFromRot * -100;
+	/*
+	Start = 
+	End =
+	*/
 }
 
 
@@ -213,6 +268,11 @@ void UUEExtendedCoverComponent::CoverToCoverJump()
 
 void UUEExtendedCoverComponent::ExitCover()
 {
+	bInCoverCanMoveRight = false;
+	bInCoverCanMoveLeft = false;
+	bCameraEdgeMove = false;
+	bCameraMoving = true;
+	Player->GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::Type::QueryAndPhysics);
 }
 
 
@@ -245,6 +305,49 @@ FVector UUEExtendedCoverComponent::FindCoverJumpLocation()
 
 void UUEExtendedCoverComponent::CameraEdgeZoom(const ECoverSide coverSide)
 {
+	if(bCameraMoving) return;
+	
+	switch (coverSide)
+	{
+		case RightSide:
+
+			if (bInCoverCanMoveLeft)
+			{
+				if (bInCoverCanMoveLeft && bInCoverCanMoveRight && bCameraEdgeMove)
+				{
+					bCameraEdgeMove = false;
+					bCameraMoving = true;
+				}
+			}
+			else if (!bCameraEdgeMove)
+			{
+				bCameraEdgeMove = true;
+				bCameraMoving = true;
+				bCameraZoomRight = true;
+			}
+			
+			break;
+		
+		case LeftSide:
+
+			if (bInCoverCanMoveRight)
+			{
+				if (bInCoverCanMoveLeft && bInCoverCanMoveRight && bCameraEdgeMove)
+				{
+					bCameraEdgeMove = false;
+					bCameraMoving = true;
+				}
+			}
+			else if (!bCameraEdgeMove)
+			{
+				bCameraEdgeMove = true;
+				bCameraMoving = true;
+				bCameraZoomRight = false;
+			}
+			break;
+	}
+
+	//GetWorld()->GetTimerManager().SetTimer(CameraHandle , this , &UUEExtendedCoverComponent::CameraMove,GetWorld()->GetDeltaSeconds() , true);
 }
 
 
