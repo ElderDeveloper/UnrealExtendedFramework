@@ -372,4 +372,17 @@ public:
         UEnum* pEnum = FindObject<UEnum>(ANY_PACKAGE, *enumName);
         return *(pEnum ? pEnum->GetNameStringByIndex(static_cast<uint8>(value)) : "null");
     }
+
+    const FString EnumToString(const TCHAR* Enum, int32 EnumValue)
+    {
+        const UEnum* EnumPtr = FindObject<UEnum>(ANY_PACKAGE, Enum, true);
+        if (!EnumPtr)
+            return NSLOCTEXT("Invalid", "Invalid", "Invalid").ToString();
+
+        #if WITH_EDITOR
+        return EnumPtr->GetDisplayNameText(EnumValue).ToString();
+        #else
+        return EnumPtr->GetEnumName(EnumValue);
+        #endif
+    }
 };
