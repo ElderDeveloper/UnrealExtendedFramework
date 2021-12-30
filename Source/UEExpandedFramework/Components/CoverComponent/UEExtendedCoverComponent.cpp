@@ -45,6 +45,12 @@ void UUEExtendedCoverComponent::BeginPlay()
 		UE_LOG(LogCover,Error,TEXT("Component Mush Be Attached To A Character"));
 		DestroyComponent();
 	}
+
+	if (!Player  && !PlayerMesh && ! PlayerCameraArm)
+	{
+		UE_LOG(LogCover,Warning,TEXT("There was error in referances , Component Destroyed"));
+		DestroyComponent();
+	}
 	
 }
 
@@ -55,20 +61,16 @@ void UUEExtendedCoverComponent::BeginPlay()
 void UUEExtendedCoverComponent::TickComponent(float DeltaTime, ELevelTick TickType,FActorComponentTickFunction* ThisTickFunction)
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
-	
-	if (!Player  && !PlayerMesh && ! PlayerCameraArm)
-	{
-		UE_LOG(LogCover,Warning,TEXT("There was error in referances , Component Destroyed"));
-		DestroyComponent();
-	}
+
+	if (bComponentPaused) return;
 
 	StorePlayerValues();
 
-	if (GetInCover())
+	if (GetIsInCover())
 	{
 		SideTracers();
 		MoveInCover();
-
+		
 		if (! bInCoverCanMoveRight && ! bJumpingCoverToCover)
 			CoverJumpRightTracer();
 
@@ -77,7 +79,6 @@ void UUEExtendedCoverComponent::TickComponent(float DeltaTime, ELevelTick TickTy
 
 
 		if (bInCoverCanMoveLeft && bInCoverCanMoveRight && ! bJumpingCoverToCover)
-
 			InCoverHeightCheck();
 		
 		
@@ -94,6 +95,19 @@ void UUEExtendedCoverComponent::TickComponent(float DeltaTime, ELevelTick TickTy
 
 void UUEExtendedCoverComponent::TakeCover()
 {
+	if (bCanCover && !GetIsInCover())
+	{
+		
+		const int32 multiply = UseInvertedCoverNormal ? -1 : 1;
+		const FVector Rotation = FVector(CoverWallNormal.X,CoverWallNormal.Y,0.f) * multiply;
+		
+		Player->SetActorRotation(Rotation.ToOrientationRotator());
+		Player->SetActorLocation(FindCoverLocation());
+		Player->GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+		
+		bInCover = true;
+		OnCoverStateChanged.Broadcast(true);
+	}
 }
 
 
@@ -136,12 +150,6 @@ void UUEExtendedCoverComponent::ProcessForwardMovement(const float forwardInput)
 
 
 
-void UUEExtendedCoverComponent::InputBlocked(const bool blocked)
-{
-	bIsInputBlocked = blocked;
-}
-
-
 
 
 void UUEExtendedCoverComponent::CoverJumpRightTracer()
@@ -180,32 +188,28 @@ void UUEExtendedCoverComponent::InCoverHeightCheck()
 
 void UUEExtendedCoverComponent::ForwardTracer()
 {
-	FSphereTraceStruct SphereTraceStruct;
-	SphereTraceStruct.TraceChannel = CapsuleTraceSettings.TraceChannel;
-	SphereTraceStruct.DrawDebugType = CapsuleTraceSettings.DrawDebugType;
-	SphereTraceStruct.Radius = 20;
 
-	SphereTraceStruct.Start = PlayerLocation;
-	SphereTraceStruct.End = PlayerLocation + GetActorForwardMultiply(50,50);
+	SphereTraceSettings.Start = PlayerLocation;
+	SphereTraceSettings.End = PlayerLocation + GetActorForwardMultiply(50,50);
 
-	if(UUEExtendedTraceLibrary::ExtendedSphereTraceSingle(GetWorld(),SphereTraceStruct))
+	if(UUEExtendedTraceLibrary::ExtendedSphereTraceSingle(GetWorld(),SphereTraceSettings))
 	{
-		SphereTraceStruct.Start = PlayerLocation + PlayerRightFromRot * 30;
-		SphereTraceStruct.End = SphereTraceStruct.Start + GetActorForwardMultiply(30,30);
+		SphereTraceSettings.Start = PlayerLocation + PlayerRightFromRot * 30;
+		SphereTraceSettings.End = SphereTraceSettings.Start + GetActorForwardMultiply(30,30);
 
-		FHitResult FirstHitResult = SphereTraceStruct.HitResult;
+		FHitResult FirstHitResult = SphereTraceSettings.HitResult;
 
-		if (UUEExtendedTraceLibrary::ExtendedSphereTraceSingle(GetWorld(),SphereTraceStruct))
+		if (UUEExtendedTraceLibrary::ExtendedSphereTraceSingle(GetWorld(),SphereTraceSettings))
 		{
-			bRightTracerHit = SphereTraceStruct.GetHitBlockingHit();
+			bRightTracerHit = SphereTraceSettings.GetHitBlockingHit();
 		}
 
-		SphereTraceStruct.Start = PlayerLocation + PlayerRightFromRot * -30;
-		SphereTraceStruct.End = SphereTraceStruct.Start + GetActorForwardMultiply(30,30);
+		SphereTraceSettings.Start = PlayerLocation + PlayerRightFromRot * -30;
+		SphereTraceSettings.End = SphereTraceSettings.Start + GetActorForwardMultiply(30,30);
 		
-		if (UUEExtendedTraceLibrary::ExtendedSphereTraceSingle(GetWorld(),SphereTraceStruct))
+		if (UUEExtendedTraceLibrary::ExtendedSphereTraceSingle(GetWorld(),SphereTraceSettings))
 		{
-			bLeftTracerHit = SphereTraceStruct.GetHitBlockingHit();
+			bLeftTracerHit = SphereTraceSettings.GetHitBlockingHit();
 		}
 
 		bCanCover = bRightTracerHit && bLeftTracerHit;
@@ -232,10 +236,7 @@ void UUEExtendedCoverComponent::ForwardTracer()
 
 void UUEExtendedCoverComponent::CoverHeightTrace(FVector& Start, FVector& End)
 {
-	/*
-	Start = 
-	End =
-	*/
+
 }
 
 
@@ -285,10 +286,10 @@ void UUEExtendedCoverComponent::InCoverExitToGrab()
 
 
 
-FVector UUEExtendedCoverComponent::FindCoverLocation()
+FVector UUEExtendedCoverComponent::FindCoverLocation() const
 {
-	FVector coverWallNorm = CoverWallNormal* FVector(5,5,0);
-	return FVector(coverWallNorm.X+CoverWallLocation.X , coverWallNorm.Y + CoverWallLocation.Y , PlayerLocation.Z );
+	const FVector CoverWallNorm = CoverWallNormal* FVector(5,5,0);
+	return FVector(CoverWallNorm.X+CoverWallLocation.X , CoverWallNorm.Y + CoverWallLocation.Y , PlayerLocation.Z );
 }
 
 
@@ -296,8 +297,8 @@ FVector UUEExtendedCoverComponent::FindCoverLocation()
 
 FVector UUEExtendedCoverComponent::FindCoverJumpLocation()
 {
-	FVector coverWallNorm = NewCoverNormal* FVector(5,5,0);
-	return FVector(coverWallNorm.X+NewCoverLocation.X , coverWallNorm.Y + NewCoverLocation.Y , PlayerLocation.Z );
+	const FVector CoverWallNorm = NewCoverNormal* FVector(5,5,0);
+	return FVector(CoverWallNorm.X+NewCoverLocation.X , CoverWallNorm.Y + NewCoverLocation.Y , PlayerLocation.Z );
 }
 
 
@@ -374,11 +375,11 @@ void UUEExtendedCoverComponent::CameraMove()
 
 void UUEExtendedCoverComponent::SimulateArrows(const ECoverSide coverSide, FVector& Location, FVector& Forward,FVector& Right, FVector& Up) const
 {
-	const float forw = 42;
+	//const float forward = 42;
 	const float Side =  coverSide == ECoverSide::RightSide ? 1 : -1;
-	const FRotator Rotator = UKismetMathLibrary::MakeRotationFromAxes(PlayerForward * forw , PlayerRight * forw, PlayerUp * forw);
+	const FRotator Rotator = UKismetMathLibrary::MakeRotationFromAxes(PlayerForward * 42 , PlayerRight * 42, PlayerUp * 42);
 	
-	Location = PlayerLocation + PlayerForward * forw + PlayerRight * forw + PlayerUp * forw;
+	Location = PlayerLocation + PlayerForward * 42 + PlayerRight * 42 + PlayerUp * 42;
 	Forward = Rotator.Vector();
 	Right	= UKismetMathLibrary::GetRightVector(Rotator) * Side ;
 	Up		= UKismetMathLibrary::GetUpVector(Rotator) * Side;
@@ -392,8 +393,8 @@ void UUEExtendedCoverComponent::MoveCoverRight()
 	if (bInCoverCanMoveRight && RightInputValue < 0)
 	{
 		FSphereTraceStruct SphereTrace;
-		SphereTrace.TraceChannel = CapsuleTraceSettings.TraceChannel;
-		SphereTrace.DrawDebugType = CapsuleTraceSettings.DrawDebugType;
+		SphereTrace.TraceChannel = SphereTraceSettings.TraceChannel;
+		SphereTrace.DrawDebugType = SphereTraceSettings.DrawDebugType;
 		SphereTrace.bTraceComplex = true;
 		SphereTrace.Radius = 20;
 
@@ -432,8 +433,8 @@ void UUEExtendedCoverComponent::MoveCoverLeft()
 	if (bInCoverCanMoveLeft && RightInputValue > 0)
 	{
 		FSphereTraceStruct SphereTrace;
-		SphereTrace.TraceChannel = CapsuleTraceSettings.TraceChannel;
-		SphereTrace.DrawDebugType = CapsuleTraceSettings.DrawDebugType;
+		SphereTrace.TraceChannel = SphereTraceSettings.TraceChannel;
+		SphereTrace.DrawDebugType = SphereTraceSettings.DrawDebugType;
 		SphereTrace.bTraceComplex = true;
 		SphereTrace.Radius = 20;
 
@@ -489,14 +490,16 @@ void UUEExtendedCoverComponent::MoveInCover()
 
 void UUEExtendedCoverComponent::StorePlayerValues()
 {
-	if (bInCover && Player)
+	if(Player)
 	{
 		PlayerLocation = Player->GetActorLocation();
 		PlayerForward = Player->GetActorForwardVector();
+		PlayerRotation = Player->GetActorRotation();
+	}
+	if (bInCover)
+	{
 		PlayerRight = Player->GetActorRightVector();
 		PlayerUp = Player->GetActorUpVector();
-		PlayerRotation = Player->GetActorRotation();
-
 		
 		PlayerForwardFromRot = PlayerRotation.Vector();
 		PlayerRightFromRot = FRotationMatrix(PlayerRotation).GetScaledAxis(EAxis::Y);

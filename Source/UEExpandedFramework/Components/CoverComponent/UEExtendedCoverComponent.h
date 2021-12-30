@@ -17,6 +17,8 @@ enum ECoverSide
 
 DECLARE_LOG_CATEGORY_EXTERN(LogCover, Error, All);
 
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnCoverStateChanged , bool , CoverState);
+
 class UAnimMontage;
 UCLASS(ClassGroup=(Custom), meta=(BlueprintSpawnableComponent))
 class UEEXPANDEDFRAMEWORK_API UUEExtendedCoverComponent : public UActorComponent
@@ -29,7 +31,7 @@ public:
 
 
 	UPROPERTY(EditDefaultsOnly,BlueprintReadWrite , Category="Cover|Trace")
-	FCapsuleTraceStruct CapsuleTraceSettings;
+	FSphereTraceStruct SphereTraceSettings;
 
 	UPROPERTY(EditDefaultsOnly,BlueprintReadWrite , Category="Cover|Trace")
 	FLineTraceStruct CoverHeightCheckSettings;
@@ -97,17 +99,30 @@ public:
 	UAnimMontage* GetOutCoverCrouchedMontage = nullptr;
 
 
+
+	UPROPERTY(BlueprintAssignable)
+	FOnCoverStateChanged OnCoverStateChanged;
+
 	UFUNCTION(BlueprintPure , Category="Cover")
 	FORCEINLINE bool GetShouldCrouch() const { return bInCoverCrouched; }
 	UFUNCTION(BlueprintPure , Category="Cover")
-	FORCEINLINE bool GetInCover() const { return bInCover; }
+	FORCEINLINE bool GetIsInCover() const { return bInCover; }
 
 	//<<<<<<<<<<<<<<<<<<<<<< Public Functions >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+	UFUNCTION(BlueprintCallable , Category="Cover")
 	void TakeCover();
-	void ProcessRightMovement(const float rightInput);
-	void ProcessForwardMovement(const float forwardInput);
-	void InputBlocked(const bool blocked);
 	
+	UFUNCTION(BlueprintCallable , Category="Cover")
+	void ProcessRightMovement(const float rightInput);
+	
+	UFUNCTION(BlueprintCallable , Category="Cover")
+	void ProcessForwardMovement(const float forwardInput);
+	
+	UFUNCTION(BlueprintCallable , Category="Cover")
+	void InputBlocked(const bool blocked) { bIsInputBlocked = blocked; }
+
+	UFUNCTION(BlueprintCallable , Category="Cover")
+	void SetComponentPaused(const bool IsPaused) { bComponentPaused = IsPaused; }
 
 protected:
 	
@@ -130,7 +145,9 @@ private:
 
 	bool bRightTracerHit;
 	bool bLeftTracerHit;
-	
+
+
+	bool bComponentPaused;
 	bool bInCover;
 	bool bInCoverMoveRight;
 	bool bInCoverMoveLeft;
@@ -182,7 +199,7 @@ private:
 	void ExitCover();
 	void InCoverExitToGrab();
 
-	FVector FindCoverLocation();
+	FVector FindCoverLocation() const;
 	FVector FindCoverJumpLocation();
 
 	//<<<<<<<<<<<<<<<<<<<<< CAMERA >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>

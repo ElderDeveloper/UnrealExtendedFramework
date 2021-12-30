@@ -2,6 +2,8 @@
 
 
 #include "UEExtendedGameplayLibrary.h"
+
+#include "Kismet/GameplayStatics.h"
 #include "Kismet/KismetMathLibrary.h"
 
 
@@ -125,4 +127,11 @@ void UUEExtendedGameplayLibrary::RotateToObjectInterp(const UObject* WorldContex
 			UKismetMathLibrary::FindLookAtRotation(From->GetActorLocation(),To->GetActorLocation())
 			, WorldContextObject->GetWorld()->GetDeltaSeconds() , InterpSpeed));
 	}
+}
+
+float UUEExtendedGameplayLibrary::GetGameplayFramePerSecond(const UObject* WorldContextObject)
+{
+	if (const auto World = Cast<UWorld>(WorldContextObject))
+		return (1/World->GetDeltaSeconds())* UGameplayStatics::GetGlobalTimeDilation(World);
+ 	return 0;
 }

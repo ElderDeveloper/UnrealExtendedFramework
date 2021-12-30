@@ -50,4 +50,10 @@ class UEEXPANDEDFRAMEWORK_API UUEExtendedGameplayLibrary : public UObject
 
 	UFUNCTION(BlueprintCallable, meta = (WorldContext = "WorldContextObject"))
 	static void RotateToObjectInterp(const UObject* WorldContextObject, AActor* From , AActor* To , float InterpSpeed);
+
+	/*
+	 * Return Game FPS
+	 */
+	UFUNCTION(BlueprintPure, meta = (WorldContext = "WorldContextObject"))
+	static float GetGameplayFramePerSecond(const UObject* WorldContextObject);
 };
