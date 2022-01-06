@@ -43,7 +43,8 @@ public class UEExpandedFramework : ModuleRules
 				"GameplayTasks",
 				"NavigationSystem",
 				"JsonUtilities",
-				"Json"
+				"Json",
+				"AnimGraphRuntime"
 				// ... add other public dependencies that you statically link with here ...
 			}
 			);

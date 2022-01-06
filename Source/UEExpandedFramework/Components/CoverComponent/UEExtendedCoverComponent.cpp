@@ -20,6 +20,7 @@ UUEExtendedCoverComponent::UUEExtendedCoverComponent()
 
 
 
+
 // Called when the game starts
 void UUEExtendedCoverComponent::BeginPlay()
 {
@@ -57,31 +58,31 @@ void UUEExtendedCoverComponent::BeginPlay()
 
 
 
+
 // Called every frame
 void UUEExtendedCoverComponent::TickComponent(float DeltaTime, ELevelTick TickType,FActorComponentTickFunction* ThisTickFunction)
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
-	if (bComponentPaused) return;
+	if (!bComponentActive) return;
 
 	StorePlayerValues();
 
 	if (GetIsInCover())
 	{
 		SideTracers();
+		MoveCoverRight();
+		MoveCoverLeft();
 		MoveInCover();
+		
+		InCoverHeightCheck();
 		
 		if (! bInCoverCanMoveRight && ! bJumpingCoverToCover)
 			CoverJumpRightTracer();
 
 		if (! bInCoverCanMoveLeft && ! bJumpingCoverToCover)
 			CoverJumpLeftTracer();
-
-
-		if (bInCoverCanMoveLeft && bInCoverCanMoveRight && ! bJumpingCoverToCover)
-			InCoverHeightCheck();
-		
-		
+			
 	}
 	else
 	{
@@ -93,11 +94,11 @@ void UUEExtendedCoverComponent::TickComponent(float DeltaTime, ELevelTick TickTy
 
 
 
+
 void UUEExtendedCoverComponent::TakeCover()
 {
 	if (bCanCover && !GetIsInCover())
 	{
-		
 		const int32 multiply = UseInvertedCoverNormal ? -1 : 1;
 		const FVector Rotation = FVector(CoverWallNormal.X,CoverWallNormal.Y,0.f) * multiply;
 		
@@ -107,46 +108,67 @@ void UUEExtendedCoverComponent::TakeCover()
 		
 		bInCover = true;
 		OnCoverStateChanged.Broadcast(true);
+
+		if (GetInCoverMontage)
+			PlayerMesh->GetAnimInstance()->Montage_Play(GetInCoverMontage);
+		
 	}
 }
+
 
 
 
 
 void UUEExtendedCoverComponent::ProcessRightMovement(const float rightInput)
 {
-	RightInputValue = 0;
-	if (!bIsInputBlocked)
+	RightInputValue = rightInput;
+		
+	if (RightInputValue != 0)
 	{
-		RightInputValue = rightInput;
-		if (RightInputValue != 0)
+		if (RightInputValue > 0)
 		{
-			if (!bRightInput)
-				bRightInput = true;
+			if (CoverDirection != RightSide)
+				PlayMontageBasedOnPose(CoverTurnRight,CrouchedCoverTurnRight);
+			
+			CoverDirection = RightSide;
+			if (bInCoverCanMoveRight)
+				IsMoving = true;
+			else
+				IsMoving = false;
 		}
 		else
-			bRightInput = false;
+		{
+			if (CoverDirection != LeftSide)
+				PlayMontageBasedOnPose(CoverTurnLeft,CrouchedCoverTurnLeft);
+			
+			CoverDirection = LeftSide;
+			
+			if (bInCoverCanMoveLeft)
+				IsMoving = true;
+			else
+				IsMoving = false;
+		}
+	}
+	else
+	{
+		IsMoving = false;
 	}
 }
+
 
 
 
 
 void UUEExtendedCoverComponent::ProcessForwardMovement(const float forwardInput)
 {
-	ForwardInputValue = 0;
-	if (!bIsInputBlocked)
+	ForwardInputValue = forwardInput;
+	
+	if (GetIsInCover())
 	{
-		ForwardInputValue = forwardInput;
-		
-		if (ForwardInputValue >= -1 || ForwardInputValue <= -0.9)
-		{
-			if (bInCover)
-				ExitCover();
-		}
+		if (ForwardInputValue >= -1 && ForwardInputValue <= -0.6)
+			ExitCover();
 	}
 }
-
 
 
 
@@ -159,6 +181,7 @@ void UUEExtendedCoverComponent::CoverJumpRightTracer()
 
 
 
+
 void UUEExtendedCoverComponent::CoverJumpLeftTracer()
 {
 }
@@ -166,16 +189,38 @@ void UUEExtendedCoverComponent::CoverJumpLeftTracer()
 
 
 
+
 void UUEExtendedCoverComponent::SideTracers()
 {
+	
+	FVector Location , Forward;
+	SimulateArrows(70 , Location , Forward);
+	
+	FCapsuleTraceStruct CoverTrace = {Location , Forward  , 20 , 60 };
+	
+	CoverTrace.TraceType = ETraceTypes::TraceType;
+	CoverTrace.TraceChannel = SphereTraceSettings.TraceChannel;
+	CoverTrace.DrawDebugType = SphereTraceSettings.DrawDebugType;
+
+	bInCoverCanMoveRight = UUEExtendedTraceLibrary::ExtendedCapsuleTraceSingle(GetWorld(),CoverTrace);
+
+	SimulateArrows(-70 , Location , Forward);
+	CoverTrace.Start = Location;
+	CoverTrace.End = Forward;
+	
+	bInCoverCanMoveLeft = UUEExtendedTraceLibrary::ExtendedCapsuleTraceSingle(GetWorld(),CoverTrace);
+	
 }
+
 
 
 
 
 void UUEExtendedCoverComponent::InCoverHeightCheck()
 {
-	const float Side =  bInCoverMoveRight ? 30 : -30;
+	
+	const float Side =  CoverDirection == RightSide ? 30 : -30;
+	
 	CoverHeightCheckSettings.Start = PlayerLocation + PlayerUpFromRot*50 + PlayerRight * Side;
 	CoverHeightCheckSettings.End = CoverHeightCheckSettings.Start + PlayerForwardFromRot * -100;
 
@@ -186,9 +231,9 @@ void UUEExtendedCoverComponent::InCoverHeightCheck()
 
 
 
+
 void UUEExtendedCoverComponent::ForwardTracer()
 {
-
 	SphereTraceSettings.Start = PlayerLocation;
 	SphereTraceSettings.End = PlayerLocation + GetActorForwardMultiply(50,50);
 
@@ -242,11 +287,13 @@ void UUEExtendedCoverComponent::CoverHeightTrace(FVector& Start, FVector& End)
 
 
 
+
 void UUEExtendedCoverComponent::CoverJumpRightTraceLocation(FVector& Start, FVector& End)
 {
 	Start = PlayerLocation + PlayerRightFromRot * (InCoverTraceDistance + CoverToCoverMaxDistance);
 	End = Start + PlayerForwardFromRot * -60;
 }
+
 
 
 
@@ -260,9 +307,11 @@ void UUEExtendedCoverComponent::CoverJumpLeftTraceLocation(FVector& Start, FVect
 
 
 
+
 void UUEExtendedCoverComponent::CoverToCoverJump()
 {
 }
+
 
 
 
@@ -274,7 +323,11 @@ void UUEExtendedCoverComponent::ExitCover()
 	bCameraEdgeMove = false;
 	bCameraMoving = true;
 	Player->GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::Type::QueryAndPhysics);
+	bInCover = false;
+	PlayMontageIfValid(GetOutCoverMontage);
+	OnCoverStateChanged.Broadcast(bInCover);
 }
+
 
 
 
@@ -282,6 +335,7 @@ void UUEExtendedCoverComponent::ExitCover()
 void UUEExtendedCoverComponent::InCoverExitToGrab()
 {
 }
+
 
 
 
@@ -295,11 +349,13 @@ FVector UUEExtendedCoverComponent::FindCoverLocation() const
 
 
 
+
 FVector UUEExtendedCoverComponent::FindCoverJumpLocation()
 {
 	const FVector CoverWallNorm = NewCoverNormal* FVector(5,5,0);
 	return FVector(CoverWallNorm.X+NewCoverLocation.X , CoverWallNorm.Y + NewCoverLocation.Y , PlayerLocation.Z );
 }
+
 
 
 
@@ -311,7 +367,6 @@ void UUEExtendedCoverComponent::CameraEdgeZoom(const ECoverSide coverSide)
 	switch (coverSide)
 	{
 		case RightSide:
-
 			if (bInCoverCanMoveLeft)
 			{
 				if (bInCoverCanMoveLeft && bInCoverCanMoveRight && bCameraEdgeMove)
@@ -330,7 +385,6 @@ void UUEExtendedCoverComponent::CameraEdgeZoom(const ECoverSide coverSide)
 			break;
 		
 		case LeftSide:
-
 			if (bInCoverCanMoveRight)
 			{
 				if (bInCoverCanMoveLeft && bInCoverCanMoveRight && bCameraEdgeMove)
@@ -354,6 +408,7 @@ void UUEExtendedCoverComponent::CameraEdgeZoom(const ECoverSide coverSide)
 
 
 
+
 void UUEExtendedCoverComponent::CameraMove()
 {
 	if (!bInCover) bCameraEdgeMove = false;
@@ -373,24 +428,20 @@ void UUEExtendedCoverComponent::CameraMove()
 
 
 
-void UUEExtendedCoverComponent::SimulateArrows(const ECoverSide coverSide, FVector& Location, FVector& Forward,FVector& Right, FVector& Up) const
+
+void UUEExtendedCoverComponent::SimulateArrows(float RightVectorMultiply, FVector& Location , FVector& Forward) const
 {
-	//const float forward = 42;
-	const float Side =  coverSide == ECoverSide::RightSide ? 1 : -1;
-	const FRotator Rotator = UKismetMathLibrary::MakeRotationFromAxes(PlayerForward * 42 , PlayerRight * 42, PlayerUp * 42);
-	
-	Location = PlayerLocation + PlayerForward * 42 + PlayerRight * 42 + PlayerUp * 42;
-	Forward = Rotator.Vector();
-	Right	= UKismetMathLibrary::GetRightVector(Rotator) * Side ;
-	Up		= UKismetMathLibrary::GetUpVector(Rotator) * Side;
+	Location = PlayerLocation + ( PlayerForward * 42 ) +  ( PlayerRight * RightVectorMultiply )  + ( PlayerUp * 25 );
+	Forward = Location + PlayerForward * -100;
 }
+
 
 
 
 
 void UUEExtendedCoverComponent::MoveCoverRight()
 {
-	if (bInCoverCanMoveRight && RightInputValue < 0)
+	if (RightInputValue < 0)
 	{
 		FSphereTraceStruct SphereTrace;
 		SphereTrace.TraceChannel = SphereTraceSettings.TraceChannel;
@@ -414,23 +465,19 @@ void UUEExtendedCoverComponent::MoveCoverRight()
 				
 				if(Player->SetActorRotation(UKismetMathLibrary::RInterpTo(PlayerRotation ,MoveRotation,GetWorld()->GetDeltaSeconds() , 5 )))
 					CoverWallNormal  = SphereTrace.GetHitImpactNormal();
-				
-				bInCoverMoveRight	= true;
-				bInCoverMoveLeft	= false;
-				bInCoverIdleRight	= false;
 			}
-			else bInCoverMoveRight = false;
 		}
 	}
-	else bInCoverMoveRight = false;
 }
+
 
 
 
 
 void UUEExtendedCoverComponent::MoveCoverLeft()
 {
-	if (bInCoverCanMoveLeft && RightInputValue > 0)
+	bInCoverCanMoveLeft;
+	if ( RightInputValue > 0)
 	{
 		FSphereTraceStruct SphereTrace;
 		SphereTrace.TraceChannel = SphereTraceSettings.TraceChannel;
@@ -454,29 +501,19 @@ void UUEExtendedCoverComponent::MoveCoverLeft()
 				
 				if(Player->SetActorRotation(UKismetMathLibrary::RInterpTo(PlayerRotation ,MoveRotation,GetWorld()->GetDeltaSeconds() , 5 )))
 					CoverWallNormal  = SphereTrace.GetHitImpactNormal();
-				
-				bInCoverMoveRight	= false;
-				bInCoverMoveLeft	= true;
-				bInCoverIdleRight	= true;
 			}
-			else bInCoverMoveLeft = false;
 		}
 	}
-	else bInCoverMoveLeft = false;
 }
+
 
 
 
 
 void UUEExtendedCoverComponent::MoveInCover()
 {
-	MoveCoverRight();
-	MoveCoverLeft();
-	
 	if (RightInputValue == 0)
 	{
-		bInCoverMoveRight = false;
-		bInCoverMoveLeft = true;
 		PlayerCameraArm->bDoCollisionTest = true;
 	}
 	else
@@ -484,6 +521,7 @@ void UUEExtendedCoverComponent::MoveInCover()
 		PlayerCameraArm->bDoCollisionTest = false;
 	}
 }
+
 
 
 
@@ -505,4 +543,30 @@ void UUEExtendedCoverComponent::StorePlayerValues()
 		PlayerRightFromRot = FRotationMatrix(PlayerRotation).GetScaledAxis(EAxis::Y);
 		PlayerUpFromRot = FRotationMatrix(PlayerRotation).GetScaledAxis(EAxis::Z);
 	}
+}
+
+
+
+
+void UUEExtendedCoverComponent::PlayMontageIfValid(UAnimMontage* MontageToPlay)
+{
+	if (MontageToPlay && PlayerMesh)
+		PlayerMesh->GetAnimInstance()->Montage_Play(MontageToPlay);
+}
+
+void UUEExtendedCoverComponent::PlayMontageBasedOnDirection(UAnimMontage* RightSideMontage,UAnimMontage* LeftSideMontage)
+{
+}
+
+void UUEExtendedCoverComponent::PlayMontageBasedOnDirectionAndPose(UAnimMontage* IdleRightSideMontage,UAnimMontage* IdleLeftSideMontage, UAnimMontage* CrouchRightSideMontage, UAnimMontage* CrouchLeftSideMontage)
+{
+	
+}
+
+void UUEExtendedCoverComponent::PlayMontageBasedOnPose(UAnimMontage* IdleMontage , UAnimMontage* CrouchMontage)
+{
+	if (bInCoverCrouched)
+		PlayMontageIfValid(CrouchMontage);
+	else
+		PlayMontageIfValid(IdleMontage);
 }

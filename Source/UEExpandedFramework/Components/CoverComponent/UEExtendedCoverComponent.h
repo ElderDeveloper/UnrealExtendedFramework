@@ -4,10 +4,12 @@
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
+#include "UEExpandedFramework/UEExpandedFramework.h"
 #include "UEExpandedFramework/Gameplay/Trace/UEExtendedTraceData.h"
 #include "UEExtendedCoverComponent.generated.h"
 
 
+UENUM(BlueprintType)
 enum ECoverSide
 {
 	RightSide,
@@ -68,46 +70,68 @@ public:
 
 	
 	//<<<<<<<<<<<<<<<<<<<<< MONTAGES >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-	UPROPERTY(EditDefaultsOnly,BlueprintReadWrite , Category="Cover|Montages")
+	UPROPERTY(EditDefaultsOnly,BlueprintReadWrite , Category="Cover|Montages|GetInOut")
 	UAnimMontage* GetInCoverMontage = nullptr;
 	
-	UPROPERTY(EditDefaultsOnly,BlueprintReadWrite , Category="Cover|Montages")
+	UPROPERTY(EditDefaultsOnly,BlueprintReadWrite , Category="Cover|Montages|GetInOut")
 	UAnimMontage* GetOutCoverMontage = nullptr;
 	
-	UPROPERTY(EditDefaultsOnly,BlueprintReadWrite , Category="Cover|Montages")
-	UAnimMontage* CrouchedGetOutCoverMontage = nullptr;
-	
-	UPROPERTY(EditDefaultsOnly,BlueprintReadWrite , Category="Cover|Montages")
+	UPROPERTY(EditDefaultsOnly,BlueprintReadWrite , Category="Cover|Montages|GetInOut")
 	UAnimMontage* CrouchedGetInCoverMontage = nullptr;
 	
-	UPROPERTY(EditDefaultsOnly,BlueprintReadWrite , Category="Cover|Montages")
-	UAnimMontage* CoverToCoverLeftMontage = nullptr;
+	UPROPERTY(EditDefaultsOnly,BlueprintReadWrite , Category="Cover|Montages|GetInOut")
+	UAnimMontage* CrouchedGetOutCoverMontage = nullptr;
+
 	
-	UPROPERTY(EditDefaultsOnly,BlueprintReadWrite , Category="Cover|Montages")
+
+	UPROPERTY(EditDefaultsOnly,BlueprintReadWrite , Category="Cover|Montages|Turn")
+	UAnimMontage* CoverTurnRight = nullptr;
+	
+	UPROPERTY(EditDefaultsOnly,BlueprintReadWrite , Category="Cover|Montages|Turn")
+	UAnimMontage* CoverTurnLeft = nullptr;
+	
+	UPROPERTY(EditDefaultsOnly,BlueprintReadWrite , Category="Cover|Montages|Turn")
+	UAnimMontage* CrouchedCoverTurnRight = nullptr;
+
+	UPROPERTY(EditDefaultsOnly,BlueprintReadWrite , Category="Cover|Montages|Turn")
+	UAnimMontage* CrouchedCoverTurnLeft = nullptr;
+
+	
+	
+	UPROPERTY(EditDefaultsOnly,BlueprintReadWrite , Category="Cover|Montages|CoverToCover")
 	UAnimMontage* CoverToCoverRightMontage = nullptr;
 	
-	UPROPERTY(EditDefaultsOnly,BlueprintReadWrite , Category="Cover|Montages")
+	UPROPERTY(EditDefaultsOnly,BlueprintReadWrite , Category="Cover|Montages|CoverToCover")
+	UAnimMontage* CoverToCoverLeftMontage = nullptr;
+	
+	UPROPERTY(EditDefaultsOnly,BlueprintReadWrite , Category="Cover|Montages|CoverToCover")
 	UAnimMontage* CrouchedCoverToCoverRightMontage = nullptr;
 	
-	UPROPERTY(EditDefaultsOnly,BlueprintReadWrite , Category="Cover|Montages")
+	UPROPERTY(EditDefaultsOnly,BlueprintReadWrite , Category="Cover|Montages|CoverToCover")
 	UAnimMontage* CrouchedCoverToCoverLeftMontage = nullptr;
-	
-	UPROPERTY(EditDefaultsOnly,BlueprintReadWrite , Category="Cover|Montages")
-	UAnimMontage* GetInCoverCrouchedMontage = nullptr;
-	
-	UPROPERTY(EditDefaultsOnly,BlueprintReadWrite , Category="Cover|Montages")
-	UAnimMontage* GetOutCoverCrouchedMontage = nullptr;
 
+	
 
 
 	UPROPERTY(BlueprintAssignable)
 	FOnCoverStateChanged OnCoverStateChanged;
-
-	UFUNCTION(BlueprintPure , Category="Cover")
-	FORCEINLINE bool GetShouldCrouch() const { return bInCoverCrouched; }
+	
 	UFUNCTION(BlueprintPure , Category="Cover")
 	FORCEINLINE bool GetIsInCover() const { return bInCover; }
+	
+	UFUNCTION(BlueprintPure , Category="Cover")
+	FORCEINLINE bool GetIsInCoverCrouched() const { return bInCoverCrouched; }
 
+	UFUNCTION(BlueprintPure , Category="Cover")
+	FORCEINLINE bool GetCoverMoving() const { return IsMoving; }
+	
+	UFUNCTION(BlueprintPure , Category="Cover")
+	FORCEINLINE TEnumAsByte<ECoverSide> GetCoverMovementDirection() const { return CoverDirection; }
+
+	UFUNCTION(BlueprintCallable,meta = (DisplayName = "IsInCoverExec",CompactNodeTitle = "IsInCover", ExpandEnumAsExecs = "OutPins") , Category="Cover")
+	FORCEINLINE bool GetIsInCoverExec(TEnumAsByte<EConditionOutput>& OutPins) {	if(bInCover) { OutPins = OutTrue; } else{ OutPins = OutIsFalse; } return bInCover; }
+
+	
 	//<<<<<<<<<<<<<<<<<<<<<< Public Functions >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 	UFUNCTION(BlueprintCallable , Category="Cover")
 	void TakeCover();
@@ -119,10 +143,7 @@ public:
 	void ProcessForwardMovement(const float forwardInput);
 	
 	UFUNCTION(BlueprintCallable , Category="Cover")
-	void InputBlocked(const bool blocked) { bIsInputBlocked = blocked; }
-
-	UFUNCTION(BlueprintCallable , Category="Cover")
-	void SetComponentPaused(const bool IsPaused) { bComponentPaused = IsPaused; }
+	void SetCoverComponentActive(const bool IsActive) { bComponentActive = IsActive; }
 
 protected:
 	
@@ -130,6 +151,7 @@ protected:
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType,FActorComponentTickFunction* ThisTickFunction) override;
 
 	FORCEINLINE FVector GetActorForwardMultiply(const float X = 1 , const float Y = 1,const float Z = 1) const { return FVector(PlayerRotation.Vector().X*X , PlayerRotation.Vector().Y*Y , PlayerRotation.Vector().Z*Z); }
+	
 private:
 
 	UPROPERTY()
@@ -146,23 +168,21 @@ private:
 	bool bRightTracerHit;
 	bool bLeftTracerHit;
 
+	TEnumAsByte<ECoverSide> CoverDirection;
 
-	bool bComponentPaused;
+	bool bComponentActive = true;
 	bool bInCover;
-	bool bInCoverMoveRight;
-	bool bInCoverMoveLeft;
+
 	bool bInCoverCrouched;
 	bool bInCoverCanMoveRight;
 	bool bInCoverCanMoveLeft;
 	bool bCanCover;
-	bool bInCoverIdleRight;
+
 	bool bJumpingCoverToCover;
 	bool bCanJumpToCoverLeft;
 	bool bCanJumpToCoverRight;
-	bool bRightInput;
-	bool bCanStealthKill;
-	bool bIsInputBlocked;
-	
+
+	bool IsMoving = false;
 
 	float RightInputValue;
 	float ForwardInputValue;
@@ -183,7 +203,6 @@ private:
 	FVector PlayerUpFromRot;
 	
 	//<<<<<<<<<<<<<<<<<<< TRACERS >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-
 	void CoverJumpRightTracer();
 	void CoverJumpLeftTracer();
 	void SideTracers();
@@ -208,7 +227,7 @@ private:
 
 
 	//<<<<<<<<<<<<<<<<<<<<< Arrow Functions >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-	void SimulateArrows(const ECoverSide coverSide, FVector& Location , FVector& Forward , FVector& Right ,FVector& Up ) const;
+	void SimulateArrows(float RightVectorMultiply, FVector& Location , FVector& Forward) const;
 
 
 	//<<<<<<<<<<<<<<<<<<<<<< Tick Cover Movement >>>>>>>>>>>>>>>>>>>>>>>>>
@@ -216,5 +235,14 @@ private:
 	void MoveCoverLeft();
 	void MoveInCover();
 	void StorePlayerValues();
+
+	//<<<<<<<<<<<<<<<<<<<<<< Animation >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+	void PlayMontageIfValid(UAnimMontage* MontageToPlay);
+	void PlayMontageBasedOnDirection(UAnimMontage* RightSideMontage , UAnimMontage* LeftSideMontage);
+	void PlayMontageBasedOnPose(UAnimMontage* IdleMontage , UAnimMontage* CrouchMontage);
+	void PlayMontageBasedOnDirectionAndPose(UAnimMontage* IdleRightSideMontage , UAnimMontage* IdleLeftSideMontage , UAnimMontage* CrouchRightSideMontage , UAnimMontage* CrouchLeftSideMontage);
 	
 };
+
+
+
