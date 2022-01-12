@@ -16,6 +16,14 @@ enum ECoverSide
 	LeftSide
 };
 
+UENUM(BlueprintType)
+enum ECoverCameraSide
+{
+	CameraCenter,
+	CameraRightSide,
+	CameraLeftSide,
+};
+
 
 DECLARE_LOG_CATEGORY_EXTERN(LogCover, Error, All);
 
@@ -38,6 +46,8 @@ public:
 	UPROPERTY(EditDefaultsOnly,BlueprintReadWrite , Category="Cover|Trace")
 	FLineTraceStruct CoverHeightCheckSettings;
 
+
+	
 	//<<<<<<<<<<<<<<<<<<<<< SETTINGS >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 	
 	UPROPERTY(EditDefaultsOnly,BlueprintReadWrite , Category="Cover|Settings")
@@ -48,24 +58,25 @@ public:
 
 	UPROPERTY(EditDefaultsOnly,BlueprintReadWrite , Category="Cover|Settings")
 	float MaxWalkInCoverAngle = 90;
-
-	UPROPERTY(EditDefaultsOnly,BlueprintReadWrite , Category="Cover|Settings")
-	float CoverToCoverMaxDistance = 180;
-
+	
 	UPROPERTY(EditDefaultsOnly,BlueprintReadWrite , Category="Cover|Settings")
 	bool ShouldCrouchAutomatically = true;
 
 	UPROPERTY(EditDefaultsOnly,BlueprintReadWrite , Category="Cover|Settings")
 	bool CameraZoomOnEdge = true;
-
+	
 	UPROPERTY(EditDefaultsOnly,BlueprintReadWrite , Category="Cover|Settings")
-	bool UseKeyToExitCover = false;
+	float CameraEdgeTargetOffset = 300;
 
 	UPROPERTY(EditDefaultsOnly,BlueprintReadWrite , Category="Cover|Settings")
 	bool UseInvertedCoverNormal = false;
+	
+	UPROPERTY(EditDefaultsOnly,BlueprintReadWrite , Category="Cover|Settings")
+	float SideTracerForward = 60;
 
 	UPROPERTY(EditDefaultsOnly,BlueprintReadWrite , Category="Cover|Settings")
-	bool AutomaticallyCoverJump = false;
+	float SideTracerRight = 20;
+
 
 
 	
@@ -97,27 +108,19 @@ public:
 	UAnimMontage* CrouchedCoverTurnLeft = nullptr;
 
 	
-	
-	UPROPERTY(EditDefaultsOnly,BlueprintReadWrite , Category="Cover|Montages|CoverToCover")
-	UAnimMontage* CoverToCoverRightMontage = nullptr;
-	
-	UPROPERTY(EditDefaultsOnly,BlueprintReadWrite , Category="Cover|Montages|CoverToCover")
-	UAnimMontage* CoverToCoverLeftMontage = nullptr;
-	
-	UPROPERTY(EditDefaultsOnly,BlueprintReadWrite , Category="Cover|Montages|CoverToCover")
-	UAnimMontage* CrouchedCoverToCoverRightMontage = nullptr;
-	
-	UPROPERTY(EditDefaultsOnly,BlueprintReadWrite , Category="Cover|Montages|CoverToCover")
-	UAnimMontage* CrouchedCoverToCoverLeftMontage = nullptr;
-
-	
 
 
+	//<<<<<<<<<<<<<<<<<<<<<<< Event Dispatcher >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 	UPROPERTY(BlueprintAssignable)
 	FOnCoverStateChanged OnCoverStateChanged;
 	
+	
+	//<<<<<<<<<<<<<<<<<<<<<< Public Pure Inline Functions >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 	UFUNCTION(BlueprintPure , Category="Cover")
 	FORCEINLINE bool GetIsInCover() const { return bInCover; }
+
+	UFUNCTION(BlueprintPure , Category="Cover")
+	FORCEINLINE bool GetCanCover() const { return bCanCover; }
 	
 	UFUNCTION(BlueprintPure , Category="Cover")
 	FORCEINLINE bool GetIsInCoverCrouched() const { return bInCoverCrouched; }
@@ -128,13 +131,29 @@ public:
 	UFUNCTION(BlueprintPure , Category="Cover")
 	FORCEINLINE TEnumAsByte<ECoverSide> GetCoverMovementDirection() const { return CoverDirection; }
 
+	UFUNCTION(BlueprintPure , Category="Cover")
+	FORCEINLINE TEnumAsByte<ECoverCameraSide> GetCoverCameraSide() const { return CoverCameraDirection; }
+	
+	UFUNCTION(BlueprintPure , Category="Cover")
+	FORCEINLINE float GetCoverCameraOffset() const { switch (CoverCameraDirection) { case CameraCenter: return 0; case CameraRightSide: return  CameraEdgeTargetOffset; case CameraLeftSide: return CameraEdgeTargetOffset * -1; default: return 0;} }
+	
+	UFUNCTION(BlueprintPure , Category="Cover")
+	FORCEINLINE bool GetIsInMontage() const { return IsInMontage; }
+	
+	
+	
 	UFUNCTION(BlueprintCallable,meta = (DisplayName = "IsInCoverExec",CompactNodeTitle = "IsInCover", ExpandEnumAsExecs = "OutPins") , Category="Cover")
 	FORCEINLINE bool GetIsInCoverExec(TEnumAsByte<EConditionOutput>& OutPins) {	if(bInCover) { OutPins = OutTrue; } else{ OutPins = OutIsFalse; } return bInCover; }
 
+
+	
 	
 	//<<<<<<<<<<<<<<<<<<<<<< Public Functions >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 	UFUNCTION(BlueprintCallable , Category="Cover")
 	void TakeCover();
+
+	UFUNCTION(BlueprintCallable , Category="Cover")
+	void ExitCover();
 	
 	UFUNCTION(BlueprintCallable , Category="Cover")
 	void ProcessRightMovement(const float rightInput);
@@ -169,6 +188,7 @@ private:
 	bool bLeftTracerHit;
 
 	TEnumAsByte<ECoverSide> CoverDirection;
+	TEnumAsByte<ECoverCameraSide> CoverCameraDirection;
 
 	bool bComponentActive = true;
 	bool bInCover;
@@ -178,9 +198,7 @@ private:
 	bool bInCoverCanMoveLeft;
 	bool bCanCover;
 
-	bool bJumpingCoverToCover;
-	bool bCanJumpToCoverLeft;
-	bool bCanJumpToCoverRight;
+	bool IsInMontage = false;
 
 	bool IsMoving = false;
 
@@ -203,23 +221,17 @@ private:
 	FVector PlayerUpFromRot;
 	
 	//<<<<<<<<<<<<<<<<<<< TRACERS >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-	void CoverJumpRightTracer();
-	void CoverJumpLeftTracer();
 	void SideTracers();
 	void InCoverHeightCheck();
 	void ForwardTracer();
 
-	void CoverHeightTrace(FVector& Start , FVector& End);
-	void CoverJumpRightTraceLocation(FVector& Start , FVector& End);
-	void CoverJumpLeftTraceLocation(FVector& Start , FVector& End);
+
 
 	//<<<<<<<<<<<<<<<<<<<<< COVER >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-	void CoverToCoverJump();
-	void ExitCover();
-	void InCoverExitToGrab();
+
 
 	FVector FindCoverLocation() const;
-	FVector FindCoverJumpLocation();
+
 
 	//<<<<<<<<<<<<<<<<<<<<< CAMERA >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 	void CameraEdgeZoom(const ECoverSide coverSide);
@@ -233,7 +245,6 @@ private:
 	//<<<<<<<<<<<<<<<<<<<<<< Tick Cover Movement >>>>>>>>>>>>>>>>>>>>>>>>>
 	void MoveCoverRight();
 	void MoveCoverLeft();
-	void MoveInCover();
 	void StorePlayerValues();
 
 	//<<<<<<<<<<<<<<<<<<<<<< Animation >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
@@ -241,7 +252,11 @@ private:
 	void PlayMontageBasedOnDirection(UAnimMontage* RightSideMontage , UAnimMontage* LeftSideMontage);
 	void PlayMontageBasedOnPose(UAnimMontage* IdleMontage , UAnimMontage* CrouchMontage);
 	void PlayMontageBasedOnDirectionAndPose(UAnimMontage* IdleRightSideMontage , UAnimMontage* IdleLeftSideMontage , UAnimMontage* CrouchRightSideMontage , UAnimMontage* CrouchLeftSideMontage);
-	
+
+	UFUNCTION()
+	void OnMontageBegin(UAnimMontage* MontageToPlay);
+	UFUNCTION()
+	void OnMontageEnded(UAnimMontage* Montage, bool bInterrupted);
 };
 
 
