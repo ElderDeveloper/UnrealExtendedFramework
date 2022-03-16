@@ -3,12 +3,11 @@
 #pragma once
 
 #include "CoreMinimal.h"
+/*
 #include "AnimGraphNode_ModifyBone.h"
 #include "EEAnimNode_LookAt.generated.h"
 
-/**
- * 
- */
+
 
 UCLASS()
 class UNREALEXTENDEDEDITOR_API UEEAnimNode_LookAt : public UAnimGraphNode_ModifyBone
@@ -25,3 +24,4 @@ public:
 	virtual FText GetTooltipText() const override;
 	// End of UEdGraphNode interface
 };
+*/

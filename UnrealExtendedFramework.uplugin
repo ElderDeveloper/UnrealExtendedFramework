@@ -17,8 +17,8 @@
 	"Modules": [
 		{
 			"Name": "UnrealExtendedEditor",
-			"Type": "Runtime",
-			"LoadingPhase": "PreLoadingScreen"
+			"Type": "Editor",
+			"LoadingPhase": "Default"
 		},
 		{
 			"Name": "UnrealExtendedFramework",
@@ -32,6 +32,11 @@
 		},
 		{
 			"Name": "UnrealExtendedSettings",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		},
+				{
+			"Name": "UnrealExtendedSteam",
 			"Type": "Runtime",
 			"LoadingPhase": "Default"
 		},
@@ -52,6 +57,16 @@
 		{
 			"Name": "Niagara",
 			"Enabled": true
+		},
+		{
+			"Name": "OnlineSubsystem",
+			"Enabled": true
+		},
+		{
+			"Name": "OnlineSubsystemUtils",
+			"Enabled": true
 		}
+
+		
 	]
 }

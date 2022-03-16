@@ -2,7 +2,6 @@
 
 
 #include "EBHttpSubsystem.h"
-
 #include "HttpModule.h"
 #include "Interfaces/IHttpResponse.h"
 
@@ -52,7 +51,39 @@ void UEBHttpSubsystem::CreateGetRequest(FString Api, TMemFunPtrType<false, UEBHt
 	Request->ProcessRequest();
 }
 
+void UEBHttpSubsystem::SendHttpRequest(const FString& Url, const FString& RequestContent)
+{
+	//Creating a request using UE4's Http Module
+	TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request = FHttpModule::Get().CreateRequest();
 
+	//Binding a function that will fire when we receive a response from our request
+	Request->OnProcessRequestComplete().BindUObject(this, &UEBHttpSubsystem::OnResponseReceived);
+
+	//This is the url on which to process the request
+	Request->SetURL(Url);
+	//We're sending data so set the Http method to POST
+	Request->SetVerb("POST");
+
+	//Tell the host that we're an unreal agent
+	Request->SetHeader(TEXT("User-Agent"), "X-UnrealEngine-Agent");
+
+	//In case you're sending json you can also make use of headers using the following command
+	//Request->SetHeader("Content-Type", TEXT("application/json"));
+	//Use the following command in case you want to send a string value to the server
+	//Request->SetContentAsString("Hello kind server.");
+
+	//Send the request
+	Request->ProcessRequest();
+}
+
+void UEBHttpSubsystem::OnResponseReceived(FHttpRequestPtr Request, FHttpResponsePtr Response, bool bWasSuccessful)
+{
+	if(bWasSuccessful)
+	{
+		GLog->Log("Hey we received the following response!");
+		GLog->Log(Response->GetContentAsString());
+	}
+}
 
 
 FString UEBHttpSubsystem::JsonString(TArray<FString> StringArray)

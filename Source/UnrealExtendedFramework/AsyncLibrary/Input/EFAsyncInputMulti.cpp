@@ -68,7 +68,7 @@ void UEFAsyncInputMulti::PassTime()
 	}
 	Handle.Invalidate();
 	SetReadyToDestroy();
-	MarkPendingKill();
+	ConditionalBeginDestroy();
 	
 }
 

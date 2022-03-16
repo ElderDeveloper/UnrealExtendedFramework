@@ -60,5 +60,5 @@ void UEGAAsyncAttributeChanged::EndTask()
 		}
 	}
 	SetReadyToDestroy();
-	MarkPendingKill();
+	ConditionalBeginDestroy();
 }

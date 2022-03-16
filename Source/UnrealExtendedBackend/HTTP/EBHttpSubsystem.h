@@ -19,6 +19,13 @@ public:
 	void CreateGetRequest(FString Api, TMemFunPtrType<false, UEBHttpSubsystem, void(FHttpRequestPtr, FHttpResponsePtr, bool)>::Type InFunc);
 
 
+	/*Sends an http request*/
+	UFUNCTION(BlueprintCallable, Category = Http)
+	void SendHttpRequest(const FString& Url, const FString& RequestContent);
+
+	/*Called when the server has responded to our http request*/
+	void OnResponseReceived(FHttpRequestPtr Request, FHttpResponsePtr Response, bool bWasSuccessful);
+	
 	UFUNCTION(BlueprintCallable, Category = Http)
 	FString JsonString(TArray<FString> StringArray);
 };

@@ -29,7 +29,7 @@ void UEFEQSQueryAsync::OnQueryFinished(UEnvQueryInstanceBlueprintWrapper* QueryI
 void UEFEQSQueryAsync::DestroyAsync()
 {
 	SetReadyToDestroy();
-	MarkPendingKill();
+	ConditionalBeginDestroy();
 }
 
 void UEFEQSQueryAsync::Activate()

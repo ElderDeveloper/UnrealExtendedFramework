@@ -58,10 +58,12 @@ void UUEFArrayLibrary::InsertionSortFloatArray(TArray<float> FloatArray, TArray<
 
 void UUEFArrayLibrary::Generic_SortUserDefinedStructArray(void* TargetArray, const FArrayProperty* ArrayProp,UObject* OwnerObject, UFunction* SortRuleFunc)
 {
+	
 	if (!SortRuleFunc || !OwnerObject || !TargetArray)
 	{
 		return;
 	}
+	
 	UBoolProperty* ReturnParam = CastField<UBoolProperty>(SortRuleFunc->GetReturnProperty());
 	if (!ReturnParam)
 	{
@@ -141,7 +143,7 @@ TArray<float> UUEFArrayLibrary::IntArrayToFloatArray(UPARAM(ref) const TArray<in
 }
 
 
-void UUEFArrayLibrary::ExtendedIsValidIndex(const TArray<FProperty*>& Array, const int32 index, TEnumAsByte<EUEFConditionOutput>& OutPins, UProperty*& Item)
+void UUEFArrayLibrary::ExtendedIsValidIndex(const TArray<FProperty*>& Array, const int32 index, TEnumAsByte<EFConditionOutput>& OutPins, UProperty*& Item)
 {
 	if (Array.IsValidIndex(index))
 	{
@@ -152,7 +154,7 @@ void UUEFArrayLibrary::ExtendedIsValidIndex(const TArray<FProperty*>& Array, con
 	OutPins = UEF_False;
 }
 
-void UUEFArrayLibrary::IsArrayNotEmpty(const TArray<FProperty*>& Array, TEnumAsByte<EUEFConditionOutput>& OutPins)
+void UUEFArrayLibrary::IsArrayNotEmpty(const TArray<FProperty*>& Array, TEnumAsByte<EFConditionOutput>& OutPins)
 {
 	if (Array.IsValidIndex(0))
 	{

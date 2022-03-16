@@ -34,6 +34,7 @@ public class UnrealExtendedFramework : ModuleRules
 				"NavigationSystem",
 				"GameplayAbilities",
 				"GameplayTasks",
+				"XmlParser"
 				// ... add other public dependencies that you statically link with here ...
 			}
 			);
@@ -48,6 +49,10 @@ public class UnrealExtendedFramework : ModuleRules
 				"SlateCore",
 				"GameplayTags",
 				"GameplayTasks",
+				"JsonUtilities",
+				"Json",
+				"XmlParser",
+				"ApplicationCore", "AnimGraphRuntime"
 				// ... add private dependencies that you statically link with here ...	
 			}
 			);

@@ -28,8 +28,7 @@ public class UnrealExtendedEditor : ModuleRules
 				"Core",
 				"CoreUObject", 
 				"Engine", 
-				"AnimGraphRuntime",
-				"BlueprintGraph",
+				//"AnimGraphRuntime",
 				"Projects"
 				// ... add other public dependencies that you statically link with here ...
 			}
@@ -43,9 +42,10 @@ public class UnrealExtendedEditor : ModuleRules
 				"Engine",
 				"Slate",
 				"SlateCore",
-				"GraphEditor",
-				"PropertyEditor", 
-				"AnimGraph",
+				//"BlueprintGraph",
+				//"GraphEditor",
+				//"PropertyEditor", 
+				//"AnimGraph",
 				"Projects"
 				// ... add private dependencies that you statically link with here ...	
 			}
@@ -63,7 +63,7 @@ public class UnrealExtendedEditor : ModuleRules
 		PrivateIncludePathModuleNames.AddRange(
 			new string[] {
 				"SkeletonEditor",
-				"AnimationBlueprintEditor",
+				//"AnimationBlueprintEditor",
 			}
 		);
 	}

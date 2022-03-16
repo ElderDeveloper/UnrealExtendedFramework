@@ -48,6 +48,11 @@ void UEFAsyncInputHoldName::EFEndInputActionName(const UObject* WorldContextObje
 	{
 		if(const auto Action = InputHoldsName.Find(ActionName))
 		{
+			if (!Action->Get())
+			{
+				InputHoldsName.Remove(ActionName);
+				return;
+			}
 			if (Action->Get()->isHold)
 			{
 				Action->Get()->BroadcastHold();
@@ -73,7 +78,7 @@ void UEFAsyncInputHoldName::StopAction()
 	}
 	Handle.Invalidate();
 	SetReadyToDestroy();
-	MarkPendingKill();
+	ConditionalBeginDestroy();
 }
 
 

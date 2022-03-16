@@ -3,7 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "UnrealExtendedFramework/ExtendedFramework/UEFDataEnum.h"
+#include "UnrealExtendedFramework/Data/EFEnums.h"
 #include "UObject/Object.h"
 #include "UEFArrayLibrary.generated.h"
 
@@ -100,10 +100,10 @@ public:
 	
 	// <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< Condition >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 	UFUNCTION(BlueprintCallable, meta=(DisplayName = "Get Value If Index Valid", ArrayParm = "Array", ArrayTypeDependentParams = "Item" , ExpandEnumAsExecs = "OutPins"), Category="Math|Library")
-	static void ExtendedIsValidIndex(const TArray<UProperty*>& Array, const int32 index, TEnumAsByte<EUEFConditionOutput>& OutPins, UProperty*& Item );
+	static void ExtendedIsValidIndex(const TArray<UProperty*>& Array, const int32 index, TEnumAsByte<EFConditionOutput>& OutPins, UProperty*& Item );
 
 	UFUNCTION(BlueprintCallable, meta=(DisplayName = "Is Array Not Empty", CompactNodeTitle = "Is Array Not Empty", ArrayParm = "Array" , ExpandEnumAsExecs = "OutPins"), Category="Math|Library")
-	static void IsArrayNotEmpty(const TArray<UProperty*>& Array, TEnumAsByte<EUEFConditionOutput>& OutPins );
+	static void IsArrayNotEmpty(const TArray<UProperty*>& Array, TEnumAsByte<EFConditionOutput>& OutPins );
 	
 
 };

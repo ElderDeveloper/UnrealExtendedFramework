@@ -23,6 +23,6 @@ class UNREALEXTENDEDGAMEPLAY_API IEGTargetingInterface
 	// Add interface functions to this class. This is the class that will be inherited to implement this interface.
 	public:
 
-		UFUNCTION(BlueprintCallable, BlueprintNativeEvent, Category = "Target System")
-		bool IsTargetable() const;
+	UFUNCTION(BlueprintCallable, BlueprintNativeEvent, Category = "Target System")
+	bool IsTargetable() const;
 };

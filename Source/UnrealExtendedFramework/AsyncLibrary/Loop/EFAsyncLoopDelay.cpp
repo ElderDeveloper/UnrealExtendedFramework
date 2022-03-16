@@ -47,5 +47,5 @@ void UEFAsyncLoopDelay::StopLoop()
 	}
 	Handle.Invalidate();
 	SetReadyToDestroy();
-	MarkPendingKill();
+	ConditionalBeginDestroy();
 }

@@ -9,26 +9,85 @@
 
 
 UENUM(BlueprintType,Blueprintable)
-enum EHitDirection
+enum EFHitDirection
 {
 	No , Front , Back , Left , Right
 };
 
-UENUM()
-enum EConditionOutput
-{
-	OutTrue,
-	OutIsFalse
-};
 
-UENUM()
-enum EButtonAction
+
+UENUM(BlueprintType , Blueprintable)
+enum EFButtonAction
 {
 	Press,
 	Release
 };
 
-#define PRINT_STRING(Time , Color , String) 	GEngine->AddOnScreenDebugMessage(-1, Time , FColor::Color , String);
+UENUM()
+enum EFExtendedLoopOutput
+{
+	ExtendedLoop,
+	ExtendedComplete
+};
+
+UENUM(BlueprintType)
+enum EFConditionOutput
+{
+	UEF_True,
+	UEF_False
+};
+
+
+
+UENUM(BlueprintType , Blueprintable)
+enum EFProjectDirectory
+{
+	UEF_ProjectDir,
+	UEF_ProjectConfigDir,
+	UEF_ProjectContentDir,
+	UEF_ProjectIntermediateDir,
+	UEF_ProjectSavedDir,
+	UEF_ProjectPluginsDir,
+	UEF_ProjectLogDir,
+	UEF_ProjectModsDir
+};
+
+
+UENUM(BlueprintType , Blueprintable)
+enum EFApplyDamageType
+{
+	UEF_ApplyDamage,
+	UEF_ApplyPointDamage,
+	UEF_ApplyRadialDamage,
+	UEF_ApplyRadialDamageFalloff,
+};
+
+UENUM(BlueprintType , Blueprintable)
+enum EFDamageDirection
+{
+	UEF_DamageForward		UMETA(DisplayName = "UEF_DamageForward"),
+	UEF_DamageBackward		UMETA(DisplayName = "UEF_DamageBackward"),
+	UEF_DamageLeft			UMETA(DisplayName = "UEF_DamageLeft"),
+	UEF_DamageRight			UMETA(DisplayName = "UEF_DamageRight")
+};
+
+
+UENUM(BlueprintType , Blueprintable)
+enum EFPerceptionFaction
+{
+	Hostile,
+	Ally,
+	Neutral
+};
+
+UENUM(BlueprintType , Blueprintable)
+enum EFPerceptionState
+{
+	EFP_Idle,
+	EFP_VaguelySensed,
+	EFP_Warned,
+	EFP_Alerted
+};
 
 UCLASS()
 class UEFEnums : public UObject

@@ -71,7 +71,7 @@ void UEFAsyncInputHold::StopAction()
 	}
 	Handle.Invalidate();
 	SetReadyToDestroy();
-	MarkPendingKill();
+	ConditionalBeginDestroy();
 }
 
 

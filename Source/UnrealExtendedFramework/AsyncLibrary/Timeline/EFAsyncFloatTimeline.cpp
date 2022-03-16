@@ -183,7 +183,7 @@ void UEFAsyncFloatTimeline::InternalCompleted()
 		WorldContext->GetWorld()->GetTimerManager().ClearTimer(TimerHandle);
 		TimerHandle.Invalidate();
 		SetReadyToDestroy();
-		MarkPendingKill();
+		ConditionalBeginDestroy();
 		if (const auto Action = EFFloatTimelines.Find(ExtendedTimelineName) )
 		{
 			EFFloatTimelines.Remove(ExtendedTimelineName);

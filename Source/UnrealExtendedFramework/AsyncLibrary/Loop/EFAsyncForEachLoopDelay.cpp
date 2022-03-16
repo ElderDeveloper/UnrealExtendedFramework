@@ -33,7 +33,7 @@ void UEFAsyncForEachLoopDelay::InternalCompleted()
 		WorldContext->GetWorld()->GetTimerManager().ClearTimer(TimerHandle);
 		TimerHandle.Invalidate();
 		SetReadyToDestroy();
-		MarkPendingKill();
+		ConditionalBeginDestroy();
 	}
 }
 

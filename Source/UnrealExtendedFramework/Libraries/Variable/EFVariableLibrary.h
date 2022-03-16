@@ -100,6 +100,12 @@ class UNREALEXTENDEDFRAMEWORK_API UEFVariableLibrary : public UBlueprintFunction
 
 
 
+	// <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< MULTIPLY OPERATIONS >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+
+	UFUNCTION(BlueprintPure,meta=(DisplayName = "Multiply Vector With Float", CompactNodeTitle = "V*F"),  Category="Math|Integer")
+	static FVector VectorMultiplyFloat( FVector Vector , float Value = 1 ) { return Vector * Value ; }
+	
 	
 	// <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< STRING >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 

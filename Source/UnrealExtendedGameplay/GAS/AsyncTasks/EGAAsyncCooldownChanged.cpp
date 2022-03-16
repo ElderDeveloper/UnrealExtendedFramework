@@ -47,7 +47,7 @@ void UEGAAsyncCooldownChanged::EndTask()
 	}
 
 	SetReadyToDestroy();
-	MarkPendingKill();
+	ConditionalBeginDestroy();
 }
 
 void UEGAAsyncCooldownChanged::OnActiveGameplayEffectAddedCallback(UAbilitySystemComponent * Target, const FGameplayEffectSpec & SpecApplied, FActiveGameplayEffectHandle ActiveHandle)

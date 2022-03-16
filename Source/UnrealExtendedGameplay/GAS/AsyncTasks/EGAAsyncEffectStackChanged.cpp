@@ -37,7 +37,7 @@ void UEGAAsyncEffectStackChanged::EndTask()
 	}
 
 	SetReadyToDestroy();
-	MarkPendingKill();
+	ConditionalBeginDestroy();
 }
 
 void UEGAAsyncEffectStackChanged::OnActiveGameplayEffectAddedCallback(UAbilitySystemComponent* Target,

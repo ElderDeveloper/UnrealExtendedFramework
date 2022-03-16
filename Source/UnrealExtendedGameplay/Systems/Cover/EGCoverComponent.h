@@ -1,6 +1,6 @@
 ﻿#include "Components/ActorComponent.h"
 #include "UnrealExtendedFramework/Data/EFTraceData.h"
-#include "UnrealExtendedFramework/ExtendedFramework/UEFDataEnum.h"
+#include "UnrealExtendedFramework/Data/EFEnums.h"
 #include "EGCoverComponent.generated.h"
 
 
@@ -138,7 +138,7 @@ public:
 	
 	
 	UFUNCTION(BlueprintCallable,meta = (DisplayName = "IsInCoverExec",CompactNodeTitle = "IsInCover", ExpandEnumAsExecs = "OutPins") , Category="Cover")
-	FORCEINLINE bool GetIsInCoverExec(TEnumAsByte<EUEFConditionOutput>& OutPins) {	if(bInCover) { OutPins = UEF_True; } else{ OutPins = UEF_False; } return bInCover; }
+	FORCEINLINE bool GetIsInCoverExec(TEnumAsByte<EFConditionOutput>& OutPins) {	bInCover?  OutPins = UEF_True : OutPins = UEF_False; return bInCover; }
 
 
 	

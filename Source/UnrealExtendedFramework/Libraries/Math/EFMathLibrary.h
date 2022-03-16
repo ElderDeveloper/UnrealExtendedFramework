@@ -22,11 +22,17 @@ class UNREALEXTENDEDFRAMEWORK_API UEFMathLibrary : public UBlueprintFunctionLibr
 	UFUNCTION(BlueprintPure)
 	static void GetAngleBetweenActors(AActor* From, AActor* To , float& Yaw , float& Pitch);
 
-
+	UFUNCTION(BlueprintPure)
+	static FRotator GetRotationBetweenVectors(const FVector& From, const FVector& To, const FRotator PlusRotator = FRotator::ZeroRotator);
+	
 
 	
 	
 	// <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< DISTANCE >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+	/**
+	 * Check Distance Between Two Actors
+	 */
 	UFUNCTION(BlueprintPure)
 	static float GetDistanceBetweenActors(const AActor* From,const AActor* To);
 
@@ -68,11 +74,17 @@ class UNREALEXTENDEDFRAMEWORK_API UEFMathLibrary : public UBlueprintFunctionLibr
 	UFUNCTION(BlueprintPure)
 	static TEnumAsByte<EHitDirection> CalculateHitDirectionActors (AActor* From, AActor* To, float& Angle);
 	*/
-	UFUNCTION(BlueprintPure)
-	static FVector GetComponentForwardVectorPlus(USceneComponent* Component , float Distance , FVector& CurrentLocation);
+	UFUNCTION(BlueprintPure  , Category="Math|Location" )
+	static UPARAM(DisplayName = "ForwardLocation") FVector GetComponentForwardVectorPlus(USceneComponent* Component , float Distance , FVector& CurrentLocation);
 	
-	UFUNCTION(BlueprintPure)
-	static void GetActorForwardVectorPlus(AActor* Actor , float Distance , FVector& CurrentLocation , FVector& ForwardLocation);
+	UFUNCTION(BlueprintPure, meta=(DefaultToSelf = Actor) , Category="Math|Location")
+	static UPARAM(DisplayName = "ForwardLocation") FVector GetActorForwardVectorPlus(AActor* Actor , float Distance , FVector& CurrentLocation);
+
+	UFUNCTION(BlueprintPure, meta=(DefaultToSelf = Actor) , Category="Math|Location")
+	static UPARAM(DisplayName = "ForwardLocation") FVector GetActorForwardVectorPlusWithRotation(AActor* Actor , float Distance , FRotator PlusRotator , FVector& CurrentLocation);
+
+	UFUNCTION(BlueprintPure, Category="Math|Location")
+	static UPARAM(DisplayName = "ForwardLocation") FVector GetComponentForwardVectorPlusWithRotation(USceneComponent* Component , float Distance , FRotator PlusRotator , FVector& CurrentLocation);
 
 	/*
 	**Calculates a forward location from given actors target location like a spine points 
@@ -211,4 +223,11 @@ class UNREALEXTENDEDFRAMEWORK_API UEFMathLibrary : public UBlueprintFunctionLibr
 
 	UFUNCTION(BlueprintPure ,meta=(DisplayName = "Map Range Clamp 2D") , Category="Math")
 	static FVector2D MapRangeClampVector2D(const FVector2D Value , const FVector2D InRangeA ,  const FVector2D InRangeB , const FVector2D OutRangeA , const FVector2D OutRangeB );
+
+
+
+
+	//<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< ANIMATION >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+	UFUNCTION(BlueprintPure ,meta=(DisplayName = "Calculate Speed And Direction") , Category="Math")
+	static void CalculateSpeedAndDirection(UAnimInstance* AnimInstance , float& Speed , float& Direction);
 };

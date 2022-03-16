@@ -29,7 +29,7 @@ public class UnrealExtendedGameplay : ModuleRules
 				"Engine",
 				"InputCore",
 				"EngineSettings",
-				"EditorSubsystem",
+				//"EditorSubsystem",
 				"Slate",
 				"SlateCore",
 				"UMG",

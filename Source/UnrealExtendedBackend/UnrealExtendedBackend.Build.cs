@@ -1,6 +1,8 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
+
 using UnrealBuildTool;
+
 
 public class UnrealExtendedBackend : ModuleRules
 {
@@ -29,17 +31,16 @@ public class UnrealExtendedBackend : ModuleRules
 				"Engine",
 				"InputCore",
 				"EngineSettings",
-				"EditorSubsystem",
+				//"EditorSubsystem",
 				"Slate",
 				"SlateCore",
 				"UMG",
 				"Networking" ,
-				"Http", 
+				"HTTP", 
 				"Json",
 				"JsonUtilities" ,
 				"Sockets"
-
-
+				
 				// ... add other public dependencies that you statically link with here ...
 			}
 			);
@@ -48,13 +49,13 @@ public class UnrealExtendedBackend : ModuleRules
 		PrivateDependencyModuleNames.AddRange(
 			new string[]
 			{
-			
 				"CoreUObject",
 				"Engine",
 				"Slate",
 				"SlateCore",
 				"JsonUtilities",
 				"Json",
+				"UnrealExtendedFramework"
 				// ... add private dependencies that you statically link with here ...	
 			}
 			);

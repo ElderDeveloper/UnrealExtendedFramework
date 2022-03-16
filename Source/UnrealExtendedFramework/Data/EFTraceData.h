@@ -155,6 +155,14 @@ public:
 	 */
 	UPhysicalMaterial* GetHitPhysMaterial() const { return HitResult.PhysMaterial.Get();}
 	
+	/** Returns All GetActor() From Hit Result  */
+	TArray<AActor*> GetAllActorsFromHitArray() const
+	{
+		TArray<AActor*> Array;
+		for (const auto i : HitResults) Array.Add(i.GetActor());
+		return Array;
+	}
+	
 };
 
 
@@ -221,6 +229,14 @@ public:
 		Start = FVector::ZeroVector;
 		End  = FVector::ZeroVector;
 	}
+
+	FSphereTraceStruct( float radius)
+	{
+		Start = FVector::ZeroVector;
+		End  = FVector::ZeroVector;
+		Radius = radius;
+	}
+	
 	FSphereTraceStruct(FVector start , FVector end , float radius )
 	{
 		Start =start;
@@ -289,6 +305,14 @@ public:
 	 * @note Must set bReturnPhysicalMaterial on the swept PrimitiveComponent or in the query params for this to be returned.
 	 */
 	UPhysicalMaterial* GetHitPhysMaterial() const { return HitResult.PhysMaterial.Get();}
+
+	/** Returns All GetActor() From Hit Result  */
+	TArray<AActor*> GetAllActorsFromHitArray() const
+	{
+		TArray<AActor*> Array;
+		for (const auto i : HitResults) Array.Add(i.GetActor());
+		return Array;
+	}
 };
 
 
@@ -355,6 +379,15 @@ public:
 	FCapsuleTraceStruct()
 	{
 	}
+	
+	FCapsuleTraceStruct( float radius , float halfHeight)
+	{
+		Start = FVector::ZeroVector;
+		End  = FVector::ZeroVector;
+		Radius = radius;
+		HalfHeight = halfHeight;
+	}
+	
 	FCapsuleTraceStruct(FVector start , FVector end , float radius , float halfHeight )
 	{
 		Start =start;
@@ -424,6 +457,14 @@ public:
 	 * @note Must set bReturnPhysicalMaterial on the swept PrimitiveComponent or in the query params for this to be returned.
 	 */
 	UPhysicalMaterial* GetHitPhysMaterial() const { return HitResult.PhysMaterial.Get();}
+
+	/** Returns All GetActor() From Hit Result  */
+	TArray<AActor*> GetAllActorsFromHitArray() const
+	{
+		TArray<AActor*> Array;
+		for (const auto i : HitResults) Array.Add(i.GetActor());
+		return Array;
+	}
 };
 
 
@@ -452,7 +493,7 @@ public:
 	FVector End = FVector::ZeroVector ;
 	
 	UPROPERTY(EditAnywhere,BlueprintReadWrite)
-	FVector HalfSize = FVector::ZeroVector;
+	FVector HalfSize = FVector(32,32,32);
 
 	UPROPERTY(EditAnywhere,BlueprintReadWrite)
 	FRotator Orientation = FRotator::ZeroRotator;
@@ -491,6 +532,13 @@ public:
 	{
 		
 	}
+
+	FBoxTraceStruct(FVector halfSize , FRotator orientation )
+	{
+		HalfSize = halfSize;
+		Orientation = orientation;
+	}
+	
 	FBoxTraceStruct(FVector start , FVector end , FVector halfSize , FRotator orientation )
 	{
 		Start =start;
@@ -560,7 +608,15 @@ public:
 	 * @note Must set bReturnPhysicalMaterial on the swept PrimitiveComponent or in the query params for this to be returned.
 	 */
 	UPhysicalMaterial* GetHitPhysMaterial() const { return HitResult.PhysMaterial.Get();}
-	
+
+
+	/** Returns All GetActor() From Hit Result  */
+	TArray<AActor*> GetAllActorsFromHitArray() const
+	{
+		TArray<AActor*> Array;
+		for (const auto i : HitResults) Array.Add(i.GetActor());
+		return Array;
+	}
 };
 
 

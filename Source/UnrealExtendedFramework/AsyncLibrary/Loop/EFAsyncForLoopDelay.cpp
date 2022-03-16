@@ -32,7 +32,7 @@ void UEFAsyncForLoopDelay::InternalCompleted()
 	}
 	TimerHandle.Invalidate();
 	SetReadyToDestroy();
-	MarkPendingKill();
+	ConditionalBeginDestroy();
 }
 
 

@@ -33,7 +33,16 @@ public:
 				WidgetTree->RootWidget = RootWidget;
 				TSharedRef<SWidget> Widget = Super::RebuildWidget();
 				RootWidget->SetBrushFromTexture(Image);
-				RootWidget->SetBrushSize(ImageSize);
+				
+				#if ENGINE_MAJOR_VERSION != 5
+					RootWidget->SetBrushSize(ImageSize);
+				#endif
+
+				#if ENGINE_MAJOR_VERSION == 5
+					RootWidget->SetDesiredSizeOverride(ImageSize);
+				#endif
+
+				
 				UE_LOG(LogBlueprint,Log,TEXT("UEExtended Targeting Widget Initialized"));
 				return;
 			}

@@ -3,6 +3,8 @@
 
 #include "EFMathLibrary.h"
 
+#include "KismetAnimationLibrary.h"
+#include "KismetAnimationLibrary.h"
 #include "Blueprint/WidgetLayoutLibrary.h"
 #include "Kismet/GameplayStatics.h"
 #include "Kismet/KismetMathLibrary.h"
@@ -28,12 +30,14 @@ void UEFMathLibrary::GetAngleBetweenActors(AActor* From, AActor* To, float& Yaw,
 	}
 }
 
-
-
-
+FRotator UEFMathLibrary::GetRotationBetweenVectors(const FVector& From, const FVector& To, const FRotator PlusRotator)
+{
+	return UKismetMathLibrary::FindLookAtRotation(From,To)+PlusRotator;
+}
 
 
 // <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< DISTANCE >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
 float UEFMathLibrary::GetDistanceBetweenActors(const AActor* From, const AActor* To)
 {
 	if (IsValid(From) && IsValid(To))
@@ -200,16 +204,39 @@ FVector UEFMathLibrary::GetComponentForwardVectorPlus(USceneComponent* Component
 	return FVector::ZeroVector;
 }
 
+FVector UEFMathLibrary::GetComponentForwardVectorPlusWithRotation(USceneComponent* Component, float Distance,FRotator PlusRotator, FVector& CurrentLocation)
+{
+	if (Component)
+	{
+		CurrentLocation = Component->GetComponentLocation();
+		const FRotator Forward = Component->GetComponentRotation() + PlusRotator ;
+		return  CurrentLocation + Forward.Vector() *Distance;
+	}
+	return FVector::ZeroVector;
+}
 
-
-void UEFMathLibrary::GetActorForwardVectorPlus(AActor* Actor, float Distance, FVector& CurrentLocation,FVector& ForwardLocation)
+FVector UEFMathLibrary::GetActorForwardVectorPlus(AActor* Actor, float Distance, FVector& CurrentLocation)
 {
 	if (Actor)
 	{
 		CurrentLocation = Actor->GetActorLocation();
-		ForwardLocation= CurrentLocation + Actor->GetActorForwardVector()*Distance;
+		return CurrentLocation + Actor->GetActorForwardVector()*Distance;
 	}
+	return  FVector::ZeroVector;
 }
+
+FVector UEFMathLibrary::GetActorForwardVectorPlusWithRotation(AActor* Actor, float Distance, FRotator PlusRotator,FVector& CurrentLocation)
+{
+	if (Actor)
+	{
+		CurrentLocation = Actor->GetActorLocation();
+		const FRotator Forward = Actor->GetActorRotation() + PlusRotator ;
+		return  CurrentLocation + Forward.Vector() *Distance;
+	}
+	return FVector::ZeroVector;
+}
+
+
 
 
 FVector UEFMathLibrary::FCalculateDirectionalLocation(const FVector targetLocation,const FVector startPosition, float distance, bool forward)
@@ -433,4 +460,23 @@ FVector2D UEFMathLibrary::MapRangeClampVector2D(const FVector2D Value, const FVe
 		UKismetMathLibrary::MapRangeClamped(Value.X , InRangeA.X,InRangeB.X , OutRangeA.X,OutRangeB.X),
 		UKismetMathLibrary::MapRangeClamped(Value.Y , InRangeA.Y,InRangeB.Y , OutRangeA.Y,OutRangeB.Y)
 	);
+}
+
+void UEFMathLibrary::CalculateSpeedAndDirection(UAnimInstance* AnimInstance, float& Speed, float& Direction)
+{
+	if (!AnimInstance)
+	{	Speed = 0; Direction = 0; return;	}
+
+	if (const auto Pawn = AnimInstance->TryGetPawnOwner())
+	{
+		Speed = Pawn->GetVelocity().Size();
+		
+			#if ENGINE_MAJOR_VERSION !=5
+					Direction = AnimInstance->CalculateDirection(Pawn->GetVelocity(),Pawn->GetActorRotation());
+			#endif
+				
+			#if ENGINE_MAJOR_VERSION == 5
+					Direction = UKismetAnimationLibrary::CalculateDirection(Pawn->GetVelocity(),Pawn->GetActorRotation());
+			#endif
+	}
 }
