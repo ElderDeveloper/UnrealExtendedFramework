@@ -36,6 +36,17 @@ public:
 	UPROPERTY(EditAnywhere , BlueprintReadWrite, meta=(BindWidget))
 	UTextBlock* TextBlock;
 
+
+	FTimerHandle SubtitleHandle;
+
+	UFUNCTION()
+	void ReceiveSubtitleRequest(FString Subtitle , float Duration);
+
+	void EraseSubtitle();
+
+	void InitializeSubtitle();
+
+	
 	virtual void NativeConstruct() override;
 	
 };

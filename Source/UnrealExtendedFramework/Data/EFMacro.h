@@ -7,7 +7,7 @@
 
 #define CREATE_COMPONENT(Component , Class , Name) Component = CreateDefaultSubobject<Class>(TEXT(Name));
 
-#define ELSE_LOG(CategoryName, Verbosity, Format) 	else  UE_LOG(CategoryName,Verbosity,Format)
+#define ELSE_LOG(CategoryName, Verbosity, Format) 	else { UE_LOG(CategoryName,Verbosity,Format); }
 
 
 #define CREATE_TIMER(Handle,Object,Function,Time,Loop) if(GetWorld()) GetWorld()->GetTimerManager().SetTimer(Handle,Object,Function,Time,Loop)

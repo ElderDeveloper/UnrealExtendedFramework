@@ -14,7 +14,6 @@ class UNREALEXTENDEDSETTINGS_API UESSubtitleLanguageSave : public USaveGame
 
 public:
 
+	UPROPERTY(BlueprintReadOnly)
 	FExtendedSubtitleLanguageSettings CurrentLanguage;
-	int32 SelectedLanguageIndex = 0;
-	
 };

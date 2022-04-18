@@ -8,18 +8,17 @@
 
 class AESSubtitleAsset;
 
-static FExtendedSubtitleLanguageSettings SESubtitleLanguage;
-static int32 SESubtitleIndex = 0;
-static const FString SESubtitleSaveSlot = "ExtendedSubtitleSave";
-static TMap<FGameplayTag , FExtendedSubtitleLanguageSettings > SESubtitleLanguages;
+
+
 
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnExecuteSubtitle , FString , Subtitle , float , Duration );
 
+DECLARE_LOG_CATEGORY_EXTERN(LogExtendedSubtitle, Log, All);
+DECLARE_LOG_CATEGORY_EXTERN(LogExtendedSubtitleError, Error, All);
+DECLARE_LOG_CATEGORY_EXTERN(LogExtendedSubtitleWarning, Warning, All);
 
-static FOnExecuteSubtitle OnExecuteSubtitle;
-
-UCLASS(Config = DefaultSubtitlePlugin)
+UCLASS(Config = "DefaultSubtitlePlugin")
 class UNREALEXTENDEDSETTINGS_API UESSubtitleSubsystem : public UGameInstanceSubsystem
 {
 	GENERATED_BODY()
@@ -29,7 +28,8 @@ public:
 	
 	UPROPERTY(Config , EditAnywhere ,  Category="Subtitles")
 	TMap<FGameplayTag , FExtendedSubtitleLanguageSettings > ExtendedSubtitleLanguages;
-	
+
+	FExtendedSubtitleLanguageSettings ESLanguage;
 	
 	
 	UFUNCTION(BlueprintCallable)
@@ -50,31 +50,41 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category="Extended Settings | Subtitle")
 	static void FillExtendedSubtitleDataTable(UDataTable* DataTable ,const TEnumAsByte<EFProjectDirectory> LanguageAssetProjectDirectory = EFProjectDirectory::UEF_ProjectContentDir , const FString AssetDirectory = "" );
-	
-	
-	static bool GetExtendedSubtitleSound(const FString SubtitleKey, FExtendedSubtitle& SubtitleStruct);
-	
-	static FExtendedSubtitle GetSubtitleJSon( FString FieldName);
+
+
+	UPROPERTY(BlueprintAssignable)
+	FOnExecuteSubtitle OnExecuteSubtitle;
+
 
 	
+
 private:
-	
-	static void LoadLanguage();
 
+	const FString SESubtitleSaveSlot = "ExtendedSubtitleSave";
 
 	
+	static bool GetExtendedSubtitleSound(const UObject* WorldContextObject,const FString SubtitleKey, FExtendedSubtitle& SubtitleStruct);
+	static void GetSubtitleJSon(const UObject* WorldContextObject , FString FieldName , FExtendedSubtitle& SubtitleStruct);
+	
+	
+	void LoadLanguage();
+	bool GetSubtitleSettingsFromIndex(const int32 Index, FExtendedSubtitleLanguageSettings& Settings);
+
+	void SaveExist();
+	void SaveNotExist();	
 	
 	virtual void Initialize(FSubsystemCollectionBase& Collection) override;
-
+	virtual bool ShouldCreateSubsystem(UObject* Outer) const override { return true; }
 	
 public: //Access
 
 	UFUNCTION(BlueprintPure)
-	static FExtendedSubtitleLanguageSettings GetExtendedSubtitleLanguage() { return SESubtitleLanguage; }
+	FExtendedSubtitleLanguageSettings GetExtendedSubtitleLanguage() { return ESLanguage; }
 
 	UFUNCTION(BlueprintPure)
 	TMap<FGameplayTag , FExtendedSubtitleLanguageSettings> GetExtendedSubtitleLanguages() const { return ExtendedSubtitleLanguages; }
-	
+
+
 	
 };
 

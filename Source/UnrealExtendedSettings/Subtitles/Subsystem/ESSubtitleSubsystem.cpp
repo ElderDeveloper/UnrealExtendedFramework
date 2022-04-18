@@ -5,9 +5,13 @@
 #include "Kismet/GameplayStatics.h"
 #include "Misc/FileHelper.h"
 #include "UnrealExtendedBackend/JSon/Library/EBJsonLibrary.h"
-#include "UnrealExtendedFramework/Libraries/File/EFFileLibrary.h"
+#include "UnrealExtendedFramework/Data/EFMacro.h"
 #include "UnrealExtendedSettings/Subtitles/Asset/ESSubtitleLanguageSave.h"
 
+
+DEFINE_LOG_CATEGORY(LogExtendedSubtitle);
+DEFINE_LOG_CATEGORY(LogExtendedSubtitleError);
+DEFINE_LOG_CATEGORY(LogExtendedSubtitleWarning);
 
 
 void UESSubtitleSubsystem::SaveExtendedLanguage(int32 LanguageIndex)
@@ -16,9 +20,13 @@ void UESSubtitleSubsystem::SaveExtendedLanguage(int32 LanguageIndex)
 	{
 		if (const auto Save = Cast<UESSubtitleLanguageSave>(SubtitleSave))
 		{
-			Save->CurrentLanguage = SESubtitleLanguage;
-			Save->SelectedLanguageIndex = SESubtitleIndex;
-			UGameplayStatics::SaveGameToSlot(SubtitleSave,SESubtitleSaveSlot,0);
+			if (GetSubtitleSettingsFromIndex(LanguageIndex , ESLanguage))
+			{
+				Save->CurrentLanguage = ESLanguage;
+				UE_LOG(LogExtendedSubtitle , Log , TEXT("UESSubtitleSubsystem: Save Compleate , New Direction = %s ") , *Save->CurrentLanguage.AssetDirectory)
+				UGameplayStatics::SaveGameToSlot(Save,SESubtitleSaveSlot,0);
+			}
+			ELSE_LOG(LogBlueprint,Error,TEXT("Extended Subtitle Subystem: Save Requested With Invalid Key Index"));
 		}
 	}
 }
@@ -31,27 +39,67 @@ void UESSubtitleSubsystem::LoadLanguage()
 {
 	if(UGameplayStatics::DoesSaveGameExist(SESubtitleSaveSlot,0))
 	{
-		if(const auto SubtitleSave = UGameplayStatics::LoadGameFromSlot(SESubtitleSaveSlot,0))
-		{
-			if (const auto Save = Cast<UESSubtitleLanguageSave>(SubtitleSave))
-			{
-				SESubtitleLanguage = Save->CurrentLanguage;
-				SESubtitleIndex = Save->SelectedLanguageIndex;
-				UGameplayStatics::SaveGameToSlot(SubtitleSave,SESubtitleSaveSlot,0);
-			}
-		}
+		FTimerHandle Handle;
+		GetWorld()->GetTimerManager().SetTimer(Handle,this,&UESSubtitleSubsystem::SaveExist,0.3,false);
 	}
-	else if (const auto SubtitleSave = UGameplayStatics::CreateSaveGameObject(UESSubtitleLanguageSave::StaticClass()))
+	else
+		SaveNotExist();
+}
+
+
+
+
+void UESSubtitleSubsystem::SaveExist()
+{
+	UE_LOG(LogExtendedSubtitle , Log , TEXT("UESSubtitleSubsystem: Save Exist"));
+		
+	if(const auto SubtitleSave = UGameplayStatics::LoadGameFromSlot(SESubtitleSaveSlot,0))
 	{
 		if (const auto Save = Cast<UESSubtitleLanguageSave>(SubtitleSave))
 		{
-			Save->CurrentLanguage = SESubtitleLanguage;
-			Save->SelectedLanguageIndex = SESubtitleIndex;
-			UGameplayStatics::SaveGameToSlot(SubtitleSave,SESubtitleSaveSlot,0);
+			ESLanguage = Save->CurrentLanguage;
+			UE_LOG(LogExtendedSubtitle , Log , TEXT("UESSubtitleSubsystem: Load Compleate : New Direction = %s") , *Save->CurrentLanguage.AssetDirectory);
 		}
 	}
 }
 
+
+
+
+void UESSubtitleSubsystem::SaveNotExist()
+{
+	UE_LOG(LogExtendedSubtitle , Log , TEXT("UESSubtitleSubsystem: Save Not Exist"));
+	
+	if (const auto SubtitleSave = UGameplayStatics::CreateSaveGameObject(UESSubtitleLanguageSave::StaticClass()))
+	{
+		if (const auto Save = Cast<UESSubtitleLanguageSave>(SubtitleSave))
+		{
+			if (GetSubtitleSettingsFromIndex(0,ESLanguage))
+			{
+				Save->CurrentLanguage = ESLanguage;
+				UE_LOG(LogExtendedSubtitle , Log , TEXT("UESSubtitleSubsystem: Load Type Create Save : New Direction = %s") , *Save->CurrentLanguage.AssetDirectory);
+				UGameplayStatics::SaveGameToSlot(Save,SESubtitleSaveSlot,0);
+			}
+		}
+	}
+}
+
+
+
+
+
+
+bool UESSubtitleSubsystem::GetSubtitleSettingsFromIndex(const int32 Index , FExtendedSubtitleLanguageSettings& Settings)
+{
+	TArray<FGameplayTag> Keys;
+	ExtendedSubtitleLanguages.GetKeys(Keys);
+	if (Keys.IsValidIndex(Index))
+	{
+		Settings = ExtendedSubtitleLanguages[Keys[Index]];
+		return true;
+	}
+	return false;
+}
 
 
 
@@ -59,32 +107,34 @@ void UESSubtitleSubsystem::LoadLanguage()
 void UESSubtitleSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
 	Super::Initialize(Collection);
+	
 	if (ExtendedSubtitleLanguages.Num() == 0)
-	{
 		ExtendedSubtitleLanguages.Add(FGameplayTag::EmptyTag ,FExtendedSubtitleLanguageSettings());
-	}
 	
 	LoadLanguage();
-	SESubtitleLanguages = ExtendedSubtitleLanguages;
 }
-
-
-
-
-
-
 
 
 
 void UESSubtitleSubsystem::ExecuteExtendedSubtitle(const UObject* WorldContextObject ,const FString SubtitleKey)
 {
-	FExtendedSubtitle SubtitleStruct = GetSubtitleJSon(SubtitleKey);
+	FExtendedSubtitle SubtitleStruct ;
+	GetSubtitleJSon(WorldContextObject,SubtitleKey , SubtitleStruct);
 	
-	if (GetExtendedSubtitleSound(SubtitleKey,SubtitleStruct) && WorldContextObject)
-	{
+	
+	if (GetExtendedSubtitleSound(WorldContextObject,SubtitleKey,SubtitleStruct) && WorldContextObject)
 		UGameplayStatics::PlaySound2D(WorldContextObject,SubtitleStruct.SubtitleSound,1);
+
+	
+	if (WorldContextObject)
+	{
+		if (WorldContextObject->GetWorld())
+		{
+			if (const auto Subsystem = WorldContextObject->GetWorld()->GetGameInstance()->GetSubsystem<UESSubtitleSubsystem>())
+				Subsystem->OnExecuteSubtitle.Broadcast(SubtitleStruct.Subtitle,SubtitleStruct.Duration);
+		}
 	}
-	OnExecuteSubtitle.Broadcast(SubtitleStruct.Subtitle,SubtitleStruct.Duration);
+	
 }
 
 
@@ -92,22 +142,43 @@ void UESSubtitleSubsystem::ExecuteExtendedSubtitle(const UObject* WorldContextOb
 
 void UESSubtitleSubsystem::ExecuteExtendedSubtitleLocation(const UObject* WorldContextObject ,const FString SubtitleKey, const FVector Location)
 {
-	FExtendedSubtitle SubtitleStruct = GetSubtitleJSon(SubtitleKey);
-	if (GetExtendedSubtitleSound(SubtitleKey,SubtitleStruct) && WorldContextObject)
+	FExtendedSubtitle SubtitleStruct ;
+	GetSubtitleJSon(WorldContextObject,SubtitleKey , SubtitleStruct);
+	
+	if (GetExtendedSubtitleSound(WorldContextObject,SubtitleKey,SubtitleStruct) && WorldContextObject)
 	{
 		UGameplayStatics::PlaySoundAtLocation(WorldContextObject,SubtitleStruct.SubtitleSound,Location);
 	}
-	OnExecuteSubtitle.Broadcast(SubtitleStruct.Subtitle,SubtitleStruct.Duration);
+	if (WorldContextObject)
+	{
+		if (WorldContextObject->GetWorld())
+		{
+			if (const auto Subsystem = WorldContextObject->GetWorld()->GetGameInstance()->GetSubsystem<UESSubtitleSubsystem>())
+				Subsystem->OnExecuteSubtitle.Broadcast(SubtitleStruct.Subtitle,SubtitleStruct.Duration);
+		}
+	}
 }
+
+
 
 void UESSubtitleSubsystem::ExecuteExtendedSubtitleAttachedComponent(const UObject* WorldContextObject,const FString SubtitleKey,  USceneComponent* SceneComponent)
 {
-	FExtendedSubtitle SubtitleStruct = GetSubtitleJSon(SubtitleKey);
-	if (GetExtendedSubtitleSound(SubtitleKey,SubtitleStruct) && WorldContextObject)
+	FExtendedSubtitle SubtitleStruct ;
+	GetSubtitleJSon(WorldContextObject,SubtitleKey , SubtitleStruct);
+	
+	if (GetExtendedSubtitleSound(WorldContextObject,SubtitleKey,SubtitleStruct) && WorldContextObject)
 	{
 		UGameplayStatics::SpawnSoundAttached(SubtitleStruct.SubtitleSound,SceneComponent);
 	}
-	OnExecuteSubtitle.Broadcast(SubtitleStruct.Subtitle,SubtitleStruct.Duration);
+	
+	if (WorldContextObject)
+	{
+		if (WorldContextObject->GetWorld())
+		{
+			if (const auto Subsystem = WorldContextObject->GetWorld()->GetGameInstance()->GetSubsystem<UESSubtitleSubsystem>())
+				Subsystem->OnExecuteSubtitle.Broadcast(SubtitleStruct.Subtitle,SubtitleStruct.Duration);
+		}
+	}
 }
 
 
@@ -115,17 +186,28 @@ void UESSubtitleSubsystem::ExecuteExtendedSubtitleAttachedComponent(const UObjec
 
 
 
-bool UESSubtitleSubsystem::GetExtendedSubtitleSound(const FString SubtitleKey, FExtendedSubtitle& SubtitleStruct)
+bool UESSubtitleSubsystem::GetExtendedSubtitleSound(const UObject* WorldContextObject,const FString SubtitleKey, FExtendedSubtitle& SubtitleStruct)
 {
-	if (SESubtitleLanguage.LanguageSubtitleDataTable)
-		if (auto i = SESubtitleLanguage.LanguageSubtitleDataTable->FindRow<FExtendedSubtitle>(*SubtitleKey,""))
+	
+	if (WorldContextObject)
+	{
+		if (WorldContextObject->GetWorld())
 		{
-			SubtitleStruct.SubtitleSound =  i->SubtitleSound;
-			return true;
+			if (const auto Subsystem = WorldContextObject->GetWorld()->GetGameInstance()->GetSubsystem<UESSubtitleSubsystem>())
+			{
+				if (Subsystem->ESLanguage.LanguageSubtitleDataTable)
+				{
+					if (auto i = Subsystem->ESLanguage.LanguageSubtitleDataTable->FindRow<FExtendedSubtitle>(*SubtitleKey,""))
+					{
+						SubtitleStruct.SubtitleSound =  i->SubtitleSound;
+						return true;
+					}
+				}
+			}
 		}
+	}
 	return false;
 }
-
 
 
 
@@ -151,7 +233,8 @@ void UESSubtitleSubsystem::FillExtendedSubtitleDataTable(UDataTable* DataTable ,
 	
 				if (const auto row = DataTable->FindRow<FExtendedSubtitle>(*i.Key,""))
 				{
-					SubtitleStruct.SubtitleSound = row->SubtitleSound;
+					if(row->SubtitleSound)
+						SubtitleStruct.SubtitleSound = row->SubtitleSound;
 					DataTable->RemoveRow(*i.Key);
 					AllRows.Remove(*i.Key);
 				}
@@ -163,33 +246,38 @@ void UESSubtitleSubsystem::FillExtendedSubtitleDataTable(UDataTable* DataTable ,
 			DataTable->RemoveRow(i);
 		}
 	}
-	
 }
 
 
 
-
-FExtendedSubtitle UESSubtitleSubsystem::GetSubtitleJSon(FString FieldName)
+void UESSubtitleSubsystem::GetSubtitleJSon(const UObject* WorldContextObject ,FString FieldName, FExtendedSubtitle& SubtitleStruct)
 {
 	bool IsSuccess;
-	FExtendedSubtitle OutSubtitle = FExtendedSubtitle();
-	const FExtendedJson ExtendedJson = UEBJsonLibrary::ReadJsonFile(SESubtitleLanguage.LanguageAssetProjectDirectory , SESubtitleLanguage.AssetDirectory  ,IsSuccess);
-	if (IsSuccess)
-	{
-		FExtendedJson ExtendedSubtitleJson;
-		UEBJsonLibrary::GetExtendedObjectField(IsSuccess , ExtendedJson , FieldName , ExtendedSubtitleJson);
 
-		if (IsSuccess)
+	if (WorldContextObject)
+	{
+		if (const auto Subsystem = WorldContextObject->GetWorld()->GetGameInstance()->GetSubsystem<UESSubtitleSubsystem>())
 		{
-			UEBJsonLibrary::GetExtendedStringField(IsSuccess ,ExtendedSubtitleJson , "Subtitle" , OutSubtitle.Subtitle );
-			UEBJsonLibrary::GetExtendedFloatField(IsSuccess ,ExtendedSubtitleJson,"Duration",OutSubtitle.Duration );
-			return OutSubtitle;
+			const FExtendedJson ExtendedJson = UEBJsonLibrary::ReadJsonFile(Subsystem->ESLanguage.LanguageAssetProjectDirectory , Subsystem->ESLanguage.AssetDirectory  ,IsSuccess);
+	
+			if (IsSuccess)
+			{
+				FExtendedJson ExtendedSubtitleJson;
+				UEBJsonLibrary::GetExtendedObjectField(IsSuccess , ExtendedJson , FieldName , ExtendedSubtitleJson);
+
+				if (IsSuccess)
+				{
+					UEBJsonLibrary::GetExtendedStringField(IsSuccess ,ExtendedSubtitleJson , "Subtitle" , SubtitleStruct.Subtitle );
+					UEBJsonLibrary::GetExtendedFloatField(IsSuccess ,ExtendedSubtitleJson,"Duration",SubtitleStruct.Duration );
+				}
+			}
+			else
+			{
+				UE_LOG(LogBlueprint , Error,TEXT("Read JSon File Failed"));
+			}
 		}
 	}
-	return OutSubtitle;
 }
-
-
 
 
 
