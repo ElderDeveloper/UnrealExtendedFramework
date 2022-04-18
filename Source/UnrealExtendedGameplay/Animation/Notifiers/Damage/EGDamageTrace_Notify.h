@@ -14,6 +14,33 @@
 class UEGDamageTrace_DamageObject;
 
 
+USTRUCT(BlueprintType)
+struct FEGNotifyRadialDamageStruct
+{
+	GENERATED_BODY()
+public:
+	UPROPERTY(EditAnywhere)
+	bool bEditEnabled = false;
+	
+	UPROPERTY(EditAnywhere, meta = (EditCondition = "bEditEnabled"), Category="Trace Damage|Area Falloff")
+	float AreaDamageMinimum = 5;
+	
+	UPROPERTY(EditAnywhere, meta = (EditCondition = "bEditEnabled"), Category="Trace Damage|Area Falloff")
+	float AreaDamageMaximum = 10;
+
+	
+	UPROPERTY(EditAnywhere, meta = (EditCondition = "bEditEnabled"), Category="Trace Damage|Area")
+	float AreaDamageRadius = 200;
+	
+	UPROPERTY(EditAnywhere, meta = (EditCondition = "bEditEnabled"), Category="Trace Damage|Area Falloff")
+	float AreaDamageInnerRadius = 100;
+	
+	UPROPERTY(EditAnywhere, meta = (EditCondition = "bEditEnabled"), Category="Trace Damage|Area Falloff")
+	float AreaDamageOuterRadius = 300;
+	
+	UPROPERTY(EditAnywhere, meta = (EditCondition = "bEditEnabled"), Category="Trace Damage|Area Falloff")
+	float AreaDamageFalloff = 1;
+};
 
 
 USTRUCT(BlueprintType)
@@ -44,25 +71,9 @@ public:
 	
 	UPROPERTY(EditAnywhere, meta = (EditCondition = "!ApplyDamageType==EUEFApplyDamageType::UEF_ApplyRadialDamageFalloff") , Category="Trace Damage")
 	float AnimNotifyDamage = 10;
-	
-	UPROPERTY(EditAnywhere, meta = (EditCondition = "ApplyDamageType==EUEFApplyDamageType::UEF_ApplyRadialDamageFalloff"), Category="Trace Damage|Area Falloff")
-	float AreaDamageMinimum = 5;
-	
-	UPROPERTY(EditAnywhere, meta = (EditCondition = "ApplyDamageType==EUEFApplyDamageType::UEF_ApplyRadialDamageFalloff"), Category="Trace Damage|Area Falloff")
-	float AreaDamageMaximum = 10;
 
-	
-	UPROPERTY(EditAnywhere, meta = (EditCondition = "!ApplyDamageType==EUEFApplyDamageType::UEF_ApplyRadialDamageFalloff"), Category="Trace Damage|Area")
-	float AreaDamageRadius = 200;
-	
 	UPROPERTY(EditAnywhere, meta = (EditCondition = "ApplyDamageType==EUEFApplyDamageType::UEF_ApplyRadialDamageFalloff"), Category="Trace Damage|Area Falloff")
-	float AreaDamageInnerRadius = 100;
-	
-	UPROPERTY(EditAnywhere, meta = (EditCondition = "ApplyDamageType==EUEFApplyDamageType::UEF_ApplyRadialDamageFalloff"), Category="Trace Damage|Area Falloff")
-	float AreaDamageOuterRadius = 300;
-	
-	UPROPERTY(EditAnywhere, meta = (EditCondition = "ApplyDamageType==EUEFApplyDamageType::UEF_ApplyRadialDamageFalloff"), Category="Trace Damage|Area Falloff")
-	float AreaDamageFalloff = 1;
+	FEGNotifyRadialDamageStruct RadialDamageStruct;
 	
 	
 	FEGNotifyDamageStruct()
@@ -96,8 +107,16 @@ UCLASS()
 class UNREALEXTENDEDGAMEPLAY_API UEGDamageTrace_Notify : public UAnimNotifyState_Trail
 {
 	GENERATED_BODY()
-	
+
+	UEGDamageTrace_Notify();
 public:
+
+
+	UPROPERTY(EditAnywhere , Category="Trace Damage")
+	bool UseEngineTickForCollisionCalculation = true;
+
+	UPROPERTY(EditAnywhere, meta = (EditCondition = "!UseEngineTickForCollisionCalculation") , Category="Trace Damage")
+	float CollisionCalculationTickSpeed = 0.01;
 	
 
 
@@ -107,7 +126,6 @@ public:
 
 	UPROPERTY(EditAnywhere , Category="Trace Damage")
 	FEGNotifyDamageStruct NotifyDamageStruct;
-
 
 	
 	UPROPERTY(EditAnywhere , Category="Trace Push")
@@ -121,12 +139,19 @@ private:
 	UPROPERTY()
 	TArray<AActor*> HitActorArray;
 
+	UPROPERTY()
+	USkeletalMeshComponent* OwnerMesh;
+
+	FTimerHandle Handle;
+
 
 	bool DrawSphereTrace(USkeletalMeshComponent* MeshComp , TArray<FHitResult>& HitResults);
 	bool DrawBoxTrace(USkeletalMeshComponent* MeshComp, TArray<FHitResult>& HitResults);
 	bool DrawLineTrace(USkeletalMeshComponent* MeshComp, TArray<FHitResult>& HitResults);
 	void Tick(USkeletalMeshComponent* MeshComp,float FrameDeltaTime);
 
+
+	void DamageTick();
 	
 	#if ENGINE_MAJOR_VERSION != 5
 		virtual void NotifyBegin(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, float TotalDuration) override;

@@ -20,7 +20,14 @@ protected:
 
 	//virtual void Notify(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation) override;
 	
+
+#if ENGINE_MAJOR_VERSION != 5
+	virtual void Notify(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation) override;
+#endif
+
+#if ENGINE_MAJOR_VERSION == 5
 	virtual void Notify(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, const FAnimNotifyEventReference& EventReference) override;
+#endif
 };
 
 

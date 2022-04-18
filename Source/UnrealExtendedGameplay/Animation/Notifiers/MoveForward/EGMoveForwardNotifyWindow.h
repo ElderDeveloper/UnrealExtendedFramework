@@ -35,4 +35,5 @@ public:
 	#if ENGINE_MAJOR_VERSION == 5
 		virtual void NotifyTick(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, float FrameDeltaTime, const FAnimNotifyEventReference& EventReference) override;
 	#endif
+
 };

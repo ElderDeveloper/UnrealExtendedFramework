@@ -48,6 +48,9 @@ class UNREALEXTENDEDFRAMEWORK_API UEFVariableLibrary : public UBlueprintFunction
 	UFUNCTION(BlueprintPure, meta=(DisplayName = "Get Vector Z", CompactNodeTitle = "Z"), Category="Math|Vector" )
 	static float Vector_GetZ(const FVector A) { return A.Z; }
 
+	UFUNCTION(BlueprintPure, meta=(DisplayName = "Normalize Scaled"), Category="Math|Vector" )
+	static FVector Vector_NormalizeScaled(const FVector Vector , float Tolerance = 0.0001 , float Scale = 1);
+
 
 	
 	UFUNCTION(BlueprintPure, meta=(DisplayName = "Int To Vector", CompactNodeTitle = "*"), Category="Math|Vector" )

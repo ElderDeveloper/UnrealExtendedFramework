@@ -62,7 +62,7 @@ public:
 	static bool FloatIsEqualToZero(const float Value) { return Value == 0; }
 	
 	UFUNCTION(BlueprintPure ,meta=(DisplayName = "!=0", CompactNodeTitle = "!=0") , Category="Condition|Float")
-	static bool FloatIsNotEqualToZero(const float Value) { return Value > 0; }
+	static bool FloatIsNotEqualToZero(const float Value) { return Value != 0; }
 	
 	UFUNCTION(BlueprintPure ,meta=(DisplayName = ">=0", CompactNodeTitle = ">=0") , Category="Condition|Float")
 	static bool FloatIsBiggerThanAndEqualZero(const float Value) { return Value >= 0; }

@@ -29,10 +29,24 @@ void UEGPlayRateNotify::NotifyEnd(USkeletalMeshComponent* MeshComp, UAnimSequenc
 void UEGPlayRateNotify::NotifyBegin(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, float TotalDuration,const FAnimNotifyEventReference& EventReference)
 {
 	Super::NotifyBegin(MeshComp, Animation, TotalDuration, EventReference);
+
+	if (MeshComp)
+	{
+		if (MeshComp->GetAnimInstance())
+			MeshComp->GetAnimInstance()->Montage_SetPlayRate(nullptr,BeginPlayRate);
+	}
+
 }
 
 void UEGPlayRateNotify::NotifyEnd(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation,const FAnimNotifyEventReference& EventReference)
 {
 	Super::NotifyEnd(MeshComp, Animation, EventReference);
+
+	if (MeshComp)
+	{
+		if (MeshComp->GetAnimInstance())
+			MeshComp->GetAnimInstance()->Montage_SetPlayRate(nullptr,EndPlayRate);
+	}
+	
 }
 #endif

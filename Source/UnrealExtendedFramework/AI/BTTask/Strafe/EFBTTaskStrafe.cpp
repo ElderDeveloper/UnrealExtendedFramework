@@ -14,20 +14,19 @@ UEFBTTaskStrafe::UEFBTTaskStrafe()
 	bNotifyTick = true;
 }
 
+
 EBTNodeResult::Type UEFBTTaskStrafe::ExecuteTask(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory)
 {
 	TaskFinished = false;
+	
 	if (auto const AIController = Cast<AAIController>(OwnerComp.GetOwner()))
 	{
 		StrafeValue = UKismetMathLibrary::RandomBool() ? 1 : -1 ;
 		GetWorld()->GetTimerManager().SetTimer(TaskFinishHandle,this,&UEFBTTaskStrafe::FinishThisTask,UKismetMathLibrary::RandomFloatInRange(StrafeTimeMin,StrafeTimeMax) , false );
 
 		if (const auto Character = Cast<ACharacter>(AIController->GetPawn()))
-		{
-			Character->GetCharacterMovement()->bOrientRotationToMovement = IsCharacterOrientRotationToMovement;
-			if (IsCharacterOrientRotationToMovement)
-				Character->GetCharacterMovement()->bOrientRotationToMovement = false;
-		}
+			Character->GetCharacterMovement()->bOrientRotationToMovement = false;
+		
 		return EBTNodeResult::InProgress;
 	}
 	return EBTNodeResult::Failed;
@@ -46,26 +45,20 @@ void UEFBTTaskStrafe::TickTask(UBehaviorTreeComponent& OwnerComp, uint8* NodeMem
 		if (AIController->GetPawn())
 			AIController->GetPawn()->AddMovementInput(AIController->GetPawn()->GetActorRightVector() , StrafeValue);
 	}
-
-
-
 	
 	if (TaskFinished)
 	{
 		if (auto const AIController = Cast<AAIController>(OwnerComp.GetOwner()))
 		{
-			if (IsCharacterOrientRotationToMovement)
-			{
-				if (const auto Character = Cast<ACharacter>(AIController->GetPawn()))
-					Character->GetCharacterMovement()->bOrientRotationToMovement = true;
-			}
+			if (const auto Character = Cast<ACharacter>(AIController->GetPawn()))
+				Character->GetCharacterMovement()->bOrientRotationToMovement = SetOrientRotationToMovementAtFinish;
 			
 			AIController->GetBlackboardComponent()->SetValueAsBool(StrafeBlackboardKey.SelectedKeyName , false );
-			
 			FinishLatentTask(OwnerComp,EBTNodeResult::Succeeded);
 		}
 	}
 }
+
 
 void UEFBTTaskStrafe::FinishThisTask()
 {

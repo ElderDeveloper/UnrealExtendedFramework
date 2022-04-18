@@ -78,8 +78,11 @@ public:
 	static bool IsClassEqualOrChildOfOtherClass(TSubclassOf<AActor> TestClass , TSubclassOf<AActor> ParentClass);
 
 
-	UFUNCTION(BlueprintPure, meta = ( DefaultToSelf = "Pawn" , Keywords = "Controller , Forward , Right ") , Category="ExtendedFramework|Actor|Networking")
-	static void GetActorControlRotationDirection(APawn* Pawn , FVector& Forward , FVector& Right);
+	UFUNCTION(BlueprintPure, meta = ( DefaultToSelf = "Pawn" , Keywords = "Controller , Forward , Right ") , Category="ExtendedFramework|Actor")
+	static void GetActorControlRotationDirection(APawn* Pawn  , FVector& Forward , FVector& Right , bool YawOnly = true);
+
+	UFUNCTION(BlueprintPure, meta = ( DefaultToSelf = "Pawn" , CompactNodeTitle = "ControlRotationYaw" , Keywords = "Controller , Forward , Right ") , Category="ExtendedFramework|Actor")
+	static FRotator GetActorControlRotationYaw(APawn* Pawn);
 };
 
 

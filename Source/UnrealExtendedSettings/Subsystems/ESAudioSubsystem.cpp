@@ -5,6 +5,7 @@
 #include "Kismet/GameplayStatics.h"
 #include "Sound/SoundMix.h"
 #include "Sound/SoundClass.h"
+#include "UObject/ConstructorHelpers.h"
 
 
 UESAudioSubsystem::UESAudioSubsystem()

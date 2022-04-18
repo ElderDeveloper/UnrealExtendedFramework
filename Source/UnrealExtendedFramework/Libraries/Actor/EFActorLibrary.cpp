@@ -137,16 +137,24 @@ bool UEFActorLibrary::IsClassEqualOrChildOfOtherClass(TSubclassOf<AActor> TestCl
 	return TestClass == ParentClass || UKismetMathLibrary::ClassIsChildOf(TestClass,ParentClass);
 }
 
-void UEFActorLibrary::GetActorControlRotationDirection(APawn* Pawn, FVector& Forward, FVector& Right)
+void UEFActorLibrary::GetActorControlRotationDirection(APawn* Pawn, FVector& Forward, FVector& Right , bool YawOnly)
 {
 	Forward = FVector::ZeroVector;
 	Right = FVector::ZeroVector;
 	
 	if(Pawn)
 	{
-		const FRotator Rot = FRotator(0 ,Pawn->GetControlRotation().Yaw,0);
+		const FRotator Rot = YawOnly ?  FRotator(0 ,Pawn->GetControlRotation().Yaw,0) : Pawn->GetControlRotation();
 		Forward = Rot.Vector();
 		Right = UKismetMathLibrary::GetRightVector(Rot);
 	}
+}
+
+FRotator UEFActorLibrary::GetActorControlRotationYaw(APawn* Pawn)
+{
+	FRotator Return = FRotator();
+	if (Pawn)
+		Return = FRotator(0 ,Pawn->GetControlRotation().Yaw,0);
+	return Return;
 }
 

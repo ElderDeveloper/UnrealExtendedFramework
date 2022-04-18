@@ -156,11 +156,9 @@ public:
 	UPhysicalMaterial* GetHitPhysMaterial() const { return HitResult.PhysMaterial.Get();}
 	
 	/** Returns All GetActor() From Hit Result  */
-	TArray<AActor*> GetAllActorsFromHitArray() const
+	void GetAllActorsFromHitArray(TArray<AActor*>& Array) const
 	{
-		TArray<AActor*> Array;
 		for (const auto i : HitResults) Array.Add(i.GetActor());
-		return Array;
 	}
 	
 };
@@ -192,7 +190,7 @@ public:
 	FVector End = FVector::ZeroVector ;
 
 	UPROPERTY(EditAnywhere,BlueprintReadWrite)
-	float Radius = 0.f;
+	float Radius = 20.f;
 
 	UPROPERTY(EditAnywhere,BlueprintReadWrite , meta = (EditCondition = "TraceType==ETraceTypes::TraceType"))
 	TEnumAsByte<ETraceTypeQuery> TraceChannel = ETraceTypeQuery::TraceTypeQuery1;
@@ -307,12 +305,11 @@ public:
 	UPhysicalMaterial* GetHitPhysMaterial() const { return HitResult.PhysMaterial.Get();}
 
 	/** Returns All GetActor() From Hit Result  */
-	TArray<AActor*> GetAllActorsFromHitArray() const
+	void GetAllActorsFromHitArray(TArray<AActor*>& Array) const
 	{
-		TArray<AActor*> Array;
 		for (const auto i : HitResults) Array.Add(i.GetActor());
-		return Array;
 	}
+	
 };
 
 
@@ -341,7 +338,7 @@ public:
 	FVector End  = FVector::ZeroVector;
 
 	UPROPERTY(EditAnywhere,BlueprintReadWrite)
-	float Radius = 0.f;
+	float Radius = 20.f;
 
 	UPROPERTY(EditAnywhere,BlueprintReadWrite)
 	float HalfHeight = 0.f;
@@ -459,11 +456,9 @@ public:
 	UPhysicalMaterial* GetHitPhysMaterial() const { return HitResult.PhysMaterial.Get();}
 
 	/** Returns All GetActor() From Hit Result  */
-	TArray<AActor*> GetAllActorsFromHitArray() const
+	void GetAllActorsFromHitArray(TArray<AActor*>& Array) const
 	{
-		TArray<AActor*> Array;
 		for (const auto i : HitResults) Array.Add(i.GetActor());
-		return Array;
 	}
 };
 
@@ -611,11 +606,9 @@ public:
 
 
 	/** Returns All GetActor() From Hit Result  */
-	TArray<AActor*> GetAllActorsFromHitArray() const
+	void GetAllActorsFromHitArray(TArray<AActor*>& Array) const
 	{
-		TArray<AActor*> Array;
 		for (const auto i : HitResults) Array.Add(i.GetActor());
-		return Array;
 	}
 };
 

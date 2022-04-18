@@ -27,6 +27,9 @@ public:
 	UPROPERTY(EditAnywhere,BlueprintReadWrite)
 	float StrafeTimeMax = 2;
 
+	UPROPERTY(EditAnywhere,BlueprintReadWrite)
+	bool SetOrientRotationToMovementAtFinish = true;
+
 protected:
 	virtual EBTNodeResult::Type ExecuteTask(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory);
 	virtual void TickTask(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory, float DeltaSeconds) override;
@@ -36,7 +39,6 @@ protected:
 
 	bool TaskFinished = false;
 	float StrafeValue = 0;
-	bool IsCharacterOrientRotationToMovement = false;
 	FTimerHandle TaskFinishHandle;
 	UPROPERTY()
 	UBehaviorTreeComponent* TaskOwnerComp;

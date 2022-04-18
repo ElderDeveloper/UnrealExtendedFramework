@@ -21,10 +21,10 @@ struct FFootStepStruct : public FTableRowBase
 	GENERATED_BODY()
 
 	UPROPERTY(EditAnywhere ,BlueprintReadWrite, Category="FootStep|Surface")
-	TEnumAsByte<EPhysicalSurface> SurfaceType;
+	TEnumAsByte<EPhysicalSurface> SurfaceType = EPhysicalSurface::SurfaceType1;
 
 	UPROPERTY(EditAnywhere ,BlueprintReadWrite, Category="FootStep|Niagara")
-	UNiagaraSystem* NiagaraSystem;
+	UNiagaraSystem* NiagaraSystem = nullptr;
 	
 	UPROPERTY(EditAnywhere ,BlueprintReadWrite, Category="FootStep|Niagara")
 	FVector NiagaraScale {1,1,1};
@@ -33,12 +33,12 @@ struct FFootStepStruct : public FTableRowBase
 	FVector NiagaraLocationPlus {0.f,0.f,0.f};
 	
 	UPROPERTY(EditAnywhere ,BlueprintReadWrite, Category="FootStep|Niagara")
-	FRotator NiagaraRotatorPlus;
+	FRotator NiagaraRotatorPlus { 0,0,0 };
 
 
 	
 	UPROPERTY(EditAnywhere ,BlueprintReadWrite, Category="FootStep|Particle")
-	UParticleSystem* Particle;
+	UParticleSystem* Particle = nullptr;
 	
 	UPROPERTY(EditAnywhere ,BlueprintReadWrite, Category="FootStep|Particle")
 	FVector ParticleScale {1,1,1};
@@ -47,12 +47,12 @@ struct FFootStepStruct : public FTableRowBase
 	FVector ParticleLocationPlus {0.f,0.f,0.f};
 	
 	UPROPERTY(EditAnywhere ,BlueprintReadWrite, Category="FootStep|Particle")
-	FRotator ParticleRotatorPlus;
+	FRotator ParticleRotatorPlus {0.f,0.f,0.f};
 
 
 	
 	UPROPERTY(EditAnywhere ,BlueprintReadWrite, Category="FootStep|Sound")
-	USoundBase* Sound ;
+	USoundBase* Sound  = nullptr;
 	
 	UPROPERTY(EditAnywhere ,BlueprintReadWrite, Category="FootStep|Sound")
 	float SoundVolume = 1.f;
@@ -60,13 +60,13 @@ struct FFootStepStruct : public FTableRowBase
 
 	
 	UPROPERTY(EditAnywhere ,BlueprintReadWrite, Category="FootStep|Decal")
-	UMaterialInterface* Decal;
+	UMaterialInterface* Decal  = nullptr;
 	
 	UPROPERTY(EditAnywhere ,BlueprintReadWrite, Category="FootStep|Decal")
 	FVector DecalScale {45,45,45};;
 	
 	UPROPERTY(EditAnywhere ,BlueprintReadWrite, Category="FootStep|Decal")
-	FRotator DecalRotatorPlus;
+	FRotator DecalRotatorPlus {0.f,0.f,0.f};
 
 	UPROPERTY(EditAnywhere,BlueprintReadWrite, Category="FootStep|Decal")
 	float DecalLifetime = 3;

@@ -26,10 +26,18 @@ public class UnrealExtendedSettings : ModuleRules
 			new string[]
 			{
 				"Core",
+				"CoreUObject",
 				"Slate",
 				"SlateCore",
 				"UMG",
-				"InputCore"
+				"InputCore",
+				"AssetTools",
+				"UnrealEd",
+				"GameplayTags",
+				"Json", 
+				"JsonUtilities",
+				"UnrealExtendedBackend",
+				"UnrealExtendedFramework"
 				// ... add other public dependencies that you statically link with here ...
 			}
 		);
@@ -42,7 +50,8 @@ public class UnrealExtendedSettings : ModuleRules
 				"Engine",
 				"Slate",
 				"SlateCore",
-				"Settings"
+				"Settings",
+				"Projects"
 				// ... add private dependencies that you statically link with here ...	
 			}
 		);

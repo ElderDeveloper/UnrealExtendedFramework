@@ -34,10 +34,10 @@ bool UEFVariableLibrary::CompareVectorSizes(const FVector IsBigger, const FVecto
 	return (IsBigger.X*IsBigger.X + IsBigger.Y*IsBigger.Y + IsBigger.Z*IsBigger.Z) > (IsLesser.X*IsLesser.X + IsLesser.Y*IsLesser.Y + IsLesser.Z*IsLesser.Z);
 }
 
-
-
-
-
+FVector UEFVariableLibrary::Vector_NormalizeScaled(const FVector Vector, float Tolerance, float Scale)
+{
+	return Vector.GetSafeNormal(Tolerance)*Scale;
+}
 
 
 FTransform UEFVariableLibrary::Add_TransformTransform(const FTransform A, const FTransform B)

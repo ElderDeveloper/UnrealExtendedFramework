@@ -19,16 +19,16 @@ struct FExtendedFrameworkDamageReaction : public FTableRowBase
 	GENERATED_BODY()
 	
 	UPROPERTY(EditAnywhere,BlueprintReadOnly)
-	FGameplayTagContainer DamageTag;
+	FGameplayTagContainer DamageTag = FGameplayTagContainer();
 	
 	UPROPERTY(EditAnywhere,BlueprintReadOnly)
-	TSubclassOf<UDamageType> DamageType;
+	TSubclassOf<UDamageType> DamageType = nullptr;
 
 	UPROPERTY(EditAnywhere,BlueprintReadOnly)
-	TEnumAsByte<EFDamageDirection> DamageDirection;
+	TEnumAsByte<EFDamageDirection> DamageDirection = EFDamageDirection::UEF_DamageForward;
 
 	UPROPERTY(EditAnywhere,BlueprintReadOnly)
-	UAnimMontage* MontageReaction;
+	UAnimMontage* MontageReaction = nullptr;
 };
 
 

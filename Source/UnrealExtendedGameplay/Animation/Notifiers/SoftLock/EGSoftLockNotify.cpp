@@ -8,6 +8,8 @@
 #include "UnrealExtendedFramework/Libraries/Trace/EFTraceLibrary.h"
 
 
+
+
 #if ENGINE_MAJOR_VERSION != 5
 void UEGSoftLockNotify::NotifyBegin(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation,float TotalDuration)
 {
@@ -46,25 +48,30 @@ void UEGSoftLockNotify::NotifyEnd(USkeletalMeshComponent* MeshComp, UAnimSequenc
 
 
 #if ENGINE_MAJOR_VERSION == 5
+
 void UEGSoftLockNotify::NotifyBegin(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, float TotalDuration,const FAnimNotifyEventReference& EventReference)
 {
-	Super::NotifyBegin(MeshComp, Animation, TotalDuration, EventReference); 	FindSoftLockActor(MeshComp);
+	Super::NotifyBegin(MeshComp, Animation, TotalDuration, EventReference);
+	FindSoftLockActor(MeshComp);
 }
 
 void UEGSoftLockNotify::NotifyEnd(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation,const FAnimNotifyEventReference& EventReference)
 {
-	Super::NotifyEnd(MeshComp, Animation, EventReference); 	SoftLockActor=nullptr;
+	Super::NotifyEnd(MeshComp, Animation, EventReference);
+	SoftLockActor=nullptr;
 }
 
 void UEGSoftLockNotify::NotifyTick(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, float FrameDeltaTime,const FAnimNotifyEventReference& EventReference)
 {
 	Super::NotifyTick(MeshComp, Animation, FrameDeltaTime, EventReference);
 	
+	
 	if (SoftLockActor == nullptr)
 	{
 		FindSoftLockActor(MeshComp);
 		return;
 	}
+	
 	if (auto const Owner = MeshComp->GetOwner())
 	{
 		const auto OwnerRot = Owner->GetActorRotation();
@@ -93,7 +100,12 @@ void UEGSoftLockNotify::FindSoftLockActor(USkeletalMeshComponent* MeshComp)
 		TArray<AActor*> HitActorArray;
 			
 		for ( const auto hit : SoftLockActorTrace.HitResults)
-			HitActorArray.Add(hit.GetActor());
+		{
+			if (const auto Pawn = Cast<APawn>(hit.GetActor()))
+				if (Pawn != MeshComp->GetOwner())
+					HitActorArray.Add(hit.GetActor());
+		}
+			
 		SoftLockActor= UEFMathLibrary::GetClosestActorFromActorArray(MeshComp->GetOwner(),HitActorArray);
 	}
 }

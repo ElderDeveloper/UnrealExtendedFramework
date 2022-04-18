@@ -13,12 +13,12 @@ class UUserWidget;
 class UWidgetComponent;
 class APlayerController;
 class UEGTargetingWidget;
-class UEGTargetingWidget;
+class UEGTargetingTargetComponent;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FComponentOnTargetLockedOnOff, AActor*, TargetActor);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FComponentSetRotation, AActor*, TargetActor, FRotator, ControlRotation);
 
-UCLASS(ClassGroup=(Custom), meta=(BlueprintSpawnableComponent))
+UCLASS(ClassGroup=(Extended), meta=(BlueprintSpawnableComponent))
 class UNREALEXTENDEDGAMEPLAY_API UEGTargetingComponent : public UActorComponent
 {
 	GENERATED_BODY()
@@ -32,6 +32,10 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Target System")
 	float MaximumDistanceToEnable = 1200.0f;
 
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Target System")
+	float ControlRotationInterpSpeed = 5;
+	
 
 	UPROPERTY(EditDefaultsOnly , BlueprintReadWrite , Category= "Target System")
 	FSphereTraceStruct TargetActorSearchSphere;
@@ -128,8 +132,7 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Target System|Pitch Offset")
 	float PitchMax = -20.0f;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Target System|Pitch Offset")
-	float ControlRotationInterpSpeed = 5;
+
 	
 	
 	// Set it to true / false whether you want a sticky feeling when switching target
@@ -238,13 +241,13 @@ private:
 	float GetAngleUsingCameraRotation(const AActor* ActorToLook) const;
 	float GetAngleUsingCharacterRotation(const AActor* ActorToLook) const;
 
-	
 
+	
 	//~ Widget
 	void CreateAndAttachTargetLockedOnWidgetComponent(AActor* TargetActor);
 
+	
 	//~ Targeting
-
 	void TargetLockOn(AActor* TargetToLockOn);
 	void ResetIsSwitchingTarget();
 	bool ShouldSwitchTargetActor(float AxisValue);
@@ -252,7 +255,6 @@ private:
 
 	/**
 	 *  Sets up cached Owner PlayerController from Owner Pawn.
-	 *
 	 *  For local split screen, Pawn's Controller may not have been setup already when this component begins play.
 	 */
 	 void SetupLocalPlayerController();
@@ -282,10 +284,12 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Target System")
 	FORCEINLINE bool GetTargetLockedStatus() {	return bIsTargetingEnabled; }
 
+	
 	// Returns the reference to currently targeted Actor if any
 	UFUNCTION(BlueprintCallable, Category = "Target System")
 	FORCEINLINE AActor* GetLockedOnTargetActor() const { return TargetedActor; }
 
+	
 	// Returns true / false whether the system is targeting an actor
 	UFUNCTION(BlueprintCallable, Category = "Target System")
 	FORCEINLINE bool GetIsTargetingEnabled() const { return bIsTargetingEnabled; }

@@ -9,6 +9,17 @@
 #include "Kismet/GameplayStatics.h"
 #include "Kismet/KismetMathLibrary.h"
 
+#include <chrono>
+#include <random>
+
+std::random_device RandRD;
+std::default_random_engine RandDRE;
+std::mt19937 RandPRNG;
+std::mt19937 RandPRNG_RD( RandRD() );
+unsigned RandGSeed = std::chrono::system_clock::now().time_since_epoch().count();
+
+#define Bernoulli std::bernoulli_distribution
+
 
 // <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< ROTATION >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 FRotator UEFMathLibrary::GetRotationBetweenActors(const AActor* From, const AActor* To, const FRotator PlusRotator)
@@ -161,37 +172,6 @@ FVector UEFMathLibrary::GetDirectionBetweenActors(const AActor* From, const AAct
 	return FVector::ZeroVector;
 }
 
-/*
-
-TEnumAsByte<EHitDirection> UEFMathLibrary::CalculateHitDirectionYaw(float Yaw, float& Angle)
-{
-	Angle=Yaw;
-	if (UKismetMathLibrary::InRange_FloatFloat(Yaw,-45,45))
-		return Front;
-
-	if (UKismetMathLibrary::InRange_FloatFloat(Yaw,-180,-135) || UKismetMathLibrary::InRange_FloatFloat(Yaw,135,180))
-		return Back;
-
-	if (UKismetMathLibrary::InRange_FloatFloat(Yaw,-135,-45))
-		return Right;
-	
-	return Left;
-}
-
-
-
-TEnumAsByte<EHitDirection> UEFMathLibrary::CalculateHitDirectionActors(AActor* From, AActor* To,float& Angle)
-{
-	if (IsValid(From) && IsValid(To))
-	{
-		float pitch;
-		GetAngleBetweenActors(From,To,Angle,pitch);
-		return CalculateHitDirectionYaw(Angle,pitch);
-	}
-	return No;
-}
-*/
-
 
 
 FVector UEFMathLibrary::GetComponentForwardVectorPlus(USceneComponent* Component, float Distance, FVector& CurrentLocation)
@@ -204,15 +184,18 @@ FVector UEFMathLibrary::GetComponentForwardVectorPlus(USceneComponent* Component
 	return FVector::ZeroVector;
 }
 
-FVector UEFMathLibrary::GetComponentForwardVectorPlusWithRotation(USceneComponent* Component, float Distance,FRotator PlusRotator, FVector& CurrentLocation)
+void UEFMathLibrary::GetComponentForwardVectorPlusWithRotation(USceneComponent* Component, float Distance,FRotator PlusRotator , FVector&ForwardLocation , FVector& CurrentLocation , FVector& ForwardVector)
 {
+	ForwardLocation = FVector::ZeroVector;
+	CurrentLocation = FVector::ZeroVector;
+	ForwardVector = FVector::ZeroVector;
 	if (Component)
 	{
 		CurrentLocation = Component->GetComponentLocation();
 		const FRotator Forward = Component->GetComponentRotation() + PlusRotator ;
-		return  CurrentLocation + Forward.Vector() *Distance;
+		ForwardVector = Forward.Vector() * Distance;
+		ForwardLocation =  CurrentLocation + Forward.Vector() *Distance;
 	}
-	return FVector::ZeroVector;
 }
 
 FVector UEFMathLibrary::GetActorForwardVectorPlus(AActor* Actor, float Distance, FVector& CurrentLocation)
@@ -225,15 +208,18 @@ FVector UEFMathLibrary::GetActorForwardVectorPlus(AActor* Actor, float Distance,
 	return  FVector::ZeroVector;
 }
 
-FVector UEFMathLibrary::GetActorForwardVectorPlusWithRotation(AActor* Actor, float Distance, FRotator PlusRotator,FVector& CurrentLocation)
+void UEFMathLibrary::GetActorForwardVectorPlusWithRotation(AActor* Actor, float Distance, FRotator PlusRotator , FVector&ForwardLocation , FVector& CurrentLocation , FVector& ForwardVector)
 {
+	ForwardLocation = FVector::ZeroVector;
+	CurrentLocation = FVector::ZeroVector;
+	ForwardVector = FVector::ZeroVector;
 	if (Actor)
 	{
 		CurrentLocation = Actor->GetActorLocation();
 		const FRotator Forward = Actor->GetActorRotation() + PlusRotator ;
-		return  CurrentLocation + Forward.Vector() *Distance;
+		ForwardVector = Forward.Vector() * Distance;
+		ForwardLocation =  CurrentLocation + Forward.Vector() *Distance;
 	}
-	return FVector::ZeroVector;
 }
 
 
@@ -259,7 +245,7 @@ float UEFMathLibrary::FindLookAtRotationYaw(const FVector& Start, const FVector&
 	return FRotationMatrix::MakeFromX(Target - Start).Rotator().Yaw;
 }
 
-bool UEFMathLibrary::FCalculateIsTheSameDirection(const FVector firstForwardDirection,const FVector secondForwardDirection, const float tolerance=0.1)
+bool UEFMathLibrary::CalculateIsTheSameDirection(const FVector firstForwardDirection,const FVector secondForwardDirection, const float tolerance=0.1)
 {
 	return UKismetMathLibrary::EqualEqual_VectorVector(firstForwardDirection.GetUnsafeNormal(),secondForwardDirection.GetUnsafeNormal(),tolerance);
 }
@@ -309,6 +295,12 @@ uint8 UEFMathLibrary::GetControllerLookAtDirection(const APawn* Pawn)
 // <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< SCREEN >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 AActor* UEFMathLibrary::GetActorInTheCenterOfTheScreen(TMap<AActor*, float> ActorScreenMap , const FVector2D ClampMinMax)
 {
+	if (ActorScreenMap.Num() == 1)
+	{
+		TArray<AActor*>actorArray;
+		ActorScreenMap.GetKeys(actorArray);
+		return actorArray[0];
+	}
 
 	TArray<float> ValueArray;
 	TArray<AActor*> ActorArray;
@@ -330,11 +322,8 @@ AActor* UEFMathLibrary::GetActorInTheCenterOfTheScreen(TMap<AActor*, float> Acto
 	
 	if (ValueArray.IsValidIndex(0))
 	{
-		
 		const float SearchValue = 0.5;
-		
 		float ClosestIndex = 0;
-		
 		float subtract_result = FMath::Abs(ValueArray[0] - SearchValue) ;
 
 		for (int32 i = 0 ; i < ValueArray.Num(); i++)
@@ -342,14 +331,12 @@ AActor* UEFMathLibrary::GetActorInTheCenterOfTheScreen(TMap<AActor*, float> Acto
 			if (subtract_result > FMath::Abs(ValueArray[i] - SearchValue))
 			{
 				subtract_result = FMath::Abs(ValueArray[i] - SearchValue);
-				
 				ClosestIndex = i;
 			}
 		}
 
 		if (ActorArray.IsValidIndex(ClosestIndex))
 		{
-	
 			return ActorArray[ClosestIndex];
 		}
 	}
@@ -383,14 +370,12 @@ FVector2D UEFMathLibrary::GetObjectScreenPositionClamped(UObject* WorldContextOb
 FVector UEFMathLibrary::FindRandomCircleLocation(float innerRadius, float outerRadius, FVector centerPont,	FVector forwardVector)
 {
 	const float rndAngle = UKismetMathLibrary::RandomFloatInRange(0,360);
-
 	const float rndDistance = UKismetMathLibrary::RandomFloatInRange(innerRadius,outerRadius);
-
 	const FVector Direction = UKismetMathLibrary::GreaterGreater_VectorRotator(forwardVector,FRotator(0,rndAngle,0))*rndDistance;
-
 	return  centerPont+Direction;
-
 }
+
+
 
 FVector UEFMathLibrary::FindRandomCircleLocationWithDirection(float innerRadius, float outerRadius,FVector centerPont, FVector targetPoint, float angle)
 {
@@ -410,22 +395,17 @@ FVector UEFMathLibrary::FindRandomCircleLocationWithDirection(float innerRadius,
 FVector UEFMathLibrary::FCalculateLaunchVelocity(const FVector targetLocation, const FVector startPosition, const float duration)
 {
 	FVector returnVector;
-
 	returnVector.X = (targetLocation.X - startPosition.X) / duration;
-	
 	returnVector.Y = (targetLocation.Y - startPosition.Y) / duration;
-	
 	const float zVelocity = (duration*duration) * -0.5 * 982;
-	
 	returnVector.Z = (targetLocation.Z - (startPosition.Z + zVelocity)) / duration;
-	
 	return returnVector;
 }
 
 
+
 FQuat UEFMathLibrary::RotatorToQuad(const FRotator Rotator)
 {
-	
 	const float SinRoll =	FMath::Sin(FMath::DegreesToRadians(Rotator.Roll) / 2);
 	const float CosRoll =	FMath::Cos(FMath::DegreesToRadians(Rotator.Roll) / 2);
 	
@@ -447,11 +427,15 @@ FQuat UEFMathLibrary::RotatorToQuad(const FRotator Rotator)
 	return FQuat(X,Y,Z,W);
 }
 
+
+
 //<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< MATH >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 FVector2D UEFMathLibrary::ClampVector2D(const FVector2D Vector , const float Min, const float Max)
 {
 	return FVector2D(FMath::Clamp(Vector.X , Min , Max) , FMath::Clamp(Vector.Y,Min,Max));
 }
+
+
 
 FVector2D UEFMathLibrary::MapRangeClampVector2D(const FVector2D Value, const FVector2D InRangeA,const FVector2D InRangeB, const FVector2D OutRangeA, const FVector2D OutRangeB)
 {
@@ -461,6 +445,8 @@ FVector2D UEFMathLibrary::MapRangeClampVector2D(const FVector2D Value, const FVe
 		UKismetMathLibrary::MapRangeClamped(Value.Y , InRangeA.Y,InRangeB.Y , OutRangeA.Y,OutRangeB.Y)
 	);
 }
+
+
 
 void UEFMathLibrary::CalculateSpeedAndDirection(UAnimInstance* AnimInstance, float& Speed, float& Direction)
 {
@@ -479,4 +465,91 @@ void UEFMathLibrary::CalculateSpeedAndDirection(UAnimInstance* AnimInstance, flo
 					Direction = UKismetAnimationLibrary::CalculateDirection(Pawn->GetVelocity(),Pawn->GetActorRotation());
 			#endif
 	}
+}
+
+
+
+bool UEFMathLibrary::RandomBoolUniform()
+{
+	const std::uniform_int_distribution<int32> Distribution( 0, 1 );
+	return (Distribution( RandDRE ) == 1) ? true : false;
+}
+
+
+
+bool UEFMathLibrary::RandomBoolBernoulli(const float Bias)
+{
+	const Bernoulli Distribution(Bias);
+	return Distribution(RandDRE );
+}
+
+
+
+bool UEFMathLibrary::RandomBoolMersenneTwister(const float Bias)
+{
+	const Bernoulli Distribution(Bias);
+	return Distribution( RandPRNG );
+}
+
+
+
+uint8 UEFMathLibrary::RandomByteUniform(const uint8 Max)
+{
+	const std::uniform_int_distribution<> Distribution( 0, Max == 0 ? sizeof( uint8 ) : Max );
+	return Distribution( RandDRE );
+}
+
+
+
+uint8 UEFMathLibrary::RandomByteBernoulli(const float Bias)
+{
+	const Bernoulli Distribution(Bias);
+	return Distribution( RandDRE );
+}
+
+
+
+uint8 UEFMathLibrary::RandomByteMersenneTwister(const float Bias)
+{
+	const Bernoulli Distribution(Bias);
+	return Distribution( RandPRNG );
+}
+
+
+
+int32 UEFMathLibrary::RandomIntUniform(const int32 Max)
+{
+	const std::uniform_int_distribution<> Distribution( 0, Max == 0 ? sizeof( int32 ) : Max );
+	return Distribution( RandDRE );
+}
+
+
+
+int32 UEFMathLibrary::RandomIntBernoulli(const float Bias)
+{
+	const Bernoulli Distribution(Bias);
+	return Distribution( RandDRE );
+}
+
+
+
+int32 UEFMathLibrary::RandomIntMersenneTwister(const float Bias)
+{
+	const Bernoulli Distribution(Bias);
+	return Distribution( RandPRNG );
+}
+
+
+
+float UEFMathLibrary::RandomFloatUniform(const float Max)
+{
+	const std::uniform_real_distribution<> Distribution( 0.0f, Max == 0 ? sizeof( float ) : Max );
+	return Distribution( RandDRE );
+}
+
+
+
+float UEFMathLibrary::RandomFloatCanonical()
+{
+	return std::generate_canonical<double, 10>( RandDRE );
 }

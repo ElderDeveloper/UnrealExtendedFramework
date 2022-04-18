@@ -16,6 +16,7 @@ class UNREALEXTENDEDGAMEPLAY_API UEGSoftLockNotify : public UAnimNotifyState
 {
 	GENERATED_BODY()
 	
+	
 	UPROPERTY(EditAnywhere)
 	FSphereTraceStruct SoftLockActorTrace = FSphereTraceStruct(300);
 

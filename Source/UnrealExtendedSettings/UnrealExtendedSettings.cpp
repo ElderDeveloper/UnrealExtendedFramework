@@ -2,10 +2,16 @@
 
 #include "UnrealExtendedSettings.h"
 
+#include "AssetToolsModule.h"
+#include "IAssetTools.h"
 #include "ISettingsModule.h"
+#include "Subtitles/Subsystem/ESSubtitleSubsystem.h"
 #include "UnrealExtendedSettings/Subsystems/ESQualitySubsystem.h"
 
 #define LOCTEXT_NAMESPACE "FUnrealExtendedSettingsModule"
+
+
+
 
 void FUnrealExtendedSettingsModule::StartupModule()
 {
@@ -16,11 +22,21 @@ void FUnrealExtendedSettingsModule::StartupModule()
 		SettingsModule->RegisterSettings(
 			"Project",
 			"Plugins",
-			"SettingsPlugin",
-			LOCTEXT("RuntimeSettingName" , "Extended Settings Plugin") ,
+			"QualitySettingsPlugin",
+			LOCTEXT("RuntimeSettingName" , "Extended Quality Plugin") ,
 			LOCTEXT("RuntimeSettingsDescription" , "Configure my setting") ,
 			GetMutableDefault<UESQualitySubsystem>());
+
+		
+		SettingsModule->RegisterSettings(
+			"Project",
+			"Plugins",
+			"SubtitleSettingsPlugin",
+			LOCTEXT("RuntimeSettingName" , "Extended Subtitle Plugin") ,
+			LOCTEXT("RuntimeSettingsDescription" , "Configure my setting") ,
+			GetMutableDefault<UESSubtitleSubsystem>());
 	}
+	
 }
 
 void FUnrealExtendedSettingsModule::ShutdownModule()
@@ -33,6 +49,18 @@ void FUnrealExtendedSettingsModule::ShutdownModule()
 		Settings->UnregisterSettings("Project","Plugins","SettingsPlugin");
 	}
 }
+
+
+
+
+
+
+
+
+
+
+
+
 
 #undef LOCTEXT_NAMESPACE
 	

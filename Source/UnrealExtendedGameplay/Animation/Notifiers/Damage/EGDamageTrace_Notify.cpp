@@ -12,6 +12,16 @@
 #include "UnrealExtendedFramework/Libraries/Trace/EFTraceLibrary.h"
 
 
+
+
+UEGDamageTrace_Notify::UEGDamageTrace_Notify()
+{
+	const ConstructorHelpers::FObjectFinder<UParticleSystem> NullParticle (TEXT("ParticleSystem'/UnrealExtendedFramework/Particles/P_EF_NullTrail.P_EF_NullTrail'"));
+	if(!ensure(NullParticle.Object!= nullptr)) return;
+	PSTemplate = NullParticle.Object;
+}
+
+
 #if ENGINE_MAJOR_VERSION != 5
 void UEGDamageTrace_Notify::NotifyBegin(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation,float TotalDuration)
 {
@@ -31,17 +41,23 @@ void UEGDamageTrace_Notify::NotifyTick(USkeletalMeshComponent* MeshComp, UAnimSe
 
 void UEGDamageTrace_Notify::Tick(USkeletalMeshComponent* MeshComp, float FrameDeltaTime)
 {
+	OwnerMesh = MeshComp;
+	if (UseEngineTickForCollisionCalculation)
+		DamageTick();
+}
 
-	if (!MeshComp && !MeshComp->GetOwner()) return;
-
+void UEGDamageTrace_Notify::DamageTick()
+{
+	if (!OwnerMesh) return;
+	if (!OwnerMesh->GetOwner()) return;
 	
 	TArray<FHitResult> HitResults;
 	bool bHit = false;
 	switch (NotifyTraceStruct.TraceShape)
 	{
-	case Sphere : bHit = DrawSphereTrace(MeshComp , HitResults ); break;
-	case Box : bHit = DrawBoxTrace(MeshComp , HitResults ); break;
-	case Line : bHit = DrawLineTrace(MeshComp , HitResults ); break;
+	case Sphere : bHit = DrawSphereTrace(OwnerMesh , HitResults ); break;
+	case Box : bHit = DrawBoxTrace(OwnerMesh , HitResults ); break;
+	case Line : bHit = DrawLineTrace(OwnerMesh , HitResults ); break;
 	default: break;
 	}
 	
@@ -51,14 +67,14 @@ void UEGDamageTrace_Notify::Tick(USkeletalMeshComponent* MeshComp, float FrameDe
 		{
 			if (!Hit.GetActor()) continue;
 	
-			if (Hit.GetActor() != MeshComp->GetOwner()  && !HitActorArray.Contains(Hit.GetActor())) 
+			if (Hit.GetActor() != OwnerMesh->GetOwner()  && !HitActorArray.Contains(Hit.GetActor())) 
 			{
 				HitActorArray.Add(Hit.GetActor());
-				HandleDamage(MeshComp , Hit);
+				HandleDamage(OwnerMesh , Hit);
 				if (bShouldPush)
 				{
 					if (const auto character = Cast<ACharacter>(Hit.GetActor()))
-						character->GetCharacterMovement()->AddForce(UEFMathLibrary::GetDirectionBetweenActors(MeshComp->GetOwner(),character,PushStrength));
+						character->GetCharacterMovement()->AddForce(UEFMathLibrary::GetDirectionBetweenActors(OwnerMesh->GetOwner(),character,PushStrength));
 				}
 			}
 		}
@@ -69,12 +85,29 @@ void UEGDamageTrace_Notify::Tick(USkeletalMeshComponent* MeshComp, float FrameDe
 #if ENGINE_MAJOR_VERSION == 5
 void UEGDamageTrace_Notify::NotifyBegin(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation,float TotalDuration, const FAnimNotifyEventReference& EventReference)
 {
-	Super::NotifyBegin(MeshComp, Animation, TotalDuration, EventReference); HitActorArray.Empty();
+	Super::NotifyBegin(MeshComp, Animation, TotalDuration, EventReference);
+	HitActorArray.Empty();
+	OwnerMesh = MeshComp;
+
+	if (!UseEngineTickForCollisionCalculation)
+	{
+		if (MeshComp)
+		{
+			DamageTick();
+			if (MeshComp->GetWorld())
+				MeshComp->GetWorld()->GetTimerManager().SetTimer(Handle,this,&UEGDamageTrace_Notify::DamageTick,CollisionCalculationTickSpeed,true);
+		}
+	}
 }
 
 void UEGDamageTrace_Notify::NotifyEnd(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation,const FAnimNotifyEventReference& EventReference)
 {
 	Super::NotifyEnd(MeshComp, Animation, EventReference); HitActorArray.Empty();
+	
+	if(MeshComp && MeshComp->GetWorld())
+	{
+		MeshComp->GetWorld()->GetTimerManager().ClearTimer(Handle);
+	}
 }
 
 void UEGDamageTrace_Notify::NotifyTick(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation,float FrameDeltaTime, const FAnimNotifyEventReference& EventReference)
@@ -106,17 +139,17 @@ void UEGDamageTrace_Notify::HandleDamage(USkeletalMeshComponent* MeshComp , FHit
 			case UEF_ApplyPointDamage: UGameplayStatics::ApplyPointDamage(HitResult.GetActor() ,  NotifyDamageStruct.AnimNotifyDamage , HitResult.Location , HitResult , instigator,owner,NotifyDamageStruct.DamageType); break;
 			
 			case UEF_ApplyRadialDamage:
-				UGameplayStatics::ApplyRadialDamage(GetWorld() ,  NotifyDamageStruct.AnimNotifyDamage , HitResult.Location ,  NotifyDamageStruct.AreaDamageRadius , NotifyDamageStruct.DamageType , IgnoreActors , owner , instigator, true , NotifyDamageStruct.AreaDamageBlockChannel);
+				UGameplayStatics::ApplyRadialDamage(GetWorld() ,  NotifyDamageStruct.AnimNotifyDamage , HitResult.Location ,  NotifyDamageStruct.RadialDamageStruct.AreaDamageRadius , NotifyDamageStruct.DamageType , IgnoreActors , owner , instigator, true , NotifyDamageStruct.AreaDamageBlockChannel);
 			break;
 			
 			case UEF_ApplyRadialDamageFalloff:
 				UGameplayStatics::ApplyRadialDamageWithFalloff(GetWorld(),
-					 NotifyDamageStruct.AreaDamageMaximum,
-					 NotifyDamageStruct.AreaDamageMinimum ,
+					 NotifyDamageStruct.RadialDamageStruct.AreaDamageMaximum,
+					 NotifyDamageStruct.RadialDamageStruct.AreaDamageMinimum ,
 					 HitResult.Location ,
-					 NotifyDamageStruct.AreaDamageInnerRadius ,
-					 NotifyDamageStruct.AreaDamageOuterRadius ,
-					 NotifyDamageStruct.AreaDamageFalloff ,
+					 NotifyDamageStruct.RadialDamageStruct.AreaDamageInnerRadius ,
+					 NotifyDamageStruct.RadialDamageStruct.AreaDamageOuterRadius ,
+					 NotifyDamageStruct.RadialDamageStruct.AreaDamageFalloff ,
 					 NotifyDamageStruct.DamageType,
 					 IgnoreActors ,
 					 owner ,
@@ -135,14 +168,6 @@ void UEGDamageTrace_Notify::HandleDamage(USkeletalMeshComponent* MeshComp , FHit
 		}
 	}
 }
-
-
-
-
-
-
-
-
 
 
 

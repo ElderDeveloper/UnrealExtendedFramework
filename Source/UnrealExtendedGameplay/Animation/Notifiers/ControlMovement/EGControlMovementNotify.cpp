@@ -50,7 +50,6 @@ void UEGControlMovementNotify::NotifyBegin(USkeletalMeshComponent* MeshComp, UAn
 			movement->MaxAcceleration = 0;
 		}
 	}
-
 }
 
 void UEGControlMovementNotify::NotifyEnd(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation,const FAnimNotifyEventReference& EventReference)

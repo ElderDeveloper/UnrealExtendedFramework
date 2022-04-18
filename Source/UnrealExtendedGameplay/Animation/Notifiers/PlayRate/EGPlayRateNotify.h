@@ -16,9 +16,9 @@ class UNREALEXTENDEDGAMEPLAY_API UEGPlayRateNotify : public UAnimNotifyState
 	GENERATED_BODY()
 
 	
-	UPROPERTY(EditDefaultsOnly)
+	UPROPERTY(EditAnywhere)
 	float BeginPlayRate = 1;
-	UPROPERTY(EditDefaultsOnly)
+	UPROPERTY(EditAnywhere)
 	float EndPlayRate = 1;
 
 #if ENGINE_MAJOR_VERSION != 5

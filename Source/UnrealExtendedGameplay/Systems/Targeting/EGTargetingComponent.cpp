@@ -51,8 +51,6 @@ void UEGTargetingComponent::TickComponent(const float DeltaTime, const ELevelTic
 
 	if (!bIsTargetingEnabled || !TargetedActor) return;
 	
-	
-
 	SetControlRotationOnTarget(TargetedActor);
 
 	// Target Locked Off based on Distance
@@ -74,8 +72,6 @@ void UEGTargetingComponent::TickComponent(const float DeltaTime, const ELevelTic
 			);
 		}
 	}
-
-
 	
 	if (!IsValid(TargetedActor)) TargetLockOff();
 }
@@ -89,20 +85,31 @@ void UEGTargetingComponent::TickComponent(const float DeltaTime, const ELevelTic
 void UEGTargetingComponent::EnableDisableTargeting()
 {
 	if (GetIsTargetingEnabled())
-	{
 		TargetLockOff();
-	}
+	
 	else
 	{
 		ClosestTargetDistance = MaximumDistanceToEnable;
-
 		TargetActorSearchSphere.Start = OwnerActor->GetActorLocation();
 		TargetActorSearchSphere.End = OwnerActor->GetActorLocation();
-
+		
 		if (UEFTraceLibrary::ExtendedSphereTraceMulti(GetWorld(),TargetActorSearchSphere))
-			TargetLockOn( FindNearestTarget(TargetActorSearchSphere.GetAllActorsFromHitArray()) );
+		{
+			TArray<AActor*> HitActorArray;
+			for (const auto hit : TargetActorSearchSphere.HitResults)
+			{
+				GEngine->AddOnScreenDebugMessage(-1,2.f,FColor::Green,hit.GetActor()->GetName());
+				HitActorArray.Add(hit.GetActor());
+			}
+			
+			if (const auto Actor = FindNearestTarget(HitActorArray))
+			{
+				GEngine->AddOnScreenDebugMessage(-1,2.f,FColor::Yellow,Actor->GetName());
+				TargetLockOn(Actor);
+			}
+		}
+		
 	}
-	
 }
 
 
@@ -116,7 +123,7 @@ AActor* UEGTargetingComponent::FindNearestTarget(const TArray<AActor*>& Actors)
 	{
 		if (const auto TargetingComp = Actor->FindComponentByClass<UEGTargetingTargetComponent>())
 		{
-			TargetObstacleLineTrace.Start = OwnerActor->GetActorLocation();
+			TargetObstacleLineTrace.Start = OwnerActor->GetActorLocation() + FVector(0,0,30);
 			TargetObstacleLineTrace.End = TargetingComp->GetComponentLocation();
 
 			// Check This Actor Has A Obstacle in Front Of Him
@@ -166,6 +173,7 @@ void UEGTargetingComponent::TargetLockOn(AActor* TargetToLockOn)
 	TargetedActorComponent = TargetedActor->FindComponentByClass<UEGTargetingTargetComponent>();
 
 	bIsTargetingEnabled = true;
+	
 	if (bShouldDrawLockedOnWidget)
 		CreateAndAttachTargetLockedOnWidgetComponent(TargetToLockOn);
 
@@ -303,14 +311,12 @@ void UEGTargetingComponent::TargetActorWithAxisInput(const float AxisValue)
 TArray<AActor*> UEGTargetingComponent::FindTargetsInRange(TArray<AActor*> ActorsToLook, const float RangeMin, const float RangeMax) const
 {
 	TArray<AActor*> ActorsInRange;
-
 	for (AActor* Actor : ActorsToLook)
 	{
 		const float Angle = GetAngleUsingCameraRotation(Actor);
 		if (Angle > RangeMin && Angle < RangeMax)
 			ActorsInRange.Add(Actor);
 	}
-
 	return ActorsInRange;
 }
 
@@ -374,7 +380,6 @@ bool UEGTargetingComponent::ShouldSwitchTargetActor(const float AxisValue)
 
 		if (AxisValue == 0 && FMath::Abs(StartRotatingStack) <= AxisMultiplier) StartRotatingStack = 0.0f;
 		
-
 		// If Axis value does not exceeds configured threshold, do nothing
 		if (FMath::Abs(StartRotatingStack) < StickyRotationThreshold)
 		{
@@ -384,12 +389,10 @@ bool UEGTargetingComponent::ShouldSwitchTargetActor(const float AxisValue)
 
 		//Sticky when switching target.
 		if (StartRotatingStack * AxisValue > 0) StartRotatingStack = StartRotatingStack > 0 ? StickyRotationThreshold : -StickyRotationThreshold;
-
 		
 		else if (StartRotatingStack * AxisValue < 0) StartRotatingStack = StartRotatingStack * -1.0f;
 
 		bDesireToSwitch = true;
-
 		return true;
 	}
 
@@ -428,7 +431,7 @@ void UEGTargetingComponent::CreateAndAttachTargetLockedOnWidgetComponent(AActor*
 	}
 	
 	ELSE_LOG(LogBlueprint ,Error , TEXT("Cast To UEExtended Targeting Widget Failed"));
-
+	
 }
 
 

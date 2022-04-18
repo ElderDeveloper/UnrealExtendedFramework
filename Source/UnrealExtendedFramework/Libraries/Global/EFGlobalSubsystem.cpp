@@ -76,7 +76,7 @@ UObject* UEFGlobalSubsystem::GetGlobalObject(FGameplayTag Tag , bool& Valid)
 
 void UEFGlobalSubsystem::GetAllGlobalActors(bool Print ,TArray<FGameplayTag>& Tags, TArray<AActor*>& Actors)
 {
-	if (EFGlobalActors.IsEmpty())
+	if (EFGlobalActors.Num() == 0)
 	{
 		UE_LOG(LogTemp,Warning,TEXT("Global Actor Array Empty"));
 		return;

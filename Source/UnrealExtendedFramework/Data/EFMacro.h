@@ -9,4 +9,7 @@
 
 #define ELSE_LOG(CategoryName, Verbosity, Format) 	else  UE_LOG(CategoryName,Verbosity,Format)
 
-#define IF_VERSION_FIVE()	#if ENGINE_MAJOR_VERSION == 5
+
+#define CREATE_TIMER(Handle,Object,Function,Time,Loop) if(GetWorld()) GetWorld()->GetTimerManager().SetTimer(Handle,Object,Function,Time,Loop)
+
+#define CLEAR_TIMER(Handle) if(GetWorld()) GetWorld()->GetTimerManager().ClearTimer(Handle)

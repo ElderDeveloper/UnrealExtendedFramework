@@ -12,7 +12,6 @@ bool UEFBTDecoratorLessThanAndBiggerThan::CalculateRawConditionValue(UBehaviorTr
 	if (auto const AIController = Cast<AAIController>(OwnerComp.GetOwner()))
 	{
 		const float value = AIController->GetBlackboardComponent()->GetValueAsFloat(CheckValue.SelectedKeyName);
-		GEngine->AddOnScreenDebugMessage(-1,1,FColor::Red,FString::SanitizeFloat(value));
 		if (value < LessThan && value > GreaterThan)
 			return true;
 	}
