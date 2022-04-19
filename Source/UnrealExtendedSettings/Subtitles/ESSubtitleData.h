@@ -5,7 +5,7 @@
 #include "CoreMinimal.h"
 #include "GameplayTagContainer.h"
 #include "UnrealExtendedFramework/Data/EFEnums.h"
-
+#include "Engine/DataTable.h"
 #include "ESSubtitleData.generated.h"
 
 

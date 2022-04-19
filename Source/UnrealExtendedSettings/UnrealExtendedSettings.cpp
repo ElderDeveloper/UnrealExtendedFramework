@@ -1,9 +1,6 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "UnrealExtendedSettings.h"
-
-#include "AssetToolsModule.h"
-#include "IAssetTools.h"
 #include "ISettingsModule.h"
 #include "Subtitles/Subsystem/ESSubtitleSubsystem.h"
 #include "UnrealExtendedSettings/Subsystems/ESQualitySubsystem.h"

@@ -31,8 +31,6 @@ public class UnrealExtendedSettings : ModuleRules
 				"SlateCore",
 				"UMG",
 				"InputCore",
-				"AssetTools",
-				"UnrealEd",
 				"GameplayTags",
 				"Json", 
 				"JsonUtilities",

@@ -12,32 +12,74 @@ UESSubtitleWidget::UESSubtitleWidget(const FObjectInitializer& ObjectInitializer
 
 }
 
-void UESSubtitleWidget::ReceiveSubtitleRequest(FString Subtitle, float Duration)
+
+
+void UESSubtitleWidget::ReceiveSubtitleRequest(FString Subtitle, float Duration, bool UseLetterCountAsDuration , float TimeForEachLetterCount, float TimeForAfterLetterCount, bool AnimateSubtitleLetters)
 {
-	TextBlock->SetText(FText::FromString(Subtitle));
-	
+
 	if (SubtitleHandle.IsValid())
 		GetWorld()->GetTimerManager().ClearTimer(SubtitleHandle);
 	
-	GetWorld()->GetTimerManager().SetTimer(SubtitleHandle,this,&UESSubtitleWidget::EraseSubtitle,Duration,false);
+	if (SubtitleAnimationHandle.IsValid())
+		GetWorld()->GetTimerManager().ClearTimer(SubtitleAnimationHandle);
+
+	TextBlock->SetText(FText::FromString(""));
+	SubtitleArray.Empty();
+	SubtitleLetterIndex = 0;
+	
+	if (AnimateSubtitleLetters && UseLetterCountAsDuration)
+	{
+		Subtitle.ParseIntoArray(SubtitleArray , TEXT(""));
+		StoredSubtitle = Subtitle;
+		
+		GetWorld()->GetTimerManager().SetTimer(SubtitleAnimationHandle,this,&UESSubtitleWidget::SubtitleAnimation,TimeForEachLetterCount,true);
+		GetWorld()->GetTimerManager().SetTimer(SubtitleHandle,this,&UESSubtitleWidget::EraseSubtitle,TimeForEachLetterCount* Subtitle.Len() + TimeForAfterLetterCount,false);
+	}
+	else
+	{
+		TextBlock->SetText(FText::FromString(Subtitle));
+		const float SubtitleTime = !UseLetterCountAsDuration ?  Duration  : TimeForEachLetterCount* Subtitle.Len() + TimeForAfterLetterCount;
+		GetWorld()->GetTimerManager().SetTimer(SubtitleHandle,this,&UESSubtitleWidget::EraseSubtitle,SubtitleTime,false);
+	}
+
+	
 }
+
+
 
 void UESSubtitleWidget::EraseSubtitle()
 {
 	TextBlock->SetText(FText());
 }
 
-void UESSubtitleWidget::InitializeSubtitle()
+
+
+void UESSubtitleWidget::SubtitleAnimation()
 {
-	if(const auto subsystem = GetWorld()->GetGameInstance()->GetSubsystem<UESSubtitleSubsystem>())
+	if (SubtitleArray.IsValidIndex(SubtitleLetterIndex))
 	{
-		subsystem->OnExecuteSubtitle.AddDynamic(this,&UESSubtitleWidget::UESSubtitleWidget::ReceiveSubtitleRequest);
+		const FString SubtitleAnimatedText =  TextBlock->GetText().ToString() + SubtitleArray[SubtitleLetterIndex];
+		TextBlock->SetText(FText::FromString(SubtitleAnimatedText));
 	}
+	else
+		GetWorld()->GetTimerManager().ClearTimer(SubtitleAnimationHandle);
+	
+	SubtitleLetterIndex++;
+
 }
+
 
 
 void UESSubtitleWidget::NativeConstruct()
 {
 	Super::NativeConstruct();
 	GetWorld()->GetTimerManager().SetTimer(SubtitleHandle,this,&UESSubtitleWidget::InitializeSubtitle,0.5,false);
+}
+
+
+
+void UESSubtitleWidget::InitializeSubtitle()
+{
+	if(const auto subsystem = GetWorld()->GetGameInstance()->GetSubsystem<UESSubtitleSubsystem>())
+		subsystem->OnExecuteSubtitle.AddDynamic(this,&UESSubtitleWidget::UESSubtitleWidget::ReceiveSubtitleRequest);
 }

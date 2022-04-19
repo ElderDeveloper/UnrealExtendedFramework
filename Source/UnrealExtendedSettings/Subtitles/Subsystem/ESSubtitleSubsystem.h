@@ -12,11 +12,13 @@ class AESSubtitleAsset;
 
 
 
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnExecuteSubtitle , FString , Subtitle , float , Duration );
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_SixParams(FOnExecuteSubtitle , FString , Subtitle , float , Duration , bool , UseLetterCountAsDuration , float ,TimeForEachLetterCount , float , TimeForAfterLetterCount , bool , AnimateSubtitleLetters );
 
 DECLARE_LOG_CATEGORY_EXTERN(LogExtendedSubtitle, Log, All);
 DECLARE_LOG_CATEGORY_EXTERN(LogExtendedSubtitleError, Error, All);
 DECLARE_LOG_CATEGORY_EXTERN(LogExtendedSubtitleWarning, Warning, All);
+
+
 
 UCLASS(Config = "DefaultSubtitlePlugin")
 class UNREALEXTENDEDSETTINGS_API UESSubtitleSubsystem : public UGameInstanceSubsystem
@@ -29,13 +31,25 @@ public:
 	UPROPERTY(Config , EditAnywhere ,  Category="Subtitles")
 	TMap<FGameplayTag , FExtendedSubtitleLanguageSettings > ExtendedSubtitleLanguages;
 
-	FExtendedSubtitleLanguageSettings ESLanguage;
-	
+
+	UPROPERTY(Config , EditAnywhere ,  Category="Subtitles")
+	bool UseLetterCountAsDuration = false;
+
+	UPROPERTY(Config , EditAnywhere ,  Category="Subtitles")
+	float TimeForEachLetterCount = 0.1;
+
+	UPROPERTY(Config , EditAnywhere ,  Category="Subtitles")
+	float TimeForAfterLetterCount = 1;
+
+	UPROPERTY(Config , EditAnywhere ,  Category="Subtitles")
+	bool AnimateSubtitleLetters = false;
+
+
+
 	
 	UFUNCTION(BlueprintCallable)
 	void SaveExtendedLanguage(int32 LanguageIndex);
 	
-
 
 	UFUNCTION(BlueprintCallable ,meta=(WorldContext = WorldContextObject) , Category="Extended Settings | Subtitle")
 	static void ExecuteExtendedSubtitle(const UObject* WorldContextObject , const FString SubtitleKey);
@@ -60,6 +74,8 @@ public:
 
 private:
 
+		
+	FExtendedSubtitleLanguageSettings ESLanguage;
 	const FString SESubtitleSaveSlot = "ExtendedSubtitleSave";
 
 	

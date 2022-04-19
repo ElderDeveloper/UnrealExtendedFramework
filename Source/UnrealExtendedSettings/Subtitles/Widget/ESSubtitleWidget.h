@@ -38,15 +38,25 @@ public:
 
 
 	FTimerHandle SubtitleHandle;
+	FTimerHandle SubtitleAnimationHandle;
 
+	
 	UFUNCTION()
-	void ReceiveSubtitleRequest(FString Subtitle , float Duration);
+	void ReceiveSubtitleRequest(FString Subtitle , float Duration , bool UseLetterCountAsDuration , float TimeForEachLetterCount , float TimeForAfterLetterCount , bool AnimateSubtitleLetters);
 
 	void EraseSubtitle();
-
 	void InitializeSubtitle();
+	void SubtitleAnimation();
+
+
 
 	
 	virtual void NativeConstruct() override;
+
+protected:
+
+	TArray<FString> SubtitleArray;
+	FString StoredSubtitle;
+	int32 SubtitleLetterIndex;
 	
 };

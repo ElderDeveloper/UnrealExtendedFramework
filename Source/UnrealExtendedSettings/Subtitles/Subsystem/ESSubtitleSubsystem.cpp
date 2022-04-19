@@ -131,7 +131,7 @@ void UESSubtitleSubsystem::ExecuteExtendedSubtitle(const UObject* WorldContextOb
 		if (WorldContextObject->GetWorld())
 		{
 			if (const auto Subsystem = WorldContextObject->GetWorld()->GetGameInstance()->GetSubsystem<UESSubtitleSubsystem>())
-				Subsystem->OnExecuteSubtitle.Broadcast(SubtitleStruct.Subtitle,SubtitleStruct.Duration);
+				Subsystem->OnExecuteSubtitle.Broadcast(SubtitleStruct.Subtitle,SubtitleStruct.Duration , Subsystem->UseLetterCountAsDuration , Subsystem->TimeForEachLetterCount , Subsystem->TimeForAfterLetterCount , Subsystem->AnimateSubtitleLetters);
 		}
 	}
 	
@@ -154,7 +154,7 @@ void UESSubtitleSubsystem::ExecuteExtendedSubtitleLocation(const UObject* WorldC
 		if (WorldContextObject->GetWorld())
 		{
 			if (const auto Subsystem = WorldContextObject->GetWorld()->GetGameInstance()->GetSubsystem<UESSubtitleSubsystem>())
-				Subsystem->OnExecuteSubtitle.Broadcast(SubtitleStruct.Subtitle,SubtitleStruct.Duration);
+				Subsystem->OnExecuteSubtitle.Broadcast(SubtitleStruct.Subtitle,SubtitleStruct.Duration , Subsystem->UseLetterCountAsDuration , Subsystem->TimeForEachLetterCount , Subsystem->TimeForAfterLetterCount , Subsystem->AnimateSubtitleLetters);
 		}
 	}
 }
@@ -176,7 +176,7 @@ void UESSubtitleSubsystem::ExecuteExtendedSubtitleAttachedComponent(const UObjec
 		if (WorldContextObject->GetWorld())
 		{
 			if (const auto Subsystem = WorldContextObject->GetWorld()->GetGameInstance()->GetSubsystem<UESSubtitleSubsystem>())
-				Subsystem->OnExecuteSubtitle.Broadcast(SubtitleStruct.Subtitle,SubtitleStruct.Duration);
+				Subsystem->OnExecuteSubtitle.Broadcast(SubtitleStruct.Subtitle,SubtitleStruct.Duration , Subsystem->UseLetterCountAsDuration , Subsystem->TimeForEachLetterCount , Subsystem->TimeForAfterLetterCount , Subsystem->AnimateSubtitleLetters);
 		}
 	}
 }
