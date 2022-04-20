@@ -42,11 +42,13 @@ public:
 
 	
 	UFUNCTION()
-	void ReceiveSubtitleRequest(FString Subtitle , float Duration , bool UseLetterCountAsDuration , float TimeForEachLetterCount , float TimeForAfterLetterCount , bool AnimateSubtitleLetters);
+	void ReceiveSubtitleRequest(FString Subtitle , float Duration);
 
 	void EraseSubtitle();
 	void InitializeSubtitle();
 	void SubtitleAnimation();
+
+	void GetSubtitleSubsystemVariables();
 
 
 
@@ -58,5 +60,16 @@ protected:
 	TArray<FString> SubtitleArray;
 	FString StoredSubtitle;
 	int32 SubtitleLetterIndex;
+
+
+	FSlateFontInfo SubtitleStoredFont;
+
+	FSlateFontInfo SubtitleStoredLanguageFont;
+	
+	bool bUseBorder = true;
+	bool UseLetterCountAsDuration = false;
+	float TimeForEachLetterCount = 0.1;
+	float TimeForAfterLetterCount = 1;
+	bool AnimateSubtitleLetters = false;
 	
 };

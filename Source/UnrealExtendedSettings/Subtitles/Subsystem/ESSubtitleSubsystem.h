@@ -12,7 +12,7 @@ class AESSubtitleAsset;
 
 
 
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_SixParams(FOnExecuteSubtitle , FString , Subtitle , float , Duration , bool , UseLetterCountAsDuration , float ,TimeForEachLetterCount , float , TimeForAfterLetterCount , bool , AnimateSubtitleLetters );
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnExecuteSubtitle , FString , Subtitle , float , Duration );
 
 DECLARE_LOG_CATEGORY_EXTERN(LogExtendedSubtitle, Log, All);
 DECLARE_LOG_CATEGORY_EXTERN(LogExtendedSubtitleError, Error, All);
@@ -31,6 +31,8 @@ public:
 	UPROPERTY(Config , EditAnywhere ,  Category="Subtitles")
 	TMap<FGameplayTag , FExtendedSubtitleLanguageSettings > ExtendedSubtitleLanguages;
 
+	UPROPERTY(Config , EditAnywhere ,  Category="Subtitles")
+	bool bUseBorder = true;
 
 	UPROPERTY(Config , EditAnywhere ,  Category="Subtitles")
 	bool UseLetterCountAsDuration = false;
@@ -48,7 +50,10 @@ public:
 
 	
 	UFUNCTION(BlueprintCallable)
-	void SaveExtendedLanguage(int32 LanguageIndex);
+	void SaveExtendedLanguageWithIndex(int32 LanguageIndex);
+
+	UFUNCTION(BlueprintCallable)
+	void SaveExtendedLanguageWithTag(FGameplayTag LanguageTag);
 	
 
 	UFUNCTION(BlueprintCallable ,meta=(WorldContext = WorldContextObject) , Category="Extended Settings | Subtitle")
@@ -86,8 +91,13 @@ private:
 	void LoadLanguage();
 	bool GetSubtitleSettingsFromIndex(const int32 Index, FExtendedSubtitleLanguageSettings& Settings);
 
+	
 	void SaveExist();
-	void SaveNotExist();	
+	void SaveNotExist();
+
+	
+	bool CheckSavesTheSame(FExtendedSubtitleLanguageSettings CheckLanguage) const;
+	
 	
 	virtual void Initialize(FSubsystemCollectionBase& Collection) override;
 	virtual bool ShouldCreateSubsystem(UObject* Outer) const override { return true; }

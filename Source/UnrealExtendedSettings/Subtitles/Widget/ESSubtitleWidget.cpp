@@ -5,31 +5,45 @@
 
 #include "Components/TextBlock.h"
 #include "Blueprint/WidgetTree.h"
+#include "Components/Border.h"
+#include "Kismet/KismetStringLibrary.h"
 #include "UnrealExtendedSettings/Subtitles/Subsystem/ESSubtitleSubsystem.h"
 
 UESSubtitleWidget::UESSubtitleWidget(const FObjectInitializer& ObjectInitializer) : Super(ObjectInitializer)
 {
-
 }
 
 
 
-void UESSubtitleWidget::ReceiveSubtitleRequest(FString Subtitle, float Duration, bool UseLetterCountAsDuration , float TimeForEachLetterCount, float TimeForAfterLetterCount, bool AnimateSubtitleLetters)
+void UESSubtitleWidget::ReceiveSubtitleRequest(FString Subtitle, float Duration)
 {
-
 	if (SubtitleHandle.IsValid())
 		GetWorld()->GetTimerManager().ClearTimer(SubtitleHandle);
+
 	
 	if (SubtitleAnimationHandle.IsValid())
 		GetWorld()->GetTimerManager().ClearTimer(SubtitleAnimationHandle);
+	
+	GetSubtitleSubsystemVariables();
+	
+	if (SubtitleStoredLanguageFont.FontObject)
+		TextBlock->SetFont(SubtitleStoredLanguageFont);
+	else
+		TextBlock->SetFont(SubtitleStoredFont);
 
+	
 	TextBlock->SetText(FText::FromString(""));
+	const auto Color = Border->BrushColor;
+	bUseBorder ?  Border->SetBrushColor(FLinearColor(Color.R,Color.G,Color.B,1)) : Border->SetBrushColor(FLinearColor(Color.R,Color.G,Color.B,0));
+
+	
 	SubtitleArray.Empty();
 	SubtitleLetterIndex = 0;
+
 	
 	if (AnimateSubtitleLetters && UseLetterCountAsDuration)
 	{
-		Subtitle.ParseIntoArray(SubtitleArray , TEXT(""));
+		SubtitleArray = UKismetStringLibrary::GetCharacterArrayFromString(Subtitle);
 		StoredSubtitle = Subtitle;
 		
 		GetWorld()->GetTimerManager().SetTimer(SubtitleAnimationHandle,this,&UESSubtitleWidget::SubtitleAnimation,TimeForEachLetterCount,true);
@@ -41,8 +55,6 @@ void UESSubtitleWidget::ReceiveSubtitleRequest(FString Subtitle, float Duration,
 		const float SubtitleTime = !UseLetterCountAsDuration ?  Duration  : TimeForEachLetterCount* Subtitle.Len() + TimeForAfterLetterCount;
 		GetWorld()->GetTimerManager().SetTimer(SubtitleHandle,this,&UESSubtitleWidget::EraseSubtitle,SubtitleTime,false);
 	}
-
-	
 }
 
 
@@ -50,6 +62,7 @@ void UESSubtitleWidget::ReceiveSubtitleRequest(FString Subtitle, float Duration,
 void UESSubtitleWidget::EraseSubtitle()
 {
 	TextBlock->SetText(FText());
+	Border->SetBrushColor(FLinearColor(0,0,0,0));
 }
 
 
@@ -65,7 +78,21 @@ void UESSubtitleWidget::SubtitleAnimation()
 		GetWorld()->GetTimerManager().ClearTimer(SubtitleAnimationHandle);
 	
 	SubtitleLetterIndex++;
+}
 
+
+
+void UESSubtitleWidget::GetSubtitleSubsystemVariables()
+{
+	if (const auto Subsystem = GetWorld()->GetGameInstance()->GetSubsystem<UESSubtitleSubsystem>())
+	{
+		bUseBorder = Subsystem->bUseBorder;
+		AnimateSubtitleLetters = Subsystem->AnimateSubtitleLetters;
+		TimeForEachLetterCount = Subsystem->TimeForEachLetterCount;
+		TimeForAfterLetterCount = Subsystem->TimeForAfterLetterCount;
+		UseLetterCountAsDuration = Subsystem->UseLetterCountAsDuration;
+		SubtitleStoredLanguageFont = Subsystem->GetExtendedSubtitleLanguage().Font;
+	}
 }
 
 
@@ -74,6 +101,7 @@ void UESSubtitleWidget::NativeConstruct()
 {
 	Super::NativeConstruct();
 	GetWorld()->GetTimerManager().SetTimer(SubtitleHandle,this,&UESSubtitleWidget::InitializeSubtitle,0.5,false);
+	SubtitleStoredFont = TextBlock->Font;
 }
 
 

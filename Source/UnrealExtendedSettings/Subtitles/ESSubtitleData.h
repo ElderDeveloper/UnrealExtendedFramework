@@ -18,6 +18,9 @@ struct FExtendedSubtitleLanguageSettings
 	GENERATED_BODY()
 
 	UPROPERTY(EditAnywhere , BlueprintReadOnly )
+	FGameplayTag LanguageTag;
+	
+	UPROPERTY(EditAnywhere , BlueprintReadOnly )
 	UDataTable* LanguageSubtitleDataTable;
 
 	UPROPERTY(EditAnywhere , BlueprintReadOnly)

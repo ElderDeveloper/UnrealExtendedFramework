@@ -14,7 +14,7 @@ DEFINE_LOG_CATEGORY(LogExtendedSubtitleError);
 DEFINE_LOG_CATEGORY(LogExtendedSubtitleWarning);
 
 
-void UESSubtitleSubsystem::SaveExtendedLanguage(int32 LanguageIndex)
+void UESSubtitleSubsystem::SaveExtendedLanguageWithIndex(int32 LanguageIndex)
 {
 	if(const auto SubtitleSave = UGameplayStatics::LoadGameFromSlot(SESubtitleSaveSlot,0))
 	{
@@ -31,16 +31,35 @@ void UESSubtitleSubsystem::SaveExtendedLanguage(int32 LanguageIndex)
 	}
 }
 
-
-
+void UESSubtitleSubsystem::SaveExtendedLanguageWithTag(FGameplayTag LanguageTag)
+{
+	if(const auto SubtitleSave = UGameplayStatics::LoadGameFromSlot(SESubtitleSaveSlot,0))
+	{
+		if (const auto Save = Cast<UESSubtitleLanguageSave>(SubtitleSave))
+		{
+			 const auto language = GetExtendedSubtitleLanguages()[LanguageTag];
+			
+			if (GetExtendedSubtitleLanguages().Find(LanguageTag))
+			{
+				ESLanguage = language;
+				Save->CurrentLanguage = ESLanguage;
+				UE_LOG(LogExtendedSubtitle , Log , TEXT("UESSubtitleSubsystem: Save Compleate , New Direction = %s ") , *Save->CurrentLanguage.AssetDirectory)
+				UGameplayStatics::SaveGameToSlot(Save,SESubtitleSaveSlot,0);
+			}
+			ELSE_LOG(LogBlueprint,Error,TEXT("Extended Subtitle Subystem: Save Requested With Invalid Key Index"));
+		}
+	}
+}
 
 
 void UESSubtitleSubsystem::LoadLanguage()
 {
 	if(UGameplayStatics::DoesSaveGameExist(SESubtitleSaveSlot,0))
 	{
-		FTimerHandle Handle;
-		GetWorld()->GetTimerManager().SetTimer(Handle,this,&UESSubtitleSubsystem::SaveExist,0.3,false);
+		SaveExist();
+		
+		//FTimerHandle Handle;
+		//GetWorld()->GetTimerManager().SetTimer(Handle,this,&UESSubtitleSubsystem::SaveExist,0.3,false);
 	}
 	else
 		SaveNotExist();
@@ -57,8 +76,24 @@ void UESSubtitleSubsystem::SaveExist()
 	{
 		if (const auto Save = Cast<UESSubtitleLanguageSave>(SubtitleSave))
 		{
-			ESLanguage = Save->CurrentLanguage;
-			UE_LOG(LogExtendedSubtitle , Log , TEXT("UESSubtitleSubsystem: Load Compleate : New Direction = %s") , *Save->CurrentLanguage.AssetDirectory);
+			if (CheckSavesTheSame(Save->CurrentLanguage))
+			{
+				ESLanguage = Save->CurrentLanguage;
+				UE_LOG(LogExtendedSubtitle , Log , TEXT("UESSubtitleSubsystem: Load Compleate : New Direction = %s") , *Save->CurrentLanguage.AssetDirectory);
+			}
+			else
+			{
+				if (const auto Language = GetExtendedSubtitleLanguages().Find(Save->CurrentLanguage.LanguageTag))
+				{
+					SaveExtendedLanguageWithTag(Save->CurrentLanguage.LanguageTag);
+					UE_LOG(LogExtendedSubtitle , Log , TEXT("UESSubtitleSubsystem: Load Compleate But Settings Are Different Than Save And Tag Found Initialize Resave"));
+				}
+				else
+				{
+					SaveNotExist();
+					UE_LOG(LogExtendedSubtitle , Log , TEXT("UESSubtitleSubsystem: Load Compleate But Settings Are Different Than Save And Tag Not Found In The Save File Initialize SaveNotExist"));
+				}
+			}
 		}
 	}
 }
@@ -85,6 +120,54 @@ void UESSubtitleSubsystem::SaveNotExist()
 }
 
 
+bool UESSubtitleSubsystem::CheckSavesTheSame(FExtendedSubtitleLanguageSettings CheckLanguage) const
+{
+	if (CheckLanguage.LanguageTag == FGameplayTag::EmptyTag)
+	{
+		return false;
+	}
+
+	if ( const auto Language = GetExtendedSubtitleLanguages().Find(CheckLanguage.LanguageTag) )
+	{
+		if (Language->Font.Size != CheckLanguage.Font.Size)
+			return false;
+
+		if( Language->Font.CompositeFont != CheckLanguage.Font.CompositeFont )
+			return false;
+
+		if (Language->Font.FontMaterial != CheckLanguage.Font.FontMaterial)
+			return false;
+
+		if( Language->Font.FontObject != CheckLanguage.Font.FontObject )
+			return false;
+
+		if (Language->Font.LetterSpacing != CheckLanguage.Font.LetterSpacing)
+			return false;
+
+		if( Language->Font.OutlineSettings.OutlineMaterial != CheckLanguage.Font.OutlineSettings.OutlineMaterial )
+			return false;
+
+		if( Language->Font.OutlineSettings.OutlineSize != CheckLanguage.Font.OutlineSettings.OutlineSize )
+			return false;
+
+		if( Language->Font.OutlineSettings.OutlineColor != CheckLanguage.Font.OutlineSettings.OutlineColor )
+			return false;
+
+		if (Language->LanguageAssetProjectDirectory != CheckLanguage.LanguageAssetProjectDirectory)
+			return false;
+
+		if (Language->AssetDirectory != CheckLanguage.AssetDirectory)
+			return false;
+		
+		if (Language->LanguageSubtitleDataTable != CheckLanguage.LanguageSubtitleDataTable)
+			return false;
+
+		return true;
+	}
+
+	return false;
+	
+}
 
 
 
@@ -119,7 +202,7 @@ void UESSubtitleSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 void UESSubtitleSubsystem::ExecuteExtendedSubtitle(const UObject* WorldContextObject ,const FString SubtitleKey)
 {
 	FExtendedSubtitle SubtitleStruct ;
-	GetSubtitleJSon(WorldContextObject,SubtitleKey , SubtitleStruct);
+	GetSubtitleJSon(WorldContextObject , SubtitleKey , SubtitleStruct);
 	
 	
 	if (GetExtendedSubtitleSound(WorldContextObject,SubtitleKey,SubtitleStruct) && WorldContextObject)
@@ -131,7 +214,7 @@ void UESSubtitleSubsystem::ExecuteExtendedSubtitle(const UObject* WorldContextOb
 		if (WorldContextObject->GetWorld())
 		{
 			if (const auto Subsystem = WorldContextObject->GetWorld()->GetGameInstance()->GetSubsystem<UESSubtitleSubsystem>())
-				Subsystem->OnExecuteSubtitle.Broadcast(SubtitleStruct.Subtitle,SubtitleStruct.Duration , Subsystem->UseLetterCountAsDuration , Subsystem->TimeForEachLetterCount , Subsystem->TimeForAfterLetterCount , Subsystem->AnimateSubtitleLetters);
+				Subsystem->OnExecuteSubtitle.Broadcast(SubtitleStruct.Subtitle,SubtitleStruct.Duration);
 		}
 	}
 	
@@ -154,7 +237,7 @@ void UESSubtitleSubsystem::ExecuteExtendedSubtitleLocation(const UObject* WorldC
 		if (WorldContextObject->GetWorld())
 		{
 			if (const auto Subsystem = WorldContextObject->GetWorld()->GetGameInstance()->GetSubsystem<UESSubtitleSubsystem>())
-				Subsystem->OnExecuteSubtitle.Broadcast(SubtitleStruct.Subtitle,SubtitleStruct.Duration , Subsystem->UseLetterCountAsDuration , Subsystem->TimeForEachLetterCount , Subsystem->TimeForAfterLetterCount , Subsystem->AnimateSubtitleLetters);
+				Subsystem->OnExecuteSubtitle.Broadcast(SubtitleStruct.Subtitle,SubtitleStruct.Duration);
 		}
 	}
 }
@@ -176,7 +259,7 @@ void UESSubtitleSubsystem::ExecuteExtendedSubtitleAttachedComponent(const UObjec
 		if (WorldContextObject->GetWorld())
 		{
 			if (const auto Subsystem = WorldContextObject->GetWorld()->GetGameInstance()->GetSubsystem<UESSubtitleSubsystem>())
-				Subsystem->OnExecuteSubtitle.Broadcast(SubtitleStruct.Subtitle,SubtitleStruct.Duration , Subsystem->UseLetterCountAsDuration , Subsystem->TimeForEachLetterCount , Subsystem->TimeForAfterLetterCount , Subsystem->AnimateSubtitleLetters);
+				Subsystem->OnExecuteSubtitle.Broadcast(SubtitleStruct.Subtitle,SubtitleStruct.Duration );
 		}
 	}
 }
@@ -188,20 +271,16 @@ void UESSubtitleSubsystem::ExecuteExtendedSubtitleAttachedComponent(const UObjec
 
 bool UESSubtitleSubsystem::GetExtendedSubtitleSound(const UObject* WorldContextObject,const FString SubtitleKey, FExtendedSubtitle& SubtitleStruct)
 {
-	
 	if (WorldContextObject)
 	{
-		if (WorldContextObject->GetWorld())
+		if (const auto Subsystem = WorldContextObject->GetWorld()->GetGameInstance()->GetSubsystem<UESSubtitleSubsystem>())
 		{
-			if (const auto Subsystem = WorldContextObject->GetWorld()->GetGameInstance()->GetSubsystem<UESSubtitleSubsystem>())
+			if (Subsystem->ESLanguage.LanguageSubtitleDataTable)
 			{
-				if (Subsystem->ESLanguage.LanguageSubtitleDataTable)
+				if (auto i = Subsystem->ESLanguage.LanguageSubtitleDataTable->FindRow<FExtendedSubtitle>(*SubtitleKey,""))
 				{
-					if (auto i = Subsystem->ESLanguage.LanguageSubtitleDataTable->FindRow<FExtendedSubtitle>(*SubtitleKey,""))
-					{
-						SubtitleStruct.SubtitleSound =  i->SubtitleSound;
-						return true;
-					}
+					SubtitleStruct.SubtitleSound =  i->SubtitleSound;
+					return true;
 				}
 			}
 		}
