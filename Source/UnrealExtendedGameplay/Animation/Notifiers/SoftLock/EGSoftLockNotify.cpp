@@ -4,6 +4,7 @@
 #include "EGSoftLockNotify.h"
 
 #include "Kismet/KismetMathLibrary.h"
+#include "UnrealExtendedFramework/Data/EFMacro.h"
 #include "UnrealExtendedFramework/Libraries/Math/EFMathLibrary.h"
 #include "UnrealExtendedFramework/Libraries/Trace/EFTraceLibrary.h"
 
@@ -71,6 +72,8 @@ void UEGSoftLockNotify::NotifyTick(USkeletalMeshComponent* MeshComp, UAnimSequen
 		FindSoftLockActor(MeshComp);
 		return;
 	}
+
+	PRINT_STRING(1,Red,SoftLockActor->GetName());
 	
 	if (auto const Owner = MeshComp->GetOwner())
 	{
