@@ -3,6 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Kismet/KismetMathLibrary.h"
 #include "UnrealExtendedFramework/Data/EFEnums.h"
 #include "EFConditionLibrary.generated.h"
 
@@ -14,40 +15,87 @@ class UNREALEXTENDEDFRAMEWORK_API UEFConditionLibrary : public UBlueprintFunctio
 
 public:
 	UFUNCTION(BlueprintCallable,meta = (DisplayName = "Exec >0",CompactNodeTitle = ">0",CustomStructureParam = "Value" , ExpandEnumAsExecs = "OutPins") , Category="ConditionLibrary")
-	static void IsBiggerThanZero(const float& Value , TEnumAsByte<EFConditionOutput>& OutPins) {	if (Value > 0) OutPins = UEF_True; else OutPins = UEF_False; }
+	static void IsBiggerThanZero(const float& Value , TEnumAsByte<EFConditionOutput>& OutPins)
+	{
+		Value > 0 ? UEF_True :  OutPins = UEF_False;
+	}
 
+	
 	UFUNCTION(BlueprintCallable,meta = (DisplayName = "Exec >=0",CompactNodeTitle = "=>0",CustomStructureParam = "Value" , ExpandEnumAsExecs = "OutPins"), Category="ConditionLibrary")
-	static void IsBiggerThanOrEqualZero(const float& Value , TEnumAsByte<EFConditionOutput>& OutPins) {	if (Value >= 0) OutPins = UEF_True; else OutPins = UEF_False; }
+	static void IsBiggerThanOrEqualZero(const float& Value , TEnumAsByte<EFConditionOutput>& OutPins)
+	{
+		Value >= 0 ? UEF_True :  OutPins = UEF_False;
+	}
 
+	
 	UFUNCTION(BlueprintCallable,meta = (DisplayName = "Exec ==0",CompactNodeTitle = "==0",CustomStructureParam = "Value" , ExpandEnumAsExecs = "OutPins"), Category="ConditionLibrary")
-	static void IsEqualZero(const float& Value , TEnumAsByte<EFConditionOutput>& OutPins) {	if (Value == 0) OutPins = UEF_True; else OutPins = UEF_False; }
+	static void IsEqualZero(const float& Value , TEnumAsByte<EFConditionOutput>& OutPins)
+	{
+		Value == 0 ? UEF_True :  OutPins = UEF_False;
+	}
 
+	
 	UFUNCTION(BlueprintCallable,meta = (DisplayName = "Exec <0",CompactNodeTitle = "<0",CustomStructureParam = "Value" , ExpandEnumAsExecs = "OutPins"), Category="ConditionLibrary")
-	static void IsLessThanZero(const float& Value , TEnumAsByte<EFConditionOutput>& OutPins) {	if (Value < 0) OutPins = UEF_True; else OutPins = UEF_False; }
+	static void IsLessThanZero(const float& Value , TEnumAsByte<EFConditionOutput>& OutPins)
+	{
+		Value < 0 ? UEF_True :  OutPins = UEF_False;
+	}
 
+	
 	UFUNCTION(BlueprintCallable,meta = (DisplayName = "Exec <=0",CompactNodeTitle = "<=0",CustomStructureParam = "Value" , ExpandEnumAsExecs = "OutPins"), Category="ConditionLibrary")
-	static void IsLessThanOrEqualZero(const float& Value , TEnumAsByte<EFConditionOutput>& OutPins) {	if (Value <= 0) OutPins = UEF_True; else OutPins = UEF_False; }
+	static void IsLessThanOrEqualZero(const float& Value , TEnumAsByte<EFConditionOutput>& OutPins)
+	{
+		Value <= 0 ? UEF_True :  OutPins = UEF_False;
+	}
 
+	
 	UFUNCTION(BlueprintCallable,meta = (DisplayName = "Exec ==-1",CompactNodeTitle = "==-1",CustomStructureParam = "Value" , ExpandEnumAsExecs = "OutPins"), Category="ConditionLibrary")
-	static void IsEqualToMinusOne(const float& Value , TEnumAsByte<EFConditionOutput>& OutPins) {	if (Value == -1) OutPins = UEF_True; else OutPins = UEF_False; }
+	static void IsEqualToMinusOne(const float& Value , TEnumAsByte<EFConditionOutput>& OutPins)
+	{
+		Value == -1 ? UEF_True :  OutPins = UEF_False;
+	}
 
+	
 	UFUNCTION(BlueprintCallable,meta = (DisplayName = "Exec ==-1",CompactNodeTitle = "==-1",CustomStructureParam = "Value" , ExpandEnumAsExecs = "OutPins"), Category="ConditionLibrary")
-	static void IsNotEqualToMinusOne(const float& Value , TEnumAsByte<EFConditionOutput>& OutPins) {	if (Value != -1) OutPins = UEF_True; else OutPins = UEF_False; }
+	static void IsNotEqualToMinusOne(const float& Value , TEnumAsByte<EFConditionOutput>& OutPins)
+	{
+		Value != -1 ? UEF_True :  OutPins = UEF_False;
+	}
+
 	
 	UFUNCTION(BlueprintCallable,meta = (DisplayName = "Exec >input",CompactNodeTitle = ">input",CustomStructureParam = "Value" , ExpandEnumAsExecs = "OutPins") , Category="ConditionLibrary")
-	static void IsBiggerThan(const float& Value , TEnumAsByte<EFConditionOutput>& OutPins , float input = 0) {	if (Value > input) OutPins = UEF_True; else OutPins = UEF_False; }
+	static void IsBiggerThan(const float& Value , TEnumAsByte<EFConditionOutput>& OutPins , float input = 0)
+	{
+		Value > input ? UEF_True :  OutPins = UEF_False;
+	}
 
+	
 	UFUNCTION(BlueprintCallable,meta = (DisplayName = "Exec >= input",CompactNodeTitle = ">=input",CustomStructureParam = "Value" , ExpandEnumAsExecs = "OutPins") , Category="ConditionLibrary")
-	static void IsBiggerThanOrEqual(const float& Value , TEnumAsByte<EFConditionOutput>& OutPins , float input = 0) {	if (Value >= input) OutPins = UEF_True; else OutPins = UEF_False; }
+	static void IsBiggerThanOrEqual(const float& Value , TEnumAsByte<EFConditionOutput>& OutPins , float input = 0)
+	{
+		Value >= input ? UEF_True :  OutPins = UEF_False;
+	}
 
+	
 	UFUNCTION(BlueprintCallable,meta = (DisplayName = "Exec <input",CompactNodeTitle = "<input",CustomStructureParam = "Value" , ExpandEnumAsExecs = "OutPins") , Category="ConditionLibrary")
-	static void IsLessThan(const float& Value , TEnumAsByte<EFConditionOutput>& OutPins , float input = 0) {	if (Value < input) OutPins = UEF_True; else OutPins = UEF_False; }
+	static void IsLessThan(const float& Value , TEnumAsByte<EFConditionOutput>& OutPins , float input = 0)
+	{
+		Value < input ? UEF_True :  OutPins = UEF_False;
+	}
 
+	
 	UFUNCTION(BlueprintCallable,meta = (DisplayName = "Exec <=input",CompactNodeTitle = "<=input",CustomStructureParam = "Value" , ExpandEnumAsExecs = "OutPins") , Category="ConditionLibrary")
-	static void IsLessThanOrEqual(const float& Value , TEnumAsByte<EFConditionOutput>& OutPins , float input = 0) {	if (Value <= input) OutPins = UEF_True; else OutPins = UEF_False; }
+	static void IsLessThanOrEqual(const float& Value , TEnumAsByte<EFConditionOutput>& OutPins , float input = 0)
+	{
+		Value <= input ? UEF_True :  OutPins = UEF_False;
+	}
 
+	
 	UFUNCTION(BlueprintCallable,meta = (DisplayName = "Exec ==input",CompactNodeTitle = "==input",CustomStructureParam = "Value" , ExpandEnumAsExecs = "OutPins") , Category="ConditionLibrary")
-	static void IsEqualTo(const float& Value , TEnumAsByte<EFConditionOutput>& OutPins ,float input = 0 ,const float Tolerance = 0.02) {	if (FMath::IsNearlyEqual(Value,input,Tolerance)) OutPins = UEF_True; else OutPins = UEF_False; }
+	static void IsEqualTo(const double& Value , TEnumAsByte<EFConditionOutput>& OutPins ,const double Input = 0 ,const double Tolerance = 0.02)
+	{
+		FMath::Abs<double>(Value - Input) <= Tolerance ? OutPins = UEF_True : OutPins = UEF_False;
+	}
 
 
 	
