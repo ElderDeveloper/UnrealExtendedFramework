@@ -8,17 +8,14 @@ This plugin contains lot's of libraries and systems to enhance the Unreal Engine
 
 <a name="table-of-contents"></a>
 ## Table of Contents
-
-1. [Unreal Extended Backend](#extended-backend)
-   1. [HTTP](#extended-backend-http)
-   2. [Socket](#extended-backend-socket)
-   3. [Json](#extended-backend-json)
-
-
-2 [Unreal Extended Editor](#extended-editor)  
-   2.1 [Animation Nodes](#extended-editor-animation)
-   2.1 [Cheat Manager](#extended-asc-cheat)
-> 3 [Unreal Extended Framework](#extended-framework) 
+> 1. [Unreal Extended Backend](#extended-backend)  
+>    1.1 [HTTP](#extended-backend-http)
+>    1.2 [Socket](#extended-backend-socket)  
+>    1.3 [Json](#extended-backend-json)  
+> 2. [Unreal Extended Editor](#extended-editor)  
+>    2.1 [Animation Nodes](#extended-editor-animation)
+>    2.1 [Cheat Manager](#extended-asc-cheat)
+> 3. [Unreal Extended Framework](#extended-framework) 
 >    &nbsp;3.1 [AI](#extended-framework-AI)
 >    &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;3.1.1 [Black Board Decorators](#extended-framework-AI-btd)
 >       3.1.1 [Black Board Services](#extended-framework-AI-bts)
@@ -30,9 +27,9 @@ This plugin contains lot's of libraries and systems to enhance the Unreal Engine
 >    3.2 [Asyc Libraries](#extended-framework-asnc)
 >    3.3 [Framework Datas](#extended-framework-data)
 >    3.4 [Libraries](#extended-framework-library) 
-> 4 [Unreal Extended Gameplay](#extended-gameplay)  
-> 5 [Unreal Extended Settings](#extended-settings)  
-> 6 [Unreal Extended Steam](#extended-steam)  
+> 4. [Unreal Extended Gameplay](#extended-gameplay)  
+> 5. [Unreal Extended Settings](#extended-settings)  
+> 6. [Unreal Extended Steam](#extended-steam)  
 
 
 
