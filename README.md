@@ -15,7 +15,8 @@ This plugin contains lot's of libraries and systems to enhance the Unreal Engine
 > 2. [Unreal Extended Editor](#extended-editor)
 
 > &nbsp; 2.1 [Animation Nodes](#extended-editor)
-> &nbsp; 2.1 [Cheat Manager](#extended-editor)
+> &nbsp; 2.2 [Cheat Manager](#extended-editor)
+
 > 3. [Unreal Extended Framework](#extended-framework)
 >     3.1 AI
 >       3.1.1 Black Board Decorators
