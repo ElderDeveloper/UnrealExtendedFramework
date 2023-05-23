@@ -12,7 +12,7 @@ This plugin contains lot's of libraries and systems to enhance the Unreal Engine
 >     1.1 HTTP
 >     1.2 Socket
 >     1.3 Json
-> 2. [Unreal Extended Editor](#extended-editor)
+> 2. [Unreal Extended Editor](#extended-editor) \n
 > &nbsp; 2.1 [Animation Nodes](#extended-editor)
 > &nbsp; 2.1 [Cheat Manager](#extended-editor)
 > 3. [Unreal Extended Framework](#extended-framework)
