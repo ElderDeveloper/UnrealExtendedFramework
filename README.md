@@ -13,8 +13,8 @@ This plugin contains lot's of libraries and systems to enhance the Unreal Engine
 >     1.2 Socket
 >     1.3 Json
 > 2. [Unreal Extended Editor](#extended-editor)
->     2.1 Animation Nodes
->     2.1 Cheat Manager
+>   2.1 Animation Nodes
+>   2.1 Cheat Manager
 > 3. [Unreal Extended Framework](#extended-framework)
 >     3.1 AI
 >       3.1.1 Black Board Decorators
