@@ -15,9 +15,9 @@ This plugin contains lot's of libraries and systems to enhance the Unreal Engine
    3. [Json](#extended-backend-json)
 
 
-> 2 [Unreal Extended Editor](#extended-editor)  
->    2.1 [Animation Nodes](#extended-editor-animation)
->    2.1 [Cheat Manager](#extended-asc-cheat)
+2 [Unreal Extended Editor](#extended-editor)  
+   2.1 [Animation Nodes](#extended-editor-animation)
+   2.1 [Cheat Manager](#extended-asc-cheat)
 > 3 [Unreal Extended Framework](#extended-framework) 
 >    &nbsp;3.1 [AI](#extended-framework-AI)
 >    &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;3.1.1 [Black Board Decorators](#extended-framework-AI-btd)
