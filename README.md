@@ -9,9 +9,9 @@ This plugin contains lot's of libraries and systems to enhance the Unreal Engine
 <a name="table-of-contents"></a>
 ## Table of Contents
 > 1. [Unreal Extended Backend](#extended-backend)   
->    1 [HTTP](#extended-backend-http)   
->    2 [Socket](#extended-backend-socket)   
->    3 [Json](#extended-backend-json)   
+>    1.1 [HTTP](#extended-backend-http)   
+>    1.2 [Socket](#extended-backend-socket)   
+>    1.3 [Json](#extended-backend-json)   
 > 2. [Unreal Extended Editor](#extended-editor)  
 >    2.1 [Animation Nodes](#extended-editor-animation)
 >    2.1 [Cheat Manager](#extended-asc-cheat)
