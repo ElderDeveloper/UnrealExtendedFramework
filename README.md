@@ -58,7 +58,7 @@ This plugin contains lot's of libraries and systems to enhance the Unreal Engine
 >    &nbsp;&nbsp;&nbsp;&nbsp; 4.6.1 [Combat](#extended-gameplay-systems-combat)   
 >    &nbsp;&nbsp;&nbsp;&nbsp; 4.6.2 [Cover](#extended-gameplay-systems-cover)   
 >    &nbsp;&nbsp;&nbsp;&nbsp; 4.6.3 [Footstep](#extended-gameplay-systems-footstep)   
->    &nbsp;&nbsp;&nbsp;&nbsp; 4.6.4 [Input Buffer](#extended-gameplay-systems-input buffer)   
+>    &nbsp;&nbsp;&nbsp;&nbsp; 4.6.4 [Input Buffer](#extended-gameplay-systems-inputbuffer)   
 >    &nbsp;&nbsp;&nbsp;&nbsp; 4.6.5 [Ladder](#extended-gameplay-systems-ladder)   
 >    &nbsp;&nbsp;&nbsp;&nbsp; 4.6.6 [Mantle Ledge](#extended-gameplay-systems-mantleledge)   
 >    &nbsp;&nbsp;&nbsp;&nbsp; 4.6.7 [State Machine](#extended-gameplay-systems-statemachine)   
