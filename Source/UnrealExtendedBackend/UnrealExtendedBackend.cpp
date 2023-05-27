@@ -2,6 +2,7 @@
 
 #include "UnrealExtendedBackend.h"
 
+// This is a test
 #define LOCTEXT_NAMESPACE "FUnrealExtendedBackendModule"
 
 void FUnrealExtendedBackendModule::StartupModule()
