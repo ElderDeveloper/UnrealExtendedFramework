@@ -7,9 +7,9 @@
 #include "Serialization/JsonSerializer.h"
 #include "UnrealExtendedFramework/Libraries/File/EFFileLibrary.h"
 
-FExtendedJson UEBJsonLibrary::ReadJsonFile(TEnumAsByte<EFProjectDirectory> DirectoryType , FString FileDirectory , bool& Success ,bool DebugDirectory)
+FExtendedJson UEBJsonLibrary::ReadJsonFile(EFProjectDirectory DirectoryType , FString FileDirectory , bool& Success ,bool DebugDirectory)
 {
-	const FString Source = UEFFileLibrary::ExtendedProjectDirectory(DirectoryType) + FileDirectory;
+	const FString Source = UEFFileLibrary::GetProjectDirectory(DirectoryType) + FileDirectory;
 	Success = true;
 	
 	if(DebugDirectory)	UE_LOG(LogBlueprint , Warning , TEXT("ReadJsonFile: Directory = %s") , *Source);
@@ -31,9 +31,9 @@ FExtendedJson UEBJsonLibrary::ReadJsonFile(TEnumAsByte<EFProjectDirectory> Direc
 }
 
 
-FString UEBJsonLibrary::ReadExtendedJsonAsString(TEnumAsByte<EFProjectDirectory> DirectoryType, FString FileDirectory,bool& Success)
+FString UEBJsonLibrary::ReadExtendedJsonAsString(EFProjectDirectory DirectoryType, FString FileDirectory,bool& Success)
 {
-	const FString Source = UEFFileLibrary::ExtendedProjectDirectory(DirectoryType) + FileDirectory;
+	const FString Source = UEFFileLibrary::GetProjectDirectory(DirectoryType) + FileDirectory;
 	Success = false;
 	FString JsonStr;
 	if(FFileHelper::LoadFileToString(JsonStr , *FString(Source)))

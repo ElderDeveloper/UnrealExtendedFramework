@@ -98,7 +98,7 @@ class UNREALEXTENDEDFRAMEWORK_API UEFFileLibrary : public UBlueprintFunctionLibr
 
 public:
 	UFUNCTION(BlueprintPure)
-	static FString ExtendedProjectDirectory(TEnumAsByte<EFProjectDirectory> DirectoryType);
+	static FString GetProjectDirectory(EFProjectDirectory DirectoryType);
 
 	
 	/* Paths */

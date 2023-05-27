@@ -24,7 +24,6 @@ void UEGStatsComponent::BeginPlay()
 	{
 		Actor->OnTakeAnyDamage.AddDynamic(this,&UEGStatsComponent::OnTakeAnyDamage);
 		Actor->OnTakePointDamage.AddDynamic(this,&UEGStatsComponent::OnTakePointDamage);
-		Actor->OnTakeRadialDamage.AddDynamic(this,&UEGStatsComponent::OnTakeRadialDamage);
 	}
 	CurrentShield = MaxShield;
 	CurrentHealth = MaxHealth;

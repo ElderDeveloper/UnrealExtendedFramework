@@ -4,13 +4,27 @@
 
 #include "CoreMinimal.h"
 #include "GameplayTagContainer.h"
-#include "UnrealExtendedFramework/Data/EFEnums.h"
 #include "Engine/DataTable.h"
+#include "UnrealExtendedFramework/Data/EFEnums.h"
+#include "UObject/Object.h"
 #include "ESSubtitleData.generated.h"
 
 
 
-
+/*
+	This is a possible language file. 
+	<?xml version="1.0" encoding="UTF-8"?>
+	<rooting>
+	<text key="NewGame" string="New Game" />
+	<text key="Settings" string="Settings" />
+	<text key="QuitGame" string="Quit Game" />
+	  <text key="Landmark Edition LOC" string="Landmark Edition" />
+	  <text key="SaveGameTitle" string="Dear Esther Save File Changed Location" />
+	  <text key="Dialouge1" string="Where am I" />
+	  <text key="Disabled" string="Disabled" />
+	  <text key="Start" string="Start Over" />
+	</rooting>
+ */
 
 USTRUCT(BlueprintType)
 struct FExtendedSubtitleLanguageSettings
@@ -24,7 +38,7 @@ struct FExtendedSubtitleLanguageSettings
 	UDataTable* LanguageSubtitleDataTable;
 
 	UPROPERTY(EditAnywhere , BlueprintReadOnly)
-	TEnumAsByte<EFProjectDirectory> LanguageAssetProjectDirectory = UEF_ProjectContentDir;
+	EFProjectDirectory LanguageAssetProjectDirectory;
 	
 	//Important! This Directory Uses Game Content Directory
 	UPROPERTY(EditAnywhere , BlueprintReadOnly )
@@ -32,6 +46,15 @@ struct FExtendedSubtitleLanguageSettings
 	
 	UPROPERTY(EditAnywhere , BlueprintReadOnly)
 	FSlateFontInfo Font;
+
+	FExtendedSubtitleLanguageSettings()
+	{
+		LanguageTag = FGameplayTag::EmptyTag;
+		LanguageSubtitleDataTable = nullptr;
+		LanguageAssetProjectDirectory = EFProjectDirectory::ProjectContentDir;
+		AssetDirectory = "";
+		Font = FSlateFontInfo();
+	}
 	
 };
 
@@ -49,6 +72,13 @@ struct FExtendedSubtitle : public FTableRowBase
 
 	UPROPERTY(EditAnywhere , BlueprintReadOnly)
 	USoundBase* SubtitleSound;
+	
+	FExtendedSubtitle()
+	{
+		Subtitle = "";
+		Duration = 0;
+		SubtitleSound = nullptr;
+	}
 };
 
 

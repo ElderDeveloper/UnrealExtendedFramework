@@ -35,24 +35,16 @@ public:
 
 	UPROPERTY(EditAnywhere , BlueprintReadWrite, meta=(BindWidget))
 	UTextBlock* TextBlock;
-
-
+	
 	FTimerHandle SubtitleHandle;
 	FTimerHandle SubtitleAnimationHandle;
-
 	
 	UFUNCTION()
 	void ReceiveSubtitleRequest(FString Subtitle , float Duration);
-
 	void EraseSubtitle();
 	void InitializeSubtitle();
 	void SubtitleAnimation();
-
 	void GetSubtitleSubsystemVariables();
-
-
-
-	
 	virtual void NativeConstruct() override;
 
 protected:
@@ -60,10 +52,8 @@ protected:
 	TArray<FString> SubtitleArray;
 	FString StoredSubtitle;
 	int32 SubtitleLetterIndex;
-
-
+	
 	FSlateFontInfo SubtitleStoredFont;
-
 	FSlateFontInfo SubtitleStoredLanguageFont;
 	
 	bool bUseBorder = true;

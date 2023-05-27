@@ -18,11 +18,11 @@ class UNREALEXTENDEDBACKEND_API UEBJsonLibrary : public UBlueprintFunctionLibrar
 public:
 	
 	UFUNCTION(BlueprintCallable ,meta=(ExpandBoolAsExecs = "Success"), Category="Extended Backend | Json")
-	static FExtendedJson ReadJsonFile(TEnumAsByte<EFProjectDirectory> DirectoryType , FString FileDirectory, bool& Success ,bool DebugDirectory = false);
+	static FExtendedJson ReadJsonFile(EFProjectDirectory DirectoryType , FString FileDirectory, bool& Success ,bool DebugDirectory = false);
 
 
 	UFUNCTION(BlueprintCallable,meta=(ExpandBoolAsExecs = "Success") , Category="Extended Backend | Json")
-	static FString ReadExtendedJsonAsString(TEnumAsByte<EFProjectDirectory> DirectoryType , FString FileDirectory , bool& Success);
+	static FString ReadExtendedJsonAsString(EFProjectDirectory DirectoryType , FString FileDirectory , bool& Success);
 
 
 	

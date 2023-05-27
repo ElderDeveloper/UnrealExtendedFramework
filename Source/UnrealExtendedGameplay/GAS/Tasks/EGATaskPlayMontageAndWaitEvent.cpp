@@ -19,7 +19,7 @@ void UEGATaskPlayMontageAndWaitEvent::Activate()
 
 	bool bPlayedMontage = false;
 
-	if (AbilitySystemComponent)
+	if (AbilitySystemComponent.IsValid())
 	{
 		const FGameplayAbilityActorInfo* ActorInfo = Ability->GetCurrentActorInfo();
 
@@ -56,15 +56,8 @@ void UEGATaskPlayMontageAndWaitEvent::Activate()
 				}
 			}
 		}
-		else
-		{
-			ABILITY_LOG(Warning, TEXT(" UEGATaskPlayMontageAndWaitEvent call to PlayMontage failed!"));
-		}
 	}
-	else
-	{
-		ABILITY_LOG(Warning, TEXT("UGSFAbilityTask_PlayMontageAndWaitForEvent called on invalid AbilitySystemComponent"));
-	}
+
 
 	if (!bPlayedMontage)
 	{
@@ -77,7 +70,7 @@ void UEGATaskPlayMontageAndWaitEvent::Activate()
 
 void UEGATaskPlayMontageAndWaitEvent::ExternalCancel()
 {
-	check(AbilitySystemComponent);
+	check(AbilitySystemComponent.IsValid());
 	OnAbilityCanceled();
 	Super::ExternalCancel();
 }
@@ -98,7 +91,7 @@ void UEGATaskPlayMontageAndWaitEvent::OnDestroy(bool bInOwnerFinished)
 		}
 	}
 
-	if (AbilitySystemComponent)
+	if (AbilitySystemComponent.IsValid())
 	{
 		AbilitySystemComponent->RemoveGameplayEventTagContainerDelegate(EventTags,MontageEventHandle);
 	}
@@ -131,7 +124,7 @@ bool UEGATaskPlayMontageAndWaitEvent::StopPlayingMontage() const
 	{
 		if (const auto AnimInstance = ActorInfo->GetAnimInstance())
 		{
-			if (AbilitySystemComponent && Ability)
+			if (AbilitySystemComponent.IsValid() && Ability)
 			{
 				if (AbilitySystemComponent->GetAnimatingAbility() == Ability
 					&& AbilitySystemComponent->GetCurrentMontage() == MontageToPlay )

@@ -14,18 +14,18 @@
 #include "Serialization/Csv/CsvParser.h"
 
 
-FString UEFFileLibrary::ExtendedProjectDirectory(TEnumAsByte<EFProjectDirectory> DirectoryType)
+FString UEFFileLibrary::GetProjectDirectory(EFProjectDirectory DirectoryType)
 {
 	switch (DirectoryType)
 	{
-		case UEF_ProjectDir : return  FPaths::ProjectDir();
-		case UEF_ProjectConfigDir :  return  FPaths::ProjectConfigDir();
-		case UEF_ProjectContentDir : return FPaths::ProjectContentDir();
-		case UEF_ProjectIntermediateDir :  return  FPaths::ProjectIntermediateDir();
-		case UEF_ProjectSavedDir :  return  FPaths::ProjectSavedDir();
-		case UEF_ProjectPluginsDir :  return  FPaths::ProjectPluginsDir();
-		case UEF_ProjectLogDir :  return  FPaths::ProjectLogDir();
-		case UEF_ProjectModsDir :  return  FPaths::ProjectModsDir();
+		case EFProjectDirectory::ProjectDir : return  FPaths::ProjectDir();
+		case EFProjectDirectory::ProjectConfigDir :  return  FPaths::ProjectConfigDir();
+		case EFProjectDirectory::ProjectContentDir : return FPaths::ProjectContentDir();
+		case EFProjectDirectory::ProjectIntermediateDir :  return  FPaths::ProjectIntermediateDir();
+		case EFProjectDirectory::ProjectSavedDir :  return  FPaths::ProjectSavedDir();
+		case EFProjectDirectory::ProjectPluginsDir :  return  FPaths::ProjectPluginsDir();
+		case EFProjectDirectory::ProjectLogDir :  return  FPaths::ProjectLogDir();
+		case EFProjectDirectory::ProjectModsDir :  return  FPaths::ProjectModsDir();
 		default: return "";
 	}
 }

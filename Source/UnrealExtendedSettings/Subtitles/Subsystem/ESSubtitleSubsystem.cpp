@@ -6,7 +6,7 @@
 #include "Misc/FileHelper.h"
 #include "UnrealExtendedBackend/JSon/Library/EBJsonLibrary.h"
 #include "UnrealExtendedFramework/Data/EFMacro.h"
-#include "UnrealExtendedSettings/Subtitles/Asset/ESSubtitleLanguageSave.h"
+#include "UnrealExtendedSettings/Subtitles/Data/ESSubtitleLanguageSave.h"
 
 
 DEFINE_LOG_CATEGORY(LogExtendedSubtitle);
@@ -291,7 +291,7 @@ bool UESSubtitleSubsystem::GetExtendedSubtitleSound(const UObject* WorldContextO
 
 
 
-void UESSubtitleSubsystem::FillExtendedSubtitleDataTable(UDataTable* DataTable , const TEnumAsByte<EFProjectDirectory> LanguageAssetProjectDirectory , const FString AssetDirectory )
+void UESSubtitleSubsystem::FillExtendedSubtitleDataTable(UDataTable* DataTable , EFProjectDirectory LanguageAssetProjectDirectory , const FString AssetDirectory )
 {
 	bool IsSuccess;
 	const FExtendedJson ExtendedJson = UEBJsonLibrary::ReadJsonFile(LanguageAssetProjectDirectory , AssetDirectory ,IsSuccess);

@@ -3,7 +3,9 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "ESSubtitleData.h"
 #include "GameFramework/SaveGame.h"
+#include "UnrealExtendedSettings/Data/ESData.h"
 #include "ESSubtitleLanguageSave.generated.h"
 
 
@@ -16,4 +18,9 @@ public:
 
 	UPROPERTY(BlueprintReadOnly)
 	FExtendedSubtitleLanguageSettings CurrentLanguage;
+
+	UESSubtitleLanguageSave()
+	{
+		CurrentLanguage = FExtendedSubtitleLanguageSettings();
+	}
 };

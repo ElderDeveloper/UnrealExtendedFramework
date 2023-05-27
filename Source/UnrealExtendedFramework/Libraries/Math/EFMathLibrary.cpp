@@ -471,7 +471,7 @@ void UEFMathLibrary::CalculateSpeedAndDirection(UAnimInstance* AnimInstance, flo
 
 bool UEFMathLibrary::RandomBoolUniform()
 {
-	const std::uniform_int_distribution<int32> Distribution( 0, 1 );
+	std::uniform_int_distribution<int32> Distribution( 0, 1 );
 	return (Distribution( RandDRE ) == 1) ? true : false;
 }
 
@@ -479,7 +479,7 @@ bool UEFMathLibrary::RandomBoolUniform()
 
 bool UEFMathLibrary::RandomBoolBernoulli(const float Bias)
 {
-	const Bernoulli Distribution(Bias);
+	Bernoulli Distribution(Bias);
 	return Distribution(RandDRE );
 }
 
@@ -487,7 +487,7 @@ bool UEFMathLibrary::RandomBoolBernoulli(const float Bias)
 
 bool UEFMathLibrary::RandomBoolMersenneTwister(const float Bias)
 {
-	const Bernoulli Distribution(Bias);
+	Bernoulli Distribution(Bias);
 	return Distribution( RandPRNG );
 }
 
@@ -495,7 +495,7 @@ bool UEFMathLibrary::RandomBoolMersenneTwister(const float Bias)
 
 uint8 UEFMathLibrary::RandomByteUniform(const uint8 Max)
 {
-	const std::uniform_int_distribution<> Distribution( 0, Max == 0 ? sizeof( uint8 ) : Max );
+	std::uniform_int_distribution<> Distribution( 0, Max == 0 ? sizeof( uint8 ) : Max );
 	return Distribution( RandDRE );
 }
 
@@ -503,7 +503,7 @@ uint8 UEFMathLibrary::RandomByteUniform(const uint8 Max)
 
 uint8 UEFMathLibrary::RandomByteBernoulli(const float Bias)
 {
-	const Bernoulli Distribution(Bias);
+	Bernoulli Distribution(Bias);
 	return Distribution( RandDRE );
 }
 
@@ -511,7 +511,7 @@ uint8 UEFMathLibrary::RandomByteBernoulli(const float Bias)
 
 uint8 UEFMathLibrary::RandomByteMersenneTwister(const float Bias)
 {
-	const Bernoulli Distribution(Bias);
+	Bernoulli Distribution(Bias);
 	return Distribution( RandPRNG );
 }
 
@@ -519,7 +519,7 @@ uint8 UEFMathLibrary::RandomByteMersenneTwister(const float Bias)
 
 int32 UEFMathLibrary::RandomIntUniform(const int32 Max)
 {
-	const std::uniform_int_distribution<> Distribution( 0, Max == 0 ? sizeof( int32 ) : Max );
+	std::uniform_int_distribution<> Distribution( 0, Max == 0 ? sizeof( int32 ) : Max );
 	return Distribution( RandDRE );
 }
 
@@ -527,7 +527,7 @@ int32 UEFMathLibrary::RandomIntUniform(const int32 Max)
 
 int32 UEFMathLibrary::RandomIntBernoulli(const float Bias)
 {
-	const Bernoulli Distribution(Bias);
+	Bernoulli Distribution(Bias);
 	return Distribution( RandDRE );
 }
 
@@ -535,7 +535,7 @@ int32 UEFMathLibrary::RandomIntBernoulli(const float Bias)
 
 int32 UEFMathLibrary::RandomIntMersenneTwister(const float Bias)
 {
-	const Bernoulli Distribution(Bias);
+	Bernoulli Distribution(Bias);
 	return Distribution( RandPRNG );
 }
 
@@ -543,7 +543,7 @@ int32 UEFMathLibrary::RandomIntMersenneTwister(const float Bias)
 
 float UEFMathLibrary::RandomFloatUniform(const float Max)
 {
-	const std::uniform_real_distribution<> Distribution( 0.0f, Max == 0 ? sizeof( float ) : Max );
+	std::uniform_real_distribution<> Distribution( 0.0f, Max == 0 ? sizeof( float ) : Max );
 	return Distribution( RandDRE );
 }
 

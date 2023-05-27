@@ -40,16 +40,16 @@ enum EFConditionOutput
 
 
 UENUM(BlueprintType , Blueprintable)
-enum EFProjectDirectory
+enum class EFProjectDirectory : uint8
 {
-	UEF_ProjectDir,
-	UEF_ProjectConfigDir,
-	UEF_ProjectContentDir,
-	UEF_ProjectIntermediateDir,
-	UEF_ProjectSavedDir,
-	UEF_ProjectPluginsDir,
-	UEF_ProjectLogDir,
-	UEF_ProjectModsDir
+	ProjectDir,
+	ProjectConfigDir,
+	ProjectContentDir,
+	ProjectIntermediateDir,
+	ProjectSavedDir,
+	ProjectPluginsDir,
+	ProjectLogDir,
+	ProjectModsDir
 };
 
 

@@ -28,44 +28,7 @@ public:
 	//<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< SORTING >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 	UFUNCTION(BlueprintCallable, Category = "Array|Sort")
 	static void InsertionSortFloatArray(TArray<float> FloatArray , TArray<float>& SortedArray);
-
-	/**
-	 *	FunctionName is a function resided in calling object that needs to have two struct input and bool return for sorting like Health variables in structs
-	 *	return Struct1.Health > Struct2.Health
-	 **/
-	UFUNCTION(BlueprintCallable, CustomThunk, meta = (DisplayName = "Sort Any Struct", DefaultToSelf = "Object", ArrayParm = "CustomStruct", AdvancedDisplay = "Object"), Category = "Utilities|UserDefinedStruct")
-	static void SortUserDefinedStructArray(const TArray<int32>& CustomStruct, UObject* Object, FName FunctionName);
-	static void Generic_SortUserDefinedStructArray(void* TargetArray, const UArrayProperty* ArrayProp, UObject* OwnerObject, UFunction* SortRuleFunc);
-	DECLARE_FUNCTION(execSortUserDefinedStructArray)
-	{
-		Stack.MostRecentProperty = nullptr;
-		Stack.StepCompiledIn<UArrayProperty>(NULL);
-		void* ArrayAAddr = Stack.MostRecentPropertyAddress;
-		UArrayProperty* ArrayProperty = CastField<UArrayProperty>(Stack.MostRecentProperty);
-		if (!ArrayProperty)
-		{
-			Stack.bArrayContextFailed = true;
-			return;
-		}
-
-		P_GET_OBJECT(UObject, OwnerObject);
-		P_GET_PROPERTY(UNameProperty, FunctionName);
-		if (!OwnerObject)
-		{
-			return;
-		}
-		UFunction* const Func = OwnerObject->FindFunction(FunctionName);
-		if ((!Func || (Func->NumParms != 3)))
-		{
-			return;
-		}
-
-		P_FINISH;
-
-		P_NATIVE_BEGIN;
-		Generic_SortUserDefinedStructArray(ArrayAAddr, ArrayProperty, OwnerObject, Func);
-		P_NATIVE_END;
-	}
+	
 
 	//<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< Translate To Vector >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 	UFUNCTION(BlueprintPure, meta=(DisplayName = "Float Array To Vector Array", CompactNodeTitle = "***"), Category="Array|Vector")

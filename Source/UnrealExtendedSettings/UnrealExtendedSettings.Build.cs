@@ -34,6 +34,7 @@ public class UnrealExtendedSettings : ModuleRules
 				"GameplayTags",
 				"Json", 
 				"JsonUtilities",
+				"XmlParser",
 				"UnrealExtendedBackend",
 				"UnrealExtendedFramework"
 				// ... add other public dependencies that you statically link with here ...
@@ -49,7 +50,7 @@ public class UnrealExtendedSettings : ModuleRules
 				"Slate",
 				"SlateCore",
 				"Settings",
-				"Projects"
+				"Projects",
 				// ... add private dependencies that you statically link with here ...	
 			}
 		);
