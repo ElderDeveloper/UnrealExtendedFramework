@@ -2,8 +2,6 @@
 
 
 #include "EFWidgetLibrary.h"
-
-
 #include "Blueprint/WidgetLayoutLibrary.h"
 #include "Components/Overlay.h"
 #include "Components/OverlaySlot.h"
@@ -13,6 +11,8 @@
 #include "Components/VerticalBoxSlot.h"
 #include "Kismet/KismetMathLibrary.h"
 #include "Slate/SlateBrushAsset.h"
+
+
 
 FVector2D UEFWidgetLibrary::GetGameViewportSize()
 {
@@ -27,11 +27,9 @@ FVector2D UEFWidgetLibrary::GetGameViewportSize()
 
 FVector2D UEFWidgetLibrary::GameGameResolution()
 {
-	FVector2D Result = FVector2D( 1, 1 );
- 
+	FVector2D Result;
 	Result.X = GSystemResolution.ResX;
 	Result.Y = GSystemResolution.ResY;
- 
 	return Result;
 }
 
@@ -63,7 +61,7 @@ FVector2D UEFWidgetLibrary::GetSizeBoxSize(USizeBox* SizeBox)
 {
 	if (SizeBox)
 	{
-		return FVector2D(SizeBox->WidthOverride,SizeBox->HeightOverride);
+		return FVector2D(SizeBox->GetWidthOverride(),SizeBox->GetHeightOverride());
 	}
 	return FVector2D();
 }
@@ -74,7 +72,9 @@ void UEFWidgetLibrary::SetProgressBarFillImage(UProgressBar* ProgressBar, UTextu
 	{
 		auto brush =FSlateBrush();
 		brush.SetResourceObject(Texture);
-		ProgressBar->WidgetStyle.SetFillImage(brush);
+		FProgressBarStyle BarStyle;
+		BarStyle.FillImage = brush;
+		ProgressBar->SetWidgetStyle(BarStyle);
 	}
 }
 
@@ -96,25 +96,25 @@ UOverlaySlot* UEFWidgetLibrary::AddChildToOverlay(UOverlay* Overlay, UUserWidget
 void UEFWidgetLibrary::SetOverlayPaddingTop(UWidget* Slot , const float PaddingTop)
 {
 	if (const auto overlay = UWidgetLayoutLibrary::SlotAsOverlaySlot(Slot))
-		overlay->SetPadding(FMargin(	overlay->Padding.Left,	PaddingTop,		overlay->Padding.Right,	overlay->Padding.Bottom));
+		overlay->SetPadding(FMargin(	overlay->GetPadding().Left,	PaddingTop,		overlay->GetPadding().Right,	overlay->GetPadding().Bottom));
 }
 
 void UEFWidgetLibrary::SetOverlayPaddingBottom(UWidget* Slot, const float PaddingBottom)
 {
 	if (const auto overlay = UWidgetLayoutLibrary::SlotAsOverlaySlot(Slot))
-		overlay->SetPadding(FMargin(	overlay->Padding.Left,	overlay->Padding.Top,	overlay->Padding.Right,	PaddingBottom));
+		overlay->SetPadding(FMargin(	overlay->GetPadding().Left,	overlay->GetPadding().Top,	overlay->GetPadding().Right,	PaddingBottom));
 }
 
 void UEFWidgetLibrary::SetOverlayPaddingLeft(UWidget* Slot, const float PaddingLeft)
 {
 	if (const auto overlay = UWidgetLayoutLibrary::SlotAsOverlaySlot(Slot))
-		overlay->SetPadding(FMargin(	PaddingLeft,	overlay->Padding.Top,	overlay->Padding.Right,	overlay->Padding.Bottom));
+		overlay->SetPadding(FMargin(	PaddingLeft,	overlay->GetPadding().Top,	overlay->GetPadding().Right,	overlay->GetPadding().Bottom));
 }
 
 void UEFWidgetLibrary::SetOverlayPaddingRight(UWidget* Slot, const float PaddingRight)
 {
 	if (const auto overlay = UWidgetLayoutLibrary::SlotAsOverlaySlot(Slot))
-		overlay->SetPadding(FMargin(	overlay->Padding.Left,	overlay->Padding.Top,	PaddingRight,	overlay->Padding.Bottom));
+		overlay->SetPadding(FMargin(	overlay->GetPadding().Left,	overlay->GetPadding().Top,	PaddingRight,	overlay->GetPadding().Bottom));
 }
 
 

@@ -102,16 +102,6 @@ public:
 	static bool SetHearingRange(UAIPerceptionComponent* Perception, float HearingRange);
 
 	
-	//Get the current value of Use LoS Hearing of the AI Perception Component's Hearing Config.
-	UFUNCTION(BlueprintPure, Category = "ExtendedFramework|AI|Perception")
-	static bool GetUseLoSHearing(UAIPerceptionComponent* Perception);
-
-	
-	//Set a new Use LoS Hearing value for the AI Perception Component's Hearing Config.
-	UFUNCTION(BlueprintCallable, Category = "ExtendedFramework|AI|Perception")
-	static bool SetUseLoSHearing(UAIPerceptionComponent* Perception, bool UseLoSHearing);
-
-	
 	//Get the current LoS Hearing Range of the AI Perception Component's Hearing Config.
 	UFUNCTION(BlueprintPure, Category = "ExtendedFramework|AI|Perception")
 	static float GetLoSHearingRange(UAIPerceptionComponent* Perception);

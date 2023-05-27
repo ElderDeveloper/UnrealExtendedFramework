@@ -18,15 +18,15 @@ FString UEFFileLibrary::GetProjectDirectory(EFProjectDirectory DirectoryType)
 {
 	switch (DirectoryType)
 	{
-		case EFProjectDirectory::ProjectDir : return  FPaths::ProjectDir();
-		case EFProjectDirectory::ProjectConfigDir :  return  FPaths::ProjectConfigDir();
-		case EFProjectDirectory::ProjectContentDir : return FPaths::ProjectContentDir();
-		case EFProjectDirectory::ProjectIntermediateDir :  return  FPaths::ProjectIntermediateDir();
-		case EFProjectDirectory::ProjectSavedDir :  return  FPaths::ProjectSavedDir();
-		case EFProjectDirectory::ProjectPluginsDir :  return  FPaths::ProjectPluginsDir();
-		case EFProjectDirectory::ProjectLogDir :  return  FPaths::ProjectLogDir();
-		case EFProjectDirectory::ProjectModsDir :  return  FPaths::ProjectModsDir();
-		default: return "";
+	case EFProjectDirectory::ProjectDir: return FPaths::ProjectDir();
+	case EFProjectDirectory::ProjectConfigDir: return FPaths::ProjectConfigDir();
+	case EFProjectDirectory::ProjectContentDir: return FPaths::ProjectContentDir();
+	case EFProjectDirectory::ProjectIntermediateDir: return FPaths::ProjectIntermediateDir();
+	case EFProjectDirectory::ProjectSavedDir: return FPaths::ProjectSavedDir();
+	case EFProjectDirectory::ProjectPluginsDir: return FPaths::ProjectPluginsDir();
+	case EFProjectDirectory::ProjectLogDir: return FPaths::ProjectLogDir();
+	case EFProjectDirectory::ProjectModsDir: return FPaths::ProjectModsDir();
+	default: return "";
 	}
 }
 
@@ -40,12 +40,13 @@ public:
 	bool bFile = true;
 	bool bDirectory = true;
 
-	FCustomFileVisitor(FString& Path, TArray<FString>& Paths, const FString& Pattern, bool File, bool Directory) : BasePath(Path), Nodes(Paths), Filter(Pattern), CustomPattern(Pattern), bFile(File), bDirectory(Directory) {};
+	FCustomFileVisitor(FString& Path, TArray<FString>& Paths, const FString& Pattern, bool File, bool Directory) :
+		BasePath(Path), Nodes(Paths), Filter(Pattern), CustomPattern(Pattern), bFile(File), bDirectory(Directory)
+	{
+	};
 
-	virtual bool Visit(const TCHAR* FilenameOrDirectory, bool bIsDirectory);
+	virtual bool Visit(const TCHAR* FilenameOrDirectory, bool bIsDirectory) override;
 };
-
-
 
 
 FEnginePath UEFFileLibrary::GetEngineDirectories()
@@ -84,7 +85,7 @@ FProjectPath UEFFileLibrary::GetProjectDirectories()
 bool UEFFileLibrary::ReadText(FString Path, FString& Output)
 {
 	IPlatformFile& file = FPlatformFileManager::Get().GetPlatformFile();
-	if (file.FileExists(*Path)) 
+	if (file.FileExists(*Path))
 	{
 		return FFileHelper::LoadFileToString(Output, *Path);
 	}
@@ -102,7 +103,8 @@ bool UEFFileLibrary::SaveText(FString Path, FString Text, FString& Error, bool A
 	}
 	if (!file.FileExists(*Path) || Append || Force)
 	{
-		return FFileHelper::SaveStringToFile(Text, *Path, FFileHelper::EEncodingOptions::AutoDetect, &IFileManager::Get(), Append ? FILEWRITE_Append : FILEWRITE_None);
+		return FFileHelper::SaveStringToFile(Text, *Path, FFileHelper::EEncodingOptions::AutoDetect,
+		                                     &IFileManager::Get(), Append ? FILEWRITE_Append : FILEWRITE_None);
 	}
 	else
 	{
@@ -122,7 +124,8 @@ bool UEFFileLibrary::SaveCSV(FString Path, TArray<FString> Headers, TArray<FStri
 	return UEFFileLibrary::SaveText(Path, Output, Error, false, Force);
 }
 
-bool UEFFileLibrary::ReadCSV(FString Path, TArray<FString>& Headers, TArray<FString>& Data, int32& Total, bool HeaderFirst)
+bool UEFFileLibrary::ReadCSV(FString Path, TArray<FString>& Headers, TArray<FString>& Data, int32& Total,
+                             bool HeaderFirst)
 {
 	Total = 0;
 	IPlatformFile& file = FPlatformFileManager::Get().GetPlatformFile();
@@ -149,7 +152,8 @@ bool UEFFileLibrary::ReadLine(FString Path, FString Pattern, TArray<FString>& Li
 	if (!Pattern.IsEmpty())
 	{
 		FRegexPattern CustomPattern(Pattern);
-		return FFileHelper::LoadFileToStringArrayWithPredicate(Lines, *Path, [CustomPattern](const FString Line) {
+		return FFileHelper::LoadFileToStringArrayWithPredicate(Lines, *Path, [CustomPattern](const FString Line)
+		{
 			FRegexMatcher CustomMatcher(CustomPattern, Line);
 			return CustomMatcher.FindNext();
 		});
@@ -172,7 +176,8 @@ bool UEFFileLibrary::SaveLine(FString Path, const TArray<FString>& Text, FString
 	}
 	if (!file.FileExists(*Path) || Append || Force)
 	{
-		return FFileHelper::SaveStringArrayToFile(Text, *Path, FFileHelper::EEncodingOptions::AutoDetect, &IFileManager::Get(), Append ? FILEWRITE_Append : FILEWRITE_None);
+		return FFileHelper::SaveStringArrayToFile(Text, *Path, FFileHelper::EEncodingOptions::AutoDetect,
+		                                          &IFileManager::Get(), Append ? FILEWRITE_Append : FILEWRITE_None);
 	}
 	else
 	{
@@ -222,7 +227,8 @@ bool UEFFileLibrary::SaveByte(FString Path, const TArray<uint8>& Bytes, FString&
 	}
 	if (!file.FileExists(*Path) || Append || Force)
 	{
-		return FFileHelper::SaveArrayToFile(Bytes, *Path, &IFileManager::Get(), Append ? FILEWRITE_Append : FILEWRITE_None);
+		return FFileHelper::SaveArrayToFile(Bytes, *Path, &IFileManager::Get(),
+		                                    Append ? FILEWRITE_Append : FILEWRITE_None);
 	}
 	else
 	{
@@ -231,7 +237,8 @@ bool UEFFileLibrary::SaveByte(FString Path, const TArray<uint8>& Bytes, FString&
 	return false;
 }
 
-bool UEFFileLibrary::StringToCSV(FString Content, TArray<FString>& Headers, TArray<FString>& Data, int32& Total, bool HeaderFirst)
+bool UEFFileLibrary::StringToCSV(FString Content, TArray<FString>& Headers, TArray<FString>& Data, int32& Total,
+                                 bool HeaderFirst)
 {
 	FCsvParser Parser(Content);
 	TArray<TArray<const TCHAR*>> Rows = Parser.GetRows();
@@ -300,7 +307,8 @@ bool UEFFileLibrary::CSVToString(FString& Output, TArray<FString> Headers, TArra
 	return true;
 }
 
-bool UEFFileLibrary::StringArrayToCSV(TArray<FString> Lines, TArray<FString>& Headers, TArray<FString>& Data, int32& Total, FString Delimiter, bool HeaderFirst)
+bool UEFFileLibrary::StringArrayToCSV(TArray<FString> Lines, TArray<FString>& Headers, TArray<FString>& Data,
+                                      int32& Total, FString Delimiter, bool HeaderFirst)
 {
 	for (auto Line : Lines)
 	{
@@ -311,7 +319,8 @@ bool UEFFileLibrary::StringArrayToCSV(TArray<FString> Lines, TArray<FString>& He
 		}
 		if (Total == 1 && HeaderFirst)
 		{
-			for (FString Col : UEFFileLibrary::SplitString(Line, TEXT("\"") + Delimiter + TEXT("\""), ESearchCase::CaseSensitive))
+			for (FString Col : UEFFileLibrary::SplitString(Line, TEXT("\"") + Delimiter + TEXT("\""),
+			                                               ESearchCase::CaseSensitive))
 			{
 				Col.TrimQuotesInline();
 				Col.ReplaceInline(TEXT("\"\""), TEXT("\""));
@@ -320,7 +329,8 @@ bool UEFFileLibrary::StringArrayToCSV(TArray<FString> Lines, TArray<FString>& He
 		}
 		else
 		{
-			for (FString Col : UEFFileLibrary::SplitString(Line, TEXT("\"") + Delimiter + TEXT("\""), ESearchCase::CaseSensitive))
+			for (FString Col : UEFFileLibrary::SplitString(Line, TEXT("\"") + Delimiter + TEXT("\""),
+			                                               ESearchCase::CaseSensitive))
 			{
 				Col.TrimQuotesInline();
 				Col.ReplaceInline(TEXT("\"\""), TEXT("\""));
@@ -330,6 +340,7 @@ bool UEFFileLibrary::StringArrayToCSV(TArray<FString> Lines, TArray<FString>& He
 	}
 	return true;
 }
+
 bool UEFFileLibrary::JsonStringToAnyStruct(FProperty* Property, void* ValuePtr, const FString& Json)
 {
 	bool Success = false;
@@ -338,17 +349,19 @@ bool UEFFileLibrary::JsonStringToAnyStruct(FProperty* Property, void* ValuePtr, 
 		return Success;
 	}
 	TSharedPtr<FJsonValue> JsonValue;
-	TSharedRef<TJsonReader<> > JsonReader = TJsonReaderFactory<>::Create(Json);
+	TSharedRef<TJsonReader<>> JsonReader = TJsonReaderFactory<>::Create(Json);
 	if (FJsonSerializer::Deserialize(JsonReader, JsonValue) && JsonValue.IsValid())
 	{
 		TSharedRef<FJsonValue> InJsonValue = UEFFileLibrary::JsonValueToAnyStruct(Property, JsonValue);
-		if ((InJsonValue->Type == EJson::Array && InJsonValue->AsArray().Num() != 0) || (InJsonValue->Type == EJson::Object && InJsonValue->AsObject()->Values.Num() != 0))
+		if ((InJsonValue->Type == EJson::Array && InJsonValue->AsArray().Num() != 0) || (InJsonValue->Type ==
+			EJson::Object && InJsonValue->AsObject()->Values.Num() != 0))
 		{
 			Success = UEFFileLibrary::JsonValueToAnyStruct(InJsonValue, Property, ValuePtr);
 		}
 	}
 	return Success;
 }
+
 TSharedRef<FJsonValue> UEFFileLibrary::JsonValueToAnyStruct(FProperty* Property, TSharedPtr<FJsonValue> Value)
 {
 	if (!Value.IsValid() || Value->IsNull() || Property == NULL)
@@ -369,7 +382,10 @@ TSharedRef<FJsonValue> UEFFileLibrary::JsonValueToAnyStruct(FProperty* Property,
 		}
 		else
 		{
-			UE_LOG(LogTemp, Warning, TEXT("JsonValueToAnyStruct: error while converting JsonValue to array, type %i is invalid with array property, returning empty array"), Value->Type);
+			UE_LOG(LogTemp, Warning,
+			       TEXT(
+				       "JsonValueToAnyStruct: error while converting JsonValue to array, type %i is invalid with array property, returning empty array"
+			       ), Value->Type);
 		}
 		return MakeShareable(new FJsonValueArray(OutArray));
 	}
@@ -387,7 +403,10 @@ TSharedRef<FJsonValue> UEFFileLibrary::JsonValueToAnyStruct(FProperty* Property,
 		}
 		else
 		{
-			UE_LOG(LogTemp, Warning, TEXT("JsonValueToAnyStruct: error while converting JsonValue to set, type %i is invalid with set property, returning empty set"), Value->Type);
+			UE_LOG(LogTemp, Warning,
+			       TEXT(
+				       "JsonValueToAnyStruct: error while converting JsonValue to set, type %i is invalid with set property, returning empty set"
+			       ), Value->Type);
 		}
 		return MakeShareable(new FJsonValueArray(OutSet));
 	}
@@ -408,7 +427,10 @@ TSharedRef<FJsonValue> UEFFileLibrary::JsonValueToAnyStruct(FProperty* Property,
 		}
 		else
 		{
-			UE_LOG(LogTemp, Warning, TEXT("JsonValueToAnyStruct: error while converting JsonValue to map, type %i is invalid with map property, returning empty object"), Value->Type);
+			UE_LOG(LogTemp, Warning,
+			       TEXT(
+				       "JsonValueToAnyStruct: error while converting JsonValue to map, type %i is invalid with map property, returning empty object"
+			       ), Value->Type);
 		}
 		return MakeShareable(new FJsonValueObject(OutMap));
 	}
@@ -426,18 +448,25 @@ TSharedRef<FJsonValue> UEFFileLibrary::JsonValueToAnyStruct(FProperty* Property,
 					FProperty* Prop = *It;
 					if (InObject->HasField(Prop->GetAuthoredName()))
 					{
-						OutObject->SetField(Prop->GetName(), UEFFileLibrary::JsonValueToAnyStruct(Prop, *InObject->Values.Find(Prop->GetAuthoredName())));
+						OutObject->SetField(Prop->GetName(),
+						                    UEFFileLibrary::JsonValueToAnyStruct(
+							                    Prop, *InObject->Values.Find(Prop->GetAuthoredName())));
 					}
 					else if (InObject->HasField(Prop->GetName()))
 					{
-						OutObject->SetField(Prop->GetName(), UEFFileLibrary::JsonValueToAnyStruct(Prop, *InObject->Values.Find(Prop->GetName())));
+						OutObject->SetField(Prop->GetName(),
+						                    UEFFileLibrary::JsonValueToAnyStruct(
+							                    Prop, *InObject->Values.Find(Prop->GetName())));
 					}
 				}
 			}
 		}
 		else
 		{
-			UE_LOG(LogTemp, Warning, TEXT("JsonValueToAnyStruct: error while converting JsonValue to struct, type %i is invalid with struct property, returning empty object"), Value->Type);
+			UE_LOG(LogTemp, Warning,
+			       TEXT(
+				       "JsonValueToAnyStruct: error while converting JsonValue to struct, type %i is invalid with struct property, returning empty object"
+			       ), Value->Type);
 		}
 		return MakeShareable(new FJsonValueObject(OutObject));
 	}
@@ -459,11 +488,15 @@ TSharedRef<FJsonValue> UEFFileLibrary::JsonValueToAnyStruct(FProperty* Property,
 					FProperty* Prop = *It;
 					if (InObject->HasField(Prop->GetAuthoredName()))
 					{
-						OutObject->SetField(Prop->GetName(), UEFFileLibrary::JsonValueToAnyStruct(Prop, InObject->TryGetField(Prop->GetAuthoredName())));
+						OutObject->SetField(Prop->GetName(),
+						                    UEFFileLibrary::JsonValueToAnyStruct(
+							                    Prop, InObject->TryGetField(Prop->GetAuthoredName())));
 					}
 					else if (InObject->HasField(Prop->GetName()))
 					{
-						OutObject->SetField(Prop->GetName(), UEFFileLibrary::JsonValueToAnyStruct(Prop, InObject->TryGetField(Prop->GetName())));
+						OutObject->SetField(Prop->GetName(),
+						                    UEFFileLibrary::JsonValueToAnyStruct(
+							                    Prop, InObject->TryGetField(Prop->GetName())));
 					}
 				}
 				return MakeShareable(new FJsonValueObject(OutObject));
@@ -471,7 +504,10 @@ TSharedRef<FJsonValue> UEFFileLibrary::JsonValueToAnyStruct(FProperty* Property,
 		}
 		else
 		{
-			UE_LOG(LogTemp, Warning, TEXT("JsonValueToAnyStruct: error while converting JsonValue to object, type %i is invalid with object property, returning empty object"), Value->Type);
+			UE_LOG(LogTemp, Warning,
+			       TEXT(
+				       "JsonValueToAnyStruct: error while converting JsonValue to object, type %i is invalid with object property, returning empty object"
+			       ), Value->Type);
 		}
 		return MakeShareable(new FJsonValueNull());
 	}
@@ -489,7 +525,7 @@ bool UEFFileLibrary::JsonValueToAnyStruct(TSharedPtr<FJsonValue> JsonValue, FPro
 		return false;
 	}
 	// array
-	else if (FArrayProperty* arrayProperty = CastField<FArrayProperty>(Property)) 
+	else if (FArrayProperty* arrayProperty = CastField<FArrayProperty>(Property))
 	{
 		if (JsonValue->Type == EJson::Array)
 		{
@@ -506,7 +542,7 @@ bool UEFFileLibrary::JsonValueToAnyStruct(TSharedPtr<FJsonValue> JsonValue, FPro
 		}
 	}
 	// set
-	else if (FSetProperty* setProperty = CastField<FSetProperty>(Property)) 
+	else if (const FSetProperty* setProperty = CastField<FSetProperty>(Property))
 	{
 		if (JsonValue->Type == EJson::Array)
 		{
@@ -515,7 +551,8 @@ bool UEFFileLibrary::JsonValueToAnyStruct(TSharedPtr<FJsonValue> JsonValue, FPro
 			for (int32 i = 0; i < JsonArray.Num(); i++)
 			{
 				int32 Idx = Helper.AddDefaultValue_Invalid_NeedsRehash();
-				if (!UEFFileLibrary::JsonValueToAnyStruct(JsonArray[i], setProperty->ElementProp, Helper.GetElementPtr(Idx)))
+				if (!UEFFileLibrary::JsonValueToAnyStruct(JsonArray[i], setProperty->ElementProp,
+				                                          Helper.GetElementPtr(Idx)))
 				{
 					return false;
 				}
@@ -524,19 +561,21 @@ bool UEFFileLibrary::JsonValueToAnyStruct(TSharedPtr<FJsonValue> JsonValue, FPro
 		}
 	}
 	// map
-	else if (FMapProperty* mapProperty = CastField<FMapProperty>(Property)) 
+	else if (const FMapProperty* mapProperty = CastField<FMapProperty>(Property))
 	{
 		if (JsonValue->Type == EJson::Object)
 		{
-			auto JsonObject = JsonValue->AsObject();
-			auto Helper = FScriptMapHelper::CreateHelperFormInnerProperties(mapProperty->KeyProp, mapProperty->ValueProp, ValuePtr);
+			const auto JsonObject = JsonValue->AsObject();
+			auto Helper = FScriptMapHelper::CreateHelperFormInnerProperties(
+				mapProperty->KeyProp, mapProperty->ValueProp, ValuePtr);
 			Helper.EmptyValues(JsonObject->Values.Num());
 
-			for (const auto& Entry : JsonObject->Values) 
+			for (const auto& Entry : JsonObject->Values)
 			{
-				int32 Idx = Helper.AddDefaultValue_Invalid_NeedsRehash();
+				const int32 Idx = Helper.AddDefaultValue_Invalid_NeedsRehash();
 				TSharedPtr<FJsonValueString> StrKeyVal = MakeShared<FJsonValueString>(Entry.Key);
-				if (!UEFFileLibrary::JsonValueToAnyStruct(StrKeyVal, mapProperty->KeyProp, Helper.GetKeyPtr(Idx)) || !UEFFileLibrary::JsonValueToAnyStruct(Entry.Value, mapProperty->ValueProp, Helper.GetValuePtr(Idx))) 
+				if (!UEFFileLibrary::JsonValueToAnyStruct(StrKeyVal, mapProperty->KeyProp, Helper.GetKeyPtr(Idx)) || !
+					UEFFileLibrary::JsonValueToAnyStruct(Entry.Value, mapProperty->ValueProp, Helper.GetValuePtr(Idx)))
 				{
 					return false;
 				}
@@ -546,7 +585,7 @@ bool UEFFileLibrary::JsonValueToAnyStruct(TSharedPtr<FJsonValue> JsonValue, FPro
 		}
 	}
 	// struct
-	else if (FStructProperty* structProperty = CastField<FStructProperty>(Property))
+	else if (const FStructProperty* structProperty = CastField<FStructProperty>(Property))
 	{
 		if (JsonValue->Type == EJson::String)
 		{
@@ -554,7 +593,7 @@ bool UEFFileLibrary::JsonValueToAnyStruct(TSharedPtr<FJsonValue> JsonValue, FPro
 		}
 		if (JsonValue->Type == EJson::Object)
 		{
-			auto JsonObject = JsonValue->AsObject();
+			const auto JsonObject = JsonValue->AsObject();
 			for (TFieldIterator<FProperty> It(structProperty->Struct); It; ++It)
 			{
 				FProperty* Prop = *It;
@@ -570,7 +609,7 @@ bool UEFFileLibrary::JsonValueToAnyStruct(TSharedPtr<FJsonValue> JsonValue, FPro
 		}
 	}
 	// object
-	else if (FObjectProperty* objectProperty = CastField<FObjectProperty>(Property))
+	else if (const FObjectProperty* objectProperty = CastField<FObjectProperty>(Property))
 	{
 		if (objectProperty->PropertyClass->IsNative())
 		{
@@ -581,16 +620,19 @@ bool UEFFileLibrary::JsonValueToAnyStruct(TSharedPtr<FJsonValue> JsonValue, FPro
 			UObject* PropValue = objectProperty->GetObjectPropertyValue(ValuePtr);
 			if (!PropValue)
 			{
-				PropValue = StaticAllocateObject(objectProperty->PropertyClass, GetTransientPackage(), NAME_None, EObjectFlags::RF_NoFlags, EInternalObjectFlags::None, false);
-				(*objectProperty->PropertyClass->ClassConstructor)(FObjectInitializer(PropValue, objectProperty->PropertyClass->ClassDefaultObject, false, false));
+				PropValue = StaticAllocateObject(objectProperty->PropertyClass, GetTransientPackage(), NAME_None,
+				                                 EObjectFlags::RF_NoFlags, EInternalObjectFlags::None, false);
+				(*objectProperty->PropertyClass->ClassConstructor)(
+					FObjectInitializer(PropValue, objectProperty->PropertyClass->ClassDefaultObject, false, false));
 				objectProperty->SetObjectPropertyValue(ValuePtr, PropValue);
 			}
-			auto JsonObject = JsonValue->AsObject();
+			const auto JsonObject = JsonValue->AsObject();
 			if (!JsonObject->HasTypedField<EJson::String>("_ClassName"))
 			{
 				JsonObject->SetStringField("_ClassName", PropValue->GetClass()->GetFName().ToString());
 			}
-			return FJsonObjectConverter::JsonObjectToUStruct(JsonObject.ToSharedRef(), objectProperty->PropertyClass, PropValue, 0, 0);
+			return FJsonObjectConverter::JsonObjectToUStruct(JsonObject.ToSharedRef(), objectProperty->PropertyClass,
+			                                                 PropValue, 0, 0);
 		}
 	}
 	// scalar
@@ -604,13 +646,14 @@ bool UEFFileLibrary::JsonValueToAnyStruct(TSharedPtr<FJsonValue> JsonValue, FPro
 bool UEFFileLibrary::AnyStructToJsonString(FProperty* Property, void* ValuePtr, FString& Json)
 {
 	bool Success = false;
-	if (!Property || ValuePtr == NULL)
+	if (!Property || ValuePtr == nullptr)
 	{
 		return Success;
 	}
-	TSharedRef<TJsonWriter<TCHAR, TPrettyJsonPrintPolicy<TCHAR>>> JsonWriter = TJsonWriterFactory<TCHAR, TPrettyJsonPrintPolicy<TCHAR>>::Create(&Json, 0);
+	TSharedRef<TJsonWriter<TCHAR, TPrettyJsonPrintPolicy<TCHAR>>> JsonWriter = TJsonWriterFactory<
+		TCHAR, TPrettyJsonPrintPolicy<TCHAR>>::Create(&Json, 0);
 	// convert to json
-	auto JsonValue = UEFFileLibrary::AnyStructToJsonValue(Property, ValuePtr);
+	const auto JsonValue = UEFFileLibrary::AnyStructToJsonValue(Property, ValuePtr);
 	// serialize
 	if (JsonValue->Type == EJson::Object)
 	{
@@ -623,9 +666,10 @@ bool UEFFileLibrary::AnyStructToJsonString(FProperty* Property, void* ValuePtr, 
 	JsonWriter->Close();
 	return Success;
 }
+
 TSharedRef<FJsonValue> UEFFileLibrary::AnyStructToJsonValue(FProperty* Property, void* ValuePtr)
 {
-	if (ValuePtr == NULL || Property == NULL)
+	if (ValuePtr == nullptr || Property == nullptr)
 	{
 		return MakeShareable(new FJsonValueNull());
 	}
@@ -655,17 +699,21 @@ TSharedRef<FJsonValue> UEFFileLibrary::AnyStructToJsonValue(FProperty* Property,
 	else if (FMapProperty* mapProperty = CastField<FMapProperty>(Property))
 	{
 		TSharedRef<FJsonObject> JsonObject = MakeShared<FJsonObject>();
-		auto Helper = FScriptMapHelper::CreateHelperFormInnerProperties(mapProperty->KeyProp, mapProperty->ValueProp, ValuePtr);
+		auto Helper = FScriptMapHelper::CreateHelperFormInnerProperties(mapProperty->KeyProp, mapProperty->ValueProp,
+		                                                                ValuePtr);
 		for (int32 ArrayIndex = 0; ArrayIndex < Helper.Num(); ++ArrayIndex)
 		{
 			FString KeyStr;
 			auto Key = UEFFileLibrary::AnyStructToJsonValue(mapProperty->KeyProp, Helper.GetKeyPtr(ArrayIndex));
 			if (!Key->TryGetString(KeyStr))
 			{
-				mapProperty->KeyProp->ExportTextItem(KeyStr, Helper.GetKeyPtr(ArrayIndex), nullptr, nullptr, 0);
+				mapProperty->KeyProp->ExportTextItem_Direct(KeyStr, Helper.GetKeyPtr(ArrayIndex), nullptr, nullptr, 0);
 				if (KeyStr.IsEmpty())
 				{
-					UE_LOG(LogTemp, Warning, TEXT("AnyStructToJsonValue : Error serializing key in map property at index %i, using empty string as key"), ArrayIndex);
+					UE_LOG(LogTemp, Warning,
+					       TEXT(
+						       "AnyStructToJsonValue : Error serializing key in map property at index %i, using empty string as key"
+					       ), ArrayIndex);
 				}
 			}
 			auto Val = UEFFileLibrary::AnyStructToJsonValue(mapProperty->ValueProp, Helper.GetValuePtr(ArrayIndex));
@@ -680,7 +728,9 @@ TSharedRef<FJsonValue> UEFFileLibrary::AnyStructToJsonValue(FProperty* Property,
 		for (TFieldIterator<FProperty> It(structProperty->Struct); It; ++It)
 		{
 			FProperty* Prop = *It;
-			JsonObject->SetField(Prop->GetAuthoredName(), UEFFileLibrary::AnyStructToJsonValue(Prop, Prop->ContainerPtrToValuePtr<void*>(ValuePtr)));
+			JsonObject->SetField(Prop->GetAuthoredName(),
+			                     UEFFileLibrary::AnyStructToJsonValue(
+				                     Prop, Prop->ContainerPtrToValuePtr<void*>(ValuePtr)));
 		}
 		return MakeShareable(new FJsonValueObject(JsonObject));
 	}
@@ -688,7 +738,7 @@ TSharedRef<FJsonValue> UEFFileLibrary::AnyStructToJsonValue(FProperty* Property,
 	else if (FObjectProperty* objectProperty = CastField<FObjectProperty>(Property))
 	{
 		void* PropValue = objectProperty->GetObjectPropertyValue(ValuePtr);
-		if (PropValue == NULL)
+		if (PropValue == nullptr)
 		{
 			return MakeShareable(new FJsonValueNull());
 		}
@@ -701,7 +751,9 @@ TSharedRef<FJsonValue> UEFFileLibrary::AnyStructToJsonValue(FProperty* Property,
 		for (TFieldIterator<FProperty> It(objectProperty->PropertyClass); It; ++It)
 		{
 			FProperty* Prop = *It;
-			JsonObject->SetField(Prop->GetAuthoredName(), UEFFileLibrary::AnyStructToJsonValue(Prop, Prop->ContainerPtrToValuePtr<void*>(PropValue)));
+			JsonObject->SetField(Prop->GetAuthoredName(),
+			                     UEFFileLibrary::AnyStructToJsonValue(
+				                     Prop, Prop->ContainerPtrToValuePtr<void*>(PropValue)));
 		}
 		return MakeShareable(new FJsonValueObject(JsonObject));
 	}
@@ -715,11 +767,11 @@ TSharedRef<FJsonValue> UEFFileLibrary::AnyStructToJsonValue(FProperty* Property,
 
 bool UEFFileLibrary::AnyStructToXmlString(FProperty* Property, void* ValuePtr, FString& Xml)
 {
-	if (!Property || ValuePtr == NULL)
+	if (!Property || ValuePtr == nullptr)
 	{
 		return false;
 	}
-	auto JsonValue = UEFFileLibrary::AnyStructToJsonValue(Property, ValuePtr);
+	const auto JsonValue = UEFFileLibrary::AnyStructToJsonValue(Property, ValuePtr);
 	Xml = UEFFileLibrary::AnyStructToXmlValue(Property, JsonValue, 1);
 	UEFFileLibrary::CreateTagNode("root", Xml, 0, true);
 	Xml = "<?xml version='1.0' encoding='UTF-8' ?>" + Xml;
@@ -745,7 +797,7 @@ FString& UEFFileLibrary::CreateTagNode(FString Tag, FString& Content, int32 Dept
 FString UEFFileLibrary::AnyStructToXmlValue(FProperty* Property, TSharedPtr<FJsonValue> Value, int32 Depth)
 {
 	FString Out;
-	if (!Property || Value == NULL)
+	if (!Property || Value == nullptr)
 	{
 		return "";
 	}
@@ -759,7 +811,8 @@ FString UEFFileLibrary::AnyStructToXmlValue(FProperty* Property, TSharedPtr<FJso
 			{
 				auto Val = Array[ArrayIndex];
 				Arr = UEFFileLibrary::AnyStructToXmlValue(arrayProperty->Inner, Val, Depth + 1);
-				UEFFileLibrary::CreateTagNode("value", Arr, Depth, (Val->Type == EJson::Array || Val->Type == EJson::Object));
+				UEFFileLibrary::CreateTagNode("value", Arr, Depth,
+				                              (Val->Type == EJson::Array || Val->Type == EJson::Object));
 				Out += Arr;
 			}
 		}
@@ -779,10 +832,11 @@ FString UEFFileLibrary::AnyStructToXmlValue(FProperty* Property, TSharedPtr<FJso
 			{
 				auto Val = Array[ArrayIndex];
 				Arr = UEFFileLibrary::AnyStructToXmlValue(setProperty->ElementProp, Val, Depth + 1);
-				UEFFileLibrary::CreateTagNode("item", Arr, Depth, (Val->Type == EJson::Array || Val->Type == EJson::Object));
+				UEFFileLibrary::CreateTagNode("item", Arr, Depth,
+				                              (Val->Type == EJson::Array || Val->Type == EJson::Object));
 				Out += Arr;
 			}
-		} 
+		}
 		else
 		{
 			// error
@@ -803,11 +857,12 @@ FString UEFFileLibrary::AnyStructToXmlValue(FProperty* Property, TSharedPtr<FJso
 				UEFFileLibrary::CreateTagNode("key", Arr, Depth + 1, false);
 				Item += Arr;
 				Arr = UEFFileLibrary::AnyStructToXmlValue(mapProperty->ValueProp, KeyVal.Value, Depth + 2);
-				UEFFileLibrary::CreateTagNode("value", Arr, Depth + 1, (KeyVal.Value->Type == EJson::Array || KeyVal.Value->Type == EJson::Object));
+				UEFFileLibrary::CreateTagNode("value", Arr, Depth + 1,
+				                              (KeyVal.Value->Type == EJson::Array || KeyVal.Value->Type ==
+					                              EJson::Object));
 				Item += Arr;
 				UEFFileLibrary::CreateTagNode("item", Item, Depth, true);
 				Out += Item;
-
 			}
 		}
 		else
@@ -815,7 +870,6 @@ FString UEFFileLibrary::AnyStructToXmlValue(FProperty* Property, TSharedPtr<FJso
 			// error
 			return "";
 		}
-		
 	}
 	// struct
 	else if (FStructProperty* structProperty = CastField<FStructProperty>(Property))
@@ -831,14 +885,16 @@ FString UEFFileLibrary::AnyStructToXmlValue(FProperty* Property, TSharedPtr<FJso
 				{
 					auto Val = Object->Values.Find(Prop->GetAuthoredName())->ToSharedRef();
 					Arr = UEFFileLibrary::AnyStructToXmlValue(Prop, Val, Depth + 1);
-					UEFFileLibrary::CreateTagNode(Prop->GetAuthoredName(), Arr, Depth, (Val->Type == EJson::Array || Val->Type == EJson::Object));
+					UEFFileLibrary::CreateTagNode(Prop->GetAuthoredName(), Arr, Depth,
+					                              (Val->Type == EJson::Array || Val->Type == EJson::Object));
 					Out += Arr;
 				}
 				else if (Object->HasField(Prop->GetName()))
 				{
 					auto Val = Object->Values.Find(Prop->GetName())->ToSharedRef();
 					Arr = UEFFileLibrary::AnyStructToXmlValue(Prop, Val, Depth + 1);
-					UEFFileLibrary::CreateTagNode(Prop->GetName(), Arr, Depth, (Val->Type == EJson::Array || Val->Type == EJson::Object));
+					UEFFileLibrary::CreateTagNode(Prop->GetName(), Arr, Depth,
+					                              (Val->Type == EJson::Array || Val->Type == EJson::Object));
 					Out += Arr;
 				}
 			}
@@ -861,7 +917,8 @@ FString UEFFileLibrary::AnyStructToXmlValue(FProperty* Property, TSharedPtr<FJso
 			}
 			else
 			{
-				UE_LOG(LogTemp, Warning, TEXT("AnyStructToXmlString : Error property %s type %i error"), *objectProperty->GetAuthoredName(), Value->Type);
+				UE_LOG(LogTemp, Warning, TEXT("AnyStructToXmlString : Error property %s type %i error"),
+				       *objectProperty->GetAuthoredName(), Value->Type);
 			}
 		}
 		else if (Value->Type == EJson::Object)
@@ -874,14 +931,16 @@ FString UEFFileLibrary::AnyStructToXmlValue(FProperty* Property, TSharedPtr<FJso
 				{
 					auto Val = Object->Values.Find(Prop->GetAuthoredName())->ToSharedRef();
 					Arr = UEFFileLibrary::AnyStructToXmlValue(Prop, Val, Depth + 1);
-					UEFFileLibrary::CreateTagNode(Prop->GetAuthoredName(), Arr, Depth, (Val->Type == EJson::Array || Val->Type == EJson::Object));
+					UEFFileLibrary::CreateTagNode(Prop->GetAuthoredName(), Arr, Depth,
+					                              (Val->Type == EJson::Array || Val->Type == EJson::Object));
 					Out += Arr;
 				}
 				else if (Object->HasField(Prop->GetName()))
 				{
 					auto Val = Object->Values.Find(Prop->GetName())->ToSharedRef();
 					Arr = UEFFileLibrary::AnyStructToXmlValue(Prop, Val, Depth + 1);
-					UEFFileLibrary::CreateTagNode(Prop->GetName(), Arr, Depth, (Val->Type == EJson::Array || Val->Type == EJson::Object));
+					UEFFileLibrary::CreateTagNode(Prop->GetName(), Arr, Depth,
+					                              (Val->Type == EJson::Array || Val->Type == EJson::Object));
 					Out += Arr;
 				}
 			}
@@ -897,17 +956,17 @@ FString UEFFileLibrary::AnyStructToXmlValue(FProperty* Property, TSharedPtr<FJso
 	{
 		switch (Value->Type)
 		{
-			case(EJson::String):
-				Out = UEFFileLibrary::XmlEscapeChars(Value->AsString());
+		case(EJson::String):
+			Out = UEFFileLibrary::XmlEscapeChars(Value->AsString());
 			break;
-			case(EJson::Number):
-				Out = UEFFileLibrary::XmlEscapeChars(FString::SanitizeFloat(Value->AsNumber()));
+		case(EJson::Number):
+			Out = UEFFileLibrary::XmlEscapeChars(FString::SanitizeFloat(Value->AsNumber()));
 			break;
-			case(EJson::Boolean):
-				Out = UEFFileLibrary::XmlEscapeChars((Value->AsBool() ? "true" : "false"));
+		case(EJson::Boolean):
+			Out = UEFFileLibrary::XmlEscapeChars((Value->AsBool() ? "true" : "false"));
 			break;
-			case(EJson::Null):
-				Out = "";
+		case(EJson::Null):
+			Out = "";
 			break;
 		}
 	}
@@ -929,7 +988,8 @@ bool UEFFileLibrary::XmlStringToAnyStruct(FProperty* Property, void* ValuePtr, c
 		return Success;
 	}
 	auto JsonValue = UEFFileLibrary::XmlNodeToAnyStruct(Property, File->GetRootNode());
-	if ((JsonValue->Type == EJson::Array && JsonValue->AsArray().Num() != 0) || (JsonValue->Type == EJson::Object && JsonValue->AsObject()->Values.Num() != 0))
+	if ((JsonValue->Type == EJson::Array && JsonValue->AsArray().Num() != 0) || (JsonValue->Type == EJson::Object &&
+		JsonValue->AsObject()->Values.Num() != 0))
 	{
 		Success = FJsonObjectConverter::JsonValueToUProperty(JsonValue, Property, ValuePtr, 0, 0);
 	}
@@ -973,7 +1033,8 @@ TSharedRef<FJsonValue> UEFFileLibrary::XmlNodeToAnyStruct(FProperty* Property, F
 			{
 				if (auto Val = Child->FindChildNode("value"))
 				{
-					Object->SetField(Key->GetContent(), UEFFileLibrary::XmlNodeToAnyStruct(mapProperty->ValueProp, Val));
+					Object->SetField(Key->GetContent(),
+					                 UEFFileLibrary::XmlNodeToAnyStruct(mapProperty->ValueProp, Val));
 				}
 			}
 		}
@@ -982,7 +1043,7 @@ TSharedRef<FJsonValue> UEFFileLibrary::XmlNodeToAnyStruct(FProperty* Property, F
 	else if (FStructProperty* structProperty = CastField<FStructProperty>(Property))
 	{
 		TSharedRef<FJsonObject> Object = MakeShareable<FJsonObject>(new FJsonObject());
-		for (TFieldIterator<FProperty> It(structProperty->Struct);It;++It)
+		for (TFieldIterator<FProperty> It(structProperty->Struct); It; ++It)
 		{
 			FProperty* Prop = *It;
 			FXmlNode* Result;
@@ -1015,18 +1076,19 @@ TSharedRef<FJsonValue> UEFFileLibrary::XmlNodeToAnyStruct(FProperty* Property, F
 			if ((Result = Node->FindChildNode(Prop->GetAuthoredName())))
 			{
 				Object->SetField(Prop->GetName(), UEFFileLibrary::XmlNodeToAnyStruct(Prop, Result));
-			} 
+			}
 			else if ((Result = Node->FindChildNode(Prop->GetName())))
 			{
 				Object->SetField(Prop->GetName(), UEFFileLibrary::XmlNodeToAnyStruct(Prop, Result));
 			}
 		}
 		return MakeShareable(new FJsonValueObject(Object));
-	} 
+	}
 	// scalar
 	else if (FBoolProperty* BoolProperty = CastField<FBoolProperty>(Property))
 	{
-		auto Prop = MakeShareable<FJsonValueBoolean>(new FJsonValueBoolean((Node->GetContent() == "true" ? true : false)));
+		auto Prop = MakeShareable<FJsonValueBoolean>(
+			new FJsonValueBoolean((Node->GetContent() == "true" ? true : false)));
 		return Prop;
 	}
 	else if (FNumericProperty* NumericProperty = CastField<FNumericProperty>(Property))
@@ -1036,13 +1098,15 @@ TSharedRef<FJsonValue> UEFFileLibrary::XmlNodeToAnyStruct(FProperty* Property, F
 	}
 	else if (FStrProperty* StringProperty = CastField<FStrProperty>(Property))
 	{
-		auto Prop = MakeShareable<FJsonValueString>(new FJsonValueString(UEFFileLibrary::XmlConvertChars(Node->GetContent())));
+		auto Prop = MakeShareable<FJsonValueString>(
+			new FJsonValueString(UEFFileLibrary::XmlConvertChars(Node->GetContent())));
 		return Prop;
 	}
 	else
 	{
 		// other
-		auto Prop = MakeShareable<FJsonValueString>(new FJsonValueString(UEFFileLibrary::XmlConvertChars(Node->GetContent())));
+		auto Prop = MakeShareable<FJsonValueString>(
+			new FJsonValueString(UEFFileLibrary::XmlConvertChars(Node->GetContent())));
 		return Prop;
 	}
 }
@@ -1111,10 +1175,10 @@ bool FCustomFileVisitor::Visit(const TCHAR* FilenameOrDirectory, bool bIsDirecto
 	{
 		FString RelativePath = FString(FilenameOrDirectory);
 		FPaths::MakePathRelativeTo(RelativePath, *BasePath);
-		if (!Filter.IsEmpty()) 
+		if (!Filter.IsEmpty())
 		{
 			FRegexMatcher CustomMatcher(CustomPattern, RelativePath);
-			if (CustomMatcher.FindNext()) 
+			if (CustomMatcher.FindNext())
 			{
 				Nodes.Add(RelativePath);
 			}
@@ -1127,24 +1191,25 @@ bool FCustomFileVisitor::Visit(const TCHAR* FilenameOrDirectory, bool bIsDirecto
 	return true;
 }
 
-bool UEFFileLibrary::ListDirectory(FString Path, FString Pattern, TArray<FString>& Nodes, bool ShowFile, bool ShowDirectory, bool Recursive)
+bool UEFFileLibrary::ListDirectory(FString Path, FString Pattern, TArray<FString>& Nodes, bool ShowFile,
+                                   bool ShowDirectory, bool Recursive)
 {
 	IPlatformFile& File = FPlatformFileManager::Get().GetPlatformFile();
-	if (!File.DirectoryExists(*Path)) 
+	if (!File.DirectoryExists(*Path))
 	{
 		return false;
 	}
 	if (!ShowDirectory && !ShowFile)
 	{
 		return true;
-	}	
+	}
 	FString BasePath = FPaths::Combine(Path, TEXT("/"));
 	FCustomFileVisitor CustomFileVisitor(BasePath, Nodes, Pattern, ShowFile, ShowDirectory);
 	if (Recursive)
 	{
 		return File.IterateDirectoryRecursively(*Path, CustomFileVisitor);
 	}
-	else 
+	else
 	{
 		return File.IterateDirectory(*Path, CustomFileVisitor);
 	}
@@ -1323,7 +1388,8 @@ bool UEFFileLibrary::RenameFile(FString Path, FString NewName)
 	return File.MoveFile(*Output, *Path);
 }
 
-void UEFFileLibrary::GetPathParts(FString Path, FString& PathPart, FString& BasePart, FString& ExtensionPart, FString& FileName)
+void UEFFileLibrary::GetPathParts(FString Path, FString& PathPart, FString& BasePart, FString& ExtensionPart,
+                                  FString& FileName)
 {
 	PathPart = FPaths::GetPath(Path);
 	BasePart = FPaths::GetBaseFilename(Path);
@@ -1339,7 +1405,8 @@ bool UEFFileLibrary::TakeScreenShot(FString Filename, FString& Path, bool Prefix
 	{
 		return false;
 	}
-	FString FinalFilename = (PrefixTimestamp ? (FDateTime::Now().ToString(TEXT("%Y_%m_%d__%H_%M_%S__"))) : "") + Filename;
+	FString FinalFilename = (PrefixTimestamp ? (FDateTime::Now().ToString(TEXT("%Y_%m_%d__%H_%M_%S__"))) : "") +
+		Filename;
 	FScreenshotRequest::Reset();
 	FScreenshotRequest::RequestScreenshot(FinalFilename, ShowUI, false);
 	if (FScreenshotRequest::IsScreenshotRequested())
@@ -1357,7 +1424,7 @@ UTexture2D* UEFFileLibrary::LoadScreenshot(FString Path, bool& Success)
 	{
 		Success = true;
 		UTexture2D* Tex = FImageUtils::ImportFileAsTexture2D(Path);
-		if (Tex) 
+		if (Tex)
 		{
 			return Tex;
 		}
@@ -1391,14 +1458,14 @@ bool UEFFileLibrary::DataTableToJSON(UDataTable* Table, FString& Output)
 UDataTable* UEFFileLibrary::CSVToDataTable(FString CSV, UScriptStruct* Struct, bool& Success)
 {
 	Success = false;
-	if (Struct == nullptr) 
+	if (Struct == nullptr)
 	{
 		return nullptr;
 	}
 	UDataTable* DataTable = NewObject<UDataTable>();
 	DataTable->RowStruct = Struct;
 	auto Result = DataTable->CreateTableFromCSVString(CSV);
-	if (Result.Num() == 0) 
+	if (Result.Num() == 0)
 	{
 		Success = true;
 	}
@@ -1440,18 +1507,20 @@ TArray<FString> UEFFileLibrary::SplitString(FString String, FString Separator, E
 			Array.Add(String);
 		}
 		String = RightString;
-	} while (Split);
+	}
+	while (Split);
 
 	return Array;
 }
 
-bool UEFFileLibrary::WriteConfigFile(FString Filename, FString Section, FString Key, FProperty* Type, void* Value, bool SingleLineArray)
+bool UEFFileLibrary::WriteConfigFile(FString Filename, FString Section, FString Key, FProperty* Type, void* Value,
+                                     bool SingleLineArray)
 {
 	if (!GConfig)
 	{
 		return false;
 	}
-	if (FBoolProperty* BoolProperty = CastField<FBoolProperty>(Type)) 
+	if (FBoolProperty* BoolProperty = CastField<FBoolProperty>(Type))
 	{
 		GConfig->SetBool(*Section, *Key, *(static_cast<bool*>(Value)), Filename);
 	}
@@ -1537,7 +1606,8 @@ bool UEFFileLibrary::WriteConfigFile(FString Filename, FString Section, FString 
 	return true;
 }
 
-bool UEFFileLibrary::ReadConfigFile(FString Filename, FString Section, FString Key, FProperty* Type, void* Value, bool SingleLineArray)
+bool UEFFileLibrary::ReadConfigFile(FString Filename, FString Section, FString Key, FProperty* Type, void* Value,
+                                    bool SingleLineArray)
 {
 	if (!GConfig)
 	{
@@ -1698,11 +1768,13 @@ bool UEFFileLibrary::WriteRowToCSV(const UScriptStruct* InRowStruct, const void*
 	return true;
 }
 
-bool UEFFileLibrary::WriteStructEntryToCSV(const void* InRowData, FProperty* InProperty, const void* InPropertyData, FString& ExportedText)
+bool UEFFileLibrary::WriteStructEntryToCSV(const void* InRowData, FProperty* InProperty, const void* InPropertyData,
+                                           FString& ExportedText)
 {
 	ExportedText += TEXT(",");
 
-	const FString PropertyValue = DataTableUtils::GetPropertyValueAsString(InProperty, (uint8*)InRowData, EDataTableExportFlags::None);
+	const FString PropertyValue = DataTableUtils::GetPropertyValueAsString(
+		InProperty, (uint8*)InRowData, EDataTableExportFlags::None);
 	ExportedText += TEXT("\"");
 	ExportedText += PropertyValue.Replace(TEXT("\""), TEXT("\"\""));
 	ExportedText += TEXT("\"");
@@ -1732,7 +1804,8 @@ bool UEFFileLibrary::WriteTableToJSON(const UDataTable& InDataTable, FString& Ou
 		return false;
 	}
 
-	TSharedRef<TJsonWriter<TCHAR, TPrettyJsonPrintPolicy<TCHAR>>> JsonWriter = TJsonWriterFactory<TCHAR, TPrettyJsonPrintPolicy<TCHAR>>::Create(&OutExportText);
+	TSharedRef<TJsonWriter<TCHAR, TPrettyJsonPrintPolicy<TCHAR>>> JsonWriter = TJsonWriterFactory<
+		TCHAR, TPrettyJsonPrintPolicy<TCHAR>>::Create(&OutExportText);
 
 	FString KeyField = UEFFileLibrary::GetKeyFieldName(InDataTable);
 
@@ -1761,7 +1834,8 @@ bool UEFFileLibrary::WriteTableToJSON(const UDataTable& InDataTable, FString& Ou
 	return true;
 }
 
-bool UEFFileLibrary::WriteTableAsObjectToJSON(const UDataTable& InDataTable, TSharedRef<TJsonWriter<TCHAR, TPrettyJsonPrintPolicy<TCHAR>>> JsonWriter)
+bool UEFFileLibrary::WriteTableAsObjectToJSON(const UDataTable& InDataTable,
+                                              TSharedRef<TJsonWriter<TCHAR, TPrettyJsonPrintPolicy<TCHAR>>> JsonWriter)
 {
 	if (!InDataTable.RowStruct)
 	{
@@ -1788,7 +1862,8 @@ bool UEFFileLibrary::WriteTableAsObjectToJSON(const UDataTable& InDataTable, TSh
 	return true;
 }
 
-bool UEFFileLibrary::WriteRowToJSON(const UScriptStruct* InRowStruct, const void* InRowData, TSharedRef<TJsonWriter<TCHAR, TPrettyJsonPrintPolicy<TCHAR>>> JsonWriter)
+bool UEFFileLibrary::WriteRowToJSON(const UScriptStruct* InRowStruct, const void* InRowData,
+                                    TSharedRef<TJsonWriter<TCHAR, TPrettyJsonPrintPolicy<TCHAR>>> JsonWriter)
 {
 	if (!InRowStruct)
 	{
@@ -1798,14 +1873,16 @@ bool UEFFileLibrary::WriteRowToJSON(const UScriptStruct* InRowStruct, const void
 	return UEFFileLibrary::WriteStructToJSON(InRowStruct, InRowData, JsonWriter);
 }
 
-bool UEFFileLibrary::WriteStructToJSON(const UScriptStruct* InStruct, const void* InStructData, TSharedRef<TJsonWriter<TCHAR, TPrettyJsonPrintPolicy<TCHAR>>> JsonWriter)
+bool UEFFileLibrary::WriteStructToJSON(const UScriptStruct* InStruct, const void* InStructData,
+                                       TSharedRef<TJsonWriter<TCHAR, TPrettyJsonPrintPolicy<TCHAR>>> JsonWriter)
 {
 	for (TFieldIterator<const FProperty> It(InStruct); It; ++It)
 	{
 		const FProperty* BaseProp = *It;
 		check(BaseProp);
 
-		const FString Identifier = DataTableUtils::GetPropertyExportName(BaseProp, EDataTableExportFlags::UseJsonObjectsForStructs);
+		const FString Identifier = DataTableUtils::GetPropertyExportName(
+			BaseProp, EDataTableExportFlags::UseJsonObjectsForStructs);
 
 		if (BaseProp->ArrayDim == 1)
 		{
@@ -1829,20 +1906,25 @@ bool UEFFileLibrary::WriteStructToJSON(const UScriptStruct* InStruct, const void
 	return true;
 }
 
-bool UEFFileLibrary::WriteStructEntryToJSON(const void* InRowData, const FProperty* InProperty, const void* InPropertyData, TSharedRef<TJsonWriter<TCHAR, TPrettyJsonPrintPolicy<TCHAR>>> JsonWriter)
+bool UEFFileLibrary::WriteStructEntryToJSON(const void* InRowData, const FProperty* InProperty,
+                                            const void* InPropertyData,
+                                            TSharedRef<TJsonWriter<TCHAR, TPrettyJsonPrintPolicy<TCHAR>>> JsonWriter)
 {
-	const FString Identifier = DataTableUtils::GetPropertyExportName(InProperty, EDataTableExportFlags::UseJsonObjectsForStructs);
+	const FString Identifier = DataTableUtils::GetPropertyExportName(
+		InProperty, EDataTableExportFlags::UseJsonObjectsForStructs);
 
 	if (const FEnumProperty* EnumProp = CastField<const FEnumProperty>(InProperty))
 	{
-		const FString PropertyValue = DataTableUtils::GetPropertyValueAsString(EnumProp, (uint8*)InRowData, EDataTableExportFlags::UseJsonObjectsForStructs);
+		const FString PropertyValue = DataTableUtils::GetPropertyValueAsString(
+			EnumProp, (uint8*)InRowData, EDataTableExportFlags::UseJsonObjectsForStructs);
 		JsonWriter->WriteValue(Identifier, PropertyValue);
 	}
 	else if (const FNumericProperty* NumProp = CastField<const FNumericProperty>(InProperty))
 	{
 		if (NumProp->IsEnum())
 		{
-			const FString PropertyValue = DataTableUtils::GetPropertyValueAsString(InProperty, (uint8*)InRowData, EDataTableExportFlags::UseJsonObjectsForStructs);
+			const FString PropertyValue = DataTableUtils::GetPropertyValueAsString(
+				InProperty, (uint8*)InRowData, EDataTableExportFlags::UseJsonObjectsForStructs);
 			JsonWriter->WriteValue(Identifier, PropertyValue);
 		}
 		else if (NumProp->IsInteger())
@@ -1884,7 +1966,8 @@ bool UEFFileLibrary::WriteStructEntryToJSON(const void* InRowData, const FProper
 			if (SetHelper.IsValidIndex(SetSparseIndex))
 			{
 				const uint8* SetEntryData = SetHelper.GetElementPtr(SetSparseIndex);
-				UEFFileLibrary::WriteContainerEntryToJSON(SetHelper.GetElementProperty(), SetEntryData, &Identifier, JsonWriter);
+				UEFFileLibrary::WriteContainerEntryToJSON(SetHelper.GetElementProperty(), SetEntryData, &Identifier,
+				                                          JsonWriter);
 			}
 		}
 
@@ -1903,8 +1986,10 @@ bool UEFFileLibrary::WriteStructEntryToJSON(const void* InRowData, const FProper
 				const uint8* MapValueData = MapHelper.GetValuePtr(MapSparseIndex);
 
 				// JSON object keys must always be strings
-				const FString KeyValue = DataTableUtils::GetPropertyValueAsStringDirect(MapHelper.GetKeyProperty(), (uint8*)MapKeyData, EDataTableExportFlags::UseJsonObjectsForStructs);
-				UEFFileLibrary::WriteContainerEntryToJSON(MapHelper.GetValueProperty(), MapValueData, &KeyValue, JsonWriter);
+				const FString KeyValue = DataTableUtils::GetPropertyValueAsStringDirect(
+					MapHelper.GetKeyProperty(), (uint8*)MapKeyData, EDataTableExportFlags::UseJsonObjectsForStructs);
+				UEFFileLibrary::WriteContainerEntryToJSON(MapHelper.GetValueProperty(), MapValueData, &KeyValue,
+				                                          JsonWriter);
 			}
 		}
 
@@ -1918,42 +2003,50 @@ bool UEFFileLibrary::WriteStructEntryToJSON(const void* InRowData, const FProper
 	}
 	else
 	{
-		const FString PropertyValue = DataTableUtils::GetPropertyValueAsString(InProperty, (uint8*)InRowData, EDataTableExportFlags::UseJsonObjectsForStructs);
+		const FString PropertyValue = DataTableUtils::GetPropertyValueAsString(
+			InProperty, (uint8*)InRowData, EDataTableExportFlags::UseJsonObjectsForStructs);
 		JsonWriter->WriteValue(Identifier, PropertyValue);
 	}
 
 	return true;
 }
 
-bool UEFFileLibrary::WriteContainerEntryToJSON(const FProperty* InProperty, const void* InPropertyData, const FString* InIdentifier, TSharedRef<TJsonWriter<TCHAR, TPrettyJsonPrintPolicy<TCHAR>>> JsonWriter)
+bool UEFFileLibrary::WriteContainerEntryToJSON(const FProperty* InProperty, const void* InPropertyData,
+                                               const FString* InIdentifier,
+                                               TSharedRef<TJsonWriter<TCHAR, TPrettyJsonPrintPolicy<TCHAR>>> JsonWriter)
 {
 	if (const FEnumProperty* EnumProp = CastField<const FEnumProperty>(InProperty))
 	{
-		const FString PropertyValue = DataTableUtils::GetPropertyValueAsStringDirect(InProperty, (uint8*)InPropertyData, EDataTableExportFlags::UseJsonObjectsForStructs);
+		const FString PropertyValue = DataTableUtils::GetPropertyValueAsStringDirect(
+			InProperty, (uint8*)InPropertyData, EDataTableExportFlags::UseJsonObjectsForStructs);
 		UEFFileLibrary::WriteJSONValueWithOptionalIdentifier(JsonWriter, InIdentifier, *PropertyValue);
 	}
 	else if (const FNumericProperty* NumProp = CastField<const FNumericProperty>(InProperty))
 	{
 		if (NumProp->IsEnum())
 		{
-			const FString PropertyValue = DataTableUtils::GetPropertyValueAsStringDirect(InProperty, (uint8*)InPropertyData, EDataTableExportFlags::UseJsonObjectsForStructs);
+			const FString PropertyValue = DataTableUtils::GetPropertyValueAsStringDirect(
+				InProperty, (uint8*)InPropertyData, EDataTableExportFlags::UseJsonObjectsForStructs);
 			UEFFileLibrary::WriteJSONValueWithOptionalIdentifier(JsonWriter, InIdentifier, *PropertyValue);
 		}
 		else if (NumProp->IsInteger())
 		{
 			const int64 PropertyValue = NumProp->GetSignedIntPropertyValue(InPropertyData);
-			UEFFileLibrary::WriteJSONValueWithOptionalIdentifier(JsonWriter, InIdentifier, *FString::FromInt(PropertyValue));
+			UEFFileLibrary::WriteJSONValueWithOptionalIdentifier(JsonWriter, InIdentifier,
+			                                                     *FString::FromInt(PropertyValue));
 		}
 		else
 		{
 			const double PropertyValue = NumProp->GetFloatingPointPropertyValue(InPropertyData);
-			UEFFileLibrary::WriteJSONValueWithOptionalIdentifier(JsonWriter, InIdentifier, *FString::SanitizeFloat(PropertyValue));
+			UEFFileLibrary::WriteJSONValueWithOptionalIdentifier(JsonWriter, InIdentifier,
+			                                                     *FString::SanitizeFloat(PropertyValue));
 		}
 	}
 	else if (const FBoolProperty* BoolProp = CastField<const FBoolProperty>(InProperty))
 	{
 		const bool PropertyValue = BoolProp->GetPropertyValue(InPropertyData);
-		UEFFileLibrary::WriteJSONValueWithOptionalIdentifier(JsonWriter, InIdentifier, *(PropertyValue ? FString("true") : FString("false")));
+		UEFFileLibrary::WriteJSONValueWithOptionalIdentifier(JsonWriter, InIdentifier,
+		                                                     *(PropertyValue ? FString("true") : FString("false")));
 	}
 	else if (const FStructProperty* StructProp = CastField<const FStructProperty>(InProperty))
 	{
@@ -1978,14 +2071,16 @@ bool UEFFileLibrary::WriteContainerEntryToJSON(const FProperty* InProperty, cons
 	}
 	else
 	{
-		const FString PropertyValue = DataTableUtils::GetPropertyValueAsStringDirect(InProperty, (uint8*)InPropertyData, EDataTableExportFlags::UseJsonObjectsForStructs);
+		const FString PropertyValue = DataTableUtils::GetPropertyValueAsStringDirect(
+			InProperty, (uint8*)InPropertyData, EDataTableExportFlags::UseJsonObjectsForStructs);
 		UEFFileLibrary::WriteJSONValueWithOptionalIdentifier(JsonWriter, InIdentifier, *PropertyValue);
 	}
 
 	return true;
 }
 
-void UEFFileLibrary::WriteJSONObjectStartWithOptionalIdentifier(TSharedRef<TJsonWriter<TCHAR, TPrettyJsonPrintPolicy<TCHAR>>> JsonWriter, const FString* InIdentifier)
+void UEFFileLibrary::WriteJSONObjectStartWithOptionalIdentifier(
+	TSharedRef<TJsonWriter<TCHAR, TPrettyJsonPrintPolicy<TCHAR>>> JsonWriter, const FString* InIdentifier)
 {
 	if (InIdentifier)
 	{
@@ -1997,7 +2092,9 @@ void UEFFileLibrary::WriteJSONObjectStartWithOptionalIdentifier(TSharedRef<TJson
 	}
 }
 
-void UEFFileLibrary::WriteJSONValueWithOptionalIdentifier(TSharedRef<TJsonWriter<TCHAR, TPrettyJsonPrintPolicy<TCHAR>>> JsonWriter, const FString* InIdentifier, const TCHAR* InValue)
+void UEFFileLibrary::WriteJSONValueWithOptionalIdentifier(
+	TSharedRef<TJsonWriter<TCHAR, TPrettyJsonPrintPolicy<TCHAR>>> JsonWriter, const FString* InIdentifier,
+	const TCHAR* InValue)
 {
 	if (InIdentifier)
 	{

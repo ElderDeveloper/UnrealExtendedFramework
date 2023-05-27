@@ -339,43 +339,6 @@ bool UEFPerceptionLibrary::SetHearingRange(UAIPerceptionComponent* Perception, f
 
 
 
-bool UEFPerceptionLibrary::GetUseLoSHearing(UAIPerceptionComponent* Perception)
-{
-    if (Perception)
-    {
-        if (const auto config  = GetPerceptionSenseConfig(Perception , UAISense_Hearing::StaticClass()))
-        {
-            if (const auto hearConfig = Cast<UAISenseConfig_Hearing>(config))
-                return hearConfig->bUseLoSHearing;
-        }
-    }
-    LOG_Error("GetUseLoSHearing: Perception or Config == nullptr");
-    return false;
-}
-
-
-
-
-bool UEFPerceptionLibrary::SetUseLoSHearing(UAIPerceptionComponent* Perception, bool UseLoSHearing)
-{
-    if (Perception)
-    {
-        if (const auto config  = GetPerceptionSenseConfig(Perception , UAISense_Hearing::StaticClass()))
-        {
-            if (const auto hearConfig = Cast<UAISenseConfig_Hearing>(config))
-            {
-                hearConfig->bUseLoSHearing = UseLoSHearing;
-                Perception->RequestStimuliListenerUpdate();
-                return true;
-            }
-        }
-    }
-    LOG_Error("SetUseLoSHearing: Perception or Config == nullptr");
-    return false;
-}
-
-
-
 
 float UEFPerceptionLibrary::GetLoSHearingRange(UAIPerceptionComponent* Perception)
 {
@@ -384,7 +347,7 @@ float UEFPerceptionLibrary::GetLoSHearingRange(UAIPerceptionComponent* Perceptio
         if (const auto config  = GetPerceptionSenseConfig(Perception , UAISense_Hearing::StaticClass()))
         {
             if (const auto hearConfig = Cast<UAISenseConfig_Hearing>(config))
-                return hearConfig->LoSHearingRange;
+                return hearConfig->HearingRange;
         }
     }
     LOG_Error("GetLoSHearingRange: Perception or Config == nullptr");
@@ -402,7 +365,7 @@ bool UEFPerceptionLibrary::SetLoSHearingRange(UAIPerceptionComponent* Perception
         {
             if (const auto hearConfig = Cast<UAISenseConfig_Hearing>(config))
             {
-                hearConfig->LoSHearingRange = LoSHearingRange;
+                hearConfig->HearingRange = LoSHearingRange;
                 Perception->RequestStimuliListenerUpdate();
                 return true;
             }

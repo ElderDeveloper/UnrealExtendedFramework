@@ -33,7 +33,7 @@ void UESSubtitleWidget::ReceiveSubtitleRequest(FString Subtitle, float Duration)
 
 	
 	TextBlock->SetText(FText::FromString(""));
-	const auto Color = Border->BrushColor;
+	const auto Color = Border->GetBrushColor();
 	bUseBorder ?  Border->SetBrushColor(FLinearColor(Color.R,Color.G,Color.B,1)) : Border->SetBrushColor(FLinearColor(Color.R,Color.G,Color.B,0));
 
 	
@@ -101,7 +101,7 @@ void UESSubtitleWidget::NativeConstruct()
 {
 	Super::NativeConstruct();
 	GetWorld()->GetTimerManager().SetTimer(SubtitleHandle,this,&UESSubtitleWidget::InitializeSubtitle,0.5,false);
-	SubtitleStoredFont = TextBlock->Font;
+	SubtitleStoredFont = TextBlock->GetFont();
 }
 
 
