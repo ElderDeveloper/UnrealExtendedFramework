@@ -18,21 +18,6 @@ FString UEGCameraShakeNotify::GetNotifyName_Implementation() const
 }
 
 
-#if	ENGINE_MAJOR_VERSION != 5
-void UEGCameraShakeNotify::Notify(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation)
-{
-	Super::Notify(MeshComp, Animation);
-
-	if (CameraShake)
-	{
-		UGameplayStatics::PlayWorldCameraShake(MeshComp->GetWorld(),CameraShake,MeshComp->GetComponentLocation(),InnerRadius,OuterRadius,Falloff);
-	}
-
-}
-#endif
-
-
-
 #if	ENGINE_MAJOR_VERSION == 5
 void UEGCameraShakeNotify::Notify(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation,const FAnimNotifyEventReference& EventReference)
 {

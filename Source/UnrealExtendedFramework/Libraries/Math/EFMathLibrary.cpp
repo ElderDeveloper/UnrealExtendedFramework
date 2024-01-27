@@ -21,6 +21,28 @@ unsigned RandGSeed = std::chrono::system_clock::now().time_since_epoch().count()
 #define Bernoulli std::bernoulli_distribution
 
 
+FVector UEFMathLibrary::RandPointInSphere(const FVector& Center, float Radius)
+{
+	FVector Point;
+	float DistanceSquared = 0.f;
+	do
+	{
+		// Generate a random point within the cube that contains the sphere
+		Point.X = FMath::FRandRange(-1.f, 1.f);
+		Point.Y = FMath::FRandRange(-1.f, 1.f);
+		Point.Z = FMath::FRandRange(-1.f, 1.f);
+
+		// Check if the point is inside the sphere
+		DistanceSquared = FVector::DistSquared(Point, FVector(0.f, 0.f, 0.f));
+	} while (DistanceSquared > 1.f);
+
+	// Scale and translate the point to be within the sphere
+	Point *= Radius;
+	Point += Center;
+
+	return Point;
+}
+
 // <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< ROTATION >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 FRotator UEFMathLibrary::GetRotationBetweenActors(const AActor* From, const AActor* To, const FRotator PlusRotator)
 {
@@ -97,7 +119,7 @@ float UEFMathLibrary::GetDistanceBetweenVectorsNoSquareRoot(const FVector From, 
 
 AActor* UEFMathLibrary::GetClosestActorFromActorArray(const AActor* OwnerActor ,UPARAM(ref) const TArray<AActor*>& TargetArray)
 {
-	float ClosestDistance = 999999999;
+	float ClosestDistance = 999999999.f;
 	AActor* ClosestActor = nullptr;
 	if (TargetArray.IsValidIndex(0))
 		ClosestActor = TargetArray[0];
@@ -115,7 +137,7 @@ AActor* UEFMathLibrary::GetClosestActorFromActorArray(const AActor* OwnerActor ,
 
 void UEFMathLibrary::GetClosestComponentFromComponentArray(const AActor* OwnerActor,const TArray<USceneComponent*>& TargetArray, USceneComponent*& Item)
 {
-	float ClosestDistance = 999999999;
+	float ClosestDistance = 999999999.f;
 	if (TargetArray.IsValidIndex(0))
 		Item = TargetArray[0];
 	
@@ -131,7 +153,7 @@ void UEFMathLibrary::GetClosestComponentFromComponentArray(const AActor* OwnerAc
 
 void UEFMathLibrary::ComponentGetClosestActorFromActorArray(const USceneComponent* OwnerComponent,const TArray<AActor*>& TargetArray, AActor*& Item)
 {
-	float ClosestDistance = 999999999;
+	float ClosestDistance = 999999999.f;
 	if (TargetArray.IsValidIndex(0))
 		Item = TargetArray[0];
 	
@@ -147,7 +169,7 @@ void UEFMathLibrary::ComponentGetClosestActorFromActorArray(const USceneComponen
 
 void UEFMathLibrary::ComponentGetClosestComponentFromComponentArray(const USceneComponent* OwnerComponent,const TArray<USceneComponent*>& TargetArray, USceneComponent*& Item)
 {
-	float ClosestDistance = 999999999;
+	float ClosestDistance = 999999999.f;
 	if (TargetArray.IsValidIndex(0))
 		Item = TargetArray[0];
 	
@@ -172,6 +194,14 @@ FVector UEFMathLibrary::GetDirectionBetweenActors(const AActor* From, const AAct
 	return FVector::ZeroVector;
 }
 
+FVector UEFMathLibrary::GetDirectionBetweenComponents(const USceneComponent* From, const USceneComponent* To,float scaleVector)
+{	
+	if (From && To)
+	{
+		return (FVector(To->GetComponentLocation() - From->GetComponentLocation()).GetSafeNormal())*scaleVector;
+	}
+	return FVector::ZeroVector;
+}
 
 
 FVector UEFMathLibrary::GetComponentForwardVectorPlus(USceneComponent* Component, float Distance, FVector& CurrentLocation)
@@ -552,4 +582,16 @@ float UEFMathLibrary::RandomFloatUniform(const float Max)
 float UEFMathLibrary::RandomFloatCanonical()
 {
 	return std::generate_canonical<double, 10>( RandDRE );
+}
+
+float UEFMathLibrary::RandomFloatRangeMinMax(const float Min, const float MinMax, const float Max, const float MaxMax)
+{
+	const int32 RandomInt = UKismetMathLibrary::RandomIntegerInRange(0 , 1);
+	return RandomInt == 0 ? UKismetMathLibrary::RandomFloatInRange(Min , MinMax) : UKismetMathLibrary::RandomFloatInRange(Max , MaxMax);
+}
+
+float UEFMathLibrary::RandomFloatPositiveNegativeOne()
+{
+	const int32 RandomInt = UKismetMathLibrary::RandomIntegerInRange(0 , 1);
+	return RandomInt == 0 ? -1 : 1;
 }

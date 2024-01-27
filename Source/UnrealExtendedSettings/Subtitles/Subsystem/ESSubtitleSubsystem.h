@@ -50,13 +50,16 @@ public:
 
 	UFUNCTION(BlueprintCallable)
 	void SaveExtendedLanguageWithTag(FGameplayTag LanguageTag);
-	
+
+	// Triggers the Subtitle Event , OnExecuteSubtitle will be triggered , Audio Will Be Played On 2D Sound 
 	UFUNCTION(BlueprintCallable ,meta=(WorldContext = WorldContextObject) , Category="Extended Settings | Subtitle")
 	static void ExecuteExtendedSubtitle(const UObject* WorldContextObject , const FString SubtitleKey);
 
+	// Triggers the Subtitle Event , OnExecuteSubtitle will be triggered , Audio Will Be Played On The Given Location
 	UFUNCTION(BlueprintCallable ,meta=(WorldContext = WorldContextObject) , Category="Extended Settings | Subtitle")
 	static void ExecuteExtendedSubtitleLocation(const UObject* WorldContextObject ,const FString SubtitleKey , const FVector Location);
 
+	// Triggers the Subtitle Event , OnExecuteSubtitle will be triggered , Audio Will Be Played On The Given Component
 	UFUNCTION(BlueprintCallable ,meta=(WorldContext = WorldContextObject) , Category="Extended Settings | Subtitle")
 	static void ExecuteExtendedSubtitleAttachedComponent(const UObject* WorldContextObject ,const FString SubtitleKey , USceneComponent* SceneComponent);
 	

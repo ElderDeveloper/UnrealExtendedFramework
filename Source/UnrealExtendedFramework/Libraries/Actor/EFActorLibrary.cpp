@@ -97,7 +97,32 @@ void UEFActorLibrary::RotateToObjectInterpYaw(const UObject* WorldContextObject,
 	}
 }
 
-
+void UEFActorLibrary::RotateToLocationInterpYaw(const UObject* WorldContextObject, AActor* From, const FVector& To,float InterpSpeed, bool UseFindLookAtRotation)
+{
+	if (From)
+	{
+		if (UseFindLookAtRotation)
+		{
+			FRotator Rot = From->GetActorRotation();
+			Rot.Yaw = UKismetMathLibrary::FInterpTo(
+				Rot.Yaw,
+				UKismetMathLibrary::FindLookAtRotation(From->GetActorLocation(),To).Yaw,
+				WorldContextObject->GetWorld()->GetDeltaSeconds(),
+				InterpSpeed);
+		 
+			From->SetActorRotation(Rot);
+		}
+		else
+		{
+			float current = From->GetActorRotation().Yaw;
+			const FRotator LookAtRotation = UKismetMathLibrary::FindLookAtRotation(From->GetActorLocation(), To);
+			const int Difference = LookAtRotation.Yaw - current;
+			const float shortest_angle = (((Difference % 360) + 540) % 360) - 180;
+			const float deltaMove = shortest_angle * FMath::Clamp(WorldContextObject->GetWorld()->GetDeltaSeconds() * InterpSpeed, 0.0f, 1.0f);
+			From->SetActorRotation(FRotator(0, current += deltaMove, 0));
+		}
+	}
+}
 
 
 void UEFActorLibrary::RotateToObjectInterp(const UObject* WorldContextObject, AActor* From, AActor* To,float InterpSpeed)
@@ -111,6 +136,20 @@ void UEFActorLibrary::RotateToObjectInterp(const UObject* WorldContextObject, AA
 	}
 }
 
+void UEFActorLibrary::RotateToLocationInterp(const UObject* WorldContextObject, AActor* From, const FVector& To,float InterpSpeed , float MaxDegreePerSecond)
+{
+	FRotator current = From->GetActorRotation();
+	const FRotator LookAtRotation = UKismetMathLibrary::FindLookAtRotation(From->GetActorLocation(), To);
+	const FRotator DeltaRotation = UKismetMathLibrary::NormalizedDeltaRotator(LookAtRotation, current);
+	const float Angle = FMath::Abs(DeltaRotation.Yaw) + FMath::Abs(DeltaRotation.Pitch) + FMath::Abs(DeltaRotation.Roll);
+	const float DeltaTime = WorldContextObject->GetWorld()->GetDeltaSeconds() * InterpSpeed;
+	if (Angle > 0.001f)
+	{
+		const float DeltaAngle = FMath::Clamp(Angle / DeltaTime, -MaxDegreePerSecond, MaxDegreePerSecond) * DeltaTime;
+		const FRotator NewRotator = UKismetMathLibrary::RInterpTo(current, LookAtRotation, DeltaTime, DeltaAngle);
+		From->SetActorRotation(NewRotator);
+	}
+}
 
 
 bool UEFActorLibrary::IsActorLocal(AActor* Actor)
@@ -158,3 +197,20 @@ FRotator UEFActorLibrary::GetActorControlRotationYaw(APawn* Pawn)
 	return Return;
 }
 
+FVector UEFActorLibrary::WorldToLocal(const AActor* Actor, const FVector& WorldLocation)
+{
+	if (Actor)
+	{
+		return UKismetMathLibrary::InverseTransformLocation(Actor->GetActorTransform(), WorldLocation);
+	}
+	return FVector::ZeroVector;
+}
+
+FVector UEFActorLibrary::LocalToWorld(const AActor* Actor, const FVector& LocalLocation)
+{
+	if ( Actor)
+	{
+		return UKismetMathLibrary::TransformLocation(Actor->GetActorTransform(), LocalLocation);
+	}
+	return FVector::ZeroVector;
+}

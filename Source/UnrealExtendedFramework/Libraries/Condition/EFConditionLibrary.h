@@ -14,91 +14,6 @@ class UNREALEXTENDEDFRAMEWORK_API UEFConditionLibrary : public UBlueprintFunctio
 	GENERATED_BODY()
 
 public:
-	UFUNCTION(BlueprintCallable,meta = (DisplayName = "Exec >0",CompactNodeTitle = ">0",CustomStructureParam = "Value" , ExpandEnumAsExecs = "OutPins") , Category="ConditionLibrary")
-	static void IsBiggerThanZero(const float& Value , TEnumAsByte<EFConditionOutput>& OutPins)
-	{
-		Value > 0 ? UEF_True :  OutPins = UEF_False;
-	}
-
-	
-	UFUNCTION(BlueprintCallable,meta = (DisplayName = "Exec >=0",CompactNodeTitle = "=>0",CustomStructureParam = "Value" , ExpandEnumAsExecs = "OutPins"), Category="ConditionLibrary")
-	static void IsBiggerThanOrEqualZero(const float& Value , TEnumAsByte<EFConditionOutput>& OutPins)
-	{
-		Value >= 0 ? UEF_True :  OutPins = UEF_False;
-	}
-
-	
-	UFUNCTION(BlueprintCallable,meta = (DisplayName = "Exec ==0",CompactNodeTitle = "==0",CustomStructureParam = "Value" , ExpandEnumAsExecs = "OutPins"), Category="ConditionLibrary")
-	static void IsEqualZero(const float& Value , TEnumAsByte<EFConditionOutput>& OutPins)
-	{
-		Value == 0 ? UEF_True :  OutPins = UEF_False;
-	}
-
-	
-	UFUNCTION(BlueprintCallable,meta = (DisplayName = "Exec <0",CompactNodeTitle = "<0",CustomStructureParam = "Value" , ExpandEnumAsExecs = "OutPins"), Category="ConditionLibrary")
-	static void IsLessThanZero(const float& Value , TEnumAsByte<EFConditionOutput>& OutPins)
-	{
-		Value < 0 ? UEF_True :  OutPins = UEF_False;
-	}
-
-	
-	UFUNCTION(BlueprintCallable,meta = (DisplayName = "Exec <=0",CompactNodeTitle = "<=0",CustomStructureParam = "Value" , ExpandEnumAsExecs = "OutPins"), Category="ConditionLibrary")
-	static void IsLessThanOrEqualZero(const float& Value , TEnumAsByte<EFConditionOutput>& OutPins)
-	{
-		Value <= 0 ? UEF_True :  OutPins = UEF_False;
-	}
-
-	
-	UFUNCTION(BlueprintCallable,meta = (DisplayName = "Exec ==-1",CompactNodeTitle = "==-1",CustomStructureParam = "Value" , ExpandEnumAsExecs = "OutPins"), Category="ConditionLibrary")
-	static void IsEqualToMinusOne(const float& Value , TEnumAsByte<EFConditionOutput>& OutPins)
-	{
-		Value == -1 ? UEF_True :  OutPins = UEF_False;
-	}
-
-	
-	UFUNCTION(BlueprintCallable,meta = (DisplayName = "Exec ==-1",CompactNodeTitle = "==-1",CustomStructureParam = "Value" , ExpandEnumAsExecs = "OutPins"), Category="ConditionLibrary")
-	static void IsNotEqualToMinusOne(const float& Value , TEnumAsByte<EFConditionOutput>& OutPins)
-	{
-		Value != -1 ? UEF_True :  OutPins = UEF_False;
-	}
-
-	
-	UFUNCTION(BlueprintCallable,meta = (DisplayName = "Exec >input",CompactNodeTitle = ">input",CustomStructureParam = "Value" , ExpandEnumAsExecs = "OutPins") , Category="ConditionLibrary")
-	static void IsBiggerThan(const float& Value , TEnumAsByte<EFConditionOutput>& OutPins , float input = 0)
-	{
-		Value > input ? UEF_True :  OutPins = UEF_False;
-	}
-
-	
-	UFUNCTION(BlueprintCallable,meta = (DisplayName = "Exec >= input",CompactNodeTitle = ">=input",CustomStructureParam = "Value" , ExpandEnumAsExecs = "OutPins") , Category="ConditionLibrary")
-	static void IsBiggerThanOrEqual(const float& Value , TEnumAsByte<EFConditionOutput>& OutPins , float input = 0)
-	{
-		Value >= input ? UEF_True :  OutPins = UEF_False;
-	}
-
-	
-	UFUNCTION(BlueprintCallable,meta = (DisplayName = "Exec <input",CompactNodeTitle = "<input",CustomStructureParam = "Value" , ExpandEnumAsExecs = "OutPins") , Category="ConditionLibrary")
-	static void IsLessThan(const float& Value , TEnumAsByte<EFConditionOutput>& OutPins , float input = 0)
-	{
-		Value < input ? UEF_True :  OutPins = UEF_False;
-	}
-
-	
-	UFUNCTION(BlueprintCallable,meta = (DisplayName = "Exec <=input",CompactNodeTitle = "<=input",CustomStructureParam = "Value" , ExpandEnumAsExecs = "OutPins") , Category="ConditionLibrary")
-	static void IsLessThanOrEqual(const float& Value , TEnumAsByte<EFConditionOutput>& OutPins , float input = 0)
-	{
-		Value <= input ? UEF_True :  OutPins = UEF_False;
-	}
-
-	
-	UFUNCTION(BlueprintCallable,meta = (DisplayName = "Exec ==input",CompactNodeTitle = "==input",CustomStructureParam = "Value" , ExpandEnumAsExecs = "OutPins") , Category="ConditionLibrary")
-	static void IsEqualTo(const double& Value , TEnumAsByte<EFConditionOutput>& OutPins ,const double Input = 0 ,const double Tolerance = 0.02)
-	{
-		FMath::Abs<double>(Value - Input) <= Tolerance ? OutPins = UEF_True : OutPins = UEF_False;
-	}
-
-
-	
 	//<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< Float >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 	UFUNCTION(BlueprintPure ,meta=(DisplayName = ">0", CompactNodeTitle = ">0") , Category="Condition|Float")
 	static bool FloatIsBiggerThanZero(const float Value) { return Value > 0; }
@@ -106,7 +21,7 @@ public:
 	UFUNCTION(BlueprintPure ,meta=(DisplayName = "<0", CompactNodeTitle = "<0") , Category="Condition|Float")
 	static bool FloatIsLesserThanZero(const float Value) { return Value < 0; }
 
-	UFUNCTION(BlueprintPure ,meta=(DisplayName = "=0", CompactNodeTitle = "=0") , Category="Condition|Float")
+	UFUNCTION(BlueprintPure ,meta=(DisplayName = "==0", CompactNodeTitle = "==0") , Category="Condition|Float")
 	static bool FloatIsEqualToZero(const float Value) { return Value == 0; }
 	
 	UFUNCTION(BlueprintPure ,meta=(DisplayName = "!=0", CompactNodeTitle = "!=0") , Category="Condition|Float")
@@ -137,7 +52,7 @@ public:
 	static bool IntIsEqualToZero(const int32 Value) { return Value == 0; }
 	
 	UFUNCTION(BlueprintPure ,meta=(DisplayName = "!=0", CompactNodeTitle = "!=0") , Category="Condition|Int")
-	static bool IntIsNotEqualToZero(const int32 Value) { return Value > 0; }
+	static bool IntIsNotEqualToZero(const int32 Value) { return Value != 0; }
 	
 	UFUNCTION(BlueprintPure ,meta=(DisplayName = ">=0", CompactNodeTitle = ">=0") , Category="Condition|Float")
 	static bool IntIsBiggerThanAndEqualZero(const int32 Value) { return Value >= 0; }
@@ -165,7 +80,7 @@ public:
 	static bool ByteIsEqualToZero(const uint8 Value) { return Value == 0; }
 	
 	UFUNCTION(BlueprintPure ,meta=(DisplayName = "!=0", CompactNodeTitle = "!=0") , Category="Condition|Byte")
-	static bool ByteIsNotEqualToZero(const uint8 Value) { return Value > 0; }
+	static bool ByteIsNotEqualToZero(const uint8 Value) { return Value != 0; }
 	
 	UFUNCTION(BlueprintPure ,meta=(DisplayName = ">=0", CompactNodeTitle = ">=0") , Category="Condition|Byte")
 	static bool ByteIsBiggerThanAndEqualZero(const uint8 Value) { return Value >= 0; }
@@ -178,5 +93,8 @@ public:
 	
 	UFUNCTION(BlueprintPure ,meta=(DisplayName = "!=-1", CompactNodeTitle = "!=-1") , Category="Condition|Int")
 	static bool ByteIsNotEqualToMinusOne(const uint8 Value) { return Value != -1; }
+
+	UFUNCTION(BlueprintPure , Category="Condition|Int")
+	static bool IsPlayingInEditor();
 
 };

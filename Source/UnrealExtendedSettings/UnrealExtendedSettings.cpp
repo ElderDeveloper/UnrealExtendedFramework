@@ -19,19 +19,19 @@ void FUnrealExtendedSettingsModule::StartupModule()
 		SettingsModule->RegisterSettings(
 			"Project",
 			"Plugins",
-			"QualitySettingsPlugin",
-			LOCTEXT("RuntimeSettingName" , "Extended Quality Plugin") ,
+			"ExtendedQualitySettings",
+			LOCTEXT("RuntimeSettingName" , "Extended Quality Settings") ,
 			LOCTEXT("RuntimeSettingsDescription" , "Configure my setting") ,
 			GetMutableDefault<UESQualitySubsystem>());
 
-		
 		SettingsModule->RegisterSettings(
 			"Project",
 			"Plugins",
-			"SubtitleSettingsPlugin",
-			LOCTEXT("RuntimeSettingName" , "Extended Subtitle Plugin") ,
+			"ExtendedSubtitleSettings",
+			LOCTEXT("RuntimeSettingName" , "Extended Subtitle Settings") ,
 			LOCTEXT("RuntimeSettingsDescription" , "Configure my setting") ,
 			GetMutableDefault<UESSubtitleSubsystem>());
+		
 	}
 	
 }
@@ -43,7 +43,8 @@ void FUnrealExtendedSettingsModule::ShutdownModule()
 
 	if (const auto Settings = FModuleManager::GetModulePtr<ISettingsModule>("Settings"))
 	{
-		Settings->UnregisterSettings("Project","Plugins","SettingsPlugin");
+		Settings->UnregisterSettings("Project","Plugins","ExtendedQualitySettings");
+		Settings->UnregisterSettings("Project","Plugins","ExtendedSubtitleSettings");
 	}
 }
 

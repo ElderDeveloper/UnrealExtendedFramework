@@ -31,7 +31,6 @@ public class UnrealExtendedBackend : ModuleRules
 				"Engine",
 				"InputCore",
 				"EngineSettings",
-				//"EditorSubsystem",
 				"Slate",
 				"SlateCore",
 				"UMG",
@@ -40,7 +39,6 @@ public class UnrealExtendedBackend : ModuleRules
 				"Json",
 				"JsonUtilities" ,
 				"Sockets"
-				
 				// ... add other public dependencies that you statically link with here ...
 			}
 			);

@@ -35,8 +35,8 @@ public class UnrealExtendedSettings : ModuleRules
 				"Json", 
 				"JsonUtilities",
 				"XmlParser",
-				"UnrealExtendedBackend",
-				"UnrealExtendedFramework"
+				"UnrealExtendedFramework",
+				"UnrealExtendedBackend"
 				// ... add other public dependencies that you statically link with here ...
 			}
 		);

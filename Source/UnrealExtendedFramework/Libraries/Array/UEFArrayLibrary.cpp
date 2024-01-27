@@ -25,6 +25,39 @@ int32 UUEFArrayLibrary::GetRandomArrayIndex(const int32 ArrayLenght, const int32
 	return UKismetMathLibrary::RandomIntegerInRange(StartIndex,ArrayLenght);
 }
 
+void UUEFArrayLibrary::GetRandomArrayMembers(const TArray<UProperty*>& TargetArray, TArray<UProperty*>& Items,const int32 Amount, const bool bUnique)
+{
+	if(TargetArray.Num() > 0)
+	{
+		if(TargetArray.Num() >= Amount && bUnique)
+		{
+			TArray<UProperty*> TempArray = TargetArray;
+			
+			while(Items.Num() < Amount)
+			{
+				const int32 j= UKismetMathLibrary::RandomIntegerInRange(0,TempArray.Max());
+				
+				if (TempArray.IsValidIndex(j))
+				{
+                    // TODO: There could be more performant way to do this
+					Items.AddUnique(TempArray[j]);
+				}
+			}
+		}
+		else
+		{
+			for (int32 i = 0; i < Amount; i++)
+			{
+				int32 j= UKismetMathLibrary::RandomIntegerInRange(0,TargetArray.Max());
+				if (TargetArray.IsValidIndex(j))
+				{
+					Items.Add(TargetArray[j]);
+				}
+			}
+		}
+	}
+}
+
 void UUEFArrayLibrary::GetArrayLastElement(const TArray<UProperty*>& TargetArray, UProperty*& Item)
 {
 	if(TargetArray.Num()>0)

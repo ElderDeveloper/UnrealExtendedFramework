@@ -56,10 +56,21 @@ public:
 	UFUNCTION(BlueprintCallable, meta = (WorldContext = "WorldContextObject" , Keywords="Set Look At Rotation Only Yaw")  , Category="ExtendedFramework|Actor|Rotation" )
 	static void RotateToObjectInterpYaw(const UObject* WorldContextObject, AActor* From , AActor* To , float InterpSpeed = 3.f , bool UseFindLookAtRotation = true);
 
+	/**
+	 * Rotates Object To Given Actor With Only Yaw Rotation With Interpolation , This Can Be Used As a Find Look At Replacement
+	 * @param UseFindLookAtRotation uses built in FindLookAtRotation but if its false function will custom Find Rotation ( this will prevent some find look at rotation issues )
+	 **/
+	UFUNCTION(BlueprintCallable, meta = (WorldContext = "WorldContextObject" , Keywords="Set Look At Rotation Only Yaw")  , Category="ExtendedFramework|Actor|Rotation" )
+	static void RotateToLocationInterpYaw(const UObject* WorldContextObject, AActor* From , const FVector& To , float InterpSpeed = 3.f , bool UseFindLookAtRotation = true);
+	
 	UFUNCTION(BlueprintCallable, meta = (WorldContext = "WorldContextObject")  , Category="ExtendedFramework|Actor|Rotation" )
 	static void RotateToObjectInterp(const UObject* WorldContextObject, AActor* From , AActor* To , float InterpSpeed);
 
+	UFUNCTION(BlueprintCallable, meta = (WorldContext = "WorldContextObject")  , Category="ExtendedFramework|Actor|Rotation" )
+	static void RotateToLocationInterp(const UObject* WorldContextObject, AActor* From , const FVector& To , float InterpSpeed = 3 , float MaxDegreePerSecond = 180.f);
 
+	
+	
 
 
 
@@ -83,6 +94,15 @@ public:
 
 	UFUNCTION(BlueprintPure, meta = ( DefaultToSelf = "Pawn" , CompactNodeTitle = "ControlRotationYaw" , Keywords = "Controller , Forward , Right ") , Category="ExtendedFramework|Actor")
 	static FRotator GetActorControlRotationYaw(APawn* Pawn);
+
+
+	UFUNCTION(BlueprintPure, Category="ExtendedFramework|Actor")
+	static FVector WorldToLocal(const AActor* Actor , const FVector& WorldLocation);
+
+	UFUNCTION(BlueprintPure, Category="ExtendedFramework|Actor")
+	static FVector LocalToWorld(const AActor* Actor , const FVector& LocalLocation);
+	
+
 };
 
 

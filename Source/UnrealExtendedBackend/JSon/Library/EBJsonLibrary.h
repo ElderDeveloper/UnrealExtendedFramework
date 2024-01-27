@@ -3,8 +3,8 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "UnrealExtendedBackend/JSon/EBJsonData.h"
 #include "UnrealExtendedFramework/Data/EFEnums.h"
+#include "UnrealExtendedBackend/JSon/EBJsonData.h"
 #include "EBJsonLibrary.generated.h"
 
 /**

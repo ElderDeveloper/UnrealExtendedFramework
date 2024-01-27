@@ -5,8 +5,6 @@
 
 
 
-
-
 void UEFAsyncForEachLoopDelay::InternalTick()
 {
 	if (Array.IsValidIndex(LoopIndex))
@@ -38,7 +36,7 @@ void UEFAsyncForEachLoopDelay::InternalCompleted()
 }
 
 
-UEFAsyncForEachLoopDelay* UEFAsyncForEachLoopDelay::ForEachLoopDelayObject(const TArray<UObject*>& TargetArray,const UObject* WorldContextObject, float Delay)
+UEFAsyncForEachLoopDelay* UEFAsyncForEachLoopDelay::ForEachLoopDelayObject(const TArray<UObject*>& TargetArray,const UObject* WorldContextObject, float Delay, bool bExecuteFirstWithoutDelay)
 {
 	if (!ensure(WorldContextObject))	return nullptr;
 
@@ -48,15 +46,20 @@ UEFAsyncForEachLoopDelay* UEFAsyncForEachLoopDelay::ForEachLoopDelayObject(const
 		Node->WorldContext = WorldContextObject;
 		Node->LoopTime = Delay;
 		Node->Array = TargetArray;
+		Node->ExecuteFirstWithoutDelay = bExecuteFirstWithoutDelay;
 	}
 	return Node;
 }
+
 
 void UEFAsyncForEachLoopDelay::Activate()
 {
 	if (WorldContext)
 	{
-
+		if (ExecuteFirstWithoutDelay)
+		{
+			InternalTick();
+		}
 		WorldContext->GetWorld()->GetTimerManager().SetTimer(TimerHandle,this,&UEFAsyncForEachLoopDelay::InternalTick,LoopTime,true);
 	}
 }

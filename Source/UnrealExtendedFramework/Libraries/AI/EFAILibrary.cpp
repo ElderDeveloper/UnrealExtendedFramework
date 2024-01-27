@@ -3,6 +3,9 @@
 
 #include "EFAILibrary.h"
 
+#include "NavigationData.h"
+#include "NavigationPath.h"
+#include "NavigationSystem.h"
 #include "BehaviorTree/BlackboardComponent.h"
 #include "Blueprint/AIBlueprintHelperLibrary.h"
 
@@ -181,5 +184,123 @@ bool UEFAILibrary::ExtendedSetBlackboardVector(AActor* OwningActor, FName KeyNam
 		Blackboard->SetValueAsVector(KeyName,Value);
 		return true;
 	}
+	return false;
+}
+
+void UEFAILibrary::CustomMoveAIToLocations(const UObject* WorldContextObject, APawn* Pawn, TArray<FVector> Locations)
+{
+    if (!Pawn || Locations.Num() == 0)
+    {
+        return;
+    }
+
+    UNavigationSystemV1* NavSys = UNavigationSystemV1::GetCurrent(Pawn->GetWorld());
+    ANavigationData* NavData = NavSys->GetDefaultNavDataInstance(FNavigationSystem::DontCreate);
+    if (!NavData)
+    {
+        return;
+    }
+
+    for (FVector Location : Locations)
+    {
+        FPathFindingQuery Query(Pawn, *NavData, Pawn->GetActorLocation(), Location);
+        FPathFindingResult Result = NavSys->FindPathSync(FNavAgentProperties{}, Query);
+
+    	TArray<FNavPathPoint> PathPoints = Result.Path->GetPathPoints();
+    	
+        if (Result.Path.IsValid())
+        {
+            // Rotate AI to face towards the first point in the path
+            FVector Direction = (PathPoints[0].Location - Pawn->GetActorLocation()).GetSafeNormal();
+            FRotator NewRotation = FRotationMatrix::MakeFromX(Direction).Rotator();
+            Pawn->SetActorRotation(NewRotation);
+
+            // Use AddMovementInput to move towards each point in the path
+            for (int32 i = 0; i < PathPoints.Num(); i++)
+            {
+                FVector PointDirection = (PathPoints[i].Location - Pawn->GetActorLocation()).GetSafeNormal();
+                if (i == PathPoints.Num() - 1)
+                {
+                    // For the last point, always move forward
+                    Pawn->AddMovementInput(PointDirection);
+                }
+                else
+                {
+                    // Move towards the next point in the path
+                    FVector NextDirection = (PathPoints[i + 1].Location - PathPoints[i].Location).GetSafeNormal();
+                    float DotProduct = FVector::DotProduct(PointDirection, NextDirection);
+                    if (DotProduct > 0.9f)
+                    {
+                        Pawn->AddMovementInput(PointDirection);
+                    }
+                    else
+                    {
+                        break;
+                    }
+                }
+            }
+        }
+    }
+}
+
+
+
+bool UEFAILibrary::CustomAIMovetoLocation(APawn* Pawn, const FVector& Location, const float& AcceptedRadius)
+{
+	if (!Pawn)
+	{
+		return false;
+	}
+	if (UNavigationSystemV1* NavSys = UNavigationSystemV1::GetCurrent(Pawn->GetWorld()))
+	{
+		if (ANavigationData* NavData = NavSys->GetDefaultNavDataInstance(FNavigationSystem::DontCreate))
+		{
+			FVector CurrentLocation = Pawn->GetActorLocation();
+
+			FPathFindingQuery Query(Pawn, *NavData, CurrentLocation, Location);
+			FPathFindingResult Result = NavSys->FindPathSync(FNavAgentProperties{}, Query);
+			
+			if (Result.Path.IsValid())
+			{
+				TArray<FNavPathPoint> PathPoints = Result.Path->GetPathPoints();
+
+				if (!PathPoints.IsValidIndex(0))
+				{
+					return false;
+				}
+				FVector Direction = (PathPoints[0].Location - CurrentLocation).GetSafeNormal();
+				FRotator NewRotation = FRotationMatrix::MakeFromX(Direction).Rotator();
+				Pawn->SetActorRotation(NewRotation);
+
+				for (int32 i = 0; i < PathPoints.Num(); i++)
+				{
+					FVector PointDirection = (PathPoints[i].Location - CurrentLocation).GetSafeNormal();
+					if (i == PathPoints.Num() - 1)
+					{
+						Pawn->AddMovementInput(PointDirection);
+					}
+					else
+					{
+						FVector NextDirection = (PathPoints[i + 1].Location - PathPoints[i].Location).GetSafeNormal();
+						float DotProduct = FVector::DotProduct(PointDirection, NextDirection);
+						if (DotProduct > 0.9f)
+						{
+							Pawn->AddMovementInput(PointDirection);
+						}
+						else
+						{
+							break;
+						}
+					}
+				}
+			}
+		}
+		
+		if ((Pawn->GetActorLocation() - Location).SizeSquared() < FMath::Square(AcceptedRadius))
+		{
+			return true;
+		}
+	}
+
 	return false;
 }

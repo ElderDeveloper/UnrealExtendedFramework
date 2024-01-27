@@ -30,14 +30,4 @@ EBTNodeResult::Type UEFBTTaskMoveToActor::AbortTask(UBehaviorTreeComponent& Owne
 void UEFBTTaskMoveToActor::TickTask(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory, float DeltaSeconds)
 {
 	Super::TickTask(OwnerComp, NodeMemory, DeltaSeconds);
-
-	/*
-	if (MoveToRef)
-	{
-		if (MoveToRef->GetMoveResult() == )
-		{
-		}
-	}
-	UAITask_MoveTo::GetMoveResult()
-	*/
 }

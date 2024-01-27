@@ -13,16 +13,26 @@
 UEGSpawnScaledParticle::UEGSpawnScaledParticle() : Super()
 {
 	Attached = true;
+	PSTemplate = nullptr;
+	LocationOffset = FVector::ZeroVector;
+	RotationOffset = FRotator::ZeroRotator;
+	SocketName = NAME_None;
+	StartingScale = FVector(1,1,1);
+	EndScale = FVector(1,1,1);
+	ScaleInterpSpeed = 4;
+	ScaleCurve = nullptr;
+	ParticleSystem = nullptr;
 
 #if WITH_EDITORONLY_DATA
 	NotifyColor = FColor(192, 255, 99, 255);
+
 #endif // WITH_EDITORONLY_DATA
 }
 
 #if ENGINE_MAJOR_VERSION == 5
-void UEGSpawnScaledParticle::NotifyBegin(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation,float TotalDuration)
+void UEGSpawnScaledParticle::NotifyBegin(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, float TotalDuration, const FAnimNotifyEventReference& EventReference)
 {
-	Super::NotifyBegin(MeshComp, Animation, TotalDuration);
+	Super::NotifyBegin(MeshComp, Animation, TotalDuration, EventReference);
 
 	RotationOffsetQuat = FQuat(RotationOffset);
 	CurrentTime = 0;
@@ -76,67 +86,6 @@ void UEGSpawnScaledParticle::NotifyEnd(USkeletalMeshComponent* MeshComp, UAnimSe
 
 #endif
 
-
-#if ENGINE_MAJOR_VERSION != 5
-
-void UEGSpawnScaledParticle::NotifyTick(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, float FrameDeltaTime)
-{
-	Super::NotifyTick(MeshComp, Animation, FrameDeltaTime);
-
-	if (ParticleSystem)
-	{
-		CurrentTime += FrameDeltaTime;
-		FVector TargetSale;
-
-		if (ScaleCurve)
-			TargetSale = ScaleCurve->GetVectorValue(CurrentTime);
-		else
-			TargetSale = UKismetMathLibrary::VInterpTo(ParticleSystem->GetComponentScale(), EndScale, FrameDeltaTime, ScaleInterpSpeed);
-
-		ParticleSystem->SetRelativeScale3D(TargetSale);
-
-	}
-}
-
-
-void UEGSpawnScaledParticle::NotifyBegin(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, float TotalDuration)
-{
-	Super::NotifyBegin(MeshComp, Animation, TotalDuration);
-
-	RotationOffsetQuat = FQuat(RotationOffset);
-	CurrentTime = 0;
-
-	if (PSTemplate)
-	{
-		if (Attached)
-			ParticleSystem = UGameplayStatics::SpawnEmitterAttached(PSTemplate, MeshComp, SocketName, LocationOffset, RotationOffset, StartingScale);
-		else
-		{
-			const FTransform MeshTransform = MeshComp->GetSocketTransform(SocketName);
-			FTransform SpawnTransform;
-			SpawnTransform.SetLocation(MeshTransform.TransformPosition(LocationOffset));
-			SpawnTransform.SetRotation(MeshTransform.GetRotation() * RotationOffsetQuat);
-			SpawnTransform.SetScale3D(StartingScale);
-			ParticleSystem = UGameplayStatics::SpawnEmitterAtLocation(MeshComp->GetWorld(), PSTemplate, SpawnTransform);
-		}
-	}
-	else
-	{
-		UE_LOG(LogBlueprint, Warning, TEXT("Particle Notify: Particle system is null for particle notify '%s' in anim: '%s'"), *GetNotifyName(), *GetPathNameSafe(Animation));
-	}
-
-}
-
-
-void UEGSpawnScaledParticle::NotifyEnd(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation)
-{
-	Super::NotifyEnd(MeshComp, Animation);
-	if (ParticleSystem)
-		ParticleSystem->DestroyComponent();
-}
-
-
-#endif
 
 inline FString UEGSpawnScaledParticle::GetNotifyName_Implementation() const
 {

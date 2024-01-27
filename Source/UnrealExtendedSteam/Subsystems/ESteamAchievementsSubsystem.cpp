@@ -3,6 +3,7 @@
 
 #include "ESteamAchievementsSubsystem.h"
 #include "OnlineSubsystem.h"
+#include "Interfaces/OnlineAchievementsInterface.h"
 #include "Online.h"
 
 /*
@@ -36,7 +37,7 @@ void UESteamAchievementsSubsystem::QueryAchievements()
 			//Get the achievements interface for this platform
 			if(IOnlineAchievementsPtr Achievements = OnlineSub->GetAchievementsInterface())
 			{
-				Achievements->QueryAchievements(*UserID.Get() , FOnQueryAchievementsCompleteDelegate::CreateUObject(this,&UESteamAchievementsSubsystem::OnQueryAchievementsComplete));  
+				Achievements->QueryAchievements(*UserID.Get() ,  FOnQueryAchievementsCompleteDelegate::CreateUObject(this,&UESteamAchievementsSubsystem::OnQueryAchievementsComplete));  
 			}
 		}
 	}

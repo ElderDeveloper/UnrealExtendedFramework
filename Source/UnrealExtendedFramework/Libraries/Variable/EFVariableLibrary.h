@@ -51,6 +51,9 @@ class UNREALEXTENDEDFRAMEWORK_API UEFVariableLibrary : public UBlueprintFunction
 	UFUNCTION(BlueprintPure, meta=(DisplayName = "Normalize Scaled"), Category="Math|Vector" )
 	static FVector Vector_NormalizeScaled(const FVector Vector , float Tolerance = 0.0001 , float Scale = 1);
 
+	UFUNCTION(BlueprintPure, meta=(DisplayName = "Get Vector Up Down"), Category="Math|Vector" )
+	static void VectorGetUpDownValues(const FVector& VectorRef , float UpValue , float DownValue , FVector& UpVector , FVector& DownVector);
+
 
 	
 	UFUNCTION(BlueprintPure, meta=(DisplayName = "Int To Vector", CompactNodeTitle = "*"), Category="Math|Vector" )
@@ -107,37 +110,21 @@ class UNREALEXTENDEDFRAMEWORK_API UEFVariableLibrary : public UBlueprintFunction
 
 
 	UFUNCTION(BlueprintPure,meta=(DisplayName = "Multiply Vector With Float", CompactNodeTitle = "V*F"),  Category="Math|Integer")
-	static FVector VectorMultiplyFloat( FVector Vector , float Value = 1 ) { return Vector * Value ; }
+	static FVector VectorMultiplyFloat(const FVector& Vector ,const float Value = 1 ) { return Vector * Value ; }
 	
 	
 	// <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< STRING >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
+	UFUNCTION(BlueprintPure ,Category = "GameModeSettings")
+	static FString GetFIntPointAsString(const FIntPoint& Point , const FString Separator = "x");
+
+	UFUNCTION(BlueprintPure ,Category = "GameModeSettings")
+	static FString GetScreenResolutionAsString(UGameUserSettings*& UserSettings , const FString Separator = "x");
 
 
 	// <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< Experiment >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-
 	//Struct To Json String;
-
-
-
-
-	// <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< Access Every Property >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+	
 
 };
 
-
-
-
-
-
-template<typename TEnum> static FORCEINLINE FString GetEnumValueAsString(const FString& Name, TEnum Value)
-	{
-
-		const UEnum* enumPtr = FindObject<UEnum>(ANY_PACKAGE, *Name, true);
-		if (!enumPtr)
-		{
-			return FString("Invalid");
-		}
-
-		return enumPtr->GetNameByValue((int64)Value).ToString();
-	}

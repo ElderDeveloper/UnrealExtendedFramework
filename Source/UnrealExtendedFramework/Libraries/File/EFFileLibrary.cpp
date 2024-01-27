@@ -623,7 +623,7 @@ bool UEFFileLibrary::JsonValueToAnyStruct(TSharedPtr<FJsonValue> JsonValue, FPro
 				PropValue = StaticAllocateObject(objectProperty->PropertyClass, GetTransientPackage(), NAME_None,
 				                                 EObjectFlags::RF_NoFlags, EInternalObjectFlags::None, false);
 				(*objectProperty->PropertyClass->ClassConstructor)(
-					FObjectInitializer(PropValue, objectProperty->PropertyClass->ClassDefaultObject, false, false));
+				FObjectInitializer(PropValue,objectProperty->PropertyClass->ClassDefaultObject,EObjectInitializerOptions::InitializeProperties));
 				objectProperty->SetObjectPropertyValue(ValuePtr, PropValue);
 			}
 			const auto JsonObject = JsonValue->AsObject();

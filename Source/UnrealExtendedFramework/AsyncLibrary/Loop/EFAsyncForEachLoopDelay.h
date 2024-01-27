@@ -38,6 +38,7 @@ public:
 	TArray<UObject*> Array;
 	const UObject* WorldContext;
 	FTimerHandle TimerHandle;
+	bool ExecuteFirstWithoutDelay;
 
 public:
 	
@@ -53,7 +54,7 @@ public:
 	* InternalUseOnly to hide sync version in BPs
 	*/
 	UFUNCTION(BlueprintCallable, meta = (DisplayName=" Extended Framework For Each Loop Delay", WorldContext = "WorldContextObject" , BlueprintInternalUseOnly = "true"), Category = "AsyncNode")
-	static UEFAsyncForEachLoopDelay* ForEachLoopDelayObject(const TArray<UObject*>& TargetArray ,const UObject* WorldContextObject , float Delay = 0.1);
+	static UEFAsyncForEachLoopDelay* ForEachLoopDelayObject(const TArray<UObject*>& TargetArray ,const UObject* WorldContextObject , float Delay = 0.1 , bool bExecuteFirstWithoutDelay = false);
 
 
 	

@@ -14,6 +14,9 @@ class UNREALEXTENDEDFRAMEWORK_API UEFMathLibrary : public UBlueprintFunctionLibr
 	GENERATED_BODY()
 
 public:
+
+	UFUNCTION(BlueprintPure , Category="ExendedFramework|Math|Random")
+	static FVector RandPointInSphere(const FVector& Center, float Radius);
 	
 	// <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< ROTATION >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 	UFUNCTION(BlueprintPure , Category="ExendedFramework|Math|Rotation")
@@ -72,8 +75,14 @@ public:
 	
 	
 	// <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< DIRECTION >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+	// Get Direction Between Actors With Simple Minus Operation
 	UFUNCTION(BlueprintPure, Category="ExendedFramework|Math|Direction")
 	static FVector GetDirectionBetweenActors(const AActor* From , const AActor* To, float scaleVector = 1);
+
+	
+	// Get Direction Between Components With Simple Minus Operation
+	static FVector GetDirectionBetweenComponents(const USceneComponent* From , const USceneComponent* To, float scaleVector = 1);
 
 	
 	// Return Component forward Vector with Multiplied Distance using Built In GetForwardVector Function
@@ -306,4 +315,15 @@ public:
 	// Returns a float in the range 0.0 to 1.0 value using the Canonical method 
 	UFUNCTION( BlueprintPure, meta = ( DisplayName = "Random Float with Canonical" ), Category="ExendedFramework|Math|Random" )
 	static float RandomFloatCanonical();
+
+	
+	//<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< USE FULL RANDOMS >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+	
+	// Get Random Float Between Min and Max But Has A Limitations
+	UFUNCTION( BlueprintPure, meta = ( DisplayName = "RandFloat Min Max Range" ), Category="ExendedFramework|Math|Random" )
+	static float RandomFloatRangeMinMax( const float Min , const float MinMax , const float Max , const float MaxMax );
+
+	// Get Random Float with Positive or Negative One
+	UFUNCTION( BlueprintPure, meta = ( DisplayName = "RandFloat Positive Negative One" ), Category="ExendedFramework|Math|Random" )
+	static float RandomFloatPositiveNegativeOne();
 };

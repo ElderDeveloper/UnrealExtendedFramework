@@ -17,11 +17,14 @@ class UNREALEXTENDEDFRAMEWORK_API UUEFArrayLibrary : public UBlueprintFunctionLi
 
 public:
 	
-	UFUNCTION(BlueprintPure, meta=(DisplayName = "Get Random Array Member", CompactNodeTitle = "Random Member", ArrayParm = "TargetArray", ArrayTypeDependentParams = "Item", BlueprintThreadSafe), Category="Math|Library")
+	UFUNCTION(BlueprintPure, meta=(DisplayName = "Get Random Array Member", CompactNodeTitle = "Random Member", ArrayParm = "TargetArray", ArrayTypeDependentParams = "Item", BlueprintThreadSafe), Category="Array|Library")
 	static int32 GetRandomArrayMember(const TArray<UProperty*>& TargetArray, UProperty*& Item);
 	static int32 GetRandomArrayIndex(const int32 ArrayLenght , const int32 StartIndex = 0);
+
+	UFUNCTION(BlueprintPure, meta=(DisplayName = "Get Random Array Members", CompactNodeTitle = "Random Members", ArrayParm = "TargetArray", ArrayTypeDependentParams = "Items", BlueprintThreadSafe), Category="Array|Library")
+	static void GetRandomArrayMembers(const TArray<UProperty*>& TargetArray, TArray<UProperty*>& Items , const int32 Amount = 1 , const bool bUnique = false); 
 	
-	UFUNCTION(BlueprintPure, meta=(DisplayName = "Get Array Last Element", CompactNodeTitle = "Last Element", ArrayParm = "TargetArray", ArrayTypeDependentParams = "Item", BlueprintThreadSafe), Category="Math|Library")
+	UFUNCTION(BlueprintPure, meta=(DisplayName = "Get Array Last Element", CompactNodeTitle = "Last Element", ArrayParm = "TargetArray", ArrayTypeDependentParams = "Item", BlueprintThreadSafe), Category="Array|Library")
 	static void GetArrayLastElement(const TArray<UProperty*>& TargetArray, UProperty*& Item);
 
 	

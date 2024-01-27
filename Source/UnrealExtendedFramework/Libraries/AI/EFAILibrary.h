@@ -78,4 +78,14 @@ public:
 
 	UFUNCTION(BlueprintCallable ,meta=(DefaultToSelf="OwningActor") ,Category="AI|Blackboard|Set")
 	static bool ExtendedSetBlackboardVector(AActor* OwningActor , FName KeyName , FVector Value);
+
+
+
+	//float AcceptanceRadius , bool bStopOnOverlap , bool bUsePathfinding , bool bProjectDestinationToNavigation , bool bCanStrafe , bool bAllowPartialPath , TEnumAsByte<EAIOptionFlag::Type> Filter
+
+	UFUNCTION(BlueprintCallable, meta = (WorldContext = "WorldContextObject")  , Category="ExtendedFramework|AI|Movement" )
+	static void CustomMoveAIToLocations( const UObject* WorldContextObject, APawn* Pawn , TArray<FVector> Locations);
+
+	UFUNCTION(BlueprintCallable, Category="ExtendedFramework|AI|Movement" )
+	static bool CustomAIMovetoLocation(APawn* Pawn ,const FVector& Location , const float& AcceptedRadius = 50);
 };

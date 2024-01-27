@@ -19,10 +19,6 @@ public:
 	// Begin UAnimNotify interface
 	virtual FString GetNotifyName_Implementation() const override;
 
-	#if ENGINE_MAJOR_VERSION != 5
-		virtual void Notify(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation) override;
-	#endif
-
 	#if	ENGINE_MAJOR_VERSION == 5
 		virtual void Notify(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, const FAnimNotifyEventReference& EventReference) override;
 	#endif

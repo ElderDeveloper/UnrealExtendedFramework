@@ -3,10 +3,8 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "UObject/Object.h"
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
-#include "JsonUtilities/Public/JsonUtilities.h"
 #include "EBJsonData.generated.h"
 
 
@@ -15,18 +13,10 @@ struct FExtendedJson
 {
 	GENERATED_BODY()
 
-public:
+	FExtendedJson() {}
+	FExtendedJson(const TSharedPtr<FJsonObject>& jsonObject) {	JsonObject = jsonObject;	}
 	
-	 TSharedPtr<FJsonObject> JsonObject = nullptr;
-
-
-	FExtendedJson()
-	{}
-	FExtendedJson(TSharedPtr<FJsonObject> jsonObject)
-	{
-		JsonObject = jsonObject;
-	}
-
+	TSharedPtr<FJsonObject> JsonObject = nullptr;
 	
 	TSharedPtr<FJsonObject> GetJsonObject() const { return JsonObject; }
 
@@ -79,17 +69,7 @@ public:
 	void GetExtendedJsonKeys(TArray<FString>& GeneratedKeys) const
 	{
 		if(JsonObject)
-		JsonObject->Values.GenerateKeyArray(GeneratedKeys);
+			JsonObject->Values.GenerateKeyArray(GeneratedKeys);
 	}
 	
-};
-
-
-
-
-
-UCLASS()
-class UNREALEXTENDEDBACKEND_API UEBJsonData : public UObject
-{
-	GENERATED_BODY()
 };

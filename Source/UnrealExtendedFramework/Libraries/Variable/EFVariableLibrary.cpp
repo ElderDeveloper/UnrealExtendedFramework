@@ -4,6 +4,7 @@
 #include "EFVariableLibrary.h"
 
 
+#include "GameFramework/GameUserSettings.h"
 #include "Kismet/KismetSystemLibrary.h"
 
 
@@ -37,6 +38,12 @@ bool UEFVariableLibrary::CompareVectorSizes(const FVector IsBigger, const FVecto
 FVector UEFVariableLibrary::Vector_NormalizeScaled(const FVector Vector, float Tolerance, float Scale)
 {
 	return Vector.GetSafeNormal(Tolerance)*Scale;
+}
+
+void UEFVariableLibrary::VectorGetUpDownValues(const FVector& VectorRef, float UpValue, float DownValue, FVector& UpVector,FVector& DownVector)
+{
+	UpVector = VectorRef + FVector(0,0,UpValue);
+	DownVector = VectorRef + FVector(0,0,DownValue);
 }
 
 
@@ -119,6 +126,22 @@ int32 UEFVariableLibrary::Average_Integers(const TArray<int32> Array)
 		A +=i;
 	}
 	return A/2;
+}
+
+FString UEFVariableLibrary::GetFIntPointAsString(const FIntPoint& Point, const FString Separator)
+{
+	return FString::FromInt(Point.X) + Separator + FString::FromInt(Point.Y);
+}
+
+FString UEFVariableLibrary::GetScreenResolutionAsString(UGameUserSettings*& UserSettings, const FString Separator)
+{
+	if (const auto GameUserSettings = GEngine->GameUserSettings)
+	{
+		const auto Resolution = GameUserSettings->GetScreenResolution();
+		UserSettings = GameUserSettings;
+		return FString::FromInt(Resolution.X) + Separator + FString::FromInt(Resolution.Y); 
+	}
+	return "";
 }
 
 

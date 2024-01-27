@@ -3,7 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "AIModule/Classes/BehaviorTree/BTDecorator.h"
+#include "BehaviorTree/BTDecorator.h"
 #include "EFBTDecoratorLessThanAndBiggerThan.generated.h"
 
 /**
