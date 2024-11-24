@@ -40,7 +40,7 @@ public:
 		// If variable does not exist register it.
 		if (!IConsoleManager::Get().IsNameRegistered(*VarName))
 		{
-			FConsoleManager::Get().RegisterConsoleVariable(*VarName, Value , *HelpText);
+			IConsoleManager::Get().RegisterConsoleVariable(*VarName, Value , *HelpText);
 			return;
 		}
 		// MA

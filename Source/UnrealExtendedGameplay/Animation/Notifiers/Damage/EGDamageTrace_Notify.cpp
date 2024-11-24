@@ -16,28 +16,9 @@
 
 UEGDamageTrace_Notify::UEGDamageTrace_Notify()
 {
-	const ConstructorHelpers::FObjectFinder<UParticleSystem> NullParticle (TEXT("ParticleSystem'/UnrealExtendedFramework/Particles/P_EF_NullTrail.P_EF_NullTrail'"));
-	if(!ensure(NullParticle.Object!= nullptr)) return;
-	PSTemplate = NullParticle.Object;
+	PSTemplate = nullptr;
+	OwnerMesh = nullptr;
 }
-
-
-#if ENGINE_MAJOR_VERSION != 5
-void UEGDamageTrace_Notify::NotifyBegin(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation,float TotalDuration)
-{
-	Super::NotifyBegin(MeshComp, Animation, TotalDuration);	HitActorArray.Empty();
-}
-
-void UEGDamageTrace_Notify::NotifyEnd(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation)
-{
-	Super::NotifyEnd(MeshComp, Animation);	HitActorArray.Empty();
-}
-void UEGDamageTrace_Notify::NotifyTick(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation,float FrameDeltaTime)
-{
-	Super::NotifyTick(MeshComp, Animation, FrameDeltaTime); Tick(MeshComp,FrameDeltaTime);
-}
-#endif
-
 
 void UEGDamageTrace_Notify::Tick(USkeletalMeshComponent* MeshComp, float FrameDeltaTime)
 {
@@ -82,7 +63,7 @@ void UEGDamageTrace_Notify::DamageTick()
 }
 
 
-#if ENGINE_MAJOR_VERSION == 5
+
 void UEGDamageTrace_Notify::NotifyBegin(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation,float TotalDuration, const FAnimNotifyEventReference& EventReference)
 {
 	Super::NotifyBegin(MeshComp, Animation, TotalDuration, EventReference);
@@ -114,12 +95,6 @@ void UEGDamageTrace_Notify::NotifyTick(USkeletalMeshComponent* MeshComp, UAnimSe
 {
 	Super::NotifyTick(MeshComp, Animation, FrameDeltaTime, EventReference); Tick(MeshComp,FrameDeltaTime);
 }
-#endif
-
-
-
-
-
 
 void UEGDamageTrace_Notify::HandleDamage(USkeletalMeshComponent* MeshComp , FHitResult HitResult)
 {
@@ -168,8 +143,6 @@ void UEGDamageTrace_Notify::HandleDamage(USkeletalMeshComponent* MeshComp , FHit
 		}
 	}
 }
-
-
 
 bool UEGDamageTrace_Notify::DrawSphereTrace(USkeletalMeshComponent* MeshComp, TArray<FHitResult>& HitResults)
 {

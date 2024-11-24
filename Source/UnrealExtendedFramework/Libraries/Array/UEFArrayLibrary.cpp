@@ -5,33 +5,27 @@
 
 #include "Kismet/KismetMathLibrary.h"
 
-
-int32 UUEFArrayLibrary::GetRandomArrayMember(const TArray<UProperty*>& TargetArray, UProperty*& Item)
+int32 UUEFArrayLibrary::GetRandomArrayMember(const TArray<int32>& TargetArray, int32& Item)
 {
-	if(TargetArray.Num()>0)
+	if (TargetArray.Num() > 0)
 	{
-		int32 i= UKismetMathLibrary::RandomIntegerInRange(0,TargetArray.Max());
-		if (TargetArray.IsValidIndex(i))
-		{
-			Item=TargetArray[i];
-			return true;
-		}
+		// Generate a random index
+		int32 RandomIndex = UKismetMathLibrary::RandomIntegerInRange(0, TargetArray.Num() - 1);
+		Item = TargetArray[RandomIndex];
+		return RandomIndex;
 	}
-	return false;
+	return -1;
 }
 
-int32 UUEFArrayLibrary::GetRandomArrayIndex(const int32 ArrayLenght, const int32 StartIndex)
-{
-	return UKismetMathLibrary::RandomIntegerInRange(StartIndex,ArrayLenght);
-}
 
-void UUEFArrayLibrary::GetRandomArrayMembers(const TArray<UProperty*>& TargetArray, TArray<UProperty*>& Items,const int32 Amount, const bool bUnique)
+void UUEFArrayLibrary::GetRandomArrayMembers(const TArray<int32>& TargetArray, TArray<int32>& Items,const int32 Amount, const bool bUnique)
 {
+
 	if(TargetArray.Num() > 0)
 	{
 		if(TargetArray.Num() >= Amount && bUnique)
 		{
-			TArray<UProperty*> TempArray = TargetArray;
+			TArray<int32> TempArray = TargetArray;
 			
 			while(Items.Num() < Amount)
 			{
@@ -58,7 +52,7 @@ void UUEFArrayLibrary::GetRandomArrayMembers(const TArray<UProperty*>& TargetArr
 	}
 }
 
-void UUEFArrayLibrary::GetArrayLastElement(const TArray<UProperty*>& TargetArray, UProperty*& Item)
+void UUEFArrayLibrary::GetArrayLastElement(const TArray<int32>& TargetArray, int32& Item)
 {
 	if(TargetArray.Num()>0)
 	{
@@ -131,7 +125,7 @@ TArray<float> UUEFArrayLibrary::IntArrayToFloatArray(UPARAM(ref) const TArray<in
 	return OutArray;
 }
 
-void UUEFArrayLibrary::ExtendedIsValidIndex(const TArray<UProperty*>& Array, const int32 index,TEnumAsByte<EFConditionOutput>& OutPins, UProperty*& Item)
+void UUEFArrayLibrary::ExtendedIsValidIndex(const TArray<int32>& Array, const int32 index,TEnumAsByte<EFConditionOutput>& OutPins, int32& Item)
 {
 	if (Array.IsValidIndex(index))
 	{
@@ -151,3 +145,4 @@ void UUEFArrayLibrary::IsArrayNotEmpty(const TArray<UProperty*>& Array, TEnumAsB
 	}
 	OutPins = UEF_False;
 }
+

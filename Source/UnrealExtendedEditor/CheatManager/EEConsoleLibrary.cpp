@@ -4,7 +4,7 @@
 
 /*/////////// Helper Functions ///////////*/
 
-#define ConsoleManager FConsoleManager::Get()
+#define ConsoleManager IConsoleManager::Get()
 
 void UEEConsoleLibrary::DeleteConsoleVariable(const FString& VarName, bool KeepState)
 {

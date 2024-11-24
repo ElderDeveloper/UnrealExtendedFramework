@@ -79,7 +79,6 @@ FRotator UEGFeetIKAnimInstance::NormalToRotator(FVector Normal)
 	float XRoll =FMath::RadiansToDegrees(FMath::Atan2(Normal.Y, Normal.Z));
 	float YPitch = FMath::RadiansToDegrees(FMath::Atan2(Normal.X, Normal.Z) * (-1));
 	FRotator Rot = FRotator(YPitch, 0.f, XRoll);
-	UE_LOG(LogTemp, Warning, TEXT("%f , %f , %f"), &Rot.Roll, &Rot.Pitch, &Rot.Yaw);
 	return Rot;
 }
 

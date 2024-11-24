@@ -43,12 +43,12 @@ void UEECheatManager::InitCheatManager()
             }
             
             // Is command registered and set to not enabled? Unregister it. This avoids constant logging of a warning and ensure that the function is updated.
-            if (FConsoleManager::Get().IsNameRegistered(*Command.Key) && !Command.Value.Enable)
-                FConsoleManager::Get().UnregisterConsoleObject(FConsoleManager::Get().FindConsoleObject(*Command.Key));
+            if (IConsoleManager::Get().IsNameRegistered(*Command.Key) && !Command.Value.Enable)
+                IConsoleManager::Get().UnregisterConsoleObject(IConsoleManager::Get().FindConsoleObject(*Command.Key));
 
             if (Command.Value.Enable)
             {                
-                FConsoleManager::Get().RegisterConsoleCommand
+                IConsoleManager::Get().RegisterConsoleCommand
                 (
                     /*Name*/ *Command.Key,
                     /*Info*/ *Command.Value.Info,
@@ -73,9 +73,9 @@ void UEECheatManager::InitCheatManager()
 
 void UEECheatManager::DeleteCommand(const FString CommandName)
 {
-    if (FConsoleManager::Get().IsNameRegistered(*CommandName))
+    if (IConsoleManager::Get().IsNameRegistered(*CommandName))
     {
-        FConsoleManager::Get().UnregisterConsoleObject(FConsoleManager::Get().FindConsoleObject(*CommandName));
+        IConsoleManager::Get().UnregisterConsoleObject(IConsoleManager::Get().FindConsoleObject(*CommandName));
         
         if (EnableLogging)
             UE_LOG(EECheatManagerLog, Display , TEXT("Command un-registered!"));
@@ -88,7 +88,7 @@ void UEECheatManager::DeleteCommand(const FString CommandName)
 
 void UEECheatManager::ExecConsoleWithArgs(const TArray<FString>& Args, const FString Command)
 {
-    OnExecute.ExecuteIfBound(Args, FConsoleManager::Get().FindConsoleObject(*Command,true));
+    OnExecute.ExecuteIfBound(Args, IConsoleManager::Get().FindConsoleObject(*Command,true));
     
     FOutputDeviceNull ar;
     

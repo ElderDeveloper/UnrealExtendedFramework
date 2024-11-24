@@ -3,6 +3,7 @@
 
 #include "EGStatsComponent.h"
 #include "GameFramework/Character.h"
+#include "Kismet/KismetMathLibrary.h"
 #include "UnrealExtendedFramework/Data/EFMacro.h"
 #include "UnrealExtendedFramework/Libraries/Array/UEFArrayLibrary.h"
 #include "UnrealExtendedFramework/Libraries/Math/EFMathLibrary.h"
@@ -173,7 +174,7 @@ bool GetRandom(const TArray<FExtendedFrameworkDamageReaction>& Array , FExtended
 {
 	if (Array.Num() > 0)
 	{
-		Item = Array[UUEFArrayLibrary::GetRandomArrayIndex(Array.Num()-1)];
+		Item = Array[UKismetMathLibrary::RandomIntegerInRange(0,Array.Num()-1)];
 		return true;
 	}
 	return false;

@@ -12,7 +12,7 @@ bool UEFDataTableLibrary::FillDataTableFromCSVString(UDataTable* DataTable, cons
 {
 	if (!DataTable || (CSVString.Len() == 0))
 	{
-		UE_LOG(LogUtiliesNode, Warning, TEXT("FillDataTableFromCSVString -> Can't fill DataTable with CSVString: %."), *CSVString);
+		UE_LOG(LogUtiliesNode, Warning, TEXT("FillDataTableFromCSVString -> Can't fill DataTable with CSVString: %s"), *CSVString);
 		return false;
 	}
 	// Call bulit-in function
@@ -50,7 +50,7 @@ bool UEFDataTableLibrary::FillDataTableFromJSONString(UDataTable* DataTable, con
 {
 	if (!DataTable || (JSONString.Len() == 0))
 	{
-		UE_LOG(LogUtiliesNode, Warning, TEXT("FillDataTableFromJSONString -> Can't fill DataTable with JSONString: %."), *JSONString);
+		UE_LOG(LogUtiliesNode, Warning, TEXT("FillDataTableFromJSONString -> Can't fill DataTable with JSONString: %s"), *JSONString);
 		return false;
 	}
 	// Call bulit-in function
