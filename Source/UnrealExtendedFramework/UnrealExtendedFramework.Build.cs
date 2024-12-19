@@ -35,7 +35,11 @@ public class UnrealExtendedFramework : ModuleRules
 				"GameplayAbilities",
 				"GameplayTasks",
 				"XmlParser",
-				"EngineSettings"
+				"EngineSettings",
+				"OnlineSubsystem",
+				"OnlineSubsystemUtils",
+				"OnlineSubsystemNull"
+
 				// ... add other public dependencies that you statically link with here ...
 			}
 			);

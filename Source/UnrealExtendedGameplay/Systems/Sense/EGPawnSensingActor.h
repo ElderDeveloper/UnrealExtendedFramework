@@ -6,7 +6,7 @@
 #include "GameFramework/Actor.h"
 #include "EGPawnSensingActor.generated.h"
 
-class UPawnSensingComponent;
+class UAIPerceptionComponent;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnSeePawn, APawn*, Pawn);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOnHearNoise, APawn*, Instigator, const FVector&, Location, float, Volume);
@@ -21,7 +21,7 @@ public:
 	AEGPawnSensingActor();
 
 	UPROPERTY(BlueprintReadOnly , VisibleDefaultsOnly , Category = "PawnSensing")
-	UPawnSensingComponent* PawnSensingComponent;
+	UAIPerceptionComponent* PawnSensingComponent;
 	
 	UPROPERTY(BlueprintAssignable , Category = "PawnSensing")
 	FOnSeePawn OnSeePawn;
@@ -30,11 +30,14 @@ public:
 	FOnHearNoise OnHearNoise;
 	
 	UFUNCTION()
-	void OnReceiveSeePawn(APawn* Pawn);
+	void OnReceiveSeePawn(AActor* Actor,FAIStimulus Stimulus);
 	UFUNCTION()
 	void OnReceiveHearNoise(APawn* HearInstigator, const FVector& Location, float Volume);
-	
 
+	UFUNCTION()
+	void PawnSensingComponentUpdated(const TArray<AActor*>& UpdatedActors);
+	
+	
 	UPROPERTY(EditAnywhere , BlueprintReadWrite , Category = "PawnSensing")
 	float HearingThreshold;
 

@@ -60,7 +60,7 @@ FEnginePath UEFFileLibrary::GetEngineDirectories()
 	P.Saved = FPaths::EngineSavedDir();
 	P.User = FPaths::EngineUserDir();
 	P.DefaultLayout = FPaths::EngineDefaultLayoutDir();
-	P.PlatformExtensions = FPaths::EnginePlatformExtensionsDir();
+	P.PlatformExtensions = FPaths::EnginePlatformExtensionDir(UTF8_TO_TCHAR(FPlatformProperties::PlatformName()));
 	P.UserLayout = FPaths::EngineUserLayoutDir();
 	return P;
 }
@@ -78,7 +78,7 @@ FProjectPath UEFFileLibrary::GetProjectDirectories()
 	P.Saved = FPaths::ProjectSavedDir();
 	P.User = FPaths::ProjectUserDir();
 	P.PersistentDownload = FPaths::ProjectPersistentDownloadDir();
-	P.PlatformExtensions = FPaths::ProjectPlatformExtensionsDir();
+	P.PlatformExtensions = FPaths::EnginePlatformExtensionDir(UTF8_TO_TCHAR(FPlatformProperties::PlatformName()));
 	return P;
 }
 
@@ -196,22 +196,22 @@ bool UEFFileLibrary::ReadByte(FString Path, TArray<uint8>& Bytes)
 	return FFileHelper::LoadFileToArray(Bytes, *Path);
 }
 
-FString UEFFileLibrary::StringToBase64(const FString Source)
+FString UEFFileLibrary::StringToBase64(const FString& Source)
 {
 	return FBase64::Encode(Source);
 }
 
-bool UEFFileLibrary::StringFromBase64(FString Base64Str, FString& Result)
+bool UEFFileLibrary::StringFromBase64(const FString& Base64Str, FString& Result)
 {
 	return FBase64::Decode(Base64Str, Result);
 }
 
-FString UEFFileLibrary::BytesToBase64(const TArray<uint8> Bytes)
+FString UEFFileLibrary::BytesToBase64(const TArray<uint8>& Bytes)
 {
 	return FBase64::Encode(Bytes);
 }
 
-bool UEFFileLibrary::BytesFromBase64(const FString Source, TArray<uint8>& Out)
+bool UEFFileLibrary::BytesFromBase64(const FString& Source, TArray<uint8>& Out)
 {
 	return FBase64::Decode(Source, Out);
 }
@@ -627,7 +627,7 @@ bool UEFFileLibrary::JsonValueToAnyStruct(TSharedPtr<FJsonValue> JsonValue, FPro
 				objectProperty->SetObjectPropertyValue(ValuePtr, PropValue);
 			}
 			const auto JsonObject = JsonValue->AsObject();
-			if (!JsonObject->HasTypedField<EJson::String>("_ClassName"))
+			if (!JsonObject->HasTypedField<EJson::String>(TEXT("_ClassName")))
 			{
 				JsonObject->SetStringField("_ClassName", PropValue->GetClass()->GetFName().ToString());
 			}

@@ -79,22 +79,17 @@ class UNREALEXTENDEDGAMEPLAY_API UEGFootstepComponent : public UActorComponent
 	GENERATED_BODY()
 
 public:
-
 	UPROPERTY(EditAnywhere , BlueprintReadWrite , Category="Extended Foot Step")
 	UDataTable* FootStepTable;
-
 	
 	UPROPERTY(EditAnywhere , BlueprintReadWrite, Category="Extended Foot Step")
 	FLineTraceStruct LineTraceInformation;
-
 	
 	UFUNCTION(BlueprintCallable, Category="Extended Foot Step")
 	void SpawnFootStepEvents(const FVector LegPosition);
 
 private:
-
 	void SpawnEffects(const FFootStepStruct* footStepStruct , const FLineTraceStruct* HitStruct);
-
 	bool GetSurfaceEffects(const TEnumAsByte<EPhysicalSurface> surfaceType , FFootStepStruct*& surfaceStruct) const;
 	
 };

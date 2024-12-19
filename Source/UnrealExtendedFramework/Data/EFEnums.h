@@ -38,7 +38,6 @@ enum EFConditionOutput
 };
 
 
-
 UENUM(BlueprintType , Blueprintable)
 enum class EFProjectDirectory : uint8
 {

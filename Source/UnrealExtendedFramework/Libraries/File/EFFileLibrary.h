@@ -137,19 +137,19 @@ public:
 	
 	/* Base64 */
 	UFUNCTION(BlueprintPure, meta = (DisplayName = "StrToBase64", CompactNodeTitle = "ToBase64", Keywords = "File plugin string convert base64 encode", ToolTip = "Encodes a string to base64"), Category = "File|Text")
-	static FString StringToBase64(const FString Source);
+	static FString StringToBase64(const FString& Source);
 
 	
 	UFUNCTION(BlueprintPure, meta = (DisplayName = "StrFromBase64", CompactNodeTitle = "FromBase64", Keywords = "File plugin string convert decode base64", ToolTip = "Decodes a string from base64"), Category = "File|Text")
-	static bool StringFromBase64(FString Base64Str, FString& Result);
+	static bool StringFromBase64(const FString& Base64Str, FString& Result);
 
 	
 	UFUNCTION(BlueprintPure, meta = (DisplayName = "BytesToBase64", CompactNodeTitle = "ToBase64", Keywords = "File plugin bytes convert base64 encode", ToolTip = "Encodes a byte array to base64"), Category = "File|Byte")
-	static FString BytesToBase64(const TArray<uint8> Bytes);
+	static FString BytesToBase64(const TArray<uint8>& Bytes);
 
 	
 	UFUNCTION(BlueprintPure, meta = (DisplayName = "BytesFromBase64", CompactNodeTitle = "FromBase64", Keywords = "File plugin bytes convert base64 decode", ToolTip = "Decodes a byte array from base64"), Category = "File|Byte")
-	static bool BytesFromBase64(const FString Source, TArray<uint8>& Out);
+	static bool BytesFromBase64(const FString& Source, TArray<uint8>& Out);
 
 	
 	/* CSV file */

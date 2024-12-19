@@ -3,6 +3,7 @@
 
 #include "EGPawnSensingActor.h"
 
+#include "Perception/AIPerceptionComponent.h"
 #include "Perception/PawnSensingComponent.h"
 
 
@@ -10,10 +11,10 @@
 AEGPawnSensingActor::AEGPawnSensingActor()
 {
 	PrimaryActorTick.bCanEverTick = true;
-	PawnSensingComponent = CreateDefaultSubobject<UPawnSensingComponent>(TEXT("ProjectPawnSenseComponent"));
+	PawnSensingComponent = CreateDefaultSubobject<UAIPerceptionComponent>(TEXT("ProjectPawnSenseComponent"));
 
-	PawnSensingComponent->OnSeePawn.AddDynamic( this, &AEGPawnSensingActor::OnReceiveSeePawn);
-	PawnSensingComponent->OnHearNoise.AddDynamic( this, &AEGPawnSensingActor::OnReceiveHearNoise);
+	PawnSensingComponent->OnPerceptionUpdated.AddDynamic(this, &AEGPawnSensingActor::PawnSensingComponentUpdated);
+	PawnSensingComponent->OnTargetPerceptionUpdated.AddDynamic(this, &AEGPawnSensingActor::OnReceiveSeePawn);
 	
 	HearingThreshold = 1400;
 	LOSHearingThreshold = 2800;
@@ -27,9 +28,9 @@ AEGPawnSensingActor::AEGPawnSensingActor()
 	bHearNoises = true;
 }
 
-void AEGPawnSensingActor::OnReceiveSeePawn(APawn* Pawn)
+void AEGPawnSensingActor::OnReceiveSeePawn(AActor* Actor,FAIStimulus Stimulus)
 {
-	OnSeePawn.Broadcast(Pawn);
+	OnSeePawn.Broadcast(Cast<APawn>(Actor));
 }
 
 void AEGPawnSensingActor::OnReceiveHearNoise(APawn* HearInstigator, const FVector& Location, float Volume)
@@ -37,8 +38,13 @@ void AEGPawnSensingActor::OnReceiveHearNoise(APawn* HearInstigator, const FVecto
 	OnHearNoise.Broadcast(HearInstigator, Location, Volume);
 }
 
+void AEGPawnSensingActor::PawnSensingComponentUpdated(const TArray<AActor*>& UpdatedActors)
+{
+}
+
 void AEGPawnSensingActor::UpdatePawnSensingComponent()
 {
+	/*
 	PawnSensingComponent->HearingThreshold = HearingThreshold;
 	PawnSensingComponent->LOSHearingThreshold = LOSHearingThreshold;
 	PawnSensingComponent->SightRadius = SightRadius;
@@ -49,5 +55,6 @@ void AEGPawnSensingActor::UpdatePawnSensingComponent()
 	PawnSensingComponent->bOnlySensePlayers = OnlySensePlayers;
 	PawnSensingComponent->bSeePawns = bSeePawns;
 	PawnSensingComponent->bHearNoises = bHearNoises;
+	*/
 }
 

@@ -14,6 +14,7 @@ AEGOutlinerWorldActor::AEGOutlinerWorldActor()
 	OutlinerPostProcessComponent->bEnabled = true;
 	RootComponent = OutlinerPostProcessComponent;
 
+	/*
 	// set default pawn class to our Blueprinted character
 	static ConstructorHelpers::FObjectFinder<UMaterialInstance> SceneDepthMaterialClass(TEXT("/UnrealExtendedFramework/Systems/Outline/Materials/MI_EFOutliner.MI_EFOutliner"));
 	if (SceneDepthMaterialClass.Object != NULL)
@@ -27,8 +28,9 @@ AEGOutlinerWorldActor::AEGOutlinerWorldActor()
 	{
 		NonSceneDepthMaterial = NonSceneDepthMaterialClass.Object;
 	}
+	*/
 
-	OutlinerPostProcessComponent->AddOrUpdateBlendable(SceneDepthMaterial);
+	//OutlinerPostProcessComponent->AddOrUpdateBlendable(SceneDepthMaterial);
 }
 
 

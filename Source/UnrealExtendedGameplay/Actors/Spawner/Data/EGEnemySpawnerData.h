@@ -25,5 +25,13 @@ struct FEnemySpawnerEnemyData :  public FTableRowBase
 
 	// This is only used when the spawn system is activated
 	UPROPERTY(EditAnywhere , BlueprintReadWrite)
-	int32 SpawnCount = 0;
+	int32 SpawnCount;
+
+	FEnemySpawnerEnemyData()
+	{
+		PawnClass = nullptr;
+		BehaviorTree = nullptr;
+		SpawnWeight = 0;
+		SpawnCount = 0;
+	}
 };

@@ -26,8 +26,6 @@ void UEGFootstepComponent::SpawnFootStepEvents(const FVector LegPosition)
 }
 
 
-
-
 bool UEGFootstepComponent::GetSurfaceEffects(const TEnumAsByte<EPhysicalSurface> surfaceType ,FFootStepStruct*& surfaceStruct) const
 {
 	if (FootStepTable)

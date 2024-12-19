@@ -9,6 +9,7 @@
 UBTComposite_SelectRandomWeight::UBTComposite_SelectRandomWeight(const FObjectInitializer& ObjectInitializer)
 {
 	NodeName = "Select Random Weighted";
+	DecayFactor = 0.1f;
 }
 
 int32 UBTComposite_SelectRandomWeight::GetNextChildHandler(FBehaviorTreeSearchData& SearchData, int32 PrevChild,EBTNodeResult::Type LastResult) const
@@ -108,7 +109,7 @@ void UBTComposite_SelectRandomWeight::ResizeArrays() const
 
 	if (ChildWeights.Num() != GetChildrenNum())
 	{
-		ChildWeights.SetNum(GetChildrenNum(),true);
+		ChildWeights.SetNum(GetChildrenNum(),EAllowShrinking::Yes);
 		
 		for (int32 ChildIndex = 0; ChildIndex < GetChildrenNum(); ChildIndex++)
 		{

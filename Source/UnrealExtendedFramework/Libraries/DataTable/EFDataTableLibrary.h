@@ -13,38 +13,6 @@ class UNREALEXTENDEDFRAMEWORK_API UEFDataTableLibrary : public UBlueprintFunctio
 {
 	GENERATED_BODY()
 public:
-	
-	/**
-	* Empty and fill a Data Table from CSV string.
-	* @param	CSVString	The Data that representing the contents of a CSV file.
-	* @return	True if the operation succeeds, check the log for errors if it didn't succeed.
-	*/
-	UFUNCTION(BlueprintCallable, DisplayName = "Fill Data Table from CSV String", Category = "DataTable")
-	static bool FillDataTableFromCSVString(UDataTable* DataTable, const FString& CSVString);
-
-/**
-	* Empty and fill a Data Table from CSV file.
-	* @param	CSVFilePath	The file path of the CSV file.
-	* @return	True if the operation succeeds, check the log for errors if it didn't succeed.
-	*/
-	UFUNCTION(BlueprintCallable, DisplayName = "Fill Data Table from CSV File", Category = "DataTable")
-	static bool FillDataTableFromCSVFile(UDataTable* DataTable, const FString& CSVFilePath);
-
-/**
-	* Empty and fill a Data Table from JSON string.
-	* @param	JSONString	The Data that representing the contents of a JSON file.
-	* @return	True if the operation succeeds, check the log for errors if it didn't succeed.
-	*/
-	UFUNCTION(BlueprintCallable, DisplayName = "Fill Data Table from JSON String", Category = "DataTable")
-	static bool FillDataTableFromJSONString(UDataTable* DataTable, const FString& JSONString);
-
-/**
-	* Empty and fill a Data Table from JSON file.
-	* @param	JSONFilePath	The file path of the JSON file.
-	* @return	True if the operation succeeds, check the log for errors if it didn't succeed.
-	*/
-	UFUNCTION(BlueprintCallable, DisplayName = "Fill Data Table from JSON File", Category = "DataTable")
-	static bool FillDataTableFromJSONFile(UDataTable* DataTable, const FString& JSONFilePath);
 
 /** Output entire contents of table as CSV string*/
 	UFUNCTION(BlueprintCallable, DisplayName = "Get Table As CSV String", Category = "DataTable")
@@ -53,10 +21,8 @@ public:
 /** Output entire contents of table as CSV File */
 	UFUNCTION(BlueprintCallable, DisplayName = "Get Table As CSV File", Category = "DataTable")
 	static void GetDataTableAsCSVFile(UDataTable* DataTable, const FString& CSVFilePath);
-
-
+	
 	// <<<<<<<<<<<<<<<<<<<<<< Experiment >>>>>>>>>>>>>>>>>>
-
 	/*
 	static int32 GetRowNumber(UDataTable* DataTable);
 	static bool AddRow(UDataTable* DataTable, FName RowName , UStruct RowData);

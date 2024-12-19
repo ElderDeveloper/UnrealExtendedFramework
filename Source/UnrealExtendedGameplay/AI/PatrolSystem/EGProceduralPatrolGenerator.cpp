@@ -34,7 +34,7 @@ void AEGProceduralPatrolGenerator::UpdatePatrolPoints(UBillboardComponent* Billb
 {
 	if (PatrolPointLocation.Num() != NumberOfPatrolPoints)
 	{
-		PatrolPointLocation.SetNum(NumberOfPatrolPoints ,true);
+		PatrolPointLocation.SetNum(NumberOfPatrolPoints ,EAllowShrinking::Yes);
 	}
 	if (BillboardComponent && PatrolPointLocation.IsValidIndex(Index))
 	{

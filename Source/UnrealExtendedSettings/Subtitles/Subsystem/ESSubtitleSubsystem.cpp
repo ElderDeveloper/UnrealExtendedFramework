@@ -1,6 +1,6 @@
 ﻿// Fill out your copyright notice in the Description page of Project Settings.
 
-
+/*
 #include "ESSubtitleSubsystem.h"
 #include "Kismet/GameplayStatics.h"
 #include "Misc/FileHelper.h"
@@ -361,3 +361,4 @@ void UESSubtitleSubsystem::GetSubtitleJSon(const UObject* WorldContextObject ,FS
 
 
 
+*/

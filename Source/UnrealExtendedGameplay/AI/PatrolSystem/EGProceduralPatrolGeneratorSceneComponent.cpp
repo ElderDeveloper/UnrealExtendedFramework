@@ -40,7 +40,7 @@ void UEGProceduralPatrolGeneratorSceneComponent::UpdatePatrolPoints(UBillboardCo
 {
 	if (PatrolPointLocation.Num() != NumberOfPatrolPoints)
 	{
-		PatrolPointLocation.SetNum(NumberOfPatrolPoints ,true);
+		PatrolPointLocation.SetNum(NumberOfPatrolPoints ,EAllowShrinking::Yes);
 	}
 	if (BillboardComponent && PatrolPointLocation.IsValidIndex(Index))
 	{

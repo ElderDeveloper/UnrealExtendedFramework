@@ -7,6 +7,7 @@ public class UnrealExtendedSettings : ModuleRules
 	public UnrealExtendedSettings(ReadOnlyTargetRules Target) : base(Target)
 	{
 		PCHUsage = ModuleRules.PCHUsageMode.UseExplicitOrSharedPCHs;
+		PrecompileForTargets = PrecompileTargetsType.Any;
 		
 		PublicIncludePaths.AddRange(
 			new string[] {
@@ -49,7 +50,6 @@ public class UnrealExtendedSettings : ModuleRules
 				"Engine",
 				"Slate",
 				"SlateCore",
-				"Settings",
 				"Projects",
 				// ... add private dependencies that you statically link with here ...	
 			}

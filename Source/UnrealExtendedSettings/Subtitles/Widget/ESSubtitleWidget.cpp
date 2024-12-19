@@ -1,6 +1,6 @@
 ﻿// Fill out your copyright notice in the Description page of Project Settings.
 
-
+/*
 #include "ESSubtitleWidget.h"
 
 #include "Components/TextBlock.h"
@@ -110,4 +110,4 @@ void UESSubtitleWidget::InitializeSubtitle()
 {
 	if(const auto subsystem = GetWorld()->GetGameInstance()->GetSubsystem<UESSubtitleSubsystem>())
 		subsystem->OnExecuteSubtitle.AddDynamic(this,&UESSubtitleWidget::UESSubtitleWidget::ReceiveSubtitleRequest);
-}
+}*/
