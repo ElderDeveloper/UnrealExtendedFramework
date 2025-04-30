@@ -14,13 +14,13 @@ class UNREALEXTENDEDFRAMEWORK_API UEFVariableLibrary : public UBlueprintFunction
 
 	public:
 	// <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< ROTATOR >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-	UFUNCTION(BlueprintPure, meta=(DisplayName = "Rotator + Rotator", CompactNodeTitle = "Rotator+"), Category="Math|Rotator" )
+	UFUNCTION(BlueprintPure, meta=(DisplayName = "Rotator+Rotator", CompactNodeTitle = "Rotator+"), Category="Math|Rotator" )
 	static FRotator Add_RotatorRotator(const FRotator A , const FRotator B);
 
-	UFUNCTION(BlueprintPure, meta=(DisplayName = "Rotator / float", CompactNodeTitle = "Rotator/"), Category="Math|Rotator" )
+	UFUNCTION(BlueprintPure, meta=(DisplayName = "Rotator/float", CompactNodeTitle = "Rotator/"), Category="Math|Rotator" )
 	static FRotator Divide_RotatorFloat(const FRotator A , const float B);
 
-	UFUNCTION(BlueprintPure, meta=(DisplayName = "Rotator - Rotator", CompactNodeTitle = "Rotator-"), Category="Math|Rotator" )
+	UFUNCTION(BlueprintPure, meta=(DisplayName = "Rotator-Rotator", CompactNodeTitle = "Rotator-"), Category="Math|Rotator" )
 	static FRotator Minus_RotatorRotator(const FRotator A , const FRotator B);
 
 	UFUNCTION(BlueprintPure, meta=(DisplayName = "Get Rotator Yaw", CompactNodeTitle = "Yaw"), Category="Math|Rotator" )
@@ -36,7 +36,7 @@ class UNREALEXTENDEDFRAMEWORK_API UEFVariableLibrary : public UBlueprintFunction
 
 	
 	// <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< VECTOR >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-	UFUNCTION(BlueprintPure , meta=(DisplayName = "Compare Vector Sizes", CompactNodeTitle = ">"),Category="Math|Vector")
+	UFUNCTION(BlueprintPure , meta=(DisplayName = "Compare Vector Sizes"),Category="Math|Vector")
 	static bool CompareVectorSizes(const FVector IsBigger , const FVector IsLesser);
 
 	UFUNCTION(BlueprintPure, meta=(DisplayName = "Get Vector X", CompactNodeTitle = "X"), Category="Math|Vector" )
@@ -56,13 +56,13 @@ class UNREALEXTENDEDFRAMEWORK_API UEFVariableLibrary : public UBlueprintFunction
 
 
 	
-	UFUNCTION(BlueprintPure, meta=(DisplayName = "Int To Vector", CompactNodeTitle = "*"), Category="Math|Vector" )
+	UFUNCTION(BlueprintPure, meta=(DisplayName = "Int To Vector"), Category="Math|Vector" )
 	static FVector IntToVector(const int32 Value) {	return FVector(Value,Value,Value);}
 
-	UFUNCTION(BlueprintPure, meta=(DisplayName = "Float To Vector", CompactNodeTitle = "*"), Category="Math|Vector" )
+	UFUNCTION(BlueprintPure, meta=(DisplayName = "Float To Vector"), Category="Math|Vector" )
 	static FVector FloatToVector(const float Value) {	return FVector(Value,Value,Value);}
 
-	UFUNCTION(BlueprintPure, meta=(DisplayName = "Byte To Vector", CompactNodeTitle = "*"), Category="Math|Vector" )
+	UFUNCTION(BlueprintPure, meta=(DisplayName = "Byte To Vector"), Category="Math|Vector" )
 	static FVector ByteToVector(const uint8 Value) {	return FVector(Value,Value,Value);}
 	
 	
@@ -75,7 +75,7 @@ class UNREALEXTENDEDFRAMEWORK_API UEFVariableLibrary : public UBlueprintFunction
 
 
 	// <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< FLOAT >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-	UFUNCTION(BlueprintCallable, meta=(DisplayName = "Increment Float", CompactNodeTitle = "Float +") ,Category="Math|Float")
+	UFUNCTION(BlueprintCallable, meta=(DisplayName = "Increment Float", CompactNodeTitle = "Float+") ,Category="Math|Float")
 	static float IncrementFloatBy(UPARAM(ref) float& Float , float Value = 1 );
 
 	UFUNCTION(BlueprintPure, meta=(DisplayName = "Add Floats", CompactNodeTitle = "FloatArray+"), Category="Math|Float")
@@ -84,14 +84,7 @@ class UNREALEXTENDEDFRAMEWORK_API UEFVariableLibrary : public UBlueprintFunction
 	UFUNCTION(BlueprintPure, meta=(DisplayName = "Average Floats", CompactNodeTitle = "FloatArrayAverage"), Category="Math|Float")
 	static float Average_Floats(const TArray<float> Array);
 
-	UFUNCTION(BlueprintPure, meta=(DisplayName = "Float / Int", CompactNodeTitle = "Float / Int"),  Category="Math|Float")
-	static float Divide_FloatInt(float Float , int32 divider = 1 );
-
-	UFUNCTION(BlueprintPure, meta=(DisplayName = "Float / Byte", CompactNodeTitle = "Float / Byte"),  Category="Math|Float")
-	static float Divide_FloatByte(float Float , uint8 divider = 1 );
-
 	
-
 	// <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< INTEGER >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 	UFUNCTION(BlueprintCallable,Category="Math|Integer")
 	static int32 IncrementIntegerBy(UPARAM(ref) int32& Integer , int32 Value = 1 );
@@ -101,17 +94,8 @@ class UNREALEXTENDEDFRAMEWORK_API UEFVariableLibrary : public UBlueprintFunction
 
 	UFUNCTION(BlueprintPure, meta=(DisplayName = "Average Integers", CompactNodeTitle = "IntegerArrayAverage"), Category="Math|Integer")
 	static int32 Average_Integers(const TArray<int32> Array);
-
-
-
-
-
-	// <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< MULTIPLY OPERATIONS >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-
-
-	UFUNCTION(BlueprintPure,meta=(DisplayName = "Multiply Vector With Float", CompactNodeTitle = "V*F"),  Category="Math|Integer")
-	static FVector VectorMultiplyFloat(const FVector& Vector ,const float Value = 1 ) { return Vector * Value ; }
 	
+
 	
 	// <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< STRING >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
@@ -120,10 +104,6 @@ class UNREALEXTENDEDFRAMEWORK_API UEFVariableLibrary : public UBlueprintFunction
 
 	UFUNCTION(BlueprintPure ,Category = "GameModeSettings")
 	static FString GetScreenResolutionAsString(UGameUserSettings*& UserSettings , const FString Separator = "x");
-
-
-	// <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< Experiment >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-	//Struct To Json String;
 	
 
 };

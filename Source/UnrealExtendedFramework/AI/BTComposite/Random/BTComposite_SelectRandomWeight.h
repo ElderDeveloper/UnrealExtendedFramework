@@ -22,15 +22,15 @@ public:
 	float DecayFactor;
 	
 	virtual int32 GetNextChildHandler(struct FBehaviorTreeSearchData& SearchData, int32 PrevChild, EBTNodeResult::Type LastResult) const override;
-
+	virtual void CleanupMemory(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory, EBTMemoryClear::Type CleanupType) const override;
+	virtual void InitializeMemory(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory, EBTMemoryInit::Type InitType) const override;
 #if WITH_EDITOR
 	virtual FName GetNodeIconName() const override;
 	virtual FString GetStaticDescription() const override;
 #endif
 
 private:
-
-	void DetailedDebug() const;
+	
 	void ResizeArrays() const;
 	void AddOneToExecutionCount(int32 ChildIndex) const;
 	

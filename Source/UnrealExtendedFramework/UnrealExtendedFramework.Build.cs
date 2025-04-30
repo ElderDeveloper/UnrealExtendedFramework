@@ -27,6 +27,8 @@ public class UnrealExtendedFramework : ModuleRules
 			{
 				"Core",
 				"InputCore",
+				"EnhancedInput",
+				"DeveloperSettings",
 				"Slate",
 				"SlateCore",
 				"UMG",

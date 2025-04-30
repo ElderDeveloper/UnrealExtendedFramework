@@ -51,6 +51,7 @@ public:
 
 FEnginePath UEFFileLibrary::GetEngineDirectories()
 {
+	const FString PlatformName = FPlatformProperties::IniPlatformName();
 	FEnginePath P;
 	P.Directory = FPaths::EngineDir();
 	P.Config = FPaths::EngineConfigDir();
@@ -60,13 +61,14 @@ FEnginePath UEFFileLibrary::GetEngineDirectories()
 	P.Saved = FPaths::EngineSavedDir();
 	P.User = FPaths::EngineUserDir();
 	P.DefaultLayout = FPaths::EngineDefaultLayoutDir();
-	P.PlatformExtensions = FPaths::EnginePlatformExtensionDir(UTF8_TO_TCHAR(FPlatformProperties::PlatformName()));
+	P.PlatformExtensions = FPaths::EnginePlatformExtensionDir(*PlatformName);
 	P.UserLayout = FPaths::EngineUserLayoutDir();
 	return P;
 }
 
 FProjectPath UEFFileLibrary::GetProjectDirectories()
 {
+	const FString PlatformName = FPlatformProperties::IniPlatformName();
 	FProjectPath P;
 	P.Directory = FPaths::ProjectDir();
 	P.Config = FPaths::ProjectConfigDir();
@@ -78,7 +80,7 @@ FProjectPath UEFFileLibrary::GetProjectDirectories()
 	P.Saved = FPaths::ProjectSavedDir();
 	P.User = FPaths::ProjectUserDir();
 	P.PersistentDownload = FPaths::ProjectPersistentDownloadDir();
-	P.PlatformExtensions = FPaths::EnginePlatformExtensionDir(UTF8_TO_TCHAR(FPlatformProperties::PlatformName()));
+	P.PlatformExtensions = FPaths::ProjectPlatformExtensionDir(*PlatformName);
 	return P;
 }
 
@@ -1520,29 +1522,29 @@ bool UEFFileLibrary::WriteConfigFile(FString Filename, FString Section, FString 
 	{
 		return false;
 	}
-	if (FBoolProperty* BoolProperty = CastField<FBoolProperty>(Type))
+	if (CastField<FBoolProperty>(Type))
 	{
 		GConfig->SetBool(*Section, *Key, *(static_cast<bool*>(Value)), Filename);
 	}
-	else if (FIntProperty* IntProperty = CastField<FIntProperty>(Type))
+	else if (CastField<FIntProperty>(Type))
 	{
 		GConfig->SetInt(*Section, *Key, *(static_cast<int32*>(Value)), Filename);
 	}
-	else if (FStrProperty* StrProperty = CastField<FStrProperty>(Type))
+	else if (CastField<FStrProperty>(Type))
 	{
 		GConfig->SetString(*Section, *Key, **(static_cast<FString*>(Value)), Filename);
 	}
-	else if (FFloatProperty* FloatProperty = CastField<FFloatProperty>(Type))
+	else if (CastField<FFloatProperty>(Type))
 	{
 		GConfig->SetFloat(*Section, *Key, *(static_cast<float*>(Value)), Filename);
 	}
-	else if (FDoubleProperty* DoubleProperty = CastField<FDoubleProperty>(Type))
+	else if (CastField<FDoubleProperty>(Type))
 	{
 		GConfig->SetDouble(*Section, *Key, *(static_cast<double*>(Value)), Filename);
 	}
 	else if (FArrayProperty* ArrayProperty = CastField<FArrayProperty>(Type))
 	{
-		if (FStrProperty* ArrayInnerProperty = CastField<FStrProperty>(ArrayProperty->Inner))
+		if (CastField<FStrProperty>(ArrayProperty->Inner))
 		{
 			TArray<FString>* Arr = (static_cast<TArray<FString>*>(Value));
 			if (SingleLineArray)
@@ -1614,29 +1616,29 @@ bool UEFFileLibrary::ReadConfigFile(FString Filename, FString Section, FString K
 		return false;
 	}
 	bool Success = false;
-	if (FBoolProperty* BoolProperty = CastField<FBoolProperty>(Type))
+	if (CastField<FBoolProperty>(Type))
 	{
 		Success = GConfig->GetBool(*Section, *Key, *(static_cast<bool*>(Value)), Filename);
 	}
-	else if (FIntProperty* IntProperty = CastField<FIntProperty>(Type))
+	else if (CastField<FIntProperty>(Type))
 	{
 		Success = GConfig->GetInt(*Section, *Key, *(static_cast<int32*>(Value)), Filename);
 	}
-	else if (FStrProperty* StrProperty = CastField<FStrProperty>(Type))
+	else if (CastField<FStrProperty>(Type))
 	{
 		Success = GConfig->GetString(*Section, *Key, *(static_cast<FString*>(Value)), Filename);
 	}
-	else if (FFloatProperty* FloatProperty = CastField<FFloatProperty>(Type))
+	else if (CastField<FFloatProperty>(Type))
 	{
 		Success = GConfig->GetFloat(*Section, *Key, *(static_cast<float*>(Value)), Filename);
 	}
-	else if (FDoubleProperty* DoubleProperty = CastField<FDoubleProperty>(Type))
+	else if (CastField<FDoubleProperty>(Type))
 	{
 		Success = GConfig->GetDouble(*Section, *Key, *(static_cast<double*>(Value)), Filename);
 	}
 	else if (FArrayProperty* ArrayProperty = CastField<FArrayProperty>(Type))
 	{
-		if (FStrProperty* ArrayInnerProperty = CastField<FStrProperty>(ArrayProperty->Inner))
+		if (CastField<FStrProperty>(ArrayProperty->Inner))
 		{
 			TArray<FString>* Arr = (static_cast<TArray<FString>*>(Value));
 			if (SingleLineArray)

@@ -26,30 +26,35 @@ public class UnrealExtendedEditor : ModuleRules
 			new string[]
 			{
 				"Core",
-				"CoreUObject", 
-				"Engine", 
-				//"AnimGraphRuntime",
-				"Projects"
+				"CoreUObject",
+				"Engine",
+				"InputCore",
+				"Slate",
+				"SlateCore"
 				// ... add other public dependencies that you statically link with here ...
 			}
 			);
+
+		if (Target.Type == TargetType.Editor)
+		{
 			
-		
-		PrivateDependencyModuleNames.AddRange(
-			new string[]
-			{
-				"CoreUObject",
-				"Engine",
-				"Slate",
-				"SlateCore",
-				//"BlueprintGraph",
-				//"GraphEditor",
-				//"PropertyEditor", 
-				//"AnimGraph",
-				"Projects"
-				// ... add private dependencies that you statically link with here ...	
-			}
+			PublicDependencyModuleNames.AddRange(
+				new string[]
+				{
+				"UnrealEd",
+				"BlueprintGraph",
+				"GraphEditor",
+				}
 			);
+			
+			PrivateDependencyModuleNames.AddRange(new string[] {
+				"EditorStyle",
+				"KismetCompiler",
+				"KismetWidgets",
+				"Projects"
+			});
+		}
+		
 		
 		
 		DynamicallyLoadedModuleNames.AddRange(
@@ -62,8 +67,10 @@ public class UnrealExtendedEditor : ModuleRules
 			
 		PrivateIncludePathModuleNames.AddRange(
 			new string[] {
+#if WITH_EDITOR
 				"SkeletonEditor",
 				//"AnimationBlueprintEditor",
+#endif
 			}
 		);
 	}

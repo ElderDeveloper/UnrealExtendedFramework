@@ -22,7 +22,7 @@ public:
 	void OnQueryAchievementsComplete(const FUniqueNetId& PlayerId, const bool bWasSuccessful);
 
 	/** Updates the achievement progress */
-	void UpdateAchievementProgress(const FString& Id, float Percent);
+	void UpdateAchievementProgress(const FName& Id, float Percent);
 
 protected:
 	

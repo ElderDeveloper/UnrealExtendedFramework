@@ -12,6 +12,9 @@ class UOverlaySlot;
 class UOverlay;
 class UVerticalBoxSlot;
 class UVerticalBox;
+class UButton;
+class UEFButtonStyle;
+
 UCLASS()
 class UNREALEXTENDEDFRAMEWORK_API UEFWidgetLibrary : public UBlueprintFunctionLibrary
 {
@@ -74,4 +77,11 @@ public:
 	//<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< Vertical Box >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 	UFUNCTION(BlueprintCallable , Category="Extended Widget|VerticalBox")
 	static UVerticalBoxSlot* AddChildToVerticalBox(UVerticalBox* VerticalBox , UUserWidget* Child , TEnumAsByte<EVerticalAlignment>InVerticalAlignment, TEnumAsByte<EHorizontalAlignment> InHorizontalAlignment);
+
+
+	//<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< Button >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+	// Apply Button Style using a style object
+	UFUNCTION(BlueprintCallable , Category="Extended Widget|Button")
+	static void ApplyButtonStyle(UButton* Button, TSubclassOf<UEFButtonStyle> StyleClass);
 };

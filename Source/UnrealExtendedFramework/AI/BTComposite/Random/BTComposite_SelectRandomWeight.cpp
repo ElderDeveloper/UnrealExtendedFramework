@@ -12,6 +12,7 @@ UBTComposite_SelectRandomWeight::UBTComposite_SelectRandomWeight(const FObjectIn
 	DecayFactor = 0.1f;
 }
 
+
 int32 UBTComposite_SelectRandomWeight::GetNextChildHandler(FBehaviorTreeSearchData& SearchData, int32 PrevChild,EBTNodeResult::Type LastResult) const
 {
 	// Store Base Weights
@@ -56,19 +57,11 @@ int32 UBTComposite_SelectRandomWeight::GetNextChildHandler(FBehaviorTreeSearchDa
 	
 	if (ChildWeightRanges.Num() > 0)
 	{
-		/*
-		for (const auto i : ChildWeightRanges)
-		{
-			GEngine->AddOnScreenDebugMessage(-1 , 5.0f , FColor::Emerald , FString::Printf(TEXT("The Child Weight Range: %d") , i));
-		}
-		*/
-		
 		const int32 RandomIndex = FMath::RandRange(0 , ChildWeightRanges.Num() - 1);
 		if (ChildWeightRanges.IsValidIndex(RandomIndex))
 		{
 			const int32 RandomChild = ChildWeightRanges[RandomIndex];
 			AddOneToExecutionCount(RandomChild);
-			DetailedDebug();
 			return RandomChild;
 		}
 	}
@@ -79,7 +72,10 @@ int32 UBTComposite_SelectRandomWeight::GetNextChildHandler(FBehaviorTreeSearchDa
 }
 
 
+void UBTComposite_SelectRandomWeight::CleanupMemory(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory,EBTMemoryClear::Type CleanupType) const{}
 
+
+void UBTComposite_SelectRandomWeight::InitializeMemory(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory,EBTMemoryInit::Type InitType) const{}
 
 
 void UBTComposite_SelectRandomWeight::AddOneToExecutionCount(int32 ChildIndex) const
@@ -128,6 +124,7 @@ FName UBTComposite_SelectRandomWeight::GetNodeIconName() const
 	return "Select Random Task";
 }
 
+
 FString UBTComposite_SelectRandomWeight::GetStaticDescription() const
 {
 	FString TaskDescription = "Select Random Task";
@@ -140,21 +137,3 @@ FString UBTComposite_SelectRandomWeight::GetStaticDescription() const
 }
 
 #endif
-
-
-
-
-void UBTComposite_SelectRandomWeight::DetailedDebug() const
-{
-	/*
-	for (int32 i = 0 ; i < ExecutionCounts.Num(); i++)
-	{
-		GEngine->AddOnScreenDebugMessage( -1, 5.f, FColor::Orange, FString::Printf(TEXT("%d , ExecutionCounts[%d] "), i, ExecutionCounts[i]));
-	}
-	
-	for (int32 i = 0 ; i < DecayedChildWeights.Num(); i++)
-	{
-		GEngine->AddOnScreenDebugMessage( -1, 5.f, FColor::Green, FString::Printf(TEXT("%d , Weighed[%f] "), i, DecayedChildWeights[i]));
-	}
-	*/
-}

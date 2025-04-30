@@ -54,7 +54,7 @@ void UESteamAchievementsSubsystem::OnQueryAchievementsComplete(const FUniqueNetI
 
 
 
-void UESteamAchievementsSubsystem::UpdateAchievementProgress(const FString& Id, float Percent)
+void UESteamAchievementsSubsystem::UpdateAchievementProgress(const FName& Id, float Percent)
 {
 	//Get the online sub system
 	if(const auto OnlineSub = IOnlineSubsystem::Get())

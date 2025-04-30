@@ -47,4 +47,10 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category="Extended Input | Axis")
 	static bool RemoveKeyBindingAxis(FInputAxisKeyMapping ChangeAxisMapping);
+
+	UFUNCTION(BlueprintCallable, Category="Extended Input | Clipboard")
+	static bool CopyStringToClipboard(const FString& TextToCopy);
+
+	UFUNCTION(BlueprintPure, Category="Extended Input | Clipboard")
+	static FString GetStringFromClipboard();
 };

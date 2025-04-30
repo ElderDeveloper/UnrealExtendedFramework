@@ -88,16 +88,6 @@ float UEFVariableLibrary::Average_Floats(const TArray<float> Array)
 	return A/2;
 }
 
-float UEFVariableLibrary::Divide_FloatInt(float Float, int32 divider)
-{
-	return Float/divider;
-}
-
-float UEFVariableLibrary::Divide_FloatByte(float Float, uint8 divider)
-{
-	return Float/divider;
-}
-
 
 int32 UEFVariableLibrary::IncrementIntegerBy(UPARAM(ref) int32& Integer, int32 Value)
 {

@@ -18,7 +18,8 @@
 		{
 			"Name": "UnrealExtendedEditor",
 			"Type": "Editor",
-			"LoadingPhase": "Default"
+			"LoadingPhase": "Default",
+			"WhitelistTargets": [ "Editor" ]
 		},
 		{
 			"Name": "UnrealExtendedFramework",
@@ -31,11 +32,6 @@
 			"LoadingPhase": "Default"
 		},
 		{
-			"Name": "UnrealExtendedSettings",
-			"Type": "Runtime",
-			"LoadingPhase": "Default"
-		},
-				{
 			"Name": "UnrealExtendedSteam",
 			"Type": "Runtime",
 			"LoadingPhase": "Default"
@@ -72,6 +68,10 @@
 		},
 		{
 			"Name": "OnlineSubsystemSteam",
+			"Enabled": true
+		},
+		{
+			"Name": "EnhancedInput",
 			"Enabled": true
 		}
 	]
