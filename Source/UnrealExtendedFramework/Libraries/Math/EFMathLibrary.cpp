@@ -422,7 +422,7 @@ FVector UEFMathLibrary::FindRandomCircleLocationWithDirection(float innerRadius,
 
 // <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< PHYSICS >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
-FVector UEFMathLibrary::FCalculateLaunchVelocity(const FVector targetLocation, const FVector startPosition, const float duration)
+FVector UEFMathLibrary::CalculateLaunchVelocity(const FVector targetLocation, const FVector startPosition, const float duration)
 {
 	FVector returnVector;
 	returnVector.X = (targetLocation.X - startPosition.X) / duration;
@@ -478,7 +478,7 @@ FVector2D UEFMathLibrary::MapRangeClampVector2D(const FVector2D Value, const FVe
 
 
 
-void UEFMathLibrary::CalculateSpeedAndDirection(UAnimInstance* AnimInstance, float& Speed, float& Direction)
+void UEFMathLibrary::CalculateSpeedAndDirection(const UAnimInstance* AnimInstance, float& Speed, float& Direction)
 {
 	if (!AnimInstance)
 	{	Speed = 0; Direction = 0; return;	}
@@ -486,14 +486,7 @@ void UEFMathLibrary::CalculateSpeedAndDirection(UAnimInstance* AnimInstance, flo
 	if (const auto Pawn = AnimInstance->TryGetPawnOwner())
 	{
 		Speed = Pawn->GetVelocity().Size();
-		
-			#if ENGINE_MAJOR_VERSION !=5
-					Direction = AnimInstance->CalculateDirection(Pawn->GetVelocity(),Pawn->GetActorRotation());
-			#endif
-				
-			#if ENGINE_MAJOR_VERSION == 5
-					Direction = UKismetAnimationLibrary::CalculateDirection(Pawn->GetVelocity(),Pawn->GetActorRotation());
-			#endif
+		Direction = UKismetAnimationLibrary::CalculateDirection(Pawn->GetVelocity(),Pawn->GetActorRotation());
 	}
 }
 

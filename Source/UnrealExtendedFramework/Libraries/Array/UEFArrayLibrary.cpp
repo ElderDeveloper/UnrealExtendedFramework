@@ -52,14 +52,6 @@ void UUEFArrayLibrary::GetRandomArrayMembers(const TArray<int32>& TargetArray, T
 	}
 }
 
-void UUEFArrayLibrary::GetArrayLastElement(const TArray<int32>& TargetArray, int32& Item)
-{
-	if(TargetArray.Num()>0)
-	{
-		Item =  TargetArray.Last();
-	}
-}
-
 
 void UUEFArrayLibrary::InsertionSortFloatArray(TArray<float> FloatArray, TArray<float>& SortedArray)
 {
@@ -79,50 +71,6 @@ void UUEFArrayLibrary::InsertionSortFloatArray(TArray<float> FloatArray, TArray<
 	}
 
 	SortedArray = FloatArray;
-}
-
-
-
-
-
-TArray<FVector> UUEFArrayLibrary::FloatArrayToVectorArray(UPARAM(ref) const TArray<float>& FArray)
-{
-	TArray<FVector> OutArray;
-	for (const auto i : FArray)
-	{OutArray.Add(FVector(i,i,i));}
-	return OutArray;
-}
-
-TArray<FVector> UUEFArrayLibrary::IntArrayToVectorArray(UPARAM(ref) const TArray<int32>& FArray)
-{
-	TArray<FVector> OutArray;
-	for (const auto i : FArray)
-	{OutArray.Add(FVector(i,i,i));}
-	return OutArray;
-}
-
-TArray<FVector> UUEFArrayLibrary::ByteArrayToVectorArray(UPARAM(ref) const TArray<uint8>& FArray)
-{
-	TArray<FVector> OutArray;
-	for (const auto i : FArray)
-	{OutArray.Add(FVector(i,i,i));}
-	return OutArray;
-}
-
-TArray<int32> UUEFArrayLibrary::FloatArrayToIntArray(UPARAM(ref) const TArray<float>& FArray)
-{
-	TArray<int32> OutArray;
-	for (const auto i : FArray)
-	{OutArray.Add(i);}
-	return OutArray;
-}
-
-TArray<float> UUEFArrayLibrary::IntArrayToFloatArray(UPARAM(ref) const TArray<int32>& FArray)
-{
-	TArray<float> OutArray;
-	for (const auto i : FArray)
-	{OutArray.Add(i);}
-	return OutArray;
 }
 
 void UUEFArrayLibrary::ExtendedIsValidIndex(const TArray<int32>& Array, const int32 index,TEnumAsByte<EFConditionOutput>& OutPins, int32& Item)

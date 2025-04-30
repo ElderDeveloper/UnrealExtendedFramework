@@ -25,31 +25,6 @@ void UEFGlobalLibrary::SetGlobalActor(const UObject* WorldContextObject, FGamepl
 }
 
 
-
-
-
-UPrimitiveComponent* UEFGlobalLibrary::GetGlobalComponent(const UObject* WorldContextObject, FGameplayTag Tag , bool& Valid)
-{
-	
-	if (const auto world  = GEngine->GetEngineSubsystem<UEFGlobalSubsystem>()) 
-	{
-		return world->GetGlobalComponent(Tag , Valid);
-	}
-	Valid = false;
-	return nullptr;
-}
-
-void UEFGlobalLibrary::SetGlobalComponent(const UObject* WorldContextObject, FGameplayTag Tag,UPrimitiveComponent* Value)
-{
-	if (const auto world  = GEngine->GetEngineSubsystem<UEFGlobalSubsystem>()) 
-	{
-		return world->SetGlobalComponent(Tag , Value);
-	}
-}
-
-
-
-
 UObject* UEFGlobalLibrary::GetGlobalObject(const UObject* WorldContextObject, FGameplayTag Tag , bool& Valid)
 {
 	if (const auto world  = GEngine->GetEngineSubsystem<UEFGlobalSubsystem>()) 

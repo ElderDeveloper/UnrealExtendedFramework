@@ -99,29 +99,6 @@ UOverlaySlot* UEFWidgetLibrary::AddChildToOverlay(UOverlay* Overlay, UUserWidget
 	}	return nullptr;
 }
 
-void UEFWidgetLibrary::SetOverlayPaddingTop(UWidget* Slot , const float PaddingTop)
-{
-	if (const auto overlay = UWidgetLayoutLibrary::SlotAsOverlaySlot(Slot))
-		overlay->SetPadding(FMargin(	overlay->GetPadding().Left,	PaddingTop,		overlay->GetPadding().Right,	overlay->GetPadding().Bottom));
-}
-
-void UEFWidgetLibrary::SetOverlayPaddingBottom(UWidget* Slot, const float PaddingBottom)
-{
-	if (const auto overlay = UWidgetLayoutLibrary::SlotAsOverlaySlot(Slot))
-		overlay->SetPadding(FMargin(	overlay->GetPadding().Left,	overlay->GetPadding().Top,	overlay->GetPadding().Right,	PaddingBottom));
-}
-
-void UEFWidgetLibrary::SetOverlayPaddingLeft(UWidget* Slot, const float PaddingLeft)
-{
-	if (const auto overlay = UWidgetLayoutLibrary::SlotAsOverlaySlot(Slot))
-		overlay->SetPadding(FMargin(	PaddingLeft,	overlay->GetPadding().Top,	overlay->GetPadding().Right,	overlay->GetPadding().Bottom));
-}
-
-void UEFWidgetLibrary::SetOverlayPaddingRight(UWidget* Slot, const float PaddingRight)
-{
-	if (const auto overlay = UWidgetLayoutLibrary::SlotAsOverlaySlot(Slot))
-		overlay->SetPadding(FMargin(	overlay->GetPadding().Left,	overlay->GetPadding().Top,	PaddingRight,	overlay->GetPadding().Bottom));
-}
 
 
 UVerticalBoxSlot* UEFWidgetLibrary::AddChildToVerticalBox(UVerticalBox* VerticalBox, UUserWidget* Child,TEnumAsByte<EVerticalAlignment> InVerticalAlignment, TEnumAsByte<EHorizontalAlignment> InHorizontalAlignment)

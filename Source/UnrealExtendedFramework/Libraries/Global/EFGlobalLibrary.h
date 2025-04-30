@@ -8,7 +8,6 @@
 
 
 static TMap<FGameplayTag , TSubclassOf<UObject>> EFGlobalClass;
-
 static TMap<FGameplayTag , bool> EFGlobalBool;
 static TMap<FGameplayTag , uint8 > EFGlobalByte;
 static TMap<FGameplayTag , float> EFGlobalFloat;
@@ -31,12 +30,7 @@ class UNREALEXTENDEDFRAMEWORK_API UEFGlobalLibrary : public UBlueprintFunctionLi
 {
 	GENERATED_BODY()
 
-
-
 public:
-
-	// <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< GET >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-
 	UFUNCTION(BlueprintPure , Category="Global Library|Get")
 	static TSubclassOf<UObject> GetGlobalClass(FGameplayTag Tag)
 	{
@@ -120,50 +114,7 @@ public:
 	}
 
 
-
-
-	/*
-	UFUNCTION(BlueprintPure , meta=(CompactNodeTitle="Global Bool" , ExpandBoolAsExecs = "Valid") , Category="Global Library|Get")
-	static UPrimitiveComponent* EFGetGlobalComponent(FGameplayTag Tag , bool& Valid);
 	
-	UFUNCTION(BlueprintCallable , meta=(ExpandBoolAsExecs = "Valid") , Category="Global Library|Get")
-	static UPARAM(DisplayName = "Object") AActor* EFGetGlobalActor(FGameplayTag Tag , bool& Valid)
-	{
-		if (EFGlobalActor.Contains(Tag))
-		{
-			Valid = IsValid(EFGlobalActor[Tag]);
-			return EFGlobalActor[Tag];
-		}
-		return nullptr;
-	}
-	
-	UFUNCTION(BlueprintCallable , Category="Global Library|Set")
-	static UObject* EFSetGlobalActor(FGameplayTag Tag , AActor* Value)
-	{
-		EFGlobalActor.Add(Tag , Value);
-		return EFGlobalActor[Tag];
-	}
-
-	UFUNCTION(BlueprintCallable , Category="Global Library|Set")
-	static TArray<AActor*> GetAllGlobalActors(bool Debug = false)
-	{
-		TArray<AActor*> Array;
-		for (const auto i :	EFGlobalActor)
-		{
-			Array.Add(i.Value);
-			if (Debug)
-			{
-				FString S = IsValid(i.Value)? i.Value->GetName() : " Value Nat Valid " ;
-				PRINT_STRING(5 , Yellow , i.Key.ToString()  + " : " + S );
-			}
-		}
-		return Array;
-	}
-	*/
-
-
-
-	//<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< SET >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
 	UFUNCTION(BlueprintCallable , Category="Global Library|Set")
 	static TSubclassOf<UObject> SetGlobalClass(FGameplayTag Tag , TSubclassOf<UObject> Value)
@@ -247,9 +198,7 @@ public:
 		return CreateNewGlobalVariable<FGameplayTag , FTransform>(EFGlobalTransform , Tag,Value);
 	}
 
-
-
-	//<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< RETURN ALL >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+	
 
 	UFUNCTION(BlueprintCallable , Category="Global Library|All")
 	static void GetAllGlobalClass(TArray<FGameplayTag>& Tags , TArray<TSubclassOf<UObject>>& Values)
@@ -340,22 +289,12 @@ public:
 
 
 
-	// <<<<<<<<<<<<<<<<<<<<<<<<<<<< ACTORS , COMPONENTS And OBJECTS >>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
 	UFUNCTION(BlueprintCallable, meta = (WorldContext = "WorldContextObject" , ExpandBoolAsExecs = "Valid"))
 	static AActor* GetGlobalActor(const UObject* WorldContextObject , FGameplayTag Tag , bool& Valid);
 
 	UFUNCTION(BlueprintCallable, meta = (WorldContext = "WorldContextObject"))
 	static void SetGlobalActor(const UObject* WorldContextObject , FGameplayTag Tag , AActor* Value);
-
-
-
-	UFUNCTION(BlueprintCallable, meta = (WorldContext = "WorldContextObject" , ExpandBoolAsExecs = "Valid"))
-	static UPrimitiveComponent* GetGlobalComponent(const UObject* WorldContextObject , FGameplayTag Tag , bool& Valid);
-
-	UFUNCTION(BlueprintCallable, meta = (WorldContext = "WorldContextObject"))
-	static void SetGlobalComponent(const UObject* WorldContextObject , FGameplayTag Tag , UPrimitiveComponent* Value);
-
 	
 
 	UFUNCTION(BlueprintCallable, meta = (WorldContext = "WorldContextObject" , ExpandBoolAsExecs = "Valid"))
@@ -364,45 +303,8 @@ public:
 	UFUNCTION(BlueprintCallable, meta = (WorldContext = "WorldContextObject"))
 	static void SetGlobalObject(const UObject* WorldContextObject , FGameplayTag Tag , UObject* Value);
 
-	
-	
-
-
-	
 
 private:
-
-	/*
-	template<class T , typename V>
-	static TMap<FGameplayTag, V* > CreateNewGlobalObject(TMap<FGameplayTag, V* >& Type ,T Tag , V* Value)
-	{
-		if (Type.Contains(Tag))
-		{
-			Type.Emplace(Tag , Value);
-			return Type;
-		}
-		Type.Add(Tag,Value);
-		return Type;
-	}
-
-	
-	template<class T , typename V>
-	static V* ReturnGlobalObject(TMap<FGameplayTag, V*>& Type ,T Tag , bool& Valid)
-	{
-		if (Type.Contains(Tag))
-		{
-			const auto i = *Type.Find(Tag);
-			Valid = IsValid(i);
-			return i;;
-		}
-		Type.Add(Tag,nullptr);
-		Valid = false;
-		return nullptr;
-	}
-	*/
-
-
-	
 	
 	template< typename  T , typename V >
 	static V CreateNewGlobalVariable(TMap<FGameplayTag, V >& Type ,T Tag , V Value)

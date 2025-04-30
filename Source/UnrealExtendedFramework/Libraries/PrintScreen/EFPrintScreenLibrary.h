@@ -10,8 +10,7 @@ UCLASS()
 class UNREALEXTENDEDFRAMEWORK_API UEFPrintScreenLibrary : public UBlueprintFunctionLibrary
 {
 	GENERATED_BODY()
-
-
+	
 public:
 
 	UFUNCTION(BlueprintCallable, meta=(WorldContext = "WorldContextObject",DisplayName = "Print Zero String"), Category="Math|Library")

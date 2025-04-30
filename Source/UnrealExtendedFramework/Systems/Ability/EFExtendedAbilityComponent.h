@@ -7,8 +7,6 @@
 #include "Components/ActorComponent.h"
 #include "EFExtendedAbilityComponent.generated.h"
 
-
-class UEFAttributeComponent;
 class UEFExtendedAbility;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnActiveGameplayTagsUpdate , UEFExtendedAbility* , Instigator , FGameplayTag , ChangedTag);
@@ -80,10 +78,6 @@ public:
 	FOnActiveGameplayTagsUpdate OnExtendedGameplayTagRemoved;
 
 protected:
-
-	UPROPERTY()
-	UEFAttributeComponent* AttributeComponent = nullptr;
-
 	UPROPERTY(EditAnywhere , Category="ExtendedAbilities|Tags")
 	FGameplayTagContainer ActiveGameplayTags;
 
@@ -117,9 +111,6 @@ public:
 	UFUNCTION(BlueprintPure , Category="ExtendedAbilities|Tags")
 	FORCEINLINE FGameplayTagContainer GetActiveTags() const { return ActiveGameplayTags; }
 	
-	UFUNCTION(BlueprintPure , Category="ExtendedAbilities")
-	FORCEINLINE UEFAttributeComponent* GetAttributeComponent() const { return AttributeComponent; }
-
 	UFUNCTION(BlueprintPure , Category="ExtendedAbilities")
 	FORCEINLINE TArray<UEFExtendedAbility*>& GetExtendedAbilities() { return ExtendedAbilities; }
 

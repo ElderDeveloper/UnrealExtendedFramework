@@ -15,23 +15,23 @@ class UNREALEXTENDEDFRAMEWORK_API UEFMathLibrary : public UBlueprintFunctionLibr
 
 public:
 
+	// Random Point In Sphere
 	UFUNCTION(BlueprintPure , Category="ExendedFramework|Math|Random")
 	static FVector RandPointInSphere(const FVector& Center, float Radius);
 	
-	// <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< ROTATION >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+	
+	// Returns a Rotator with given Yaw and Pitch values
 	UFUNCTION(BlueprintPure , Category="ExendedFramework|Math|Rotation")
 	static FRotator GetRotationBetweenActors(const AActor* From, const AActor* To, const FRotator PlusRotator = FRotator::ZeroRotator);
-	
+
+	// Returns a Rotator with given Yaw and Pitch values
 	UFUNCTION(BlueprintPure, Category="ExendedFramework|Math|Rotation")
 	static void GetAngleBetweenActors(AActor* From, AActor* To , float& Yaw , float& Pitch);
 
+	// Returns a Rotator with given Yaw and Pitch values
 	UFUNCTION(BlueprintPure, Category="ExendedFramework|Math|Rotation")
 	static FRotator GetRotationBetweenVectors(const FVector& From, const FVector& To, const FRotator PlusRotator = FRotator::ZeroRotator);
 	
-
-	
-	
-	// <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< DISTANCE >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
 	//Returns Distance Between Two Actors With Simple Minus Operation. Checks If Valid For References If Not Valid Returns 0
 	UFUNCTION(BlueprintPure, Category="ExendedFramework|Math|Distance")
@@ -72,9 +72,6 @@ public:
 
 
 	
-	
-	
-	// <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< DIRECTION >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
 	// Get Direction Between Actors With Simple Minus Operation
 	UFUNCTION(BlueprintPure, Category="ExendedFramework|Math|Direction")
@@ -114,7 +111,7 @@ public:
 	UFUNCTION(BlueprintCallable , Category="ExendedFramework|Math|Direction")
 	static bool FCalculateIsLookingAt(const FVector actorForward, const FVector target, const FVector start, float& returnAngle, float limit = 1.7);
 
-	
+
 	UFUNCTION(BlueprintPure, Category="ExendedFramework|Math|Direction")
 	static float FindLookAtRotationYaw(const FVector& Start, const FVector& Target);
 	
@@ -146,22 +143,15 @@ public:
 	static uint8 GetControllerLookAtDirection(const APawn* Pawn);
 	
 	
-
-	
-	// <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< SCREEN >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-	
 	UFUNCTION(BlueprintPure, meta=(DisplayName = "Get Actor In The Center Of The Screen", CompactNodeTitle = "CenterActor"), Category="ExendedFramework|Math|Screen")
 	static AActor* GetActorInTheCenterOfTheScreen(TMap<AActor*,float> ActorScreenMap , const FVector2D ClampMinMax = FVector2D(0,1));
 
-	
+	//  Get the screen position of the object clamped to the screen
 	UFUNCTION(BlueprintPure, meta = (DisplayName = "Get Object Screen Position Clamped", CompactNodeTitle = "Screen Position", WorldContext = "WorldContextObject") , Category="ExendedFramework|Math|Screen")
 	static FVector2D GetObjectScreenPositionClamped(UObject* WorldContextObject , FVector Position);
 
 
-
 	
-	// <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< LOCATION >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-
 	// Find a location close to center point in a circle with given min-max radius
 	UFUNCTION(BlueprintPure, Category="ExendedFramework|Math|Location")
 	static FVector FindRandomCircleLocation(float innerRadius , float outerRadius , FVector centerPont , FVector forwardVector);
@@ -171,101 +161,63 @@ public:
 	UFUNCTION(BlueprintPure, Category="ExendedFramework|Math|Location")
 	static FVector FindRandomCircleLocationWithDirection(float innerRadius , float outerRadius , FVector centerPont , FVector targetPoint,float angle);
 
-
-
 	
-	// <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< PHYSICS >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-
 	//Calculates a launch velocity for characters with how long should they travel. The Z value and forward vector calculated based on duration
 	UFUNCTION(BlueprintCallable , Category="ExendedFramework|Math|Physics")
-	static FVector FCalculateLaunchVelocity(const FVector targetLocation , const FVector startPosition ,const float duration);
-
-
-
-	
-	//<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< VARIABLE >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+	static FVector CalculateLaunchVelocity(const FVector targetLocation , const FVector startPosition ,const float duration);
 	
 	UFUNCTION(BlueprintPure ,meta=(DisplayName = "+1", CompactNodeTitle = "+1") , Category="ExendedFramework|Math|Variable|Float")
 	static float FloatPlusOne(const float Value) {return Value + 1;}
-
 	
 	UFUNCTION(BlueprintPure ,meta=(DisplayName = "-1", CompactNodeTitle = "-1") , Category="ExendedFramework|Math|Variable|Float")
 	static float FloatMinusOne(const float Value) {return Value - 1;}
-
 	
 	UFUNCTION(BlueprintPure ,meta=(DisplayName = "*2", CompactNodeTitle = "*2") , Category="ExendedFramework|Math|Variable|Float")
 	static float FloatMultiplyByTwo(const float Value) {return Value * 2 ;}
-
 	
 	UFUNCTION(BlueprintPure ,meta=(DisplayName = "/2", CompactNodeTitle = "/2") , Category="ExendedFramework|Math|Variable|Float")
 	static float FloatDivideByTwo(const float Value) {return Value / 2 ;}
-
 	
 	UFUNCTION(BlueprintPure ,meta=(DisplayName = "Invert", CompactNodeTitle = "Invert") , Category="ExendedFramework|Math|Variable|Float")
 	static float FloatInvert(const float Value) {return Value * -1; }
-
 	
 	UFUNCTION(BlueprintPure ,meta=(DisplayName = "-ABS", CompactNodeTitle = "-ABS") , Category="ExendedFramework|Math|Variable|Float")
 	static float FloatMinusABS(const float Value) {return Value>0 ? Value*-1 : Value;  }
-
-	
-
 	
 	UFUNCTION(BlueprintPure ,meta=(DisplayName = "+1", CompactNodeTitle = "+1") , Category="ExendedFramework|Math|Variable|Int32")
 	static int32 IntPlusOne(const int32 Value) {return Value + 1;}
-
 	
 	UFUNCTION(BlueprintPure ,meta=(DisplayName = "-1", CompactNodeTitle = "-1") , Category="ExendedFramework|Math|Variable|Int32")
 	static int32 IntMinusOne(const int32 Value) {return Value - 1;}
-
 	
 	UFUNCTION(BlueprintPure ,meta=(DisplayName = "*2", CompactNodeTitle = "*2") , Category="ExendedFramework|Math|Variable|Int32")
 	static int32 IntMultiplyByTwo(const int32 Value) {return Value * 2 ;}
-
 	
 	UFUNCTION(BlueprintPure ,meta=(DisplayName = "/2", CompactNodeTitle = "/2") , Category="ExendedFramework|Math|Variable|Int32")
 	static int32 IntDivideByTwo(const int32 Value) {return Value / 2 ;}
-
 	
 	UFUNCTION(BlueprintPure ,meta=(DisplayName = "Invert", CompactNodeTitle = "Invert") , Category="ExendedFramework|Math|Variable|Int32")
 	static int32 IntInvert(const int32 Value) {return Value*-1; }
-
 	
 	UFUNCTION(BlueprintPure ,meta=(DisplayName = "-ABS", CompactNodeTitle = "-ABS") , Category="ExendedFramework|Math|Variable|Int32")
 	static int32 IntMinusABS(const int32 Value) {return Value>0 ? Value*-1 : Value;  }
-
-
-
 	
-	//<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< MATH >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-
 	UFUNCTION(BlueprintPure ,meta=(DisplayName = "RotatorToQuad", CompactNodeTitle = "RotToQuad") , Category="ExendedFramework|Math")
 	static FQuat RotatorToQuad(const FRotator Rotator);
-
 	
 	UFUNCTION(BlueprintPure ,meta=(DisplayName = "Clamp 2D"), Category="ExendedFramework|Math")
 	static FVector2D ClampVector2D(const FVector2D Vector , const float Min , const float Max);
-
 	
 	UFUNCTION(BlueprintPure ,meta=(DisplayName = "Map Range Clamp 2D"), Category="ExendedFramework|Math")
 	static FVector2D MapRangeClampVector2D(const FVector2D Value , const FVector2D InRangeA ,  const FVector2D InRangeB , const FVector2D OutRangeA , const FVector2D OutRangeB );
-
-
-
-
-	//<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< ANIMATION >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-	UFUNCTION(BlueprintPure ,meta=(DisplayName = "Calculate Speed And Direction") , Category="ExendedFramework|Math|Animation")
-	static void CalculateSpeedAndDirection(UAnimInstance* AnimInstance , float& Speed , float& Direction);
-
-
-
 	
-	//<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< RANDOM >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+	// Calculates the speed and direction of the character based on the velocity of the character Direction is 360 degrees
+	UFUNCTION(BlueprintPure ,meta=(DisplayName = "Calculate Speed And Direction") , Category="ExendedFramework|Math|Animation")
+	static void CalculateSpeedAndDirection(const UAnimInstance* AnimInstance , float& Speed , float& Direction);
 	
 	// Returns a bool value using the Uniform method 
 	UFUNCTION( BlueprintPure, meta = ( DisplayName = "Random Bool Uniform" ), Category="ExendedFramework|Math|Random" )
 	static bool RandomBoolUniform();
-
 	
 	// Returns a bool value using the Bernoulli method 
 	UFUNCTION( BlueprintPure, meta = ( DisplayName = "Random Bool with Bernoulli" ), Category="ExendedFramework|Math|Random" )
@@ -275,49 +227,38 @@ public:
 	// Returns a bool value using the Bernoulli Twister method 
 	UFUNCTION( BlueprintPure, meta = ( DisplayName = "Random Bool with Mersenne Twister" ), Category="ExendedFramework|Math|Random" )
 	static bool RandomBoolMersenneTwister( const float Bias = 0.5f );
-
 	
 	// Returns a uint8 in the range 0 to X value using the Uniform method 
 	UFUNCTION( BlueprintPure, meta = ( DisplayName = "Random Byte Uniform" ), Category="ExendedFramework|Math|Random" )
 	static uint8 RandomByteUniform( const uint8 Max );
-
 	
 	// Returns a uint8 in the range 0 to 1 value using the Bernoulli method 
 	UFUNCTION( BlueprintPure, meta = ( DisplayName = "Random Byte with Bernoulli" ), Category="ExendedFramework|Math|Random" )
 	static uint8 RandomByteBernoulli( const float Bias = 0.5f );
-
 	
 	// Returns a uint8 in the range 0 to 1 value using the Bernoulli Twister method 
 	UFUNCTION( BlueprintPure, meta = ( DisplayName = "Random Byte with Mersenne Twister" ), Category="ExendedFramework|Math|Random" )
 	static uint8 RandomByteMersenneTwister( const float Bias = 0.5f );
-
 	
 	// Returns a int32 in the range 0 to X value using the Uniform method 
 	UFUNCTION( BlueprintPure, meta = ( DisplayName = "Random Integer with Uniform" ), Category="ExendedFramework|Math|Random" )
 	static int32 RandomIntUniform( const int32 Max );
-
 	
 	// Returns a int32 in the range 0 to 1 value using the Bernoulli method 
 	UFUNCTION( BlueprintPure, meta = ( DisplayName = "Random Integer with Bernoulli" ), Category="ExendedFramework|Math|Random" )
 	static int32 RandomIntBernoulli( const float Bias = 0.5f );
-
 	
 	// Returns a int32 in the range 0 to 1 value using the Bernoulli Twister method 
 	UFUNCTION( BlueprintPure, meta = ( DisplayName = "Random Integer with Mersenne Twister" ), Category="ExendedFramework|Math|Random" )
 	static int32 RandomIntMersenneTwister( const float Bias = 0.5f );
-
 	
 	// Returns a float in the range 0.0 to X.X value using the Uniform method 
 	UFUNCTION( BlueprintPure, meta = ( DisplayName = "Random Float Uniform" ), Category="ExendedFramework|Math|Random" )
 	static float RandomFloatUniform( const float Max );
-
 	
 	// Returns a float in the range 0.0 to 1.0 value using the Canonical method 
 	UFUNCTION( BlueprintPure, meta = ( DisplayName = "Random Float with Canonical" ), Category="ExendedFramework|Math|Random" )
 	static float RandomFloatCanonical();
-
-	
-	//<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< USE FULL RANDOMS >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 	
 	// Get Random Float Between Min and Max But Has A Limitations
 	UFUNCTION( BlueprintPure, meta = ( DisplayName = "RandFloat Min Max Range" ), Category="ExendedFramework|Math|Random" )

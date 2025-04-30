@@ -2,7 +2,6 @@
 
 #include "EFExtendedAbilityComponent.h"
 #include "Abilities/EFExtendedAbility.h"
-#include "UnrealExtendedFramework/Systems/Attribute/EFAttributeComponent.h"
 
 
 UEFExtendedAbilityComponent::UEFExtendedAbilityComponent()
@@ -212,14 +211,6 @@ void UEFExtendedAbilityComponent::BeginPlay()
 		if (IsValid(i))
 		{
 			AddExtendedAbility(GetOwner() , i);
-		}
-	}
-
-	if (const auto actorComponent = GetOwner()->GetComponentByClass(UEFAttributeComponent::StaticClass()))
-	{
-		if (const auto attributeComp = Cast<UEFAttributeComponent>(actorComponent))
-		{
-			AttributeComponent = attributeComp;
 		}
 	}
 }
