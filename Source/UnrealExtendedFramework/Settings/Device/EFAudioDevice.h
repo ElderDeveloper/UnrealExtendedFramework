@@ -4,10 +4,10 @@
 
 #include "CoreMinimal.h"
 #include "UObject/Object.h"
-#include "ExtendedAudioDevice.generated.h"
+#include "EFAudioDevice.generated.h"
 
 USTRUCT(BlueprintType)
-struct FExtendedAudioDeviceInfo
+struct FEFAudioDeviceInfo
 {
     GENERATED_BODY()
     
@@ -27,16 +27,16 @@ struct FExtendedAudioDeviceInfo
     bool bIsConnected = false;
 };
 
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnAudioDevicesChanged, const TArray<FExtendedAudioDeviceInfo>&, AudioDevices);
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnDeviceDisconnected, const FExtendedAudioDeviceInfo&, DisconnectedDevice);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnAudioDevicesChanged, const TArray<FEFAudioDeviceInfo>&, AudioDevices);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnDeviceDisconnected, const FEFAudioDeviceInfo&, DisconnectedDevice);
 
 UCLASS(BlueprintType, Blueprintable)
-class UNREALEXTENDEDFRAMEWORK_API UExtendedAudioDeviceManager : public UObject
+class UNREALEXTENDEDFRAMEWORK_API UEFAudioDeviceManager : public UObject
 {
     GENERATED_BODY()
     
 public:
-    UExtendedAudioDeviceManager();
+    UEFAudioDeviceManager();
     
     // Initialize the audio device manager
     UFUNCTION(BlueprintCallable, Category = "Audio|Devices")
@@ -44,19 +44,19 @@ public:
     
     // Get all available audio output devices
     UFUNCTION(BlueprintCallable, Category = "Audio|Devices")
-    TArray<FExtendedAudioDeviceInfo> GetOutputDevices() const;
+    TArray<FEFAudioDeviceInfo> GetOutputDevices() const;
     
     // Get all available audio input devices
     UFUNCTION(BlueprintCallable, Category = "Audio|Devices")
-    TArray<FExtendedAudioDeviceInfo> GetInputDevices() const;
+    TArray<FEFAudioDeviceInfo> GetInputDevices() const;
     
     // Get the current default output device
     UFUNCTION(BlueprintCallable, Category = "Audio|Devices")
-    FExtendedAudioDeviceInfo GetDefaultOutputDevice() const;
+    FEFAudioDeviceInfo GetDefaultOutputDevice() const;
     
     // Get the current default input device
     UFUNCTION(BlueprintCallable, Category = "Audio|Devices")
-    FExtendedAudioDeviceInfo GetDefaultInputDevice() const;
+    FEFAudioDeviceInfo GetDefaultInputDevice() const;
     
     // Set the current output device
     UFUNCTION(BlueprintCallable, Category = "Audio|Devices")
@@ -84,10 +84,10 @@ private:
     void StartDeviceMonitoring();
     void CheckDeviceConnectivity();
     
-    TArray<FExtendedAudioDeviceInfo> OutputDevices;
-    TArray<FExtendedAudioDeviceInfo> InputDevices;
-    FExtendedAudioDeviceInfo DefaultOutputDevice;
-    FExtendedAudioDeviceInfo DefaultInputDevice;
+    TArray<FEFAudioDeviceInfo> OutputDevices;
+    TArray<FEFAudioDeviceInfo> InputDevices;
+    FEFAudioDeviceInfo DefaultOutputDevice;
+    FEFAudioDeviceInfo DefaultInputDevice;
     
     FTimerHandle DeviceMonitorTimerHandle;
     bool bIsInitialized;

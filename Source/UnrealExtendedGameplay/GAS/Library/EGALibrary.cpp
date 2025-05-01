@@ -8,10 +8,6 @@
 #include "AbilitySystemInterface.h"
 
 
-bool UEGALibrary::IsInEditor()
-{
-	return GIsEditor;
-}
 
 
 
@@ -31,19 +27,7 @@ UAbilitySystemComponent* UEGALibrary::GetAbilitySystemComponentFromActor(AActor*
 
 
 
-FString UEGALibrary::GetProjectVersion()
-{
-	FString ProjectVersion;
 
-	GConfig->GetString(
-		TEXT("/Script/EngineSettings.GeneralProjectSettings"),
-		TEXT("ProjectVersion"),
-		ProjectVersion,
-		GGameIni
-	);
-
-	return ProjectVersion;
-}
 
 
 

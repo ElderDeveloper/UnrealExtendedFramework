@@ -1,7 +1,7 @@
 // Fill out your copyright notice in the Description page of Project Settings.
 
 
-#include "ExtendedAudioDevice.h"
+#include "EFAudioDevice.h"
 
 #if PLATFORM_WINDOWS
 #include "Windows/AllowWindowsPlatformTypes.h"
@@ -11,17 +11,17 @@
 #include "Windows/HideWindowsPlatformTypes.h"
 #endif
 
-UExtendedAudioDeviceManager::UExtendedAudioDeviceManager()
+UEFAudioDeviceManager::UEFAudioDeviceManager()
 {
 }
 
-void UExtendedAudioDeviceManager::Initialize()
+void UEFAudioDeviceManager::Initialize()
 {
     RefreshDeviceList();
     StartDeviceMonitoring();
 }
 
-void UExtendedAudioDeviceManager::RefreshDeviceList()
+void UEFAudioDeviceManager::RefreshDeviceList()
 {
     OutputDevices.Empty();
     InputDevices.Empty();
@@ -30,7 +30,7 @@ void UExtendedAudioDeviceManager::RefreshDeviceList()
 }
 
 #if PLATFORM_WINDOWS
-void UExtendedAudioDeviceManager::PlatformEnumerateAudioDevices()
+void UEFAudioDeviceManager::PlatformEnumerateAudioDevices()
 {
     CoInitialize(nullptr);
     IMMDeviceEnumerator* pEnumerator = nullptr;
@@ -84,7 +84,7 @@ void UExtendedAudioDeviceManager::PlatformEnumerateAudioDevices()
                                 
                                 if (SUCCEEDED(hr))
                                 {
-                                    FExtendedAudioDeviceInfo DeviceInfo;
+                                    FEFAudioDeviceInfo DeviceInfo;
                                     DeviceInfo.DeviceName = FString(varName.pwszVal);
                                     DeviceInfo.DeviceID = FString(pwszID);
                                     DeviceInfo.bIsInputDevice = false;
@@ -165,7 +165,7 @@ void UExtendedAudioDeviceManager::PlatformEnumerateAudioDevices()
                                 
                                 if (SUCCEEDED(hr))
                                 {
-                                    FExtendedAudioDeviceInfo DeviceInfo;
+                                    FEFAudioDeviceInfo DeviceInfo;
                                     DeviceInfo.DeviceName = FString(varName.pwszVal);
                                     DeviceInfo.DeviceID = FString(pwszID);
                                     DeviceInfo.bIsInputDevice = true;
@@ -208,33 +208,33 @@ void UExtendedAudioDeviceManager::PlatformEnumerateAudioDevices()
 }
 #endif
 
-void UExtendedAudioDeviceManager::StartDeviceMonitoring()
+void UEFAudioDeviceManager::StartDeviceMonitoring()
 {
     if (UWorld* World = GEngine->GetWorld())
     {
         World->GetTimerManager().SetTimer(
             DeviceMonitorTimerHandle,
-            FTimerDelegate::CreateUObject(this, &UExtendedAudioDeviceManager::CheckDeviceConnectivity),
+            FTimerDelegate::CreateUObject(this, &UEFAudioDeviceManager::CheckDeviceConnectivity),
             2.0f, // Check every 2 seconds
             true);
     }
 }
 
-void UExtendedAudioDeviceManager::CheckDeviceConnectivity()
+void UEFAudioDeviceManager::CheckDeviceConnectivity()
 {
     // Store previous device lists to compare against
-    TArray<FExtendedAudioDeviceInfo> PreviousOutputDevices = OutputDevices;
-    TArray<FExtendedAudioDeviceInfo> PreviousInputDevices = InputDevices;
+    TArray<FEFAudioDeviceInfo> PreviousOutputDevices = OutputDevices;
+    TArray<FEFAudioDeviceInfo> PreviousInputDevices = InputDevices;
     
     // Refresh the device lists
     PlatformEnumerateAudioDevices();
     
     // Check for disconnected output devices
-    for (const FExtendedAudioDeviceInfo& PreviousDevice : PreviousOutputDevices)
+    for (const FEFAudioDeviceInfo& PreviousDevice : PreviousOutputDevices)
     {
         bool bStillConnected = false;
         
-        for (const FExtendedAudioDeviceInfo& CurrentDevice : OutputDevices)
+        for (const FEFAudioDeviceInfo& CurrentDevice : OutputDevices)
         {
             if (PreviousDevice.DeviceID == CurrentDevice.DeviceID)
             {
@@ -246,18 +246,18 @@ void UExtendedAudioDeviceManager::CheckDeviceConnectivity()
         if (!bStillConnected && PreviousDevice.bIsConnected)
         {
             // Device was disconnected, broadcast event
-            FExtendedAudioDeviceInfo DisconnectedDevice = PreviousDevice;
+            FEFAudioDeviceInfo DisconnectedDevice = PreviousDevice;
             DisconnectedDevice.bIsConnected = false;
             OnDeviceDisconnected.Broadcast(DisconnectedDevice);
         }
     }
     
     // Check for disconnected input devices
-    for (const FExtendedAudioDeviceInfo& PreviousDevice : PreviousInputDevices)
+    for (const FEFAudioDeviceInfo& PreviousDevice : PreviousInputDevices)
     {
         bool bStillConnected = false;
         
-        for (const FExtendedAudioDeviceInfo& CurrentDevice : InputDevices)
+        for (const FEFAudioDeviceInfo& CurrentDevice : InputDevices)
         {
             if (PreviousDevice.DeviceID == CurrentDevice.DeviceID)
             {
@@ -269,7 +269,7 @@ void UExtendedAudioDeviceManager::CheckDeviceConnectivity()
         if (!bStillConnected && PreviousDevice.bIsConnected)
         {
             // Device was disconnected, broadcast event
-            FExtendedAudioDeviceInfo DisconnectedDevice = PreviousDevice;
+            FEFAudioDeviceInfo DisconnectedDevice = PreviousDevice;
             DisconnectedDevice.bIsConnected = false;
             OnDeviceDisconnected.Broadcast(DisconnectedDevice);
         }
@@ -279,34 +279,34 @@ void UExtendedAudioDeviceManager::CheckDeviceConnectivity()
     if (OnAudioDevicesChanged.IsBound())
     {
         // Combine output and input devices for the event
-        TArray<FExtendedAudioDeviceInfo> AllDevices;
+        TArray<FEFAudioDeviceInfo> AllDevices;
         AllDevices.Append(OutputDevices);
         AllDevices.Append(InputDevices);
         OnAudioDevicesChanged.Broadcast(AllDevices);
     }
 }
 
-TArray<FExtendedAudioDeviceInfo> UExtendedAudioDeviceManager::GetOutputDevices() const
+TArray<FEFAudioDeviceInfo> UEFAudioDeviceManager::GetOutputDevices() const
 {
     return OutputDevices;
 }
 
-TArray<FExtendedAudioDeviceInfo> UExtendedAudioDeviceManager::GetInputDevices() const
+TArray<FEFAudioDeviceInfo> UEFAudioDeviceManager::GetInputDevices() const
 {
     return InputDevices;
 }
 
-FExtendedAudioDeviceInfo UExtendedAudioDeviceManager::GetDefaultOutputDevice() const
+FEFAudioDeviceInfo UEFAudioDeviceManager::GetDefaultOutputDevice() const
 {
     return DefaultOutputDevice;
 }
 
-FExtendedAudioDeviceInfo UExtendedAudioDeviceManager::GetDefaultInputDevice() const
+FEFAudioDeviceInfo UEFAudioDeviceManager::GetDefaultInputDevice() const
 {
     return DefaultInputDevice;
 }
 
-bool UExtendedAudioDeviceManager::SetOutputDevice(const FString& DeviceID)
+bool UEFAudioDeviceManager::SetOutputDevice(const FString& DeviceID)
 {
 #if PLATFORM_WINDOWS
     return PlatformSetOutputDevice(DeviceID);
@@ -315,7 +315,7 @@ bool UExtendedAudioDeviceManager::SetOutputDevice(const FString& DeviceID)
 #endif
 }
 
-bool UExtendedAudioDeviceManager::SetInputDevice(const FString& DeviceID)
+bool UEFAudioDeviceManager::SetInputDevice(const FString& DeviceID)
 {
 #if PLATFORM_WINDOWS
     return PlatformSetInputDevice(DeviceID);
@@ -325,7 +325,7 @@ bool UExtendedAudioDeviceManager::SetInputDevice(const FString& DeviceID)
 }
 
 #if PLATFORM_WINDOWS
-bool UExtendedAudioDeviceManager::PlatformSetOutputDevice(const FString& DeviceID)
+bool UEFAudioDeviceManager::PlatformSetOutputDevice(const FString& DeviceID)
 {
     bool bSuccess = false;
     CoInitialize(nullptr);
@@ -365,7 +365,7 @@ bool UExtendedAudioDeviceManager::PlatformSetOutputDevice(const FString& DeviceI
     return bSuccess;
 }
 
-bool UExtendedAudioDeviceManager::PlatformSetInputDevice(const FString& DeviceID)
+bool UEFAudioDeviceManager::PlatformSetInputDevice(const FString& DeviceID)
 {
     bool bSuccess = false;
     CoInitialize(nullptr);

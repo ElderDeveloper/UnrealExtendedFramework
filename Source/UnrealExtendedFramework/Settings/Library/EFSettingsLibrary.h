@@ -4,20 +4,20 @@
 
 #include "CoreMinimal.h"
 #include "Kismet/BlueprintFunctionLibrary.h"
-#include "../Data/ExtendedSettingsData.h"
-#include "../ExtendedSettingsSubsystem.h"
-#include "ExtendedSettingsLibrary.generated.h"
+#include "../Data/EFSettingsData.h"
+#include "../EFSettingsSubsystem.h"
+#include "EFSettingsLibrary.generated.h"
 
 /**
  * Blueprint Function Library for easy access to Extended Settings Subsystem
  */
 UCLASS()
-class UNREALEXTENDEDFRAMEWORK_API UExtendedSettingsLibrary : public UBlueprintFunctionLibrary
+class UNREALEXTENDEDFRAMEWORK_API UEFSettingsLibrary : public UBlueprintFunctionLibrary
 {
 	GENERATED_BODY()
 
 	// Helper function to get the Extended Settings Subsystem
-	static UExtendedSettingsSubsystem* GetExtendedSettingsSubsystem(const UObject* WorldContextObject);
+	static UEFSettingsSubsystem* GetEFSettingsSubsystem(const UObject* WorldContextObject);
 
 	// Gameplay Settings
 	UFUNCTION(BlueprintPure, Category = "Extended Settings|Gameplay", meta = (WorldContext = "WorldContextObject"))

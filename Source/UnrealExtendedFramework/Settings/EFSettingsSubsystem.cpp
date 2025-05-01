@@ -1,42 +1,42 @@
 // Fill out your copyright notice in the Description page of Project Settings.
 
-#include "ExtendedSettingsSubsystem.h"
+#include "EFSettingsSubsystem.h"
 #include "AudioDevice.h"
 #include "Kismet/GameplayStatics.h"
-#include "Device/ExtendedAudioDevice.h"
+#include "Device/EFAudioDevice.h"
 #include "GameFramework/GameUserSettings.h"
-#include "Library/ExtendedMonitorLibrary.h"
+#include "UnrealExtendedFramework/Libraries/Monitor/EFMonitorLibrary.h"
 
 
-void UExtendedSettingsSubsystem::SetGameplaySettings(const FExtendedGameplaySettings& GameplaySettings)
+void UEFSettingsSubsystem::SetGameplaySettings(const FExtendedGameplaySettings& GameplaySettings)
 {
 	TemporaryGameplaySettings = GameplaySettings;
 	OnExtendedSettingsChanged.Broadcast();
 }
 
 
-void UExtendedSettingsSubsystem::SetAudioSettings(const FExtendedAudioSettings& AudioSettings)
+void UEFSettingsSubsystem::SetAudioSettings(const FExtendedAudioSettings& AudioSettings)
 {
 	TemporaryAudioSettings = AudioSettings;
 	OnExtendedSettingsChanged.Broadcast();
 }
 
 
-void UExtendedSettingsSubsystem::SetGraphicsSettings(const FExtendedGraphicsSettings& GraphicsSettings)
+void UEFSettingsSubsystem::SetGraphicsSettings(const FExtendedGraphicsSettings& GraphicsSettings)
 {
 	TemporaryGraphicsSettings = GraphicsSettings;
 	OnExtendedSettingsChanged.Broadcast();
 }
 
 
-void UExtendedSettingsSubsystem::SetDisplaySettings(const FExtendedDisplaySettings& DisplaySettings)
+void UEFSettingsSubsystem::SetDisplaySettings(const FExtendedDisplaySettings& DisplaySettings)
 {
 	TemporaryDisplaySettings = DisplaySettings;
 	OnExtendedSettingsChanged.Broadcast();
 }
 
 
-void UExtendedSettingsSubsystem::FindAndApplyBestSettings()
+void UEFSettingsSubsystem::FindAndApplyBestSettings()
 {
 	ExtendedSettings->bCheckedBestSettings = true;
 	ExtendedSettings->SaveExtendedSettings();
@@ -65,7 +65,7 @@ void UExtendedSettingsSubsystem::FindAndApplyBestSettings()
 
 	// Get the current monitor's resolution (the one the game window is on)
 	int32 CurrentMonitorWidth, CurrentMonitorHeight;
-	UExtendedMonitorLibrary::GetCurrentMonitorResolution(CurrentMonitorWidth, CurrentMonitorHeight);
+	UEFMonitorLibrary::GetCurrentMonitorResolution(CurrentMonitorWidth, CurrentMonitorHeight);
 	FIntPoint CurrentMonitorResolution(CurrentMonitorWidth, CurrentMonitorHeight);
 	
 	// Update screen resolution list to ensure we have valid options
@@ -118,18 +118,18 @@ void UExtendedSettingsSubsystem::FindAndApplyBestSettings()
 }
 
 
-void UExtendedSettingsSubsystem::Initialize(FSubsystemCollectionBase& Collection)
+void UEFSettingsSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
 	Super::Initialize(Collection);
 
-	//ExtendedSettings = GetMutableDefault<UExtendedSettingsDeveloperSettings>();
+	//ExtendedSettings = GetMutableDefault<UEFDeveloperSettings>();
 
-	ExtendedAudioDeviceManager = NewObject<UExtendedAudioDeviceManager>(this);
-	ExtendedAudioDeviceManager->Initialize();
+	EFAudioDeviceManager = NewObject<UEFAudioDeviceManager>(this);
+	EFAudioDeviceManager->Initialize();
     
 	// Bind to audio device change events
-	ExtendedAudioDeviceManager->OnAudioDevicesChanged.AddDynamic(this, &UExtendedSettingsSubsystem::OnAudioDevicesChanged);
-	ExtendedAudioDeviceManager->OnDeviceDisconnected.AddDynamic(this, &UExtendedSettingsSubsystem::OnAudioDeviceDisconnected);
+	EFAudioDeviceManager->OnAudioDevicesChanged.AddDynamic(this, &UEFSettingsSubsystem::OnAudioDevicesChanged);
+	EFAudioDeviceManager->OnDeviceDisconnected.AddDynamic(this, &UEFSettingsSubsystem::OnAudioDeviceDisconnected);
     
 	// Initialize audio device lists in settings
 	UpdateAudioDeviceLists();
@@ -152,23 +152,23 @@ void UExtendedSettingsSubsystem::Initialize(FSubsystemCollectionBase& Collection
 }
 
 
-void UExtendedSettingsSubsystem::Deinitialize()
+void UEFSettingsSubsystem::Deinitialize()
 {
-	if (ExtendedAudioDeviceManager)
+	if (EFAudioDeviceManager)
 	{
-		ExtendedAudioDeviceManager->ConditionalBeginDestroy();
-		ExtendedAudioDeviceManager = nullptr;
+		EFAudioDeviceManager->ConditionalBeginDestroy();
+		EFAudioDeviceManager = nullptr;
 	}
 	Super::Deinitialize();
 }
 
 
-void UExtendedSettingsSubsystem::PostInitProperties()
+void UEFSettingsSubsystem::PostInitProperties()
 {
 	Super::PostInitProperties();
 	
-	ExtendedSettings = GetMutableDefault<UExtendedSettingsDeveloperSettings>();
-	AudioMixer = GetMutableDefault<UExtendedAudioDeveloperSettings>();
+	ExtendedSettings = GetMutableDefault<UEFDeveloperSettings>();
+	AudioMixer = GetMutableDefault<UEFAudioDeveloperSettings>();
 
 	// Initialize screen resolution list in settings
 	UpdateScreenResolutionList();
@@ -177,7 +177,7 @@ void UExtendedSettingsSubsystem::PostInitProperties()
 }
 
 
-void UExtendedSettingsSubsystem::StoreTemporarySettings()
+void UEFSettingsSubsystem::StoreTemporarySettings()
 {
 	TemporaryGameplaySettings = ExtendedSettings->GameplaySettings;
 	TemporaryAudioSettings = ExtendedSettings->AudioSettings;
@@ -186,7 +186,7 @@ void UExtendedSettingsSubsystem::StoreTemporarySettings()
 }
 
 
-void UExtendedSettingsSubsystem::ApplyGameplaySettings(const FExtendedGameplaySettings& Settings)
+void UEFSettingsSubsystem::ApplyGameplaySettings(const FExtendedGameplaySettings& Settings)
 {
 	// Apply gameplay settings to the game
 	/*
@@ -204,18 +204,18 @@ void UExtendedSettingsSubsystem::ApplyGameplaySettings(const FExtendedGameplaySe
 }
 
 
-void UExtendedSettingsSubsystem::ApplyAudioSettings(const FExtendedAudioSettings& Settings)
+void UEFSettingsSubsystem::ApplyAudioSettings(const FExtendedAudioSettings& Settings)
 {
     // Apply audio device settings
-    if (ExtendedAudioDeviceManager)
+    if (EFAudioDeviceManager)
     {
         if (!Settings.AudioOutputDeviceName.IsNone())
         {
-            for (const auto& Device : ExtendedAudioDeviceManager->GetOutputDevices())
+            for (const auto& Device : EFAudioDeviceManager->GetOutputDevices())
             {
                 if (Device.DeviceName == Settings.AudioOutputDeviceName.ToString())
                 {
-                    ExtendedAudioDeviceManager->SetOutputDevice(Device.DeviceID);
+                    EFAudioDeviceManager->SetOutputDevice(Device.DeviceID);
                     break;
                 }
             }
@@ -223,11 +223,11 @@ void UExtendedSettingsSubsystem::ApplyAudioSettings(const FExtendedAudioSettings
 
         if (!Settings.AudioInputDeviceName.IsNone())
         {
-            for (const auto& Device : ExtendedAudioDeviceManager->GetInputDevices())
+            for (const auto& Device : EFAudioDeviceManager->GetInputDevices())
             {
                 if (Device.DeviceName == Settings.AudioInputDeviceName.ToString())
                 {
-                    ExtendedAudioDeviceManager->SetInputDevice(Device.DeviceID);
+                    EFAudioDeviceManager->SetInputDevice(Device.DeviceID);
                     break;
                 }
             }
@@ -249,7 +249,7 @@ void UExtendedSettingsSubsystem::ApplyAudioSettings(const FExtendedAudioSettings
 }
 
 
-void UExtendedSettingsSubsystem::ApplyGraphicsSettings(const FExtendedGraphicsSettings& Settings)
+void UEFSettingsSubsystem::ApplyGraphicsSettings(const FExtendedGraphicsSettings& Settings)
 {
 	// Apply various graphics settings through console commands
 	if (GetWorld())
@@ -285,7 +285,7 @@ void UExtendedSettingsSubsystem::ApplyGraphicsSettings(const FExtendedGraphicsSe
 }
 
 
-void UExtendedSettingsSubsystem::ApplyDisplaySettings(const FExtendedDisplaySettings& Settings)
+void UEFSettingsSubsystem::ApplyDisplaySettings(const FExtendedDisplaySettings& Settings)
 {
 	if (!GetWorld())
 	{
@@ -310,7 +310,7 @@ void UExtendedSettingsSubsystem::ApplyDisplaySettings(const FExtendedDisplaySett
 
 	// Get the current monitor's resolution (the one the game window is on)
 	int32 CurrentMonitorWidth, CurrentMonitorHeight;
-	UExtendedMonitorLibrary::GetCurrentMonitorResolution(CurrentMonitorWidth, CurrentMonitorHeight);
+	UEFMonitorLibrary::GetCurrentMonitorResolution(CurrentMonitorWidth, CurrentMonitorHeight);
 	FIntPoint CurrentMonitorResolution(CurrentMonitorWidth, CurrentMonitorHeight);
 
 	// Apply screen resolution
@@ -415,7 +415,7 @@ void UExtendedSettingsSubsystem::ApplyDisplaySettings(const FExtendedDisplaySett
 }
 
 
-void UExtendedSettingsSubsystem::ApplySettings()
+void UEFSettingsSubsystem::ApplySettings()
 {
 	ApplyGameplaySettings(TemporaryGameplaySettings);
 	ApplyAudioSettings(TemporaryAudioSettings);
@@ -425,7 +425,7 @@ void UExtendedSettingsSubsystem::ApplySettings()
 }
 
 
-void UExtendedSettingsSubsystem::RevertSettings()
+void UEFSettingsSubsystem::RevertSettings()
 {
 	TemporaryGameplaySettings = ExtendedSettings->GameplaySettings;
 	TemporaryAudioSettings = ExtendedSettings->AudioSettings;
@@ -438,14 +438,14 @@ void UExtendedSettingsSubsystem::RevertSettings()
 
 
 
-void UExtendedSettingsSubsystem::OnAudioDevicesChanged(const TArray<FExtendedAudioDeviceInfo>& AudioDevices)
+void UEFSettingsSubsystem::OnAudioDevicesChanged(const TArray<FEFAudioDeviceInfo>& AudioDevices)
 {
     // Update the audio device lists in settings
     UpdateAudioDeviceLists();
 }
 
 
-void UExtendedSettingsSubsystem::OnAudioDeviceDisconnected(const FExtendedAudioDeviceInfo& DisconnectedDevice)
+void UEFSettingsSubsystem::OnAudioDeviceDisconnected(const FEFAudioDeviceInfo& DisconnectedDevice)
 {
     // Update the audio device lists in settings
     UpdateAudioDeviceLists();
@@ -456,7 +456,7 @@ void UExtendedSettingsSubsystem::OnAudioDeviceDisconnected(const FExtendedAudioD
     {
         // Reset to default output device
         FExtendedAudioSettings CurrentSettings = ExtendedSettings->AudioSettings;
-        FExtendedAudioDeviceInfo DefaultDevice = ExtendedAudioDeviceManager->GetDefaultOutputDevice();
+        FEFAudioDeviceInfo DefaultDevice = EFAudioDeviceManager->GetDefaultOutputDevice();
         CurrentSettings.AudioOutputDeviceName = FName(*DefaultDevice.DeviceName);
         ApplyAudioSettings(CurrentSettings);
     }
@@ -465,16 +465,16 @@ void UExtendedSettingsSubsystem::OnAudioDeviceDisconnected(const FExtendedAudioD
     {
         // Reset to default input device
         FExtendedAudioSettings CurrentSettings = ExtendedSettings->AudioSettings;
-        FExtendedAudioDeviceInfo DefaultDevice = ExtendedAudioDeviceManager->GetDefaultInputDevice();
+        FEFAudioDeviceInfo DefaultDevice = EFAudioDeviceManager->GetDefaultInputDevice();
         CurrentSettings.AudioInputDeviceName = FName(*DefaultDevice.DeviceName);
         ApplyAudioSettings(CurrentSettings);
     }
 }
 
 
-void UExtendedSettingsSubsystem::UpdateAudioDeviceLists()
+void UEFSettingsSubsystem::UpdateAudioDeviceLists()
 {
-    if (!ExtendedAudioDeviceManager)
+    if (!EFAudioDeviceManager)
     {
         return;
     }
@@ -483,19 +483,19 @@ void UExtendedSettingsSubsystem::UpdateAudioDeviceLists()
     FExtendedAudioSettings CurrentSettings = ExtendedSettings->AudioSettings;
     
     // Update output devices list
-    TArray<FExtendedAudioDeviceInfo> OutputDevices = ExtendedAudioDeviceManager->GetOutputDevices();
+    TArray<FEFAudioDeviceInfo> OutputDevices = EFAudioDeviceManager->GetOutputDevices();
     CurrentSettings.AudioOutputDevices.Empty();
     
-    for (const FExtendedAudioDeviceInfo& Device : OutputDevices)
+    for (const FEFAudioDeviceInfo& Device : OutputDevices)
     {
         CurrentSettings.AudioOutputDevices.Add(FName(*Device.DeviceName));
     }
     
     // Update input devices list
-    TArray<FExtendedAudioDeviceInfo> InputDevices = ExtendedAudioDeviceManager->GetInputDevices();
+    TArray<FEFAudioDeviceInfo> InputDevices = EFAudioDeviceManager->GetInputDevices();
     CurrentSettings.AudioInputDevices.Empty();
     
-    for (const FExtendedAudioDeviceInfo& Device : InputDevices)
+    for (const FEFAudioDeviceInfo& Device : InputDevices)
     {
         CurrentSettings.AudioInputDevices.Add(FName(*Device.DeviceName));
     }
@@ -503,14 +503,14 @@ void UExtendedSettingsSubsystem::UpdateAudioDeviceLists()
     // If no output device is selected, set to default
     if (CurrentSettings.AudioOutputDeviceName.IsNone() && OutputDevices.Num() > 0)
     {
-        FExtendedAudioDeviceInfo DefaultDevice = ExtendedAudioDeviceManager->GetDefaultOutputDevice();
+        FEFAudioDeviceInfo DefaultDevice = EFAudioDeviceManager->GetDefaultOutputDevice();
         CurrentSettings.AudioOutputDeviceName = FName(*DefaultDevice.DeviceName);
     }
     
     // If no input device is selected, set to default
     if (CurrentSettings.AudioInputDeviceName.IsNone() && InputDevices.Num() > 0)
     {
-        FExtendedAudioDeviceInfo DefaultDevice = ExtendedAudioDeviceManager->GetDefaultInputDevice();
+        FEFAudioDeviceInfo DefaultDevice = EFAudioDeviceManager->GetDefaultInputDevice();
         CurrentSettings.AudioInputDeviceName = FName(*DefaultDevice.DeviceName);
     }
     
@@ -521,7 +521,7 @@ void UExtendedSettingsSubsystem::UpdateAudioDeviceLists()
 }
 
 
-void UExtendedSettingsSubsystem::UpdateScreenResolutionList()
+void UEFSettingsSubsystem::UpdateScreenResolutionList()
 {
     // Get current display settings
     FExtendedDisplaySettings CurrentSettings = ExtendedSettings->DisplaySettings;
@@ -531,11 +531,11 @@ void UExtendedSettingsSubsystem::UpdateScreenResolutionList()
     
     // Get the current monitor's resolution (the one the game window is on)
     int32 CurrentMonitorWidth, CurrentMonitorHeight;
-    UExtendedMonitorLibrary::GetCurrentMonitorResolution(CurrentMonitorWidth, CurrentMonitorHeight);
+    UEFMonitorLibrary::GetCurrentMonitorResolution(CurrentMonitorWidth, CurrentMonitorHeight);
     FIntPoint CurrentMonitorResolution(CurrentMonitorWidth, CurrentMonitorHeight);
     
     // Get all supported resolutions for the current monitor
-    TArray<FIntPoint> SupportedResolutions = UExtendedMonitorLibrary::GetCurrentMonitorSupportedResolutions();
+    TArray<FIntPoint> SupportedResolutions = UEFMonitorLibrary::GetCurrentMonitorSupportedResolutions();
     
     // Add all supported resolutions to the list
     for (const FIntPoint& Resolution : SupportedResolutions)

@@ -5,7 +5,7 @@
 #include "CoreMinimal.h"
 #include "GameplayTagContainer.h"
 #include "UObject/Object.h"
-#include "ExtendedSettingsData.generated.h"
+#include "EFSettingsData.generated.h"
 
 
 USTRUCT(Blueprintable, BlueprintType)

@@ -3,19 +3,19 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Data/ExtendedSettingsData.h"
+#include "Data/EFSettingsData.h"
 #include "Subsystems/GameInstanceSubsystem.h"
-#include "ExtendedSettingsSubsystem.generated.h"
+#include "EFSettingsSubsystem.generated.h"
 
 class USoundMix;
-class UExtendedAudioDeviceManager;
-struct FExtendedAudioDeviceInfo;
+class UEFAudioDeviceManager;
+struct FEFAudioDeviceInfo;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnExtendedSettingsChanged);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnExtendedSettingsApplied);
 
 UCLASS(Config=GameUserSettings, ProjectUserConfig)
-class UNREALEXTENDEDFRAMEWORK_API UExtendedSettingsDeveloperSettings : public UDeveloperSettings
+class UNREALEXTENDEDFRAMEWORK_API UEFDeveloperSettings : public UDeveloperSettings
 {
 	GENERATED_BODY()
 public:
@@ -50,7 +50,7 @@ public:
 
 
 UCLASS(Config=Game, DefaultConfig)
-class UNREALEXTENDEDFRAMEWORK_API UExtendedAudioDeveloperSettings : public UDeveloperSettings
+class UNREALEXTENDEDFRAMEWORK_API UEFAudioDeveloperSettings : public UDeveloperSettings
 {
 	GENERATED_BODY()
 public:
@@ -72,7 +72,7 @@ public:
 
 
 UCLASS()
-class UNREALEXTENDEDFRAMEWORK_API UExtendedSettingsSubsystem : public UGameInstanceSubsystem
+class UNREALEXTENDEDFRAMEWORK_API UEFSettingsSubsystem : public UGameInstanceSubsystem
 {
 	GENERATED_BODY()
 
@@ -81,7 +81,7 @@ public:
     virtual void Deinitialize() override;
 
     UFUNCTION(BlueprintPure, Category = "Extended Settings")
-    UExtendedAudioDeviceManager* GetAudioDeviceManager() const { return ExtendedAudioDeviceManager; }
+    UEFAudioDeviceManager* GetAudioDeviceManager() const { return EFAudioDeviceManager; }
 
 	UFUNCTION(BlueprintPure, Category = "Extended Settings")
 	FExtendedGameplaySettings GetGameplaySettings() const	{ return TemporaryGameplaySettings;	}
@@ -96,7 +96,7 @@ public:
 	FExtendedDisplaySettings GetDisplaySettings() const { return TemporaryDisplaySettings; }
 
 	UFUNCTION(BlueprintPure, Category = "Extended Settings")
-	UExtendedSettingsDeveloperSettings* GetExtendedSettings() const	{ return ExtendedSettings;	}
+	UEFDeveloperSettings* GetExtendedSettings() const	{ return ExtendedSettings;	}
 
 	UFUNCTION(BlueprintCallable, Category = "Extended Settings")
 	void SetGameplaySettings(const FExtendedGameplaySettings& GameplaySettings);
@@ -139,10 +139,10 @@ public:
 
     // Audio device event handlers
     UFUNCTION()
-    void OnAudioDevicesChanged(const TArray<FExtendedAudioDeviceInfo>& AudioDevices);
+    void OnAudioDevicesChanged(const TArray<FEFAudioDeviceInfo>& AudioDevices);
     
     UFUNCTION()
-    void OnAudioDeviceDisconnected(const FExtendedAudioDeviceInfo& DisconnectedDevice);
+    void OnAudioDeviceDisconnected(const FEFAudioDeviceInfo& DisconnectedDevice);
     
     // Update audio device lists in settings
     UFUNCTION(BlueprintCallable, Category = "Extended Settings")
@@ -154,10 +154,10 @@ public:
 
 protected:
 	UPROPERTY()
-	UExtendedSettingsDeveloperSettings* ExtendedSettings;
+	UEFDeveloperSettings* ExtendedSettings;
 
 	UPROPERTY()
-	UExtendedAudioDeveloperSettings* AudioMixer;
+	UEFAudioDeveloperSettings* AudioMixer;
 
 	// Store temporary settings for applying
 	FExtendedGameplaySettings TemporaryGameplaySettings;
@@ -170,7 +170,7 @@ protected:
 	virtual void PostInitProperties() override;
 private:
 	UPROPERTY()
-	UExtendedAudioDeviceManager* ExtendedAudioDeviceManager;
+	UEFAudioDeviceManager* EFAudioDeviceManager;
 
 public:
 	UPROPERTY( BlueprintAssignable, Category = "Extended Settings")

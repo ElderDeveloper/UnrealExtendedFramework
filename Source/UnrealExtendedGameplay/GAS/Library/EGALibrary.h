@@ -18,19 +18,14 @@ class UNREALEXTENDEDGAMEPLAY_API UEGALibrary : public UObject
 
 		public:
 
-	/** Returns true if this is being run from an editor preview */
-	UFUNCTION(BlueprintPure, Category = Loading)
-	static bool IsInEditor();
+
 
 
 	UFUNCTION(BlueprintCallable, Category = "GAS|Abilities|GameplayTags")
 	static UAbilitySystemComponent* GetAbilitySystemComponentFromActor(AActor* Actor);
 
-	   //Returns the project version set in the 'Project Settings' > 'Description' section of the editor
-    UFUNCTION(BlueprintPure, Category = "Project")
-    static FString GetProjectVersion();
 
-	#pragma region Gameplay Tags Functions
+	
     /** Gameplay Tags */
 
     /**

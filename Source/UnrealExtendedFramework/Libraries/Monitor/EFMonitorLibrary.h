@@ -88,5 +88,34 @@ public:
 
 	UFUNCTION(BlueprintPure, meta = (DisplayName = "Get Resolution Aspect Ratio", Keywords = "Display Device Resolution Aspect Ratio"), Category = "Display Info")
 	static UPARAM(DisplayName = "AspectRatio") EMonitorAspectRatio GetResolutionAspectRatio(FIntPoint Resolution, float& Ratio, bool& IsWide);
-	
+
+
+	/**
+ * Gets the index of the monitor that the game window is currently on
+ * @return The index of the monitor, or 0 if the primary monitor is used or detection fails
+ */
+	UFUNCTION(BlueprintCallable, Category = "Extended|Monitor")
+	static int32 GetGameWindowMonitorIndex();
+
+	/**
+	 * Gets the resolution of the monitor that the game window is currently on
+	 * @param OutWidth The width of the monitor
+	 * @param OutHeight The height of the monitor
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Extended|Monitor")
+	static void GetCurrentMonitorResolution(int32& OutWidth, int32& OutHeight);
+
+	/**
+	 * Gets all available resolutions for the monitor that the game window is currently on
+	 * @return Array of available resolutions as FIntPoint
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Extended|Monitor")
+	static TArray<FIntPoint> GetCurrentMonitorSupportedResolutions();
+
+	/**
+	 * Checks if the game window is on the primary monitor
+	 * @return True if the game is on the primary monitor, false otherwise
+	 */
+	UFUNCTION(BlueprintPure, Category = "Extended|Monitor")
+	static bool IsGameOnPrimaryMonitor();
 };
