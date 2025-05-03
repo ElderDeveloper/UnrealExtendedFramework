@@ -39,8 +39,7 @@ void UEFSettingsSubsystem::SetDisplaySettings(const FExtendedDisplaySettings& Di
 void UEFSettingsSubsystem::FindAndApplyBestSettings()
 {
 	ExtendedSettings->bCheckedBestSettings = true;
-	ExtendedSettings->SaveExtendedSettings();
-
+	
 	// Get system information
 	const bool bIsHighEndGPU = FPlatformMisc::NumberOfCores() >= 4;
 	const uint32 SystemMemoryMB = FPlatformMemory::GetPhysicalGBRam() * 1024;
@@ -92,20 +91,10 @@ void UEFSettingsSubsystem::FindAndApplyBestSettings()
 
 	// Configure gameplay settings with reasonable defaults
 	FExtendedGameplaySettings GameplaySettings = ExtendedSettings->GameplaySettings;
-	GameplaySettings.FieldOfView = 90.0f;
-	GameplaySettings.bHeadBob = true;
-	GameplaySettings.bCrosshair = true;
-	GameplaySettings.bFPSCounter = false;
 	GameplaySettings.bDepthOfField = bIsHighEndSystem;
 
 	// Configure audio settings with reasonable defaults
 	FExtendedAudioSettings AudioSettings = ExtendedSettings->AudioSettings;
-	AudioSettings.MasterVolume = 1.0f;
-	AudioSettings.MusicVolume = 0.8f;
-	AudioSettings.EffectsVolume = 1.0f;
-	AudioSettings.VoiceChatVolume = 1.0f;
-	AudioSettings.bVoiceChatEnabled = true;
-	AudioSettings.bMuteJumpScare = false;
 
 	// Apply all settings
 	ExtendedSettings->GraphicsSettings = GraphicsSettings;
@@ -114,16 +103,14 @@ void UEFSettingsSubsystem::FindAndApplyBestSettings()
 	ExtendedSettings->AudioSettings = AudioSettings;
 	
 	// Save the configured settings
-	ExtendedSettings->SaveExtendedSettings();
+	SaveExtendedSettings();
 }
 
 
 void UEFSettingsSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
 	Super::Initialize(Collection);
-
-	//ExtendedSettings = GetMutableDefault<UEFDeveloperSettings>();
-
+	
 	EFAudioDeviceManager = NewObject<UEFAudioDeviceManager>(this);
 	EFAudioDeviceManager->Initialize();
     
@@ -156,9 +143,20 @@ void UEFSettingsSubsystem::Deinitialize()
 {
 	if (EFAudioDeviceManager)
 	{
+		// Unbind from audio device change events
+		EFAudioDeviceManager->OnAudioDevicesChanged.RemoveDynamic(this, &UEFSettingsSubsystem::OnAudioDevicesChanged);
+		EFAudioDeviceManager->OnDeviceDisconnected.RemoveDynamic(this, &UEFSettingsSubsystem::OnAudioDeviceDisconnected);
+		
 		EFAudioDeviceManager->ConditionalBeginDestroy();
 		EFAudioDeviceManager = nullptr;
 	}
+
+	// Reset all timers
+	GetWorld()->GetTimerManager().ClearAllTimersForObject(this);
+
+	// Save settings before deinitializing
+	SaveExtendedSettings();
+	
 	Super::Deinitialize();
 }
 
@@ -234,13 +232,22 @@ void UEFSettingsSubsystem::ApplyAudioSettings(const FExtendedAudioSettings& Sett
         }
     }
 
+	AudioMixer = GetMutableDefault<UEFAudioDeveloperSettings>();
+
     // Apply sound mix settings
-    if (GetWorld() && AudioMixer->GlobalSoundMix)
+    if (GetWorld() && AudioMixer->GlobalSoundMix.IsValid())
     {
-    	UGameplayStatics::SetSoundMixClassOverride(GetWorld(), AudioMixer->GlobalSoundMix.LoadSynchronous(),AudioMixer->MasterSoundClass.LoadSynchronous() , Settings.MasterVolume, 1.0f, 0.0f);
-    	UGameplayStatics::SetSoundMixClassOverride(GetWorld(), AudioMixer->GlobalSoundMix.LoadSynchronous(), AudioMixer->MusicSoundClass.LoadSynchronous(), Settings.MusicVolume, 1.0f, 0.0f);
-    	UGameplayStatics::SetSoundMixClassOverride(GetWorld(), AudioMixer->GlobalSoundMix.LoadSynchronous(), AudioMixer->EffectsSoundClass.LoadSynchronous(), Settings.EffectsVolume, 1.0f, 0.0f);
-    	UGameplayStatics::SetSoundMixClassOverride(GetWorld(), AudioMixer->GlobalSoundMix.LoadSynchronous(), AudioMixer->VoiceSoundClass.LoadSynchronous(), Settings.VoiceChatVolume, 1.0f, 0.0f);
+	    if (AudioMixer->MasterSoundClass.IsValid())
+	    	UGameplayStatics::SetSoundMixClassOverride(GetWorld(), AudioMixer->GlobalSoundMix.LoadSynchronous(),AudioMixer->MasterSoundClass.LoadSynchronous() , Settings.MasterVolume, 1.0f, 0.0f);
+
+    	if (AudioMixer->MusicSoundClass.IsValid())
+    		UGameplayStatics::SetSoundMixClassOverride(GetWorld(), AudioMixer->GlobalSoundMix.LoadSynchronous(), AudioMixer->MusicSoundClass.LoadSynchronous(), Settings.MusicVolume, 1.0f, 0.0f);
+
+    	if (AudioMixer->EffectsSoundClass.IsValid())
+    		UGameplayStatics::SetSoundMixClassOverride(GetWorld(), AudioMixer->GlobalSoundMix.LoadSynchronous(), AudioMixer->EffectsSoundClass.LoadSynchronous(), Settings.EffectsVolume, 1.0f, 0.0f);
+
+		if (AudioMixer->VoiceSoundClass.IsValid())
+    		UGameplayStatics::SetSoundMixClassOverride(GetWorld(), AudioMixer->GlobalSoundMix.LoadSynchronous(), AudioMixer->VoiceSoundClass.LoadSynchronous(), Settings.VoiceChatVolume, 1.0f, 0.0f);
     }
 
     // Store and save settings
@@ -297,117 +304,121 @@ void UEFSettingsSubsystem::ApplyDisplaySettings(const FExtendedDisplaySettings& 
 	GEngine->Exec(GetWorld(), *VSync);
 
 	// Apply frame rate limit
-	if (Settings.FrameRateLimit == "Unlimited")
-		{
-			FString FrameRateLimit = FString::Printf(TEXT("t.MaxFPS 0"));
-			GEngine->Exec(GetWorld(), *FrameRateLimit);
-		}
-	else
-		{
-			FString FrameRateLimit = FString::Printf(TEXT("t.MaxFPS %d"), FCString::Atoi(*Settings.FrameRateLimit.ToString()));
-			GEngine->Exec(GetWorld(), *FrameRateLimit);
-		}
+	FString FrameRateLimit = FString::Printf(TEXT("t.MaxFPS %d"), Settings.FrameRateLimit == "Unlimited" ?
+		0 : FCString::Atoi(*Settings.FrameRateLimit.ToString()));
+	GEngine->Exec(GetWorld(), *FrameRateLimit);
 
+	
 	// Get the current monitor's resolution (the one the game window is on)
 	int32 CurrentMonitorWidth, CurrentMonitorHeight;
 	UEFMonitorLibrary::GetCurrentMonitorResolution(CurrentMonitorWidth, CurrentMonitorHeight);
-	FIntPoint CurrentMonitorResolution(CurrentMonitorWidth, CurrentMonitorHeight);
+	FString NativeResStr = FString::Printf(TEXT("%dx%d"), CurrentMonitorWidth, CurrentMonitorHeight);
+
+	FName SelectedResolution = Settings.ScreenResolution;
+
+	// If no resolution is set, use the current monitor's native resolution
+	if (SelectedResolution.IsNone()) SelectedResolution = FName(*NativeResStr);
 
 	// Apply screen resolution
-	if (!Settings.ScreenResolution.IsNone())
+	FString ResolutionStr = SelectedResolution.ToString();
+	FString WidthStr, HeightStr;
+	if (ResolutionStr.Split(TEXT("x"), &WidthStr, &HeightStr))
 	{
-		FString ResolutionStr = Settings.ScreenResolution.ToString();
-		FString WidthStr, HeightStr;
-		if (ResolutionStr.Split(TEXT("x"), &WidthStr, &HeightStr))
-		{
-			int32 Width = FCString::Atoi(*WidthStr);
-			int32 Height = FCString::Atoi(*HeightStr);
+		int32 Width = FCString::Atoi(*WidthStr);
+		int32 Height = FCString::Atoi(*HeightStr);
 				
-			// Check if the requested resolution exceeds the current monitor's capabilities
-			if (Width > CurrentMonitorWidth || Height > CurrentMonitorHeight)
-			{
-				UE_LOG(LogTemp, Warning, TEXT("Requested resolution (%dx%d) exceeds current monitor capabilities (%dx%d). Adjusting to current monitor resolution."),
-				Width, Height, CurrentMonitorWidth, CurrentMonitorHeight);
+		// Check if the requested resolution exceeds the current monitor's capabilities
+		if (Width > CurrentMonitorWidth || Height > CurrentMonitorHeight)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("Requested resolution (%dx%d) exceeds current monitor capabilities (%dx%d). Adjusting to current monitor resolution."),
+			Width, Height, CurrentMonitorWidth, CurrentMonitorHeight);
 					
-				// Adjust to current monitor resolution
-				Width = CurrentMonitorWidth;
-				Height = CurrentMonitorHeight;
-			}
-				
-			if (Width > 0 && Height > 0)
-			{
-				// Get the game user settings
-				if (GEngine && GEngine->GameUserSettings)
-				{
-					UGameUserSettings* UserSettings = GEngine->GameUserSettings;
-					// Set the resolution
-					UserSettings->SetScreenResolution(FIntPoint(Width, Height));
-					UserSettings->ApplyResolutionSettings(false);
-				}
-			}
+			// Adjust to current monitor resolution
+			Width = CurrentMonitorWidth;
+			Height = CurrentMonitorHeight;
 		}
-
-		// Apply display mode
-		if (!Settings.DisplayMode.IsNone())
+				
+		if (Width > 0 && Height > 0)
 		{
-			EWindowMode::Type WindowMode = EWindowMode::Fullscreen; // Default to fullscreen
-			
-			if (Settings.DisplayMode == "Windowed")
-			{
-				WindowMode = EWindowMode::Windowed;
-				GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Red, TEXT("Windowed"));
-			}
-			else if (Settings.DisplayMode == "Windowed Fullscreen")
-			{
-				WindowMode = EWindowMode::WindowedFullscreen;
-				GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Red, TEXT("Windowed Fullscreen"));
-			}
-			else if (Settings.DisplayMode == "Fullscreen")
-			{
-				WindowMode = EWindowMode::Fullscreen;
-			}
-			
 			// Get the game user settings
 			if (GEngine && GEngine->GameUserSettings)
 			{
 				UGameUserSettings* UserSettings = GEngine->GameUserSettings;
-				
-				// Set the window mode
-				UserSettings->SetFullscreenMode(WindowMode);
-				
-				// Apply the settings
+				// Set the resolution
+				UserSettings->SetScreenResolution(FIntPoint(Width, Height));
 				UserSettings->ApplyResolutionSettings(false);
 			}
 		}
-
-		// Apply anti-aliasing mode
-		if (!Settings.AntiAliasingMode.IsNone())
+	}
+	
+	// Apply display mode
+	if (!Settings.DisplayMode.IsNone())
+	{
+		EWindowMode::Type WindowMode = EWindowMode::Fullscreen; // Default to fullscreen
+			
+		if (Settings.DisplayMode == "Windowed")
 		{
-			FString AACommand;
-			
-			if (Settings.AntiAliasingMode == "None")
+			WindowMode = EWindowMode::Windowed;
+		}
+		else if (Settings.DisplayMode == "Windowed Fullscreen")
+		{
+			WindowMode = EWindowMode::WindowedFullscreen;
+
+		}
+		else if (Settings.DisplayMode == "Fullscreen")
+		{
+			WindowMode = EWindowMode::Fullscreen;
+
+			if (Settings.ScreenResolution.ToString() != NativeResStr)
 			{
-				AACommand = TEXT("r.DefaultFeature.AntiAliasing 0"); // No anti-aliasing
-			}
-			else if (Settings.AntiAliasingMode == "FXAA")
-			{
-				AACommand = TEXT("r.DefaultFeature.AntiAliasing 1"); // FXAA
-			}
-			else if (Settings.AntiAliasingMode == "TAA")
-			{
-				AACommand = TEXT("r.DefaultFeature.AntiAliasing 2"); // Temporal AA
-			}
-			else if (Settings.AntiAliasingMode == "MSAA")
-			{
-				AACommand = TEXT("r.DefaultFeature.AntiAliasing 3"); // MSAA
-			}
-			
-			if (!AACommand.IsEmpty())
-			{
-				GEngine->Exec(GetWorld(), *AACommand);
+				// Optionally: warn or auto-set
+				GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Yellow, TEXT("For exclusive fullscreen, using native monitor resolution for proper stretching."));
+				if (GEngine && GEngine->GameUserSettings)
+				{
+					GEngine->GameUserSettings->SetScreenResolution(FIntPoint(CurrentMonitorWidth, CurrentMonitorHeight));
+					GEngine->GameUserSettings->ApplyResolutionSettings(false);
+				}
 			}
 		}
+			
+		// Get the game user settings
+		if (GEngine && GEngine->GameUserSettings)
+		{
+			UGameUserSettings* UserSettings = GEngine->GameUserSettings;
+			UserSettings->SetFullscreenMode(WindowMode);
+			UserSettings->ApplyResolutionSettings(false);
+		}
 	}
+
+
+	// Apply anti-aliasing mode
+	if (!Settings.AntiAliasingMode.IsNone())
+	{
+		FString AACommand;
+
+		if (Settings.AntiAliasingMode == FName("None"))
+		{
+			AACommand = TEXT("r.DefaultFeature.AntiAliasing 0"); // No anti-aliasing
+		}
+		else if (Settings.AntiAliasingMode == FName("FXAA"))
+		{
+			AACommand = TEXT("r.DefaultFeature.AntiAliasing 1"); // FXAA
+		}
+		else if (Settings.AntiAliasingMode == FName("TAA"))
+		{
+			AACommand = TEXT("r.DefaultFeature.AntiAliasing 2"); // Temporal AA
+		}
+		else if (Settings.AntiAliasingMode == FName("MSAA"))
+		{
+			AACommand = TEXT("r.DefaultFeature.AntiAliasing 3"); // MSAA
+		}
+		
+		if (!AACommand.IsEmpty())
+		{
+			GEngine->Exec(GetWorld(), *AACommand);
+		}
+	}
+	
 
 	// Store and save settings
 	ExtendedSettings->DisplaySettings = Settings;
@@ -517,68 +528,65 @@ void UEFSettingsSubsystem::UpdateAudioDeviceLists()
     // Update both temporary and saved settings
     TemporaryAudioSettings = CurrentSettings;
     ExtendedSettings->AudioSettings = CurrentSettings;
-    ExtendedSettings->SaveExtendedSettings();
+    SaveExtendedSettings();
 }
 
 
 void UEFSettingsSubsystem::UpdateScreenResolutionList()
 {
-    // Get current display settings
     FExtendedDisplaySettings CurrentSettings = ExtendedSettings->DisplaySettings;
-    
-    // Clear existing resolutions
     CurrentSettings.ScreenResolutions.Empty();
-    
-    // Get the current monitor's resolution (the one the game window is on)
+
     int32 CurrentMonitorWidth, CurrentMonitorHeight;
     UEFMonitorLibrary::GetCurrentMonitorResolution(CurrentMonitorWidth, CurrentMonitorHeight);
     FIntPoint CurrentMonitorResolution(CurrentMonitorWidth, CurrentMonitorHeight);
-    
-    // Get all supported resolutions for the current monitor
+
     TArray<FIntPoint> SupportedResolutions = UEFMonitorLibrary::GetCurrentMonitorSupportedResolutions();
-    
-    // Add all supported resolutions to the list
+
+    // Acceptable aspect ratios (width / height)
+    TArray<float> AllowedAspectRatios = { 16.0f / 9.0f, 16.0f / 10.0f, 4.0f / 3.0f };
+
     for (const FIntPoint& Resolution : SupportedResolutions)
     {
-        FString ResolutionStr = FString::Printf(TEXT("%dx%d"), Resolution.X, Resolution.Y);
-        CurrentSettings.ScreenResolutions.Add(FName(*ResolutionStr));
-    }
-    
-    if (CurrentSettings.ScreenResolutions.Num() > 0)
-    {
-        // If current resolution is not in the list or not set, find the best match for current monitor
-        if (CurrentSettings.ScreenResolution.IsNone() ||
-            !CurrentSettings.ScreenResolutions.Contains(CurrentSettings.ScreenResolution))
+        if (Resolution.X > CurrentMonitorWidth || Resolution.Y > CurrentMonitorHeight)
+            continue; // Skip resolutions larger than the monitor
+
+        float Aspect = float(Resolution.X) / float(Resolution.Y);
+        bool bAspectOk = false;
+        for (float Allowed : AllowedAspectRatios)
         {
-            // Try to find a resolution that matches the current monitor's native resolution
-            FString CurrentMonitorResStr = FString::Printf(TEXT("%dx%d"), CurrentMonitorResolution.X, CurrentMonitorResolution.Y);
-            FName CurrentMonitorResFName = FName(*CurrentMonitorResStr);
-            
-            if (CurrentSettings.ScreenResolutions.Contains(CurrentMonitorResFName))
+            if (FMath::Abs(Aspect - Allowed) < 0.05f)
             {
-                // Use the current monitor's native resolution if available
-                CurrentSettings.ScreenResolution = CurrentMonitorResFName;
-            }
-            else
-            {
-                // Otherwise use the highest available resolution that fits the display
-                CurrentSettings.ScreenResolution = CurrentSettings.ScreenResolutions.Last();
+                bAspectOk = true;
+                break;
             }
         }
+        if (!bAspectOk)
+            continue; // Skip unusual aspect ratios
+
+        FString ResolutionStr = FString::Printf(TEXT("%dx%d"), Resolution.X, Resolution.Y);
+        CurrentSettings.ScreenResolutions.AddUnique(FName(*ResolutionStr));
     }
-    else
+
+    // Fallback if none found
+    if (CurrentSettings.ScreenResolutions.Num() == 0)
     {
-        // Handle case where no resolutions are available
-        UE_LOG(LogTemp, Warning, TEXT("No supported resolutions found for the current monitor"));
-        
-        // Add a fallback resolution (1280x720 is generally safe)
         FString FallbackResolution = TEXT("1280x720");
         CurrentSettings.ScreenResolutions.Add(FName(*FallbackResolution));
         CurrentSettings.ScreenResolution = FName(*FallbackResolution);
     }
-    
-    // Update both temporary and saved settings
+    else
+    {
+        // Set to native or highest available
+        FString NativeResStr = FString::Printf(TEXT("%dx%d"), CurrentMonitorResolution.X, CurrentMonitorResolution.Y);
+        FName NativeResFName = FName(*NativeResStr);
+        if (CurrentSettings.ScreenResolutions.Contains(NativeResFName))
+            CurrentSettings.ScreenResolution = NativeResFName;
+        else
+            CurrentSettings.ScreenResolution = CurrentSettings.ScreenResolutions.Last();
+    }
+
     TemporaryDisplaySettings = CurrentSettings;
     ExtendedSettings->DisplaySettings = CurrentSettings;
-    ExtendedSettings->SaveExtendedSettings();
+    SaveExtendedSettings();
 }
