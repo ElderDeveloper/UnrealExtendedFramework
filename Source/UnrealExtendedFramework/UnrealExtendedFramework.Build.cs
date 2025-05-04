@@ -31,6 +31,7 @@ public class UnrealExtendedFramework : ModuleRules
 				"DeveloperSettings",
 				"Slate",
 				"SlateCore",
+				"ApplicationCore",
 				"UMG",
 				"AIModule",
 				"NavigationSystem",

@@ -63,7 +63,7 @@ class UNREALEXTENDEDFRAMEWORK_API UEFMonitorLibrary : public UBlueprintFunctionL
 public:
 	
 	UFUNCTION(BlueprintPure, meta = (DisplayName = "Get Monitor Info", Keywords = "Display Device Info Monitor"), Category = "Display Info")
-	static UPARAM(DisplayName = "DisplayInfo") FDisplayInfo GetMonitorInfo(int32 Index = 0);
+	static UPARAM(DisplayName = "DisplayInfo") FDisplayInfo GetMonitorInfoByIndex(const int32 Index = 0);
 
 	UFUNCTION(BlueprintPure, meta = (DisplayName = "Get Number Attached Monitors", Keywords = "Display Device Monitor"), Category = "Display Info")
 	static UPARAM(DisplayName = "Number") int32 GetNAttachedMonitors();

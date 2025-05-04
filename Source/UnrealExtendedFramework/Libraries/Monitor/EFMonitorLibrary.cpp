@@ -5,7 +5,7 @@
 #include "GenericPlatform/GenericApplication.h"
 #include "Kismet/KismetSystemLibrary.h"
 
-FDisplayInfo UEFMonitorLibrary::GetMonitorInfo(int32 Index)
+FDisplayInfo UEFMonitorLibrary::GetMonitorInfoByIndex(const int32 Index)
 {
 	FDisplayMetrics* DisplayMetrics;
 	DisplayMetrics = new(FDisplayMetrics);
