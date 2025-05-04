@@ -39,8 +39,11 @@ public:
     UEFAudioDeviceManager();
     
     // Initialize the audio device manager
-    UFUNCTION(BlueprintCallable, Category = "Audio|Devices")
+    UFUNCTION(BlueprintCallable, Category = "Audio")
     void Initialize();
+
+    UFUNCTION(BlueprintCallable, Category = "Audio")
+    void Deinitialize();
     
     // Get all available audio output devices
     UFUNCTION(BlueprintCallable, Category = "Audio|Devices")

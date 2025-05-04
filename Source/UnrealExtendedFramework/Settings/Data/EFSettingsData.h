@@ -191,7 +191,7 @@ struct FExtendedDisplaySettings
 	TArray<FName> DisplayModes = { "Windowed", "Fullscreen", "Windowed Fullscreen" };
 
 	UPROPERTY(EditAnywhere,Config, BlueprintReadWrite, Category = "Settings")
-	FName DisplayMode = "Fullscreen";
+	FName DisplayMode = "Windowed Fullscreen";
 
 	UPROPERTY(EditAnywhere,Config, BlueprintReadWrite, Category = "Settings")
 	bool VerticalSync = true;

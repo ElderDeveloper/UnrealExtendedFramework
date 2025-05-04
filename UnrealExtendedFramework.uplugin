@@ -32,11 +32,6 @@
 			"LoadingPhase": "Default"
 		},
 		{
-			"Name": "UnrealExtendedSteam",
-			"Type": "Runtime",
-			"LoadingPhase": "Default"
-		},
-		{
 			"Name": "UnrealExtendedBackend",
 			"Type": "Runtime",
 			"LoadingPhase": "Default"
@@ -64,10 +59,6 @@
 		},
 		{
 			"Name": "OnlineSubsystemNull",
-			"Enabled": true
-		},
-		{
-			"Name": "OnlineSubsystemSteam",
 			"Enabled": true
 		},
 		{

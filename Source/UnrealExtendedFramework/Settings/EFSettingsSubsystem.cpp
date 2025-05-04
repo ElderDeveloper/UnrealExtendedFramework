@@ -146,8 +146,7 @@ void UEFSettingsSubsystem::Deinitialize()
 		// Unbind from audio device change events
 		EFAudioDeviceManager->OnAudioDevicesChanged.RemoveDynamic(this, &UEFSettingsSubsystem::OnAudioDevicesChanged);
 		EFAudioDeviceManager->OnDeviceDisconnected.RemoveDynamic(this, &UEFSettingsSubsystem::OnAudioDeviceDisconnected);
-		
-		EFAudioDeviceManager->ConditionalBeginDestroy();
+		EFAudioDeviceManager->Deinitialize();
 		EFAudioDeviceManager = nullptr;
 	}
 

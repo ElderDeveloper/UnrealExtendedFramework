@@ -21,6 +21,14 @@ void UEFAudioDeviceManager::Initialize()
     StartDeviceMonitoring();
 }
 
+void UEFAudioDeviceManager::Deinitialize()
+{
+    // Reset all timers
+    GetWorld()->GetTimerManager().ClearAllTimersForObject(this);
+
+    ConditionalBeginDestroy();
+}
+
 void UEFAudioDeviceManager::RefreshDeviceList()
 {
     OutputDevices.Empty();

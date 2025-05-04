@@ -14,5 +14,5 @@ class UNREALEXTENDEDFRAMEWORK_API UEFPrintScreenLibrary : public UBlueprintFunct
 public:
 
 	UFUNCTION(BlueprintCallable, meta=(WorldContext = "WorldContextObject",DisplayName = "Print Zero String"), Category="Math|Library")
-	static void PrintZeroString(const UObject* WorldContextObject ,FString String = "" , float Time = 0 , FLinearColor Color = FLinearColor::Green);
+	static void PrintZeroString(const UObject* WorldContextObject ,FString String = "" , float Time = 0 , FLinearColor Color = FLinearColor::Green, const bool bPrintToLog = false);
 };

@@ -36,7 +36,6 @@ public class UnrealExtendedGameplay : ModuleRules
 				"Sockets",
 				"OnlineSubsystem",
 				"OnlineSubsystemUtils",
-				"OnlineSubsystemSteam",
 				"OnlineSubsystemNull",
 				"Niagara",
 				"PhysicsCore",
