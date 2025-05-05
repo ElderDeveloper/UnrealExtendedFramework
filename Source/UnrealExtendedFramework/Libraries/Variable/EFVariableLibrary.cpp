@@ -91,4 +91,58 @@ FString UEFVariableLibrary::GetScreenResolutionAsString(UGameUserSettings*& User
 }
 
 
+FGameplayTag UEFVariableLibrary::GetGameplayTagFromName(const FName& Name)
+{
+	if (Name.IsNone())
+	{
+		return FGameplayTag::EmptyTag;
+	}
+	
+	FGameplayTag Tag = FGameplayTag::RequestGameplayTag(Name);
+	if (Tag.IsValid())
+	{
+		return Tag;
+	}
+	
+	UE_LOG(LogTemp, Warning, TEXT("GetGameplayTagFromFName() Invalid tag: %s"), *Name.ToString());
+	return FGameplayTag::EmptyTag;
+}
+
+
+FGameplayTag UEFVariableLibrary::GetGameplayTagFromString(const FString& Name)
+{
+	if (Name.IsEmpty())
+	{
+		return FGameplayTag::EmptyTag;
+	}
+	
+	FGameplayTag Tag = FGameplayTag::RequestGameplayTag(FName(*Name));
+	if (Tag.IsValid())
+	{
+		return Tag;
+	}
+	
+	UE_LOG(LogTemp, Warning, TEXT("GetGameplayTagFromString() Invalid tag: %s"), *Name);
+	return FGameplayTag::EmptyTag;
+}
+
+
+FGameplayTag UEFVariableLibrary::GetGameplayTagFromText(const FText& Name)
+{
+	if (Name.IsEmpty())
+	{
+		return FGameplayTag::EmptyTag;
+	}
+	
+	FGameplayTag Tag = FGameplayTag::RequestGameplayTag(FName(*Name.ToString()));
+	if (Tag.IsValid())
+	{
+		return Tag;
+	}
+	
+	UE_LOG(LogTemp, Warning, TEXT("GetGameplayTagFromText() Invalid tag: %s"), *Name.ToString());
+	return FGameplayTag::EmptyTag;
+}
+
+
 

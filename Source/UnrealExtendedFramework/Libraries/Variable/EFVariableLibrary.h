@@ -3,6 +3,8 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Kismet/BlueprintFunctionLibrary.h"
+#include "GameplayTagContainer.h"
 #include "EFVariableLibrary.generated.h"
 
 
@@ -77,7 +79,16 @@ public:
 
 	UFUNCTION(BlueprintPure ,Category = "GameModeSettings")
 	static FString GetScreenResolutionAsString(UGameUserSettings*& UserSettings , const FString& Separator = "x");
+
+
+	UFUNCTION(BlueprintPure, meta=(CompactNodeTitle="ToGameplayTag"), Category = "VariableLibrary|GameplayTag")
+	static FGameplayTag GetGameplayTagFromName(const FName& Name);
 	
+	UFUNCTION(BlueprintPure, meta=(CompactNodeTitle="ToGameplayTag") ,Category = "VariableLibrary|GameplayTag")
+	static FGameplayTag GetGameplayTagFromString(const FString& Name);
+	
+	UFUNCTION(BlueprintPure, meta=(CompactNodeTitle="ToGameplayTag") ,Category = "VariableLibrary|GameplayTag")
+	static FGameplayTag GetGameplayTagFromText(const FText& Name);
 
 };
 
