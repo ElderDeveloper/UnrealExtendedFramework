@@ -111,7 +111,7 @@ public:
 	void SetDisplaySettings(const FExtendedDisplaySettings& DisplaySettings);
 
 	UFUNCTION(BlueprintCallable, Category = "Extended Settings")
-	void SaveExtendedSettings() const	{ ExtendedSettings->TryUpdateDefaultConfigFile(); OnExtendedSettingsApplied.Broadcast();	}
+	void SaveExtendedSettings() const;
 
 	UFUNCTION(BlueprintCallable, Category = "Extended Settings")
 	void FindAndApplyBestSettings();
@@ -150,7 +150,7 @@ public:
     
     // Update screen resolution list in settings
     UFUNCTION(BlueprintCallable, Category = "Extended Settings")
-    void UpdateScreenResolutionList();
+    void UpdateScreenResolutionList(bool bForceBestResolution = false);
 
 protected:
 	UPROPERTY()

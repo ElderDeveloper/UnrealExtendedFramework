@@ -36,6 +36,22 @@ void UEFSettingsSubsystem::SetDisplaySettings(const FExtendedDisplaySettings& Di
 }
 
 
+void UEFSettingsSubsystem::SaveExtendedSettings() const
+{
+	// Save the config directly
+	ExtendedSettings->SaveConfig();
+    
+	// Also save to the game user settings
+	if (GEngine && GEngine->GameUserSettings)
+	{
+		GEngine->GameUserSettings->SaveConfig();
+		GEngine->GameUserSettings->SaveSettings();
+	}
+    
+	OnExtendedSettingsApplied.Broadcast();
+}
+
+
 void UEFSettingsSubsystem::FindAndApplyBestSettings()
 {
 	ExtendedSettings->bCheckedBestSettings = true;
@@ -68,7 +84,7 @@ void UEFSettingsSubsystem::FindAndApplyBestSettings()
 	FIntPoint CurrentMonitorResolution(CurrentMonitorWidth, CurrentMonitorHeight);
 	
 	// Update screen resolution list to ensure we have valid options
-	UpdateScreenResolutionList();
+	UpdateScreenResolutionList(true);
 	
 	// Set the initial resolution to match the current monitor if possible
 	if (DisplaySettings.ScreenResolutions.Num() > 0)
@@ -353,18 +369,17 @@ void UEFSettingsSubsystem::ApplyDisplaySettings(const FExtendedDisplaySettings& 
 	// Apply display mode
 	if (!Settings.DisplayMode.IsNone())
 	{
-		EWindowMode::Type WindowMode = EWindowMode::Fullscreen; // Default to fullscreen
+		EWindowMode::Type WindowMode = EWindowMode::Type::WindowedFullscreen; // Default to WindowedFullscreen
 			
-		if (Settings.DisplayMode == "Windowed")
+		if (Settings.DisplayMode.ToString() == "Windowed")
 		{
 			WindowMode = EWindowMode::Windowed;
 		}
-		else if (Settings.DisplayMode == "Windowed Fullscreen")
+		else if (Settings.DisplayMode.ToString() == "Windowed Fullscreen")
 		{
 			WindowMode = EWindowMode::WindowedFullscreen;
-
 		}
-		else if (Settings.DisplayMode == "Fullscreen")
+		else if (Settings.DisplayMode.ToString() == "Fullscreen")
 		{
 			WindowMode = EWindowMode::Fullscreen;
 
@@ -531,7 +546,7 @@ void UEFSettingsSubsystem::UpdateAudioDeviceLists()
 }
 
 
-void UEFSettingsSubsystem::UpdateScreenResolutionList()
+void UEFSettingsSubsystem::UpdateScreenResolutionList(bool bForceBestResolution)
 {
     FExtendedDisplaySettings CurrentSettings = ExtendedSettings->DisplaySettings;
     CurrentSettings.ScreenResolutions.Empty();
@@ -579,10 +594,21 @@ void UEFSettingsSubsystem::UpdateScreenResolutionList()
         // Set to native or highest available
         FString NativeResStr = FString::Printf(TEXT("%dx%d"), CurrentMonitorResolution.X, CurrentMonitorResolution.Y);
         FName NativeResFName = FName(*NativeResStr);
-        if (CurrentSettings.ScreenResolutions.Contains(NativeResFName))
-            CurrentSettings.ScreenResolution = NativeResFName;
-        else
-            CurrentSettings.ScreenResolution = CurrentSettings.ScreenResolutions.Last();
+
+    	if (!CurrentSettings.ScreenResolutions.Contains(CurrentSettings.ScreenResolution))
+    	{
+    		if (CurrentSettings.ScreenResolutions.Contains(NativeResFName))
+    			CurrentSettings.ScreenResolution = NativeResFName;
+    		else
+    			CurrentSettings.ScreenResolution = CurrentSettings.ScreenResolutions.Last();
+    	}
+    	else if (bForceBestResolution)
+	    {
+    		if (CurrentSettings.ScreenResolutions.Contains(NativeResFName))
+    			CurrentSettings.ScreenResolution = NativeResFName;
+    		else
+    			CurrentSettings.ScreenResolution = CurrentSettings.ScreenResolutions.Last();
+	    }
     }
 
     TemporaryDisplaySettings = CurrentSettings;

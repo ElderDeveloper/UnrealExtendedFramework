@@ -90,5 +90,8 @@ public:
 	UFUNCTION(BlueprintPure, meta=(CompactNodeTitle="ToGameplayTag") ,Category = "VariableLibrary|GameplayTag")
 	static FGameplayTag GetGameplayTagFromText(const FText& Name);
 
+	UFUNCTION(BlueprintPure, meta=(CompactNodeTitle="ToName") ,Category = "VariableLibrary|GameplayTag")
+	static FName GetNameFromText(const FText& Name);
+
 };
 

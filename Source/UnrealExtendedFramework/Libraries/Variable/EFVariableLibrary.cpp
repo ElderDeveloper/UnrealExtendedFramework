@@ -144,5 +144,10 @@ FGameplayTag UEFVariableLibrary::GetGameplayTagFromText(const FText& Name)
 	return FGameplayTag::EmptyTag;
 }
 
+FName UEFVariableLibrary::GetNameFromText(const FText& Name)
+{
+	return FName(*Name.ToString());
+}
+
 
 
