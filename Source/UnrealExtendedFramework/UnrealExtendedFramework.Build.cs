@@ -34,6 +34,7 @@ public class UnrealExtendedFramework : ModuleRules
 				"ApplicationCore",
 				"UMG",
 				"AIModule",
+				"Niagara",
 				"NavigationSystem",
 				"GameplayAbilities",
 				"GameplayTasks",
@@ -60,7 +61,7 @@ public class UnrealExtendedFramework : ModuleRules
 				"JsonUtilities",
 				"Json",
 				"XmlParser",
-				"ApplicationCore", "AnimGraphRuntime"
+				"ApplicationCore", "AnimGraphRuntime", "Niagara"
 				// ... add private dependencies that you statically link with here ...	
 			}
 			);
