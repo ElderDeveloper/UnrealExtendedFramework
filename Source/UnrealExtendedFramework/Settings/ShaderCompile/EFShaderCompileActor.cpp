@@ -15,6 +15,10 @@ AEFShaderCompileActor::AEFShaderCompileActor()
 	PrimaryActorTick.bCanEverTick = true;
 }
 
+void AEFShaderCompileActor::FinishCompiling()
+{
+}
+
 // Called when the game starts or when spawned
 void AEFShaderCompileActor::BeginPlay()
 {
