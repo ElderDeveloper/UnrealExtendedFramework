@@ -17,6 +17,7 @@ class UNREALEXTENDEDFRAMEWORK_API UEFLoadingScreenSettings : public UDeveloperSe
 public:
 
 	UEFLoadingScreenSettings();
+	/*
 	
 	// The widget to load for the loading screen.
 	UPROPERTY(config, EditAnywhere, Category=Display, meta=(MetaClass="/Script/UMG.UserWidget"))
@@ -59,4 +60,5 @@ public:
 	// (useful when iterating on loading screens)
 	UPROPERTY(config, EditAnywhere, Category=Configuration)
 	bool ForceTickLoadingScreenEvenInEditor = true;
+	*/
 };
