@@ -2,9 +2,9 @@
 
 
 #include "EFSubtitleSubsystem.h"
-#include "UnrealExtendedFramework/Subtitle/Widget/EFSubtitleWidget.h"
+#include "UnrealExtendedFramework/Settings/Subtitle/Widget/EFSubtitleWidget.h"
 #include "Blueprint/UserWidget.h"
-#include "UnrealExtendedFramework/Subtitle/Data/EFSubtitlePluginSettings.h"
+#include "UnrealExtendedFramework/Settings/Subtitle/Data/EFSubtitlePluginSettings.h"
 
 DEFINE_LOG_CATEGORY(LogExtendedSubtitleSubsystemError);
 DEFINE_LOG_CATEGORY(LogExtendedSubtitleSubsystemWarning);

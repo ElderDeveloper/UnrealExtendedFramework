@@ -2,7 +2,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "UnrealExtendedFramework/Subtitle/Data/EFSubtitleData.h"
+#include "UnrealExtendedFramework/Settings/Subtitle/Data/EFSubtitleData.h"
 #include "Blueprint/UserWidget.h"
 #include "EFSubtitleWidget.generated.h"
 

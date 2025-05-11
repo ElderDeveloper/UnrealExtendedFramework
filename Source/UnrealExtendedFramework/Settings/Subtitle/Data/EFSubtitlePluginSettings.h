@@ -2,15 +2,15 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "UnrealExtendedFramework/Subtitle/Data/EFSubtitleData.h"
-#include "UnrealExtendedFramework/Subtitle/Widget/EFSubtitleWidget.h"
+#include "UnrealExtendedFramework/Settings/Subtitle/Data/EFSubtitleData.h"
+#include "UnrealExtendedFramework/Settings/Subtitle/Widget/EFSubtitleWidget.h"
 #include "EFSubtitlePluginSettings.generated.h"
 
 
 class UExtendedSubtitleWidget;
 struct FGameplayTag;
 
-UCLASS(Config=Game, defaultconfig, meta = (DisplayName="Subtitle Plugin Settings") , Category = "Subtitle Plugin")
+UCLASS(Config=Game, defaultconfig, meta=(DisplayName="Extended Subtitle Settings"))
 class UNREALEXTENDEDFRAMEWORK_API UEFSubtitleSettings : public UDeveloperSettings
 {
 	GENERATED_BODY()
@@ -51,11 +51,5 @@ public:
 	UPROPERTY(EditAnywhere ,config, BlueprintReadOnly, Category = "Subtitle Appearance")
 	FExtendedSubtitleDurationSettings DurationSettings;
 
-protected:
-#if WITH_EDITOR
-	virtual FName GetCategoryName() const override { return FName(TEXT("Subtitle Plugin Settings")); }
-	virtual FText GetSectionText() const override { return NSLOCTEXT("SubtitlePlugin", "SubtitlePlugin", "Subtitle Settings"); }
-#endif
-	
 };
 

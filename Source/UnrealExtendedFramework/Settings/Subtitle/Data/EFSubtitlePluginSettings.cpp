@@ -13,6 +13,8 @@ UEFSubtitleSettings::UEFSubtitleSettings()
 		
 	BorderSettings = FExtendedSubtitleBorderSettings();
 	BackgroundSettings = FExtendedSubtitleBackgroundSettings();
+
+	CategoryName = TEXT("Extended Framework");
 }
 
 

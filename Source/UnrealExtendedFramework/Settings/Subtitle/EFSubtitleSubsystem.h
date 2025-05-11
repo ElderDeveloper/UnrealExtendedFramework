@@ -3,7 +3,7 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
 #include "Subsystems/GameInstanceSubsystem.h" 
-#include "UnrealExtendedFramework/Subtitle/Data/EFSubtitleData.h"
+#include "UnrealExtendedFramework/Settings/Subtitle/Data/EFSubtitleData.h"
 #include "EFSubtitleSubsystem.generated.h"
 
 

@@ -26,13 +26,17 @@ public class UnrealExtendedFramework : ModuleRules
 			new string[]
 			{
 				"Core",
+				"CoreUObject",
+				"Engine",
 				"InputCore",
 				"EnhancedInput",
 				"DeveloperSettings",
 				"Slate",
 				"SlateCore",
-				"ApplicationCore",
 				"UMG",
+				"PreLoadScreen",
+				"RenderCore",
+				"ApplicationCore",
 				"AIModule",
 				"Niagara",
 				"NavigationSystem",

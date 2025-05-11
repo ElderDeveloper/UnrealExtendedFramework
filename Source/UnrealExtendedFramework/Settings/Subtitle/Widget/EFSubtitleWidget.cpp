@@ -2,7 +2,7 @@
 
 #include "EFSubtitleWidget.h"
 #include "Components/TextBlock.h"
-#include "UnrealExtendedFramework/Subtitle/Data/EFSubtitlePluginSettings.h"
+#include "UnrealExtendedFramework/Settings/Subtitle/Data/EFSubtitlePluginSettings.h"
 
 void UEFSubtitleWidget::ApplyVisualSettings()
 {

@@ -9,16 +9,18 @@
 
 class USoundMix;
 class UEFAudioDeviceManager;
-struct FEFAudioDeviceInfo;
+struct FEFAudioDeviceInfo; 
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnExtendedSettingsChanged);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnExtendedSettingsApplied);
 
-UCLASS(Config=GameUserSettings, ProjectUserConfig)
+UCLASS(Config=GameUserSettings, ProjectUserConfig, meta=(DisplayName="Extended Game Settings"))
 class UNREALEXTENDEDFRAMEWORK_API UEFDeveloperSettings : public UDeveloperSettings
 {
 	GENERATED_BODY()
 public:
+
+	UEFDeveloperSettings() { CategoryName = TEXT("Extended Framework"); }
 
 	UPROPERTY(Config, EditAnywhere,BlueprintReadWrite, Category = "Settings" )
 	FExtendedGameplaySettings GameplaySettings;
@@ -33,7 +35,7 @@ public:
 	FExtendedAudioSettings AudioSettings;
 
 	UPROPERTY(Config, EditAnywhere, BlueprintReadWrite, Category = "Settings")
-	uint8 DifficultyLevel;
+	uint8 DifficultyLevel = 1;
 	
 	UPROPERTY(Config, EditAnywhere, BlueprintReadWrite, Category = "Settings")
 	TSoftObjectPtr<UDataTable> DifficultySettingsTable;
@@ -54,6 +56,9 @@ class UNREALEXTENDEDFRAMEWORK_API UEFAudioDeveloperSettings : public UDeveloperS
 {
 	GENERATED_BODY()
 public:
+
+	UEFAudioDeveloperSettings() { CategoryName = TEXT("Extended Framework"); }
+	
 	UPROPERTY(Config, EditAnywhere, BlueprintReadWrite, Category = "Audio")
 	TSoftObjectPtr<USoundMix> GlobalSoundMix;
 
