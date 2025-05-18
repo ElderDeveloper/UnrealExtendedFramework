@@ -151,3 +151,36 @@ FName UEFVariableLibrary::GetNameFromText(const FText& Name)
 
 
 
+FString UEFVariableLibrary::GetRandomPassword(int32 Length, bool bIncludeNumbers, bool bIncludeSymbols, bool bIncludeUppercase, bool bIncludeLowercase)
+{
+	FString Password;
+	const FString Numbers = TEXT("0123456789");
+	const FString Symbols = TEXT("!@#$%^&*()_+-=[]{}|;:,.<>?/");
+	const FString Uppercase = TEXT("ABCDEFGHIJKLMNOPQRSTUVWXYZ");
+	const FString Lowercase = TEXT("abcdefghijklmnopqrstuvwxyz");
+
+	if (bIncludeNumbers)
+	{
+		Password += Numbers;
+	}
+	if (bIncludeSymbols)
+	{
+		Password += Symbols;
+	}
+	if (bIncludeUppercase)
+	{
+		Password += Uppercase;
+	}
+	if (bIncludeLowercase)
+	{
+		Password += Lowercase;
+	}
+
+	FString RandomPassword;
+	for (int32 i = 0; i < Length; ++i)
+	{
+		RandomPassword += Password[FMath::RandRange(0, Length - 1)];
+	}
+
+	return RandomPassword;
+}

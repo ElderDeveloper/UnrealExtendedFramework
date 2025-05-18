@@ -92,6 +92,9 @@ public:
 
 	UFUNCTION(BlueprintPure, meta=(CompactNodeTitle="ToName") ,Category = "VariableLibrary|GameplayTag")
 	static FName GetNameFromText(const FText& Name);
+	
+	UFUNCTION(BlueprintPure,Category = "VariableLibrary|Password")
+	static FString GetRandomPassword(int32 Length = 6 , bool bIncludeNumbers = true , bool bIncludeSymbols = false , bool bIncludeUppercase = false , bool bIncludeLowercase = false);
 
 };
 
