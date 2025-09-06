@@ -1,7 +1,7 @@
 ﻿// Fill out your copyright notice in the Description page of Project Settings.
 
 
-#include "EFBTTaskRandomLocation.h"
+#include "EFBTTask_RandomLocation.h"
 
 #include "AIController.h"
 #include "NavigationSystem.h"
@@ -9,7 +9,7 @@
 #include "BehaviorTree/Blackboard/BlackboardKeyType_Vector.h"
 
 
-EBTNodeResult::Type UEFBTTaskRandomLocation::ExecuteTask(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory)
+EBTNodeResult::Type UEFBTTask_RandomLocation::ExecuteTask(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory)
 {
 	if (auto const AIController = Cast<AAIController>(OwnerComp.GetOwner()))
 	{
@@ -28,4 +28,9 @@ EBTNodeResult::Type UEFBTTaskRandomLocation::ExecuteTask(UBehaviorTreeComponent&
 	}
 	
 	return Super::ExecuteTask(OwnerComp, NodeMemory);
+}
+
+FString UEFBTTask_RandomLocation::GetStaticDescription() const
+{
+	return FString::Printf(TEXT("Set %s to random location \nRadius %.1f"), *TargetLocationKey.SelectedKeyName.ToString(), SearchRadius);
 }

@@ -57,3 +57,11 @@ EBTNodeResult::Type UEFBTTask_TryActivateAbility::ExecuteTask(UBehaviorTreeCompo
 
 	return EBTNodeResult::Succeeded;
 }
+
+FString UEFBTTask_TryActivateAbility::GetStaticDescription() const
+{
+	const FString ApplyToSelf = bApplyToSelf ? TEXT("Self") : TargetActorKey.SelectedKeyName.ToString();
+	const FString AbilityClass = TryActivateAbilityClass ? TryActivateAbilityClass->GetName() : TEXT("None");
+	const FString AbilityTag = TryActivateAbilityTag.IsValid() ? TryActivateAbilityTag.ToString() : TEXT("None");
+	return FString::Printf(TEXT("%s: \n Target: %s \n Ability Class %s \n  Ability Tag: %s"), *NodeName, *ApplyToSelf, *AbilityClass, *AbilityTag);
+}

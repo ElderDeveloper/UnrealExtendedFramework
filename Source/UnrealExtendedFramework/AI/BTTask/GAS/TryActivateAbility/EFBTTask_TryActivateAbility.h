@@ -22,7 +22,7 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AI")
 	bool bApplyToSelf = true;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AI", meta = (EditCondition = "!bApplyToSelf"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AI")
 	FGameplayTagContainer TryActivateAbilityTag;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AI")
@@ -34,4 +34,5 @@ public:
 protected:
 
 	virtual EBTNodeResult::Type ExecuteTask(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory) override;
+	virtual FString GetStaticDescription() const override;
 };

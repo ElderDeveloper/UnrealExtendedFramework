@@ -4,21 +4,21 @@
 
 #include "CoreMinimal.h"
 #include "BehaviorTree/BTTaskNode.h"
-#include "EFBTTaskRandomLocation.generated.h"
+#include "EFBTTask_ClearBlackboardObject.generated.h"
 
-
+/**
+ * 
+ */
 UCLASS()
-class UNREALEXTENDEDFRAMEWORK_API UEFBTTaskRandomLocation : public UBTTaskNode
+class UNREALEXTENDEDFRAMEWORK_API UEFBTTask_ClearBlackboardObject : public UBTTaskNode
 {
 	GENERATED_BODY()
 
 public:
-	
-	UPROPERTY(EditAnywhere,BlueprintReadWrite)
-	float SearchRadius = 2000;
 
 	UPROPERTY(EditAnywhere,BlueprintReadWrite)
-	FBlackboardKeySelector TargetLocationKey;
+	FBlackboardKeySelector ObjectKey;
 	
 	virtual EBTNodeResult::Type ExecuteTask(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory) override;
+	virtual FString GetStaticDescription() const override;
 };
