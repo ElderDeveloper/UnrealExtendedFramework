@@ -52,5 +52,5 @@ EBTNodeResult::Type UEFBTTask_HasTag::ExecuteTask(UBehaviorTreeComponent& OwnerC
 
 FString UEFBTTask_HasTag::GetStaticDescription() const
 {
-	return FString::Printf(TEXT("Target: %s \nTag: %s"), *NodeName, *TargetActorKey.SelectedKeyName.ToString(), *SearchTag.ToString());
+	return FString::Printf(TEXT("Target: %s \nTag: %s"), *TargetActorKey.SelectedKeyName.ToString(), *SearchTag.ToString());
 }
