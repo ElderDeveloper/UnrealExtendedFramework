@@ -13,7 +13,6 @@ class UOverlay;
 class UVerticalBoxSlot;
 class UVerticalBox;
 class UButton;
-class UEFButtonStyle;
 
 UCLASS()
 class UNREALEXTENDEDFRAMEWORK_API UEFWidgetLibrary : public UBlueprintFunctionLibrary
@@ -55,7 +54,5 @@ public:
 	static void SetProgressBarFillImageSize(UProgressBar* ProgressBar , FVector2D Size);
 	
 	
-	// Apply Button Style using a style object
-	UFUNCTION(BlueprintCallable , Category="Extended Widget|Button")
-	static void ApplyButtonStyle(UButton* Button, TSubclassOf<UEFButtonStyle> StyleClass);
+
 };

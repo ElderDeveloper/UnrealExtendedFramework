@@ -10,11 +10,7 @@
 #include "Components/VerticalBox.h"
 #include "Components/VerticalBoxSlot.h"
 #include "Components/Button.h"
-#include "Components/TextBlock.h"
 #include "Kismet/KismetMathLibrary.h"
-#include "Slate/SlateBrushAsset.h"
-#include "EFButtonStyle.h"
-#include "Kismet/GameplayStatics.h"
 
 
 
@@ -113,13 +109,4 @@ UVerticalBoxSlot* UEFWidgetLibrary::AddChildToVerticalBox(UVerticalBox* Vertical
 }
 
 
-void UEFWidgetLibrary::ApplyButtonStyle(UButton* Button, TSubclassOf<UEFButtonStyle> StyleClass)
-{
-	if (!Button || !StyleClass)
-	{
-		return;
-	}
 
-	// Apply button style
-	Button->SetStyle(StyleClass.GetDefaultObject()->ButtonStyle);
-}
