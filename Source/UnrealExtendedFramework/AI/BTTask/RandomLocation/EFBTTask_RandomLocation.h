@@ -13,12 +13,15 @@ class UNREALEXTENDEDFRAMEWORK_API UEFBTTask_RandomLocation : public UBTTaskNode
 	GENERATED_BODY()
 
 public:
-	
+
 	UPROPERTY(EditAnywhere,BlueprintReadWrite)
-	float SearchRadius = 2000;
+	FBlackboardKeySelector TargetActorKey;
 
 	UPROPERTY(EditAnywhere,BlueprintReadWrite)
 	FBlackboardKeySelector TargetLocationKey;
+	
+	UPROPERTY(EditAnywhere,BlueprintReadWrite)
+	float SearchRadius = 2000;
 	
 	virtual EBTNodeResult::Type ExecuteTask(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory) override;
 	virtual FString GetStaticDescription() const override;

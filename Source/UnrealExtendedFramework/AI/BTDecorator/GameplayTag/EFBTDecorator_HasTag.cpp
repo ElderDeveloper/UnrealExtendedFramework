@@ -106,5 +106,5 @@ void UEFBTDecorator_HasTag::OnGameplayTagsChanged(const FGameplayTag Tag, int32 
 
 FString UEFBTDecorator_HasTag::GetStaticDescription() const
 {
-	return FString::Printf(TEXT("%s Has Tag: %s"), *TargetActorKey.SelectedKeyName.ToString(), *SearchTag.ToString());
+	return FString::Printf(TEXT("%s Has Tag: \n %s"), *TargetActorKey.SelectedKeyName.ToString(), *SearchTag.ToString());
 }

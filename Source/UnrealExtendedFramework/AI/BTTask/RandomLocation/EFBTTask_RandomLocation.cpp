@@ -18,7 +18,14 @@ EBTNodeResult::Type UEFBTTask_RandomLocation::ExecuteTask(UBehaviorTreeComponent
 			if (const auto NavSystem = Cast<UNavigationSystemV1>(GetWorld()->GetNavigationSystem()))
 			{
 				FNavLocation FoundPosition;
-				if (NavSystem->GetRandomPointInNavigableRadius(AIController->GetPawn()->GetActorLocation(),SearchRadius,FoundPosition))
+
+				AActor* TargetActor = AIController->GetPawn();
+				if (const auto TargetObject = AIController->GetBlackboardComponent()->GetValueAsObject(TargetActorKey.SelectedKeyName))
+				{
+					TargetActor = Cast<AActor>(TargetObject);
+				}
+				
+				if (NavSystem->GetRandomPointInNavigableRadius(TargetActor->GetActorLocation(),SearchRadius,FoundPosition))
 				{
 					AIController->GetBlackboardComponent()->SetValue<UBlackboardKeyType_Vector>(TargetLocationKey.SelectedKeyName,FoundPosition.Location);
 					return EBTNodeResult::Succeeded;
@@ -32,5 +39,5 @@ EBTNodeResult::Type UEFBTTask_RandomLocation::ExecuteTask(UBehaviorTreeComponent
 
 FString UEFBTTask_RandomLocation::GetStaticDescription() const
 {
-	return FString::Printf(TEXT("Set %s to random location \nRadius %.1f"), *TargetLocationKey.SelectedKeyName.ToString(), SearchRadius);
+	return FString::Printf(TEXT("Random Location Around %s \nto Key: %s \nRadius %.1f"),*TargetActorKey.SelectedKeyName.ToString(), *TargetLocationKey.SelectedKeyName.ToString(), SearchRadius);
 }
