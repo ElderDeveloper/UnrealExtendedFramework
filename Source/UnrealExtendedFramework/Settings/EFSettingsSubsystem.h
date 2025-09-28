@@ -22,6 +22,9 @@ public:
 
 	UEFDeveloperSettings() { CategoryName = TEXT("Extended Framework"); }
 
+	UPROPERTY(Config, EditAnywhere, Category = "Settings" )
+	bool bAutoApplySettings = true;
+
 	UPROPERTY(Config, EditAnywhere,BlueprintReadWrite, Category = "Settings" )
 	FExtendedGameplaySettings GameplaySettings;
 

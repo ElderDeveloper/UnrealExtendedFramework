@@ -1,5 +1,3 @@
-// InputBindingSubsystem.cpp
-// Implementation of the InputBindingSubsystem class
 
 #include "InputBindingSubsystem.h"
 #include "GameFramework/PlayerController.h"
@@ -32,20 +30,11 @@ UEnhancedInputLocalPlayerSubsystem* UInputBindingSubsystem::GetEnhancedInputSubs
 void UInputBindingSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
     Super::Initialize(Collection);
-    
-    // Load saved key bindings when the subsystem initializes
-    //LoadKeyBindings();
-    
-    // Apply the loaded key bindings to the Enhanced Input system
-    //ApplyKeyBindings();
 }
 
 
 void UInputBindingSubsystem::Deinitialize()
 {
-    // Save key bindings when the subsystem shuts down
-    //SaveKeyBindings();
-    
     Super::Deinitialize();
 }
 
@@ -135,60 +124,3 @@ FKey UInputBindingSubsystem::GetCurrentKeyBinding(UInputAction* InputAction) con
     return FKey();
 }
 
-
-/*
-bool UInputBindingSubsystem::SetKeyBinding(UInputAction* InputAction, const FKey& NewKey, int32 MappingGroup)
-{
-    if (!InputAction || !NewKey.IsValid())
-    {
-        return false;
-    }
-    
-    // Apply the changes to the Enhanced Input system
-    ApplyKeyBindings();
-    
-    // Save the changes to config
-    SaveKeyBindings();
-    
-    return true;
-}
-
-
-bool UInputBindingSubsystem::IsKeyAlreadyBound(const FKey& Key, const UInputAction* BoundAction, int32& MappingGroup) const
-{
-    
-}
-
-bool UInputBindingSubsystem::SwapKeyBindings(UInputAction* FirstAction, UInputAction* SecondAction, int32 FirstMappingGroup, int32 SecondMappingGroup)
-{
-    if (!FirstAction || !SecondAction)
-    {
-        return false;
-    }
-    
-    // Get the current key bindings
-    FKey FirstKey = GetCurrentKeyBinding(FirstAction);
-    FKey SecondKey = GetCurrentKeyBinding(SecondAction);
-    
-    // Swap the key bindings
-    bool bFirstSuccess = SetKeyBinding(FirstAction, SecondKey, FirstMappingGroup);
-    bool bSecondSuccess = SetKeyBinding(SecondAction, FirstKey, SecondMappingGroup);
-    
-    return bFirstSuccess && bSecondSuccess;
-}
-
-void UInputBindingSubsystem::SaveKeyBindings()
-{
-
-}
-
-void UInputBindingSubsystem::LoadKeyBindings()
-{
- 
-}
-
-void UInputBindingSubsystem::ApplyKeyBindings()
-{
- 
-}
-*/

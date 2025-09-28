@@ -126,6 +126,11 @@ void UEFSettingsSubsystem::FindAndApplyBestSettings()
 void UEFSettingsSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
 	Super::Initialize(Collection);
+
+	if (!ExtendedSettings->bAutoApplySettings)
+	{
+		return;
+	}
 	
 	EFAudioDeviceManager = NewObject<UEFAudioDeviceManager>(this);
 	EFAudioDeviceManager->Initialize();
@@ -201,16 +206,6 @@ void UEFSettingsSubsystem::StoreTemporarySettings()
 
 void UEFSettingsSubsystem::ApplyGameplaySettings(const FExtendedGameplaySettings& Settings)
 {
-	// Apply gameplay settings to the game
-	/*
-	if (GEngine)
-	{
-		if (APlayerCameraManager* CameraManager = UGameplayStatics::GetPlayerCameraManager(GetWorld(), 0))
-		{
-			CameraManager->SetFOV(Settings.FieldOfView);
-		}
-	}
-	*/
 	// Store and save settings
 	ExtendedSettings->GameplaySettings = Settings;
 	SaveExtendedSettings();

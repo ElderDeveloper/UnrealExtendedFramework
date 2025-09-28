@@ -8,7 +8,7 @@
 
 // Fullscreen Mode Setting
 UCLASS(Blueprintable, DisplayName = "Fullscreen Mode")
-class UNREALEXTENDEDFRAMEWORK_API UEFFullscreenSetting : public UEFModularMultiSelectSetting
+class UNREALEXTENDEDFRAMEWORK_API UEFFullscreenSetting : public UEFModularSettingMultiSelect
 {
 	GENERATED_BODY()
 	
@@ -95,7 +95,7 @@ public:
 
 // Brightness Setting
 UCLASS(Blueprintable, DisplayName = "Brightness")
-class UNREALEXTENDEDFRAMEWORK_API UEFBrightnessSetting : public UEFModularFloatSetting
+class UNREALEXTENDEDFRAMEWORK_API UEFBrightnessSetting : public UEFModularSettingFloat
 {
 	GENERATED_BODY()
 	
@@ -136,7 +136,7 @@ public:
 
 // Contrast Setting
 UCLASS(Blueprintable, DisplayName = "Contrast")
-class UNREALEXTENDEDFRAMEWORK_API UEFContrastSetting : public UEFModularFloatSetting
+class UNREALEXTENDEDFRAMEWORK_API UEFContrastSetting : public UEFModularSettingFloat
 {
 	GENERATED_BODY()
 	
@@ -174,7 +174,7 @@ public:
 
 // Saturation Setting
 UCLASS(Blueprintable, DisplayName = "Saturation")
-class UNREALEXTENDEDFRAMEWORK_API UEFSaturationSetting : public UEFModularFloatSetting
+class UNREALEXTENDEDFRAMEWORK_API UEFSaturationSetting : public UEFModularSettingFloat
 {
 	GENERATED_BODY()
 	
@@ -212,7 +212,7 @@ public:
 
 // Field of View Setting
 UCLASS(Blueprintable, DisplayName = "Field of View")
-class UNREALEXTENDEDFRAMEWORK_API UEFFOVSetting : public UEFModularFloatSetting
+class UNREALEXTENDEDFRAMEWORK_API UEFFOVSetting : public UEFModularSettingFloat
 {
 	GENERATED_BODY()
 	
@@ -258,7 +258,7 @@ public:
 
 // UI Scale Setting
 UCLASS(Blueprintable, DisplayName = "UI Scale")
-class UNREALEXTENDEDFRAMEWORK_API UEFUIScaleSetting : public UEFModularFloatSetting
+class UNREALEXTENDEDFRAMEWORK_API UEFUIScaleSetting : public UEFModularSettingFloat
 {
 	GENERATED_BODY()
 	
@@ -296,7 +296,7 @@ public:
 
 // HDR Setting
 UCLASS(Blueprintable, DisplayName = "HDR")
-class UNREALEXTENDEDFRAMEWORK_API UEFHDRSetting : public UEFModularBoolSetting
+class UNREALEXTENDEDFRAMEWORK_API UEFHDRSetting : public UEFModularSettingBool
 {
 	GENERATED_BODY()
 	
@@ -331,7 +331,7 @@ public:
 
 // Color Blind Support Setting
 UCLASS(Blueprintable, DisplayName = "Color Blind Support")
-class UNREALEXTENDEDFRAMEWORK_API UEFColorBlindSetting : public UEFModularMultiSelectSetting
+class UNREALEXTENDEDFRAMEWORK_API UEFColorBlindSetting : public UEFModularSettingMultiSelect
 {
 	GENERATED_BODY()
 	
@@ -406,7 +406,7 @@ public:
 
 // Safe Zone Setting
 UCLASS(Blueprintable, DisplayName = "Safe Zone")
-class UNREALEXTENDEDFRAMEWORK_API UEFSafeZoneSetting : public UEFModularFloatSetting
+class UNREALEXTENDEDFRAMEWORK_API UEFSafeZoneSetting : public UEFModularSettingFloat
 {
 	GENERATED_BODY()
 	
@@ -444,7 +444,7 @@ public:
 
 // Display Mode Setting (for multiple monitors)
 UCLASS(Blueprintable, DisplayName = "Display Mode")
-class UNREALEXTENDEDFRAMEWORK_API UEFDisplayModeSetting : public UEFModularMultiSelectSetting
+class UNREALEXTENDEDFRAMEWORK_API UEFDisplayModeSetting : public UEFModularSettingMultiSelect
 {
 	GENERATED_BODY()
 	

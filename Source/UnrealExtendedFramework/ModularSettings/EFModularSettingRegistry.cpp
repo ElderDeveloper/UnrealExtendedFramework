@@ -212,7 +212,7 @@ void UEFModularSettingRegistry::ValidateSettingConfiguration(UEFModularSettingBa
 	}
 	
 	// Type-specific validation
-	if (UEFModularFloatSetting* FloatSetting = Cast<UEFModularFloatSetting>(Setting))
+	if (UEFModularSettingFloat* FloatSetting = Cast<UEFModularSettingFloat>(Setting))
 	{
 		if (FloatSetting->Min >= FloatSetting->Max)
 		{
@@ -220,7 +220,7 @@ void UEFModularSettingRegistry::ValidateSettingConfiguration(UEFModularSettingBa
 		}
 	}
 	
-	if (UEFModularMultiSelectSetting* MultiSelectSetting = Cast<UEFModularMultiSelectSetting>(Setting))
+	if (UEFModularSettingMultiSelect* MultiSelectSetting = Cast<UEFModularSettingMultiSelect>(Setting))
 	{
 		if (MultiSelectSetting->Values.Num() == 0)
 		{

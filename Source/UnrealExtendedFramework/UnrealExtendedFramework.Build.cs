@@ -46,7 +46,8 @@ public class UnrealExtendedFramework : ModuleRules
 				"EngineSettings",
 				"OnlineSubsystem",
 				"OnlineSubsystemUtils",
-				"OnlineSubsystemNull"
+				"OnlineSubsystemNull",
+				"Projects"
 
 				// ... add other public dependencies that you statically link with here ...
 			}

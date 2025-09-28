@@ -26,7 +26,7 @@ void UEFModularSettingsSubsystem::Deinitialize()
 
 bool UEFModularSettingsSubsystem::GetBool(FGameplayTag Tag) const
 {
-	if (const UEFModularBoolSetting* BoolSetting = GetSetting<UEFModularBoolSetting>(Tag))
+	if (const UEFModularSettingBool* BoolSetting = GetSetting<UEFModularSettingBool>(Tag))
 	{
 		return BoolSetting->bValue;
 	}
@@ -35,7 +35,7 @@ bool UEFModularSettingsSubsystem::GetBool(FGameplayTag Tag) const
 
 void UEFModularSettingsSubsystem::SetBool(FGameplayTag Tag, bool bValue)
 {
-	if (UEFModularBoolSetting* BoolSetting = GetSetting<UEFModularBoolSetting>(Tag))
+	if (UEFModularSettingBool* BoolSetting = GetSetting<UEFModularSettingBool>(Tag))
 	{
 		BoolSetting->bValue = bValue;
 		BoolSetting->Apply();
@@ -50,7 +50,7 @@ void UEFModularSettingsSubsystem::SetBool(FGameplayTag Tag, bool bValue)
 
 float UEFModularSettingsSubsystem::GetFloat(FGameplayTag Tag) const
 {
-	if (const UEFModularFloatSetting* FloatSetting = GetSetting<UEFModularFloatSetting>(Tag))
+	if (const UEFModularSettingFloat* FloatSetting = GetSetting<UEFModularSettingFloat>(Tag))
 	{
 		return FloatSetting->Value;
 	}
@@ -59,7 +59,7 @@ float UEFModularSettingsSubsystem::GetFloat(FGameplayTag Tag) const
 
 void UEFModularSettingsSubsystem::SetFloat(FGameplayTag Tag, float Value)
 {
-	if (UEFModularFloatSetting* FloatSetting = GetSetting<UEFModularFloatSetting>(Tag))
+	if (UEFModularSettingFloat* FloatSetting = GetSetting<UEFModularSettingFloat>(Tag))
 	{
 		FloatSetting->Value = Value;
 		FloatSetting->Apply();
@@ -73,7 +73,7 @@ void UEFModularSettingsSubsystem::SetFloat(FGameplayTag Tag, float Value)
 
 int32 UEFModularSettingsSubsystem::GetIndex(FGameplayTag Tag) const
 {
-	if (const UEFModularMultiSelectSetting* MultiSelectSetting = GetSetting<UEFModularMultiSelectSetting>(Tag))
+	if (const UEFModularSettingMultiSelect* MultiSelectSetting = GetSetting<UEFModularSettingMultiSelect>(Tag))
 	{
 		return MultiSelectSetting->SelectedIndex;
 	}
@@ -82,7 +82,7 @@ int32 UEFModularSettingsSubsystem::GetIndex(FGameplayTag Tag) const
 
 void UEFModularSettingsSubsystem::SetIndex(FGameplayTag Tag, int32 Index)
 {
-	if (UEFModularMultiSelectSetting* MultiSelectSetting = GetSetting<UEFModularMultiSelectSetting>(Tag))
+	if (UEFModularSettingMultiSelect* MultiSelectSetting = GetSetting<UEFModularSettingMultiSelect>(Tag))
 	{
 		if (Index >= 0 && Index < MultiSelectSetting->Values.Num())
 		{
@@ -103,7 +103,7 @@ void UEFModularSettingsSubsystem::SetIndex(FGameplayTag Tag, int32 Index)
 
 void UEFModularSettingsSubsystem::AddIndex(FGameplayTag Tag, int32 Amount)
 {
-	if (UEFModularMultiSelectSetting* MultiSelectSetting = GetSetting<UEFModularMultiSelectSetting>(Tag))
+	if (UEFModularSettingMultiSelect* MultiSelectSetting = GetSetting<UEFModularSettingMultiSelect>(Tag))
 	{
 		int32 NewIndex = MultiSelectSetting->SelectedIndex + Amount;
 		
@@ -136,7 +136,7 @@ void UEFModularSettingsSubsystem::AddIndex(FGameplayTag Tag, int32 Amount)
 
 TArray<FText> UEFModularSettingsSubsystem::GetOptions(FGameplayTag Tag) const
 {
-	if (const UEFModularMultiSelectSetting* MultiSelectSetting = GetSetting<UEFModularMultiSelectSetting>(Tag))
+	if (const UEFModularSettingMultiSelect* MultiSelectSetting = GetSetting<UEFModularSettingMultiSelect>(Tag))
 	{
 		return MultiSelectSetting->DisplayNames;
 	}
@@ -145,7 +145,7 @@ TArray<FText> UEFModularSettingsSubsystem::GetOptions(FGameplayTag Tag) const
 
 FText UEFModularSettingsSubsystem::GetSelectedOption(FGameplayTag Tag) const
 {
-	if (const UEFModularMultiSelectSetting* MultiSelectSetting = GetSetting<UEFModularMultiSelectSetting>(Tag))
+	if (const UEFModularSettingMultiSelect* MultiSelectSetting = GetSetting<UEFModularSettingMultiSelect>(Tag))
 	{
 		if (MultiSelectSetting->DisplayNames.IsValidIndex(MultiSelectSetting->SelectedIndex))
 		{

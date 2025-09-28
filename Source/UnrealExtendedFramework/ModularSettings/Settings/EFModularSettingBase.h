@@ -8,7 +8,7 @@
 
 #include "EFModularSettingBase.generated.h"
 
-UCLASS(Abstract, Blueprintable, EditInlineNew)
+UCLASS(Abstract,BlueprintType, Blueprintable, EditInlineNew)
 class UNREALEXTENDEDFRAMEWORK_API UEFModularSettingBase : public UObject
 {
 	GENERATED_BODY()
@@ -24,17 +24,23 @@ public:
 
 	UPROPERTY(EditDefaultsOnly, Category="Meta")
 	FString DefaultValue;
-
+	
 	virtual bool CanApply(const FString& Value) const { return true; }
 	virtual void Apply() {}
+
+	UFUNCTION(BlueprintCallable, Category = "Settings")
 	virtual FString GetValueAsString() const { return TEXT(""); }
+
+	UFUNCTION(BlueprintCallable, Category = "Settings")
 	virtual void SetValueFromString(const FString& Value) {}
+
+	UFUNCTION(BlueprintCallable, Category = "Settings")
 	virtual void ResetToDefault() {}
 };
 
 /* Bool */
-UCLASS(Blueprintable)
-class UNREALEXTENDEDFRAMEWORK_API UEFModularBoolSetting : public UEFModularSettingBase
+UCLASS(Blueprintable,BlueprintType, EditInlineNew)
+class UNREALEXTENDEDFRAMEWORK_API UEFModularSettingBool : public UEFModularSettingBase
 {
 	GENERATED_BODY()
 public:
@@ -60,15 +66,15 @@ public:
 };
 
 /* Float */
-UCLASS(Blueprintable)
-class UNREALEXTENDEDFRAMEWORK_API UEFModularFloatSetting : public UEFModularSettingBase
+UCLASS(Blueprintable,BlueprintType, EditInlineNew)
+class UNREALEXTENDEDFRAMEWORK_API UEFModularSettingFloat : public UEFModularSettingBase
 {
 	GENERATED_BODY()
 public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite)
 	float Value = 1.f;
 
-	UPROPERTY(EditDefaultsOnly)
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
 	float Min = 0.f, Max = 1.f;
 
 	virtual void Apply() override {}
@@ -90,17 +96,17 @@ public:
 };
 
 /* Multi-select */
-UCLASS(Blueprintable)
-class UNREALEXTENDEDFRAMEWORK_API UEFModularMultiSelectSetting : public UEFModularSettingBase
+UCLASS(Blueprintable,BlueprintType, EditInlineNew)
+class UNREALEXTENDEDFRAMEWORK_API UEFModularSettingMultiSelect : public UEFModularSettingBase
 {
 	GENERATED_BODY()
 public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite)
 	int32 SelectedIndex = 0;
 
-	UPROPERTY(EditDefaultsOnly)
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
 	TArray<FString> Values;
-	UPROPERTY(EditDefaultsOnly)
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite)
 	TArray<FText> DisplayNames;
 
 	virtual void Apply() override {}

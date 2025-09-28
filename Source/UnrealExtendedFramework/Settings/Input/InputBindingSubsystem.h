@@ -35,32 +35,6 @@ public:
     UFUNCTION(BlueprintCallable, Category = "Input")
     FKey GetCurrentKeyBinding(UInputAction* InputAction) const;
 
-    /*
-    // Set a new key binding for an input action
-    UFUNCTION(BlueprintCallable, Category = "Input")
-    bool SetKeyBinding(UInputAction* InputAction, const FKey& NewKey, int32 MappingGroup = 0);
-    
-    // Check if a key is already bound to another action
-    UFUNCTION(BlueprintCallable, Category = "Input")
-    bool IsKeyAlreadyBound(const FKey& Key, const UInputAction* BoundAction, int32& MappingGroup) const;
-    
-    // Swap key bindings between two actions
-    UFUNCTION(BlueprintCallable, Category = "Input")
-    bool SwapKeyBindings(UInputAction* FirstAction, UInputAction* SecondAction, int32 FirstMappingGroup = 0, int32 SecondMappingGroup = 0);
-    
-    // Save current key bindings to config
-    UFUNCTION(BlueprintCallable, Category = "Input")
-    void SaveKeyBindings();
-    
-    // Load key bindings from config
-    UFUNCTION(BlueprintCallable, Category = "Input")
-    void LoadKeyBindings();
-    
-    // Apply current key bindings to the Enhanced Input system
-    UFUNCTION(BlueprintCallable, Category = "Input")
-    void ApplyKeyBindings();
-    */
-
 private:
     // Get the Enhanced Input subsystem for the local player
     UEnhancedInputLocalPlayerSubsystem* GetEnhancedInputSubsystem() const;
