@@ -8,8 +8,8 @@
 #include "EFWaitModularSettingsChange.generated.h"
 
 
-class UEFModularSettingBase;
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnModularSettingsChangeTriggered, UEFModularSettingBase*, Setting);
+class UEFModularSettingsBase;
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnModularSettingsChangeTriggered, UEFModularSettingsBase*, Setting);
 
 UCLASS()
 class UNREALEXTENDEDFRAMEWORK_API UEFWaitModularSettingsChange : public UBlueprintAsyncActionBase
@@ -36,6 +36,6 @@ protected:
 	UObject* WorldContextObject;
 
 	UFUNCTION()
-	void OnSettingChanged(UEFModularSettingBase* ChangedSetting);
+	void OnSettingChanged(UEFModularSettingsBase* ChangedSetting);
 	
 };

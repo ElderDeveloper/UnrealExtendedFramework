@@ -1,13 +1,13 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "UnrealExtendedFramework/ModularSettings/Settings/EFModularSettingBase.h"
+#include "UnrealExtendedFramework/ModularSettings/Settings/EFModularSettingsBase.h"
 #include "Engine/Engine.h"
 #include "EFGraphicsSettings.generated.h"
 
 // Screen Resolution Setting
 UCLASS(Blueprintable, DisplayName = "Screen Resolution")
-class UNREALEXTENDEDFRAMEWORK_API UEFResolutionSetting : public UEFModularSettingMultiSelect
+class UNREALEXTENDEDFRAMEWORK_API UEFResolutionSetting : public UEFModularSettingsMultiSelect
 {
 	GENERATED_BODY()
 	
@@ -95,7 +95,7 @@ private:
 
 // Graphics Quality Setting
 UCLASS(Blueprintable, DisplayName = "Graphics Quality")
-class UNREALEXTENDEDFRAMEWORK_API UEFGraphicsQualitySetting : public UEFModularSettingMultiSelect
+class UNREALEXTENDEDFRAMEWORK_API UEFGraphicsQualitySetting : public UEFModularSettingsMultiSelect
 {
 	GENERATED_BODY()
 	
@@ -172,7 +172,7 @@ private:
 
 // VSync Setting
 UCLASS(Blueprintable, DisplayName = "VSync")
-class UNREALEXTENDEDFRAMEWORK_API UEFVSyncSetting : public UEFModularSettingBool
+class UNREALEXTENDEDFRAMEWORK_API UEFVSyncSetting : public UEFModularSettingsBool
 {
 	GENERATED_BODY()
 	
@@ -209,7 +209,7 @@ public:
 
 // Frame Rate Limit Setting
 UCLASS(Blueprintable, DisplayName = "Frame Rate Limit")
-class UNREALEXTENDEDFRAMEWORK_API UEFFrameRateLimitSetting : public UEFModularSettingMultiSelect
+class UNREALEXTENDEDFRAMEWORK_API UEFFrameRateLimitSetting : public UEFModularSettingsMultiSelect
 {
 	GENERATED_BODY()
 	
@@ -273,7 +273,7 @@ public:
 
 // Anti-Aliasing Setting
 UCLASS(Blueprintable, DisplayName = "Anti-Aliasing")
-class UNREALEXTENDEDFRAMEWORK_API UEFAntiAliasingSetting : public UEFModularSettingMultiSelect
+class UNREALEXTENDEDFRAMEWORK_API UEFAntiAliasingSetting : public UEFModularSettingsMultiSelect
 {
 	GENERATED_BODY()
 	
@@ -347,7 +347,7 @@ public:
 
 // Texture Quality Setting
 UCLASS(Blueprintable, DisplayName = "Texture Quality")
-class UNREALEXTENDEDFRAMEWORK_API UEFTextureQualitySetting : public UEFModularSettingMultiSelect
+class UNREALEXTENDEDFRAMEWORK_API UEFTextureQualitySetting : public UEFModularSettingsMultiSelect
 {
 	GENERATED_BODY()
 	
@@ -390,7 +390,7 @@ public:
 
 // Shadow Quality Setting
 UCLASS(Blueprintable, DisplayName = "Shadow Quality")
-class UNREALEXTENDEDFRAMEWORK_API UEFShadowQualitySetting : public UEFModularSettingMultiSelect
+class UNREALEXTENDEDFRAMEWORK_API UEFShadowQualitySetting : public UEFModularSettingsMultiSelect
 {
 	GENERATED_BODY()
 	
@@ -434,7 +434,7 @@ public:
 
 // Post-Processing Quality Setting
 UCLASS(Blueprintable, DisplayName = "Post-Processing Quality")
-class UNREALEXTENDEDFRAMEWORK_API UEFPostProcessQualitySetting : public UEFModularSettingMultiSelect
+class UNREALEXTENDEDFRAMEWORK_API UEFPostProcessQualitySetting : public UEFModularSettingsMultiSelect
 {
 	GENERATED_BODY()
 	
@@ -477,7 +477,7 @@ public:
 
 // View Distance Setting
 UCLASS(Blueprintable, DisplayName = "View Distance")
-class UNREALEXTENDEDFRAMEWORK_API UEFViewDistanceSetting : public UEFModularSettingMultiSelect
+class UNREALEXTENDEDFRAMEWORK_API UEFViewDistanceSetting : public UEFModularSettingsMultiSelect
 {
 	GENERATED_BODY()
 	
@@ -520,7 +520,7 @@ public:
 
 // Motion Blur Setting
 UCLASS(Blueprintable, DisplayName = "Motion Blur")
-class UNREALEXTENDEDFRAMEWORK_API UEFMotionBlurSetting : public UEFModularSettingBool
+class UNREALEXTENDEDFRAMEWORK_API UEFMotionBlurSetting : public UEFModularSettingsBool
 {
 	GENERATED_BODY()
 	
@@ -547,7 +547,7 @@ public:
 
 // Screen Space Reflections Setting
 UCLASS(Blueprintable, DisplayName = "Screen Space Reflections")
-class UNREALEXTENDEDFRAMEWORK_API UEFSSRSetting : public UEFModularSettingBool
+class UNREALEXTENDEDFRAMEWORK_API UEFSSRSetting : public UEFModularSettingsBool
 {
 	GENERATED_BODY()
 	
@@ -574,7 +574,7 @@ public:
 
 // Bloom Setting
 UCLASS(Blueprintable, DisplayName = "Bloom")
-class UNREALEXTENDEDFRAMEWORK_API UEFBloomSetting : public UEFModularSettingBool
+class UNREALEXTENDEDFRAMEWORK_API UEFBloomSetting : public UEFModularSettingsBool
 {
 	GENERATED_BODY()
 	
@@ -601,7 +601,7 @@ public:
 
 // Lens Flares Setting
 UCLASS(Blueprintable, DisplayName = "Lens Flares")
-class UNREALEXTENDEDFRAMEWORK_API UEFLensFlaresSetting : public UEFModularSettingBool
+class UNREALEXTENDEDFRAMEWORK_API UEFLensFlaresSetting : public UEFModularSettingsBool
 {
 	GENERATED_BODY()
 	
@@ -628,7 +628,7 @@ public:
 
 // Enhanced Graphics Quality Setting with Scalability Integration
 UCLASS(Blueprintable, DisplayName = "Overall Graphics Quality")
-class UNREALEXTENDEDFRAMEWORK_API UEFOverallGraphicsQualitySetting : public UEFModularSettingMultiSelect
+class UNREALEXTENDEDFRAMEWORK_API UEFOverallGraphicsQualitySetting : public UEFModularSettingsMultiSelect
 {
 	GENERATED_BODY()
 	

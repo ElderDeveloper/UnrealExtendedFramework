@@ -6,23 +6,23 @@
 #include "GameplayTagContainer.h"
 #include "Engine/Engine.h"
 
-#include "EFModularSettingBase.generated.h"
+#include "EFModularSettingsBase.generated.h"
 
 UCLASS(Abstract,BlueprintType, Blueprintable, EditInlineNew)
-class UNREALEXTENDEDFRAMEWORK_API UEFModularSettingBase : public UObject
+class UNREALEXTENDEDFRAMEWORK_API UEFModularSettingsBase : public UObject
 {
 	GENERATED_BODY()
 public:
-	UPROPERTY(EditDefaultsOnly, Category="Meta")
+	UPROPERTY(EditDefaultsOnly,BlueprintReadOnly, Category="Meta")
 	FGameplayTag SettingTag;
 
-	UPROPERTY(EditDefaultsOnly, Category="Meta")
+	UPROPERTY(EditDefaultsOnly,BlueprintReadOnly, Category="Meta")
 	FText DisplayName;
 
-	UPROPERTY(EditDefaultsOnly, Category="Meta")
+	UPROPERTY(EditDefaultsOnly,BlueprintReadOnly, Category="Meta")
 	FName ConfigCategory = TEXT("Settings");
 
-	UPROPERTY(EditDefaultsOnly, Category="Meta")
+	UPROPERTY(EditDefaultsOnly,BlueprintReadWrite, Category="Meta")
 	FString DefaultValue;
 	
 	virtual bool CanApply(const FString& Value) const { return true; }
@@ -40,7 +40,7 @@ public:
 
 /* Bool */
 UCLASS(Blueprintable,BlueprintType, EditInlineNew)
-class UNREALEXTENDEDFRAMEWORK_API UEFModularSettingBool : public UEFModularSettingBase
+class UNREALEXTENDEDFRAMEWORK_API UEFModularSettingsBool : public UEFModularSettingsBase
 {
 	GENERATED_BODY()
 public:
@@ -67,7 +67,7 @@ public:
 
 /* Float */
 UCLASS(Blueprintable,BlueprintType, EditInlineNew)
-class UNREALEXTENDEDFRAMEWORK_API UEFModularSettingFloat : public UEFModularSettingBase
+class UNREALEXTENDEDFRAMEWORK_API UEFModularSettingsFloat : public UEFModularSettingsBase
 {
 	GENERATED_BODY()
 public:
@@ -97,7 +97,7 @@ public:
 
 /* Multi-select */
 UCLASS(Blueprintable,BlueprintType, EditInlineNew)
-class UNREALEXTENDEDFRAMEWORK_API UEFModularSettingMultiSelect : public UEFModularSettingBase
+class UNREALEXTENDEDFRAMEWORK_API UEFModularSettingsMultiSelect : public UEFModularSettingsBase
 {
 	GENERATED_BODY()
 public:

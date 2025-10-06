@@ -2,6 +2,7 @@
 
 
 #include "EFModularSettingsSubsystem.h"
+#include "EFModularSettingRegistry.h"
 #include "Engine/Engine.h"
 #include "HAL/PlatformFilemanager.h"
 #include "Misc/FileHelper.h"
@@ -11,7 +12,21 @@
 void UEFModularSettingsSubsystem::Initialize(FSubsystemCollectionBase& SubsystemCollectionBase)
 {
 	Super::Initialize(SubsystemCollectionBase);
-	
+
+	// Initialize registry and discover settings
+	UEFModularSettingRegistry* Registry = UEFModularSettingRegistry::Get();
+	if (Registry)
+	{
+		Registry->DiscoverAllSettings();
+
+		// Register all discovered settings
+		TArray<UEFModularSettingsBase*> AllSettings = Registry->GetAllSettings();
+		for (UEFModularSettingsBase* Setting : AllSettings)
+		{
+			RegisterSetting(Setting);
+		}
+	}
+
 	// Load settings from disk on initialization
 	LoadFromDisk();
 }
@@ -26,7 +41,7 @@ void UEFModularSettingsSubsystem::Deinitialize()
 
 bool UEFModularSettingsSubsystem::GetBool(FGameplayTag Tag) const
 {
-	if (const UEFModularSettingBool* BoolSetting = GetSetting<UEFModularSettingBool>(Tag))
+	if (const UEFModularSettingsBool* BoolSetting = GetSetting<UEFModularSettingsBool>(Tag))
 	{
 		return BoolSetting->bValue;
 	}
@@ -35,7 +50,7 @@ bool UEFModularSettingsSubsystem::GetBool(FGameplayTag Tag) const
 
 void UEFModularSettingsSubsystem::SetBool(FGameplayTag Tag, bool bValue)
 {
-	if (UEFModularSettingBool* BoolSetting = GetSetting<UEFModularSettingBool>(Tag))
+	if (UEFModularSettingsBool* BoolSetting = GetSetting<UEFModularSettingsBool>(Tag))
 	{
 		BoolSetting->bValue = bValue;
 		BoolSetting->Apply();
@@ -50,7 +65,7 @@ void UEFModularSettingsSubsystem::SetBool(FGameplayTag Tag, bool bValue)
 
 float UEFModularSettingsSubsystem::GetFloat(FGameplayTag Tag) const
 {
-	if (const UEFModularSettingFloat* FloatSetting = GetSetting<UEFModularSettingFloat>(Tag))
+	if (const UEFModularSettingsFloat* FloatSetting = GetSetting<UEFModularSettingsFloat>(Tag))
 	{
 		return FloatSetting->Value;
 	}
@@ -59,7 +74,7 @@ float UEFModularSettingsSubsystem::GetFloat(FGameplayTag Tag) const
 
 void UEFModularSettingsSubsystem::SetFloat(FGameplayTag Tag, float Value)
 {
-	if (UEFModularSettingFloat* FloatSetting = GetSetting<UEFModularSettingFloat>(Tag))
+	if (UEFModularSettingsFloat* FloatSetting = GetSetting<UEFModularSettingsFloat>(Tag))
 	{
 		FloatSetting->Value = Value;
 		FloatSetting->Apply();
@@ -73,7 +88,7 @@ void UEFModularSettingsSubsystem::SetFloat(FGameplayTag Tag, float Value)
 
 int32 UEFModularSettingsSubsystem::GetIndex(FGameplayTag Tag) const
 {
-	if (const UEFModularSettingMultiSelect* MultiSelectSetting = GetSetting<UEFModularSettingMultiSelect>(Tag))
+	if (const UEFModularSettingsMultiSelect* MultiSelectSetting = GetSetting<UEFModularSettingsMultiSelect>(Tag))
 	{
 		return MultiSelectSetting->SelectedIndex;
 	}
@@ -82,7 +97,7 @@ int32 UEFModularSettingsSubsystem::GetIndex(FGameplayTag Tag) const
 
 void UEFModularSettingsSubsystem::SetIndex(FGameplayTag Tag, int32 Index)
 {
-	if (UEFModularSettingMultiSelect* MultiSelectSetting = GetSetting<UEFModularSettingMultiSelect>(Tag))
+	if (UEFModularSettingsMultiSelect* MultiSelectSetting = GetSetting<UEFModularSettingsMultiSelect>(Tag))
 	{
 		if (Index >= 0 && Index < MultiSelectSetting->Values.Num())
 		{
@@ -103,7 +118,7 @@ void UEFModularSettingsSubsystem::SetIndex(FGameplayTag Tag, int32 Index)
 
 void UEFModularSettingsSubsystem::AddIndex(FGameplayTag Tag, int32 Amount)
 {
-	if (UEFModularSettingMultiSelect* MultiSelectSetting = GetSetting<UEFModularSettingMultiSelect>(Tag))
+	if (UEFModularSettingsMultiSelect* MultiSelectSetting = GetSetting<UEFModularSettingsMultiSelect>(Tag))
 	{
 		int32 NewIndex = MultiSelectSetting->SelectedIndex + Amount;
 		
@@ -136,7 +151,7 @@ void UEFModularSettingsSubsystem::AddIndex(FGameplayTag Tag, int32 Amount)
 
 TArray<FText> UEFModularSettingsSubsystem::GetOptions(FGameplayTag Tag) const
 {
-	if (const UEFModularSettingMultiSelect* MultiSelectSetting = GetSetting<UEFModularSettingMultiSelect>(Tag))
+	if (const UEFModularSettingsMultiSelect* MultiSelectSetting = GetSetting<UEFModularSettingsMultiSelect>(Tag))
 	{
 		return MultiSelectSetting->DisplayNames;
 	}
@@ -145,7 +160,7 @@ TArray<FText> UEFModularSettingsSubsystem::GetOptions(FGameplayTag Tag) const
 
 FText UEFModularSettingsSubsystem::GetSelectedOption(FGameplayTag Tag) const
 {
-	if (const UEFModularSettingMultiSelect* MultiSelectSetting = GetSetting<UEFModularSettingMultiSelect>(Tag))
+	if (const UEFModularSettingsMultiSelect* MultiSelectSetting = GetSetting<UEFModularSettingsMultiSelect>(Tag))
 	{
 		if (MultiSelectSetting->DisplayNames.IsValidIndex(MultiSelectSetting->SelectedIndex))
 		{
@@ -162,8 +177,8 @@ void UEFModularSettingsSubsystem::StageChanges()
 	
 	for (const auto& SettingPair : Settings)
 	{
-		UEFModularSettingBase* OriginalSetting = SettingPair.Value;
-		UEFModularSettingBase* StagedSetting = DuplicateObject(OriginalSetting, this);
+		UEFModularSettingsBase* OriginalSetting = SettingPair.Value;
+		UEFModularSettingsBase* StagedSetting = DuplicateObject(OriginalSetting, this);
 		StagedSettings.Add(SettingPair.Key, StagedSetting);
 	}
 	
@@ -180,7 +195,7 @@ void UEFModularSettingsSubsystem::ApplyStaged()
 	
 	for (const auto& StagedPair : StagedSettings)
 	{
-		if (UEFModularSettingBase* OriginalSetting = Settings.FindRef(StagedPair.Key))
+		if (UEFModularSettingsBase* OriginalSetting = Settings.FindRef(StagedPair.Key))
 		{
 			CopySettingValue(StagedPair.Value, OriginalSetting);
 			OriginalSetting->Apply();
@@ -212,7 +227,7 @@ void UEFModularSettingsSubsystem::ResetToDefaults(FGameplayTag CategoryTag)
 {
 	for (const auto& SettingPair : Settings)
 	{
-		UEFModularSettingBase* Setting = SettingPair.Value;
+		UEFModularSettingsBase* Setting = SettingPair.Value;
 		
 		// If CategoryTag is empty, reset all settings
 		// Otherwise, only reset settings in the specified category
@@ -238,7 +253,7 @@ void UEFModularSettingsSubsystem::ResetToDefaults(FGameplayTag CategoryTag)
 
 void UEFModularSettingsSubsystem::SetAsUserDefault(FGameplayTag Tag)
 {
-	if (UEFModularSettingBase* Setting = Settings.FindRef(Tag))
+	if (UEFModularSettingsBase* Setting = Settings.FindRef(Tag))
 	{
 		UserDefaults.Add(Tag, Setting->GetValueAsString());
 		UE_LOG(LogTemp, Log, TEXT("Setting %s set as user default."), *Tag.ToString());
@@ -256,12 +271,12 @@ void UEFModularSettingsSubsystem::LoadPlatformDefaults()
 void UEFModularSettingsSubsystem::SaveToDisk()
 {
 	FString ConfigContent;
-	TMap<FName, TArray<UEFModularSettingBase*>> SettingsByCategory;
+	TMap<FName, TArray<UEFModularSettingsBase*>> SettingsByCategory;
 	
 	// Group settings by category
 	for (const auto& SettingPair : Settings)
 	{
-		UEFModularSettingBase* Setting = SettingPair.Value;
+		UEFModularSettingsBase* Setting = SettingPair.Value;
 		SettingsByCategory.FindOrAdd(Setting->ConfigCategory).Add(Setting);
 	}
 	
@@ -275,11 +290,11 @@ void UEFModularSettingsSubsystem::SaveToDisk()
 	for (const auto& CategoryPair : SettingsByCategory)
 	{
 		FName CategoryName = CategoryPair.Key;
-		const TArray<UEFModularSettingBase*>& CategorySettings = CategoryPair.Value;
+		const TArray<UEFModularSettingsBase*>& CategorySettings = CategoryPair.Value;
 		
 		ConfigContent += FString::Printf(TEXT("[/Settings/%s]\n"), *CategoryName.ToString());
 		
-		for (UEFModularSettingBase* Setting : CategorySettings)
+		for (UEFModularSettingsBase* Setting : CategorySettings)
 		{
 			FString SettingLine = FString::Printf(TEXT("%s=%s\n"), 
 				*Setting->SettingTag.ToString(), 
@@ -352,7 +367,7 @@ void UEFModularSettingsSubsystem::LoadFromDisk()
 				else if (CurrentSection.StartsWith(TEXT("/Settings/")) && !CurrentSection.Contains(TEXT("Meta")))
 				{
 					FGameplayTag Tag = FGameplayTag::RequestGameplayTag(*Key);
-					if (UEFModularSettingBase* Setting = Settings.FindRef(Tag))
+					if (UEFModularSettingsBase* Setting = Settings.FindRef(Tag))
 					{
 						Setting->SetValueFromString(Value);
 					}
@@ -399,7 +414,7 @@ bool UEFModularSettingsSubsystem::HasSetting(FGameplayTag Tag) const
 	return Settings.Contains(Tag);
 }
 
-void UEFModularSettingsSubsystem::RegisterSetting(UEFModularSettingBase* Setting)
+void UEFModularSettingsSubsystem::RegisterSetting(UEFModularSettingsBase* Setting)
 {
 	if (Setting && Setting->SettingTag.IsValid())
 	{
@@ -408,9 +423,9 @@ void UEFModularSettingsSubsystem::RegisterSetting(UEFModularSettingBase* Setting
 	}
 }
 
-TArray<UEFModularSettingBase*> UEFModularSettingsSubsystem::GetSettingsByCategory(FName Category) const
+TArray<UEFModularSettingsBase*> UEFModularSettingsSubsystem::GetSettingsByCategory(FName Category) const
 {
-	TArray<UEFModularSettingBase*> Result;
+	TArray<UEFModularSettingsBase*> Result;
 	
 	for (const auto& SettingPair : Settings)
 	{
@@ -424,7 +439,7 @@ TArray<UEFModularSettingBase*> UEFModularSettingsSubsystem::GetSettingsByCategor
 }
 
 // Helper methods
-void UEFModularSettingsSubsystem::CopySettingValue(UEFModularSettingBase* From, UEFModularSettingBase* To)
+void UEFModularSettingsSubsystem::CopySettingValue(UEFModularSettingsBase* From, UEFModularSettingsBase* To)
 {
 	if (From && To)
 	{

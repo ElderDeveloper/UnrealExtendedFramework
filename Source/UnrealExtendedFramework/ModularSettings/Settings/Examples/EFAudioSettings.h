@@ -4,7 +4,7 @@
 #include "Kismet/GameplayStatics.h"
 #include "Sound/SoundClass.h"
 #include "Sound/SoundMix.h"
-#include "UnrealExtendedFramework/ModularSettings/Settings/EFModularSettingBase.h"
+#include "UnrealExtendedFramework/ModularSettings/Settings/EFModularSettingsBase.h"
 #include "EFAudioSettings.generated.h"
 
 UENUM(BlueprintType)
@@ -52,11 +52,11 @@ struct FModularAudioSetting
 };
 
 UCLASS(Abstract, Blueprintable, EditInlineNew)
-class UNREALEXTENDEDFRAMEWORK_API UEFModularAudioSettingMasterVolume : public UEFModularSettingBase
+class UNREALEXTENDEDFRAMEWORK_API UEFModularAudioSettingMasterVolume : public UEFModularSettingsBase
 {
 	GENERATED_BODY()
 public:
-	UEFModularAudioSettingMasterVolume() : UEFModularSettingBase()
+	UEFModularAudioSettingMasterVolume() : UEFModularSettingsBase()
 	{
 		DefaultValue = "1.0";
 		ConfigCategory = TEXT("Audio");
@@ -80,11 +80,11 @@ public:
 
 
 UCLASS(Abstract, Blueprintable, EditInlineNew)
-class UNREALEXTENDEDFRAMEWORK_API UEFModularAudioSettingMusicVolume : public UEFModularSettingBase
+class UNREALEXTENDEDFRAMEWORK_API UEFModularAudioSettingMusicVolume : public UEFModularSettingsBase
 {
 	GENERATED_BODY()
 public:
-	UEFModularAudioSettingMusicVolume() : UEFModularSettingBase()
+	UEFModularAudioSettingMusicVolume() : UEFModularSettingsBase()
 	{
 		DefaultValue = "1.0";
 		ConfigCategory = TEXT("Audio");
@@ -107,11 +107,11 @@ public:
 
 
 UCLASS(Abstract, Blueprintable, EditInlineNew)
-class UNREALEXTENDEDFRAMEWORK_API UEFModularAudioSettingSFXVolume : public UEFModularSettingBase
+class UNREALEXTENDEDFRAMEWORK_API UEFModularAudioSettingSFXVolume : public UEFModularSettingsBase
 {
 	GENERATED_BODY()
 public:
-	UEFModularAudioSettingSFXVolume() : UEFModularSettingBase()
+	UEFModularAudioSettingSFXVolume() : UEFModularSettingsBase()
 	{
 		DefaultValue = "1.0";
 		ConfigCategory = TEXT("Audio");
@@ -134,11 +134,11 @@ public:
 
 
 UCLASS(Abstract, Blueprintable, EditInlineNew)
-class UNREALEXTENDEDFRAMEWORK_API UEFModularAudioSettingVoiceVolume : public UEFModularSettingBase
+class UNREALEXTENDEDFRAMEWORK_API UEFModularAudioSettingVoiceVolume : public UEFModularSettingsBase
 {
 	GENERATED_BODY()
 public:
-	UEFModularAudioSettingVoiceVolume() : UEFModularSettingBase()
+	UEFModularAudioSettingVoiceVolume() : UEFModularSettingsBase()
 	{
 		DefaultValue = "1.0";
 		ConfigCategory = TEXT("Audio");
@@ -162,11 +162,11 @@ public:
 
 
 UCLASS(Abstract, Blueprintable, EditInlineNew)
-class UNREALEXTENDEDFRAMEWORK_API UEFModularAudioSettingAmbientVolume : public UEFModularSettingBase
+class UNREALEXTENDEDFRAMEWORK_API UEFModularAudioSettingAmbientVolume : public UEFModularSettingsBase
 {
 	GENERATED_BODY()
 public:
-	UEFModularAudioSettingAmbientVolume() : UEFModularSettingBase()
+	UEFModularAudioSettingAmbientVolume() : UEFModularSettingsBase()
 	{
 		DefaultValue = "1.0";
 		ConfigCategory = TEXT("Audio");

@@ -4,12 +4,12 @@
 
 #include "CoreMinimal.h"
 #include "GameplayTagContainer.h"
-#include "Settings/EFModularSettingBase.h"
+#include "Settings/EFModularSettingsBase.h"
 #include "EFModularSettingsSubsystem.generated.h"
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnSettingsSaved);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnSettingsLoaded);
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnSettingsChanged, UEFModularSettingBase*, Setting);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnSettingsChanged, UEFModularSettingsBase*, Setting);
 
 UCLASS()
 class UNREALEXTENDEDFRAMEWORK_API UEFModularSettingsSubsystem : public UGameInstanceSubsystem
@@ -92,11 +92,11 @@ public:
 	bool HasSetting(FGameplayTag Tag) const;
 
 	// Register setting (called by registry)
-	void RegisterSetting(UEFModularSettingBase* Setting);
+	void RegisterSetting(UEFModularSettingsBase* Setting);
 
 	// Get setting by category
 	UFUNCTION(BlueprintCallable, Category = "Modular Settings")
-	TArray<UEFModularSettingBase*> GetSettingsByCategory(FName Category) const;
+	TArray<UEFModularSettingsBase*> GetSettingsByCategory(FName Category) const;
 
 	UPROPERTY(BlueprintAssignable, Category = "Modular Settings")
 	FOnSettingsSaved OnSettingsSaved;
@@ -107,11 +107,11 @@ public:
 private:
 	/* Storage */
 	UPROPERTY()
-	TMap<FGameplayTag, TObjectPtr<UEFModularSettingBase>> Settings;
+	TMap<FGameplayTag, TObjectPtr<UEFModularSettingsBase>> Settings;
 
 	/* Staging system */
 	UPROPERTY()
-	TMap<FGameplayTag, TObjectPtr<UEFModularSettingBase>> StagedSettings;
+	TMap<FGameplayTag, TObjectPtr<UEFModularSettingsBase>> StagedSettings;
 
 	/* User defaults */
 	UPROPERTY()
@@ -120,9 +120,9 @@ private:
 	bool bHasStagedChanges = false;
 
 	// Helper methods
-	void CopySettingValue(UEFModularSettingBase* From, UEFModularSettingBase* To);
-	void SaveSettingToConfig(UEFModularSettingBase* Setting);
-	void LoadSettingFromConfig(UEFModularSettingBase* Setting);
+	void CopySettingValue(UEFModularSettingsBase* From, UEFModularSettingsBase* To);
+	void SaveSettingToConfig(UEFModularSettingsBase* Setting);
+	void LoadSettingFromConfig(UEFModularSettingsBase* Setting);
 	FString GetConfigFilePath() const;
 	
 public:
@@ -130,14 +130,14 @@ public:
 	template<typename T>
 	T* GetSetting(FGameplayTag Tag) const
 	{
-		if (const UEFModularSettingBase* Setting = Settings.FindRef(Tag))
+		if (const UEFModularSettingsBase* Setting = Settings.FindRef(Tag))
 		{
-			return Cast<T>(const_cast<UEFModularSettingBase*>(Setting));
+			return Cast<T>(const_cast<UEFModularSettingsBase*>(Setting));
 		}
 		return nullptr;
 	}
 
-	UEFModularSettingBase* GetSettingByTag(FGameplayTag Tag) const
+	UEFModularSettingsBase* GetSettingByTag(FGameplayTag Tag) const
 	{
 		return Settings.FindRef(Tag);
 	}

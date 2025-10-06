@@ -5,12 +5,12 @@
 #include "Engine/LocalPlayer.h"
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/PlayerInput.h"
-#include "UnrealExtendedFramework/ModularSettings/Settings/EFModularSettingBase.h"
+#include "UnrealExtendedFramework/ModularSettings/Settings/EFModularSettingsBase.h"
 #include "EFInputSettings.generated.h"
 
 // Mouse Sensitivity Setting
 UCLASS(Blueprintable, DisplayName = "Mouse Sensitivity")
-class UNREALEXTENDEDFRAMEWORK_API UEFMouseSensitivitySetting : public UEFModularSettingFloat
+class UNREALEXTENDEDFRAMEWORK_API UEFMouseSensitivitySetting : public UEFModularSettingsFloat
 {
 	GENERATED_BODY()
 	
@@ -44,7 +44,7 @@ public:
 
 // Reverse Mouse Y Setting
 UCLASS(Blueprintable, DisplayName = "Reverse Mouse Y")
-class UNREALEXTENDEDFRAMEWORK_API UEFReverseMouseYSetting : public UEFModularSettingBool
+class UNREALEXTENDEDFRAMEWORK_API UEFReverseMouseYSetting : public UEFModularSettingsBool
 {
 	GENERATED_BODY()
 	
@@ -111,7 +111,7 @@ public:
 
 // Mouse Smoothing Setting (Bonus)
 UCLASS(Blueprintable, DisplayName = "Mouse Smoothing")
-class UNREALEXTENDEDFRAMEWORK_API UEFMouseSmoothingSetting : public UEFModularSettingBool
+class UNREALEXTENDEDFRAMEWORK_API UEFMouseSmoothingSetting : public UEFModularSettingsBool
 {
 	GENERATED_BODY()
 	
@@ -140,7 +140,7 @@ public:
 
 // Mouse Acceleration Setting
 UCLASS(Blueprintable, DisplayName = "Mouse Acceleration")
-class UNREALEXTENDEDFRAMEWORK_API UEFMouseAccelerationSetting : public UEFModularSettingBool
+class UNREALEXTENDEDFRAMEWORK_API UEFMouseAccelerationSetting : public UEFModularSettingsBool
 {
 	GENERATED_BODY()
 	
@@ -175,7 +175,7 @@ public:
 
 // Mouse Sensitivity X Setting
 UCLASS(Blueprintable, DisplayName = "Mouse Sensitivity X")
-class UNREALEXTENDEDFRAMEWORK_API UEFMouseSensitivityXSetting : public UEFModularSettingFloat
+class UNREALEXTENDEDFRAMEWORK_API UEFMouseSensitivityXSetting : public UEFModularSettingsFloat
 {
 	GENERATED_BODY()
 	
@@ -225,7 +225,7 @@ public:
 
 // Mouse Sensitivity Y Setting
 UCLASS(Blueprintable, DisplayName = "Mouse Sensitivity Y")
-class UNREALEXTENDEDFRAMEWORK_API UEFMouseSensitivityYSetting : public UEFModularSettingFloat
+class UNREALEXTENDEDFRAMEWORK_API UEFMouseSensitivityYSetting : public UEFModularSettingsFloat
 {
 	GENERATED_BODY()
 	
@@ -275,7 +275,7 @@ public:
 
 // Controller Sensitivity Setting
 UCLASS(Blueprintable, DisplayName = "Controller Sensitivity")
-class UNREALEXTENDEDFRAMEWORK_API UEFControllerSensitivitySetting : public UEFModularSettingFloat
+class UNREALEXTENDEDFRAMEWORK_API UEFControllerSensitivitySetting : public UEFModularSettingsFloat
 {
 	GENERATED_BODY()
 	
@@ -325,7 +325,7 @@ public:
 
 // Controller Deadzone Setting
 UCLASS(Blueprintable, DisplayName = "Controller Deadzone")
-class UNREALEXTENDEDFRAMEWORK_API UEFControllerDeadzoneSetting : public UEFModularSettingFloat
+class UNREALEXTENDEDFRAMEWORK_API UEFControllerDeadzoneSetting : public UEFModularSettingsFloat
 {
 	GENERATED_BODY()
 	
@@ -373,7 +373,7 @@ public:
 
 // Controller Vibration Setting
 UCLASS(Blueprintable, DisplayName = "Controller Vibration")
-class UNREALEXTENDEDFRAMEWORK_API UEFControllerVibrationSetting : public UEFModularSettingBool
+class UNREALEXTENDEDFRAMEWORK_API UEFControllerVibrationSetting : public UEFModularSettingsBool
 {
 	GENERATED_BODY()
 	
@@ -409,7 +409,7 @@ public:
 
 // Controller Vibration Strength Setting
 UCLASS(Blueprintable, DisplayName = "Controller Vibration Strength")
-class UNREALEXTENDEDFRAMEWORK_API UEFControllerVibrationStrengthSetting : public UEFModularSettingFloat
+class UNREALEXTENDEDFRAMEWORK_API UEFControllerVibrationStrengthSetting : public UEFModularSettingsFloat
 {
 	GENERATED_BODY()
 	
@@ -448,7 +448,7 @@ public:
 
 // Auto Sprint Setting
 UCLASS(Blueprintable, DisplayName = "Auto Sprint")
-class UNREALEXTENDEDFRAMEWORK_API UEFAutoSprintSetting : public UEFModularSettingBool
+class UNREALEXTENDEDFRAMEWORK_API UEFAutoSprintSetting : public UEFModularSettingsBool
 {
 	GENERATED_BODY()
 	
@@ -478,7 +478,7 @@ public:
 
 // Hold to Sprint Setting
 UCLASS(Blueprintable, DisplayName = "Hold to Sprint")
-class UNREALEXTENDEDFRAMEWORK_API UEFHoldToSprintSetting : public UEFModularSettingBool
+class UNREALEXTENDEDFRAMEWORK_API UEFHoldToSprintSetting : public UEFModularSettingsBool
 {
 	GENERATED_BODY()
 	
@@ -508,7 +508,7 @@ public:
 
 // Hold to Crouch Setting
 UCLASS(Blueprintable, DisplayName = "Hold to Crouch")
-class UNREALEXTENDEDFRAMEWORK_API UEFHoldToCrouchSetting : public UEFModularSettingBool
+class UNREALEXTENDEDFRAMEWORK_API UEFHoldToCrouchSetting : public UEFModularSettingsBool
 {
 	GENERATED_BODY()
 	
@@ -538,7 +538,7 @@ public:
 
 // Mouse Wheel Sensitivity Setting
 UCLASS(Blueprintable, DisplayName = "Mouse Wheel Sensitivity")
-class UNREALEXTENDEDFRAMEWORK_API UEFMouseWheelSensitivitySetting : public UEFModularSettingFloat
+class UNREALEXTENDEDFRAMEWORK_API UEFMouseWheelSensitivitySetting : public UEFModularSettingsFloat
 {
 	GENERATED_BODY()
 	
@@ -585,7 +585,7 @@ public:
 
 // Double Click Speed Setting
 UCLASS(Blueprintable, DisplayName = "Double Click Speed")
-class UNREALEXTENDEDFRAMEWORK_API UEFDoubleClickSpeedSetting : public UEFModularSettingFloat
+class UNREALEXTENDEDFRAMEWORK_API UEFDoubleClickSpeedSetting : public UEFModularSettingsFloat
 {
 	GENERATED_BODY()
 	

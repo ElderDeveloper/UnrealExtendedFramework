@@ -40,7 +40,7 @@ void UEFWaitModularSettingsChange::Activate()
 	}
 }
 
-void UEFWaitModularSettingsChange::OnSettingChanged(UEFModularSettingBase* ChangedSetting)
+void UEFWaitModularSettingsChange::OnSettingChanged(UEFModularSettingsBase* ChangedSetting)
 {
 	if (ChangedSetting && ChangedSetting->SettingTag == SettingTag)
 	{

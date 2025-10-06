@@ -2,7 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "GameplayTagContainer.h"
-#include "Settings/EFModularSettingBase.h"
+#include "Settings/EFModularSettingsBase.h"
 #include "EFModularSettingRegistry.generated.h"
 
 UCLASS()
@@ -15,7 +15,7 @@ public:
 	static UEFModularSettingRegistry* Get();
 	
 	// Registration methods
-	void RegisterSetting(UEFModularSettingBase* Setting);
+	void RegisterSetting(UEFModularSettingsBase* Setting);
 	void UnregisterSetting(FGameplayTag SettingTag);
 	
 	// Discovery methods
@@ -23,9 +23,9 @@ public:
 	void DiscoverSettingsInModule(const FString& ModuleName);
 	
 	// Query methods
-	TArray<UEFModularSettingBase*> GetSettingsByCategory(FName Category) const;
-	TArray<UEFModularSettingBase*> GetAllSettings() const;
-	UEFModularSettingBase* FindSetting(FGameplayTag SettingTag) const;
+	TArray<UEFModularSettingsBase*> GetSettingsByCategory(FName Category) const;
+	TArray<UEFModularSettingsBase*> GetAllSettings() const;
+	UEFModularSettingsBase* FindSetting(FGameplayTag SettingTag) const;
 	
 	// Validation
 	bool ValidateAllSettings() const;
@@ -41,11 +41,11 @@ private:
 	
 	// Storage
 	UPROPERTY()
-	TMap<FGameplayTag, TObjectPtr<UEFModularSettingBase>> RegisteredSettings;
+	TMap<FGameplayTag, TObjectPtr<UEFModularSettingsBase>> RegisteredSettings;
 	
 	// Helper methods
 	void CreateDefaultInstancesOfSettingClasses();
-	void ValidateSettingConfiguration(UEFModularSettingBase* Setting, TArray<FString>& OutErrors) const;
+	void ValidateSettingConfiguration(UEFModularSettingsBase* Setting, TArray<FString>& OutErrors) const;
 	
 	// Prevent direct instantiation
 	UEFModularSettingRegistry() = default;

@@ -3,6 +3,9 @@
 #include "Engine/Engine.h"
 #include "Engine/World.h"
 #include "UObject/UObjectIterator.h"
+#include "AssetRegistry/AssetRegistryModule.h"
+#include "Engine/AssetManager.h"
+#include "Engine/Blueprint.h"
 
 // Static instance
 UEFModularSettingRegistry* UEFModularSettingRegistry::Instance = nullptr;
@@ -21,37 +24,11 @@ UEFModularSettingRegistry* UEFModularSettingRegistry::Get()
 void UEFModularSettingRegistry::InitializeRegistry()
 {
 	UE_LOG(LogTemp, Log, TEXT("Initializing Modular Settings Registry..."));
-	
-	// Discover all setting classes
-	DiscoverAllSettings();
-	
-	// Validate all discovered settings
-	if (!ValidateAllSettings())
-	{
-		UE_LOG(LogTemp, Error, TEXT("Setting validation failed during registry initialization."));
-		TArray<FString> Errors = GetValidationErrors();
-		for (const FString& Error : Errors)
-		{
-			UE_LOG(LogTemp, Error, TEXT("Setting Error: %s"), *Error);
-		}
-	}
-	
-	// Register with subsystem if available
-	if (UWorld* World = GEngine->GetWorldFromContextObject(this, EGetWorldErrorMode::LogAndReturnNull))
-	{
-		if (UGameInstance* GameInstance = World->GetGameInstance())
-		{
-			if (UEFModularSettingsSubsystem* Subsystem = GameInstance->GetSubsystem<UEFModularSettingsSubsystem>())
-			{
-				for (const auto& SettingPair : RegisteredSettings)
-				{
-					Subsystem->RegisterSetting(SettingPair.Value);
-				}
-			}
-		}
-	}
-	
-	UE_LOG(LogTemp, Log, TEXT("Registry initialized with %d settings."), RegisteredSettings.Num());
+
+	// Note: Settings discovery is now handled by the subsystem during its initialization
+	// This ensures proper world context and initialization order
+
+	UE_LOG(LogTemp, Log, TEXT("Registry initialized."));
 }
 
 void UEFModularSettingRegistry::ShutdownRegistry()
@@ -71,18 +48,18 @@ void UEFModularSettingRegistry::DiscoverAllSettings()
 {
 	RegisteredSettings.Empty();
 	
-	// Find all UClass objects that inherit from UEFModularSettingBase
+	// Find all UClass objects that inherit from UEFModularSettingsBase
 	for (TObjectIterator<UClass> ClassIterator; ClassIterator; ++ClassIterator)
 	{
 		UClass* Class = *ClassIterator;
 		
-		// Check if this class inherits from UEFModularSettingBase and is not abstract
-		if (Class->IsChildOf(UEFModularSettingBase::StaticClass()) && 
+		// Check if this class inherits from UEFModularSettingsBase and is not abstract
+		if (Class->IsChildOf(UEFModularSettingsBase::StaticClass()) && 
 			!Class->HasAnyClassFlags(CLASS_Abstract) &&
-			Class != UEFModularSettingBase::StaticClass())
+			Class != UEFModularSettingsBase::StaticClass())
 		{
 			// Create a default instance of this setting class
-			UEFModularSettingBase* SettingInstance = NewObject<UEFModularSettingBase>(this, Class);
+			UEFModularSettingsBase* SettingInstance = NewObject<UEFModularSettingsBase>(this, Class);
 			
 			if (SettingInstance && SettingInstance->SettingTag.IsValid())
 			{
@@ -95,6 +72,58 @@ void UEFModularSettingRegistry::DiscoverAllSettings()
 			}
 		}
 	}
+
+	// Now discover Blueprint settings using Asset Registry
+	FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
+	IAssetRegistry& AssetRegistry = AssetRegistryModule.Get();
+
+	// Ensure asset registry is loaded
+	AssetRegistry.SearchAllAssets(true);
+
+	TArray<FAssetData> AssetDataList;
+	FARFilter Filter;
+	Filter.ClassPaths.Add(UBlueprint::StaticClass()->GetClassPathName());
+	Filter.bRecursiveClasses = true;
+
+	AssetRegistry.GetAssets(Filter, AssetDataList);
+
+	for (const FAssetData& AssetData : AssetDataList)
+	{
+		// Check if this blueprint's parent class is UEFModularSettingsBase
+		const FString ParentClassPath = AssetData.GetTagValueRef<FString>(FBlueprintTags::ParentClassPath);
+  
+		if (ParentClassPath.Contains(TEXT("EFModularSettingBase")))
+		{
+			// Load the blueprint asset
+			UBlueprint* Blueprint = Cast<UBlueprint>(AssetData.GetAsset());
+   
+			if (Blueprint && Blueprint->GeneratedClass)
+			{
+				UClass* GeneratedClass = Blueprint->GeneratedClass;
+    
+				if (GeneratedClass->IsChildOf(UEFModularSettingsBase::StaticClass()) &&
+				 !GeneratedClass->HasAnyClassFlags(CLASS_Abstract))
+				{
+					// Create an instance of the blueprint class
+					UEFModularSettingsBase* SettingInstance = NewObject<UEFModularSettingsBase>(this, GeneratedClass);
+     
+					if (SettingInstance && SettingInstance->SettingTag.IsValid())
+					{
+						RegisterSetting(SettingInstance);
+						UE_LOG(LogTemp, Log, TEXT("Discovered Blueprint setting: %s with tag: %s"), 
+						 *Blueprint->GetName(), *SettingInstance->SettingTag.ToString());
+					}
+					else
+					{
+						UE_LOG(LogTemp, Warning, TEXT("Blueprint setting %s has invalid or missing SettingTag."), 
+						 *Blueprint->GetName());
+					}
+				}
+			}
+		}
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("Settings discovery complete. Total registered: %d"), RegisteredSettings.Num());
 }
 
 void UEFModularSettingRegistry::DiscoverSettingsInModule(const FString& ModuleName)
@@ -104,7 +133,7 @@ void UEFModularSettingRegistry::DiscoverSettingsInModule(const FString& ModuleNa
 	DiscoverAllSettings();
 }
 
-void UEFModularSettingRegistry::RegisterSetting(UEFModularSettingBase* Setting)
+void UEFModularSettingRegistry::RegisterSetting(UEFModularSettingsBase* Setting)
 {
 	if (!Setting || !Setting->SettingTag.IsValid())
 	{
@@ -134,9 +163,9 @@ void UEFModularSettingRegistry::UnregisterSetting(FGameplayTag SettingTag)
 	}
 }
 
-TArray<UEFModularSettingBase*> UEFModularSettingRegistry::GetSettingsByCategory(FName Category) const
+TArray<UEFModularSettingsBase*> UEFModularSettingRegistry::GetSettingsByCategory(FName Category) const
 {
-	TArray<UEFModularSettingBase*> Result;
+	TArray<UEFModularSettingsBase*> Result;
 	
 	for (const auto& SettingPair : RegisteredSettings)
 	{
@@ -149,14 +178,14 @@ TArray<UEFModularSettingBase*> UEFModularSettingRegistry::GetSettingsByCategory(
 	return Result;
 }
 
-TArray<UEFModularSettingBase*> UEFModularSettingRegistry::GetAllSettings() const
+TArray<UEFModularSettingsBase*> UEFModularSettingRegistry::GetAllSettings() const
 {
-	TArray<TObjectPtr<UEFModularSettingBase>> Results;
+	TArray<TObjectPtr<UEFModularSettingsBase>> Results;
 	RegisteredSettings.GenerateValueArray(Results);
 	return Results;
 }
 
-UEFModularSettingBase* UEFModularSettingRegistry::FindSetting(FGameplayTag SettingTag) const
+UEFModularSettingsBase* UEFModularSettingRegistry::FindSetting(FGameplayTag SettingTag) const
 {
 	return RegisteredSettings.FindRef(SettingTag);
 }
@@ -185,7 +214,7 @@ TArray<FString> UEFModularSettingRegistry::GetValidationErrors() const
 	return Errors;
 }
 
-void UEFModularSettingRegistry::ValidateSettingConfiguration(UEFModularSettingBase* Setting, TArray<FString>& OutErrors) const
+void UEFModularSettingRegistry::ValidateSettingConfiguration(UEFModularSettingsBase* Setting, TArray<FString>& OutErrors) const
 {
 	if (!Setting)
 	{
@@ -212,7 +241,7 @@ void UEFModularSettingRegistry::ValidateSettingConfiguration(UEFModularSettingBa
 	}
 	
 	// Type-specific validation
-	if (UEFModularSettingFloat* FloatSetting = Cast<UEFModularSettingFloat>(Setting))
+	if (UEFModularSettingsFloat* FloatSetting = Cast<UEFModularSettingsFloat>(Setting))
 	{
 		if (FloatSetting->Min >= FloatSetting->Max)
 		{
@@ -220,7 +249,7 @@ void UEFModularSettingRegistry::ValidateSettingConfiguration(UEFModularSettingBa
 		}
 	}
 	
-	if (UEFModularSettingMultiSelect* MultiSelectSetting = Cast<UEFModularSettingMultiSelect>(Setting))
+	if (UEFModularSettingsMultiSelect* MultiSelectSetting = Cast<UEFModularSettingsMultiSelect>(Setting))
 	{
 		if (MultiSelectSetting->Values.Num() == 0)
 		{
