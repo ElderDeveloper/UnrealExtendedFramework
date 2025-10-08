@@ -42,7 +42,8 @@ public class UnrealExtendedGameplay : ModuleRules
 				"AIModule",
 				"GameplayAbilities",
 				"GameplayTasks",
-				"NavigationSystem"
+				"NavigationSystem",
+				"DeveloperSettings"
 				// ... add other public dependencies that you statically link with here ...
 			}
 			);
