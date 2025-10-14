@@ -1,34 +1,38 @@
 // Fill out your copyright notice in the Description page of Project Settings.
 
-
 #include "EFModularSettingsSubsystem.h"
-#include "EFModularSettingRegistry.h"
 #include "Engine/Engine.h"
 #include "HAL/PlatformFilemanager.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
 #include "Async/Async.h"
 
+
 void UEFModularSettingsSubsystem::Initialize(FSubsystemCollectionBase& SubsystemCollectionBase)
 {
 	Super::Initialize(SubsystemCollectionBase);
 
-	// Initialize registry and discover settings
-	UEFModularSettingRegistry* Registry = UEFModularSettingRegistry::Get();
-	if (Registry)
+	const UEFModularProjectSettings* ProjectSettings = GetDefault<UEFModularProjectSettings>();
+	if (ProjectSettings)
 	{
-		Registry->DiscoverAllSettings();
-
-		// Register all discovered settings
-		TArray<UEFModularSettingsBase*> AllSettings = Registry->GetAllSettings();
-		for (UEFModularSettingsBase* Setting : AllSettings)
+		for (const TSoftObjectPtr<UEFModularSettingsContainer>& ContainerPtr : ProjectSettings->SettingsContainers)
 		{
-			RegisterSetting(Setting);
+			if (UEFModularSettingsContainer* Container = ContainerPtr.LoadSynchronous())
+			{
+				for (UEFModularSettingsBase* Setting : Container->Settings)
+				{
+					if (Setting)
+					{
+						RegisterSetting(Setting);
+					}
+				}
+			}
 		}
 	}
 
-	// Load settings from disk on initialization
 	LoadFromDisk();
+
+	ApplyAllChanges();
 }
 
 void UEFModularSettingsSubsystem::Deinitialize()
@@ -39,29 +43,31 @@ void UEFModularSettingsSubsystem::Deinitialize()
 	Super::Deinitialize();
 }
 
+
+
 bool UEFModularSettingsSubsystem::GetBool(FGameplayTag Tag) const
 {
 	if (const UEFModularSettingsBool* BoolSetting = GetSetting<UEFModularSettingsBool>(Tag))
 	{
-		return BoolSetting->bValue;
+		return BoolSetting->Value;
 	}
 	return false;
 }
 
-void UEFModularSettingsSubsystem::SetBool(FGameplayTag Tag, bool bValue)
+void UEFModularSettingsSubsystem::SetBool(FGameplayTag Tag, bool Value)
 {
 	if (UEFModularSettingsBool* BoolSetting = GetSetting<UEFModularSettingsBool>(Tag))
 	{
-		BoolSetting->bValue = bValue;
-		BoolSetting->Apply();
+		BoolSetting->Value = Value;
 		OnSettingsChanged.Broadcast(BoolSetting);
 	}
 	else
 	{
 		UE_LOG(LogTemp, Warning, TEXT("Setting with tag %s not found or is not a Bool setting."), *Tag.ToString());
 	}
-
 }
+
+
 
 float UEFModularSettingsSubsystem::GetFloat(FGameplayTag Tag) const
 {
@@ -77,7 +83,6 @@ void UEFModularSettingsSubsystem::SetFloat(FGameplayTag Tag, float Value)
 	if (UEFModularSettingsFloat* FloatSetting = GetSetting<UEFModularSettingsFloat>(Tag))
 	{
 		FloatSetting->Value = Value;
-		FloatSetting->Apply();
 		OnSettingsChanged.Broadcast(FloatSetting);
 	}
 	else
@@ -85,6 +90,8 @@ void UEFModularSettingsSubsystem::SetFloat(FGameplayTag Tag, float Value)
 		UE_LOG(LogTemp, Warning, TEXT("Setting with tag %s not found or is not a Float setting."), *Tag.ToString());
 	}
 }
+
+
 
 int32 UEFModularSettingsSubsystem::GetIndex(FGameplayTag Tag) const
 {
@@ -102,7 +109,6 @@ void UEFModularSettingsSubsystem::SetIndex(FGameplayTag Tag, int32 Index)
 		if (Index >= 0 && Index < MultiSelectSetting->Values.Num())
 		{
 			MultiSelectSetting->SelectedIndex = Index;
-			MultiSelectSetting->Apply();
 			OnSettingsChanged.Broadcast(MultiSelectSetting);
 		}
 		else
@@ -125,21 +131,18 @@ void UEFModularSettingsSubsystem::AddIndex(FGameplayTag Tag, int32 Amount)
 		if (NewIndex < 0)
 		{
 			MultiSelectSetting->SelectedIndex = MultiSelectSetting->Values.Num() - 1;
-			MultiSelectSetting->Apply();
 			OnSettingsChanged.Broadcast(MultiSelectSetting);
-			return;;
+			return;
 		}
 		
 		if (NewIndex >= 0 && NewIndex < MultiSelectSetting->Values.Num())
 		{
 			MultiSelectSetting->SelectedIndex = NewIndex;
-			MultiSelectSetting->Apply();
 			OnSettingsChanged.Broadcast(MultiSelectSetting);
 		}
 		else
 		{
 			MultiSelectSetting->SelectedIndex = 0;
-			MultiSelectSetting->Apply();
 			OnSettingsChanged.Broadcast(MultiSelectSetting);
 		}
 	}
@@ -170,80 +173,52 @@ FText UEFModularSettingsSubsystem::GetSelectedOption(FGameplayTag Tag) const
 	return FText::GetEmpty();
 }
 
-// Staging system implementation
-void UEFModularSettingsSubsystem::StageChanges()
+
+
+void UEFModularSettingsSubsystem::ApplyAllChanges()
 {
-	StagedSettings.Empty();
-	
 	for (const auto& SettingPair : Settings)
 	{
-		UEFModularSettingsBase* OriginalSetting = SettingPair.Value;
-		UEFModularSettingsBase* StagedSetting = DuplicateObject(OriginalSetting, this);
-		StagedSettings.Add(SettingPair.Key, StagedSetting);
+		UEFModularSettingsBase* Setting = SettingPair.Value;
+		Setting->SaveCurrentValue();
+		Setting->Apply();
 	}
-	
-	bHasStagedChanges = true;
-	UE_LOG(LogTemp, Log, TEXT("Settings staged for preview."));
+    
+	SaveToDisk();
+	UE_LOG(LogTemp, Log, TEXT("All settings applied and saved."));
 }
 
-void UEFModularSettingsSubsystem::ApplyStaged()
+void UEFModularSettingsSubsystem::RevertAllChanges()
 {
-	if (!bHasStagedChanges)
+	for (const auto& SettingPair : Settings)
 	{
-		return;
+		UEFModularSettingsBase* Setting = SettingPair.Value;
+		Setting->RevertToSavedValue();
+		OnSettingsChanged.Broadcast(Setting);
 	}
-	
-	for (const auto& StagedPair : StagedSettings)
+    
+	UE_LOG(LogTemp, Log, TEXT("All settings reverted to saved values."));
+}
+
+bool UEFModularSettingsSubsystem::HasPendingChanges() const
+{
+	for (const auto& SettingPair : Settings)
 	{
-		if (UEFModularSettingsBase* OriginalSetting = Settings.FindRef(StagedPair.Key))
+		const UEFModularSettingsBase* Setting = SettingPair.Value;
+		if (Setting->GetValueAsString() != Setting->GetSavedValueAsString())
 		{
-			CopySettingValue(StagedPair.Value, OriginalSetting);
-			OriginalSetting->Apply();
+			return true;
 		}
 	}
-	
-	SaveToDisk();
-	StagedSettings.Empty();
-	bHasStagedChanges = false;
-	
-	UE_LOG(LogTemp, Log, TEXT("Staged settings applied and saved."));
+	return false;
 }
 
-void UEFModularSettingsSubsystem::RevertStaged()
-{
-	StagedSettings.Empty();
-	bHasStagedChanges = false;
-	
-	UE_LOG(LogTemp, Log, TEXT("Staged settings reverted."));
-}
-
-bool UEFModularSettingsSubsystem::HasStagedChanges() const
-{
-	return bHasStagedChanges;
-}
-
-// Default system implementation
 void UEFModularSettingsSubsystem::ResetToDefaults(FGameplayTag CategoryTag)
 {
 	for (const auto& SettingPair : Settings)
 	{
 		UEFModularSettingsBase* Setting = SettingPair.Value;
-		
-		// If CategoryTag is empty, reset all settings
-		// Otherwise, only reset settings in the specified category
-		if (CategoryTag.IsValid())
-		{
-			FString CategoryString = CategoryTag.ToString();
-			FString SettingTagString = Setting->SettingTag.ToString();
-			
-			if (!SettingTagString.StartsWith(CategoryString))
-			{
-				continue;
-			}
-		}
-		
 		Setting->ResetToDefault();
-		Setting->Apply();
 		OnSettingsChanged.Broadcast(Setting);
 	}
 	
@@ -251,42 +226,24 @@ void UEFModularSettingsSubsystem::ResetToDefaults(FGameplayTag CategoryTag)
 	UE_LOG(LogTemp, Log, TEXT("Settings reset to defaults."));
 }
 
-void UEFModularSettingsSubsystem::SetAsUserDefault(FGameplayTag Tag)
-{
-	if (UEFModularSettingsBase* Setting = Settings.FindRef(Tag))
-	{
-		UserDefaults.Add(Tag, Setting->GetValueAsString());
-		UE_LOG(LogTemp, Log, TEXT("Setting %s set as user default."), *Tag.ToString());
-	}
-}
 
-void UEFModularSettingsSubsystem::LoadPlatformDefaults()
-{
-	// Implementation would load platform-specific defaults
-	// This is a placeholder for platform-specific optimization
-	UE_LOG(LogTemp, Log, TEXT("Loading platform-specific defaults..."));
-}
 
-// Enhanced persistence implementation
 void UEFModularSettingsSubsystem::SaveToDisk()
 {
 	FString ConfigContent;
 	TMap<FName, TArray<UEFModularSettingsBase*>> SettingsByCategory;
 	
-	// Group settings by category
 	for (const auto& SettingPair : Settings)
 	{
 		UEFModularSettingsBase* Setting = SettingPair.Value;
 		SettingsByCategory.FindOrAdd(Setting->ConfigCategory).Add(Setting);
 	}
 	
-	// Add metadata
 	ConfigContent += TEXT("[/Settings/Meta]\n");
 	ConfigContent += TEXT("ConfigVersion=1.0\n");
 	ConfigContent += FString::Printf(TEXT("LastSaved=%s\n"), *FDateTime::Now().ToString());
 	ConfigContent += FString::Printf(TEXT("Platform=%s\n\n"), ANSI_TO_TCHAR(FPlatformProperties::PlatformName()));
 	
-	// Write each category
 	for (const auto& CategoryPair : SettingsByCategory)
 	{
 		FName CategoryName = CategoryPair.Key;
@@ -304,18 +261,6 @@ void UEFModularSettingsSubsystem::SaveToDisk()
 		ConfigContent += TEXT("\n");
 	}
 	
-	// Write user defaults
-	if (UserDefaults.Num() > 0)
-	{
-		ConfigContent += TEXT("[/Settings/UserDefaults]\n");
-		for (const auto& DefaultPair : UserDefaults)
-		{
-			ConfigContent += FString::Printf(TEXT("%s=%s\n"), 
-				*DefaultPair.Key.ToString(), 
-				*DefaultPair.Value);
-		}
-	}
-	
 	FString ConfigPath = GetConfigFilePath();
 	FFileHelper::SaveStringToFile(ConfigContent, *ConfigPath);
 	
@@ -329,7 +274,6 @@ void UEFModularSettingsSubsystem::LoadFromDisk()
 	
 	if (FFileHelper::LoadFileToString(ConfigContent, *ConfigPath))
 	{
-		// Parse the config file and load settings
 		TArray<FString> Lines;
 		ConfigContent.ParseIntoArray(Lines, TEXT("\n"), true);
 		
@@ -342,29 +286,19 @@ void UEFModularSettingsSubsystem::LoadFromDisk()
 				continue;
 			}
 			
-			// Check for section header
 			if (TrimmedLine.StartsWith(TEXT("[")) && TrimmedLine.EndsWith(TEXT("]")))
 			{
 				CurrentSection = TrimmedLine.Mid(1, TrimmedLine.Len() - 2);
 				continue;
 			}
 			
-			// Parse key-value pairs
 			FString Key, Value;
 			if (TrimmedLine.Split(TEXT("="), &Key, &Value))
 			{
 				Key = Key.TrimStartAndEnd();
 				Value = Value.TrimStartAndEnd();
 				
-				if (CurrentSection.Contains(TEXT("UserDefaults")))
-				{
-					FGameplayTag Tag = FGameplayTag::RequestGameplayTag(*Key);
-					if (Tag.IsValid())
-					{
-						UserDefaults.Add(Tag, Value);
-					}
-				}
-				else if (CurrentSection.StartsWith(TEXT("/Settings/")) && !CurrentSection.Contains(TEXT("Meta")))
+				if (CurrentSection.StartsWith(TEXT("/Settings/")) && !CurrentSection.Contains(TEXT("Meta")))
 				{
 					FGameplayTag Tag = FGameplayTag::RequestGameplayTag(*Key);
 					if (UEFModularSettingsBase* Setting = Settings.FindRef(Tag))
@@ -409,6 +343,8 @@ void UEFModularSettingsSubsystem::LoadFromDiskAsync()
 	});
 }
 
+
+
 bool UEFModularSettingsSubsystem::HasSetting(FGameplayTag Tag) const
 {
 	return Settings.Contains(Tag);
@@ -438,7 +374,6 @@ TArray<UEFModularSettingsBase*> UEFModularSettingsSubsystem::GetSettingsByCatego
 	return Result;
 }
 
-// Helper methods
 void UEFModularSettingsSubsystem::CopySettingValue(UEFModularSettingsBase* From, UEFModularSettingsBase* To)
 {
 	if (From && To)

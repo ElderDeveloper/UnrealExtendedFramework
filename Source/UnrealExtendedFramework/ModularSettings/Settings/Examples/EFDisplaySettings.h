@@ -7,7 +7,7 @@
 #include "EFDisplaySettings.generated.h"
 
 // Fullscreen Mode Setting
-UCLASS(Blueprintable, DisplayName = "Fullscreen Mode")
+UCLASS(Blueprintable,EditInlineNew,  DisplayName = "Extended Fullscreen Mode")
 class UNREALEXTENDEDFRAMEWORK_API UEFFullscreenSetting : public UEFModularSettingsMultiSelect
 {
 	GENERATED_BODY()
@@ -36,7 +36,7 @@ public:
 		SelectedIndex = DefaultIndex != INDEX_NONE ? DefaultIndex : 0;
 	}
 	
-	virtual void Apply() override
+	virtual void Apply_Implementation() override
 	{
 		if (!Values.IsValidIndex(SelectedIndex))
 		{
@@ -94,7 +94,7 @@ public:
 };
 
 // Brightness Setting
-UCLASS(Blueprintable, DisplayName = "Brightness")
+UCLASS(Blueprintable,EditInlineNew,  DisplayName = "Extended Brightness")
 class UNREALEXTENDEDFRAMEWORK_API UEFBrightnessSetting : public UEFModularSettingsFloat
 {
 	GENERATED_BODY()
@@ -105,14 +105,14 @@ public:
 		SettingTag = FGameplayTag::RequestGameplayTag(TEXT("Settings.Display.Brightness"));
 		DisplayName = NSLOCTEXT("Settings", "Brightness", "Brightness");
 		ConfigCategory = TEXT("Display");
-		DefaultValue = TEXT("1.0");
+		DefaultValue = 1.0f;
 		
 		Value = 1.0f;
 		Min = 0.5f;
 		Max = 2.0f;
 	}
 	
-	virtual void Apply() override
+	virtual void Apply_Implementation() override
 	{
 		if (GEngine)
 		{
@@ -135,7 +135,7 @@ public:
 };
 
 // Contrast Setting
-UCLASS(Blueprintable, DisplayName = "Contrast")
+UCLASS(Blueprintable,EditInlineNew,  DisplayName = "Extended Contrast")
 class UNREALEXTENDEDFRAMEWORK_API UEFContrastSetting : public UEFModularSettingsFloat
 {
 	GENERATED_BODY()
@@ -146,14 +146,14 @@ public:
 		SettingTag = FGameplayTag::RequestGameplayTag(TEXT("Settings.Display.Contrast"));
 		DisplayName = NSLOCTEXT("Settings", "Contrast", "Contrast");
 		ConfigCategory = TEXT("Display");
-		DefaultValue = TEXT("1.0");
+		DefaultValue = 1.0f;
 		
 		Value = 1.0f;
 		Min = 0.5f;
 		Max = 2.0f;
 	}
 	
-	virtual void Apply() override
+	virtual void Apply_Implementation() override
 	{
 		if (GEngine)
 		{
@@ -173,7 +173,7 @@ public:
 };
 
 // Saturation Setting
-UCLASS(Blueprintable, DisplayName = "Saturation")
+UCLASS(Blueprintable,EditInlineNew,  DisplayName = "Extended Saturation")
 class UNREALEXTENDEDFRAMEWORK_API UEFSaturationSetting : public UEFModularSettingsFloat
 {
 	GENERATED_BODY()
@@ -184,14 +184,14 @@ public:
 		SettingTag = FGameplayTag::RequestGameplayTag(TEXT("Settings.Display.Saturation"));
 		DisplayName = NSLOCTEXT("Settings", "Saturation", "Saturation");
 		ConfigCategory = TEXT("Display");
-		DefaultValue = TEXT("1.0");
+		DefaultValue = 1.0f;
 		
 		Value = 1.0f;
 		Min = 0.0f;
 		Max = 2.0f;
 	}
 	
-	virtual void Apply() override
+	virtual void Apply_Implementation() override
 	{
 		if (GEngine)
 		{
@@ -211,7 +211,7 @@ public:
 };
 
 // Field of View Setting
-UCLASS(Blueprintable, DisplayName = "Field of View")
+UCLASS(Blueprintable,EditInlineNew,  DisplayName = "Extended Field of View")
 class UNREALEXTENDEDFRAMEWORK_API UEFFOVSetting : public UEFModularSettingsFloat
 {
 	GENERATED_BODY()
@@ -222,14 +222,14 @@ public:
 		SettingTag = FGameplayTag::RequestGameplayTag(TEXT("Settings.Display.FOV"));
 		DisplayName = NSLOCTEXT("Settings", "FOV", "Field of View");
 		ConfigCategory = TEXT("Display");
-		DefaultValue = TEXT("90.0");
+		DefaultValue = 90.0;
 		
 		Value = 90.0f;
 		Min = 60.0f;
 		Max = 120.0f;
 	}
 	
-	virtual void Apply() override
+	virtual void Apply_Implementation() override
 	{
 		if (GEngine)
 		{
@@ -256,46 +256,8 @@ public:
 	}
 };
 
-// UI Scale Setting
-UCLASS(Blueprintable, DisplayName = "UI Scale")
-class UNREALEXTENDEDFRAMEWORK_API UEFUIScaleSetting : public UEFModularSettingsFloat
-{
-	GENERATED_BODY()
-	
-public:
-	UEFUIScaleSetting()
-	{
-		SettingTag = FGameplayTag::RequestGameplayTag(TEXT("Settings.Display.UIScale"));
-		DisplayName = NSLOCTEXT("Settings", "UIScale", "UI Scale");
-		ConfigCategory = TEXT("Display");
-		DefaultValue = TEXT("1.0");
-		
-		Value = 1.0f;
-		Min = 0.5f;
-		Max = 2.0f;
-	}
-	
-	virtual void Apply() override
-	{
-		if (GEngine)
-		{
-			// Apply UI scaling through DPI settings
-			FString Command = FString::Printf(TEXT("r.MobileContentScaleFactor %f"), Value);
-			GEngine->Exec(GEngine->GetWorld(), *Command);
-			
-			UE_LOG(LogTemp, Log, TEXT("Applied UI Scale: %.2f"), Value);
-		}
-	}
-	
-	UFUNCTION(BlueprintCallable, Category = "Display Settings")
-	float GetCurrentUIScale() const
-	{
-		return Value;
-	}
-};
-
 // HDR Setting
-UCLASS(Blueprintable, DisplayName = "HDR")
+UCLASS(Blueprintable,EditInlineNew,  DisplayName = "Extended HDR")
 class UNREALEXTENDEDFRAMEWORK_API UEFHDRSetting : public UEFModularSettingsBool
 {
 	GENERATED_BODY()
@@ -306,31 +268,31 @@ public:
 		SettingTag = FGameplayTag::RequestGameplayTag(TEXT("Settings.Display.HDR"));
 		DisplayName = NSLOCTEXT("Settings", "HDR", "HDR (High Dynamic Range)");
 		ConfigCategory = TEXT("Display");
-		DefaultValue = TEXT("false");
-		bValue = false;
+		DefaultValue = false;
+		Value = false;
 	}
 	
-	virtual void Apply() override
+	virtual void Apply_Implementation() override
 	{
 		if (GEngine)
 		{
 			// Enable/disable HDR output
-			FString Command = bValue ? TEXT("r.HDR.Display.OutputDevice 1") : TEXT("r.HDR.Display.OutputDevice 0");
+			FString Command = Value ? TEXT("r.HDR.Display.OutputDevice 1") : TEXT("r.HDR.Display.OutputDevice 0");
 			GEngine->Exec(GEngine->GetWorld(), *Command);
 			
-			UE_LOG(LogTemp, Log, TEXT("Applied HDR: %s"), bValue ? TEXT("Enabled") : TEXT("Disabled"));
+			UE_LOG(LogTemp, Log, TEXT("Applied HDR: %s"), Value ? TEXT("Enabled") : TEXT("Disabled"));
 		}
 	}
 	
 	UFUNCTION(BlueprintCallable, Category = "Display Settings")
 	bool IsHDREnabled() const
 	{
-		return bValue;
+		return Value;
 	}
 };
 
 // Color Blind Support Setting
-UCLASS(Blueprintable, DisplayName = "Color Blind Support")
+UCLASS(Blueprintable,EditInlineNew,  DisplayName = "Extended Color Blind Support")
 class UNREALEXTENDEDFRAMEWORK_API UEFColorBlindSetting : public UEFModularSettingsMultiSelect
 {
 	GENERATED_BODY()
@@ -361,7 +323,7 @@ public:
 		SelectedIndex = DefaultIndex != INDEX_NONE ? DefaultIndex : 0;
 	}
 	
-	virtual void Apply() override
+	virtual void Apply_Implementation() override
 	{
 		if (Values.IsValidIndex(SelectedIndex))
 		{
@@ -404,46 +366,8 @@ public:
 	}
 };
 
-// Safe Zone Setting
-UCLASS(Blueprintable, DisplayName = "Safe Zone")
-class UNREALEXTENDEDFRAMEWORK_API UEFSafeZoneSetting : public UEFModularSettingsFloat
-{
-	GENERATED_BODY()
-	
-public:
-	UEFSafeZoneSetting()
-	{
-		SettingTag = FGameplayTag::RequestGameplayTag(TEXT("Settings.Display.SafeZone"));
-		DisplayName = NSLOCTEXT("Settings", "SafeZone", "Safe Zone");
-		ConfigCategory = TEXT("Display");
-		DefaultValue = TEXT("1.0");
-		
-		Value = 1.0f;
-		Min = 0.8f;
-		Max = 1.0f;
-	}
-	
-	virtual void Apply() override
-	{
-		if (GEngine)
-		{
-			// Apply safe zone scaling for UI elements
-			FString Command = FString::Printf(TEXT("r.SafeZone.Scale %f"), Value);
-			GEngine->Exec(GEngine->GetWorld(), *Command);
-			
-			UE_LOG(LogTemp, Log, TEXT("Applied Safe Zone: %.2f"), Value);
-		}
-	}
-	
-	UFUNCTION(BlueprintCallable, Category = "Display Settings")
-	float GetCurrentSafeZone() const
-	{
-		return Value;
-	}
-};
-
 // Display Mode Setting (for multiple monitors)
-UCLASS(Blueprintable, DisplayName = "Display Mode")
+UCLASS(Blueprintable,EditInlineNew,  DisplayName = "Extended Display Mode")
 class UNREALEXTENDEDFRAMEWORK_API UEFDisplayModeSetting : public UEFModularSettingsMultiSelect
 {
 	GENERATED_BODY()
@@ -474,7 +398,7 @@ public:
 		SelectedIndex = DefaultIndex != INDEX_NONE ? DefaultIndex : 0;
 	}
 	
-	virtual void Apply() override
+	virtual void Apply_Implementation() override
 	{
 		if (Values.IsValidIndex(SelectedIndex))
 		{

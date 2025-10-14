@@ -6,7 +6,7 @@
 #include "EFGraphicsSettings.generated.h"
 
 // Screen Resolution Setting
-UCLASS(Blueprintable, DisplayName = "Screen Resolution")
+UCLASS(Blueprintable,EditInlineNew, DisplayName = "Extended Screen Resolution")
 class UNREALEXTENDEDFRAMEWORK_API UEFResolutionSetting : public UEFModularSettingsMultiSelect
 {
 	GENERATED_BODY()
@@ -22,7 +22,7 @@ public:
 		PopulateResolutionOptions();
 	}
 	
-	virtual void Apply() override
+	virtual void Apply_Implementation() override
 	{
 		if (Values.IsValidIndex(SelectedIndex))
 		{
@@ -94,7 +94,7 @@ private:
 };
 
 // Graphics Quality Setting
-UCLASS(Blueprintable, DisplayName = "Graphics Quality")
+UCLASS(Blueprintable,EditInlineNew,  DisplayName = "Extended Graphics Quality")
 class UNREALEXTENDEDFRAMEWORK_API UEFGraphicsQualitySetting : public UEFModularSettingsMultiSelect
 {
 	GENERATED_BODY()
@@ -119,7 +119,7 @@ public:
 		SelectedIndex = DefaultIndex != INDEX_NONE ? DefaultIndex : 1;
 	}
 	
-	virtual void Apply() override
+	virtual void Apply_Implementation() override
 	{
 		if (Values.IsValidIndex(SelectedIndex))
 		{
@@ -171,7 +171,7 @@ private:
 };
 
 // VSync Setting
-UCLASS(Blueprintable, DisplayName = "VSync")
+UCLASS(Blueprintable,EditInlineNew,  DisplayName = "Extended VSync")
 class UNREALEXTENDEDFRAMEWORK_API UEFVSyncSetting : public UEFModularSettingsBool
 {
 	GENERATED_BODY()
@@ -182,20 +182,20 @@ public:
 		SettingTag = FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.VSync"));
 		DisplayName = NSLOCTEXT("Settings", "VSync", "Vertical Sync");
 		ConfigCategory = TEXT("Graphics");
-		DefaultValue = TEXT("true");
-		bValue = true;
+		DefaultValue = true;
+		Value = true;
 	}
 	
-	virtual void Apply() override
+	virtual void Apply_Implementation() override
 	{
 		if (GEngine)
 		{
 			// Apply VSync setting to the engine
 			// This would typically involve console commands or engine settings
-			FString Command = bValue ? TEXT("r.VSync 1") : TEXT("r.VSync 0");
+			FString Command = Value ? TEXT("r.VSync 1") : TEXT("r.VSync 0");
 			GEngine->Exec(GEngine->GetWorld(), *Command);
 			
-			UE_LOG(LogTemp, Log, TEXT("Applied VSync: %s"), bValue ? TEXT("Enabled") : TEXT("Disabled"));
+			UE_LOG(LogTemp, Log, TEXT("Applied VSync: %s"), Value ? TEXT("Enabled") : TEXT("Disabled"));
 		}
 	}
 	
@@ -203,12 +203,12 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Graphics Settings")
 	bool IsVSyncEnabled() const
 	{
-		return bValue;
+		return Value;
 	}
 };
 
 // Frame Rate Limit Setting
-UCLASS(Blueprintable, DisplayName = "Frame Rate Limit")
+UCLASS(Blueprintable,EditInlineNew,  DisplayName = "Extended Frame Rate Limit")
 class UNREALEXTENDEDFRAMEWORK_API UEFFrameRateLimitSetting : public UEFModularSettingsMultiSelect
 {
 	GENERATED_BODY()
@@ -234,7 +234,7 @@ public:
 		SelectedIndex = DefaultIndex != INDEX_NONE ? DefaultIndex : 1;
 	}
 	
-	virtual void Apply() override
+	virtual void Apply_Implementation() override
 	{
 		if (Values.IsValidIndex(SelectedIndex))
 		{
@@ -272,7 +272,7 @@ public:
 };
 
 // Anti-Aliasing Setting
-UCLASS(Blueprintable, DisplayName = "Anti-Aliasing")
+UCLASS(Blueprintable,EditInlineNew,  DisplayName = "Extended Anti-Aliasing")
 class UNREALEXTENDEDFRAMEWORK_API UEFAntiAliasingSetting : public UEFModularSettingsMultiSelect
 {
 	GENERATED_BODY()
@@ -298,7 +298,7 @@ public:
 		SelectedIndex = DefaultIndex != INDEX_NONE ? DefaultIndex : 2;
 	}
 	
-	virtual void Apply() override
+	virtual void Apply_Implementation() override
 	{
 		if (Values.IsValidIndex(SelectedIndex))
 		{
@@ -346,7 +346,7 @@ public:
 };
 
 // Texture Quality Setting
-UCLASS(Blueprintable, DisplayName = "Texture Quality")
+UCLASS(Blueprintable,EditInlineNew,  DisplayName = "Extended Texture Quality")
 class UNREALEXTENDEDFRAMEWORK_API UEFTextureQualitySetting : public UEFModularSettingsMultiSelect
 {
 	GENERATED_BODY()
@@ -371,7 +371,7 @@ public:
 		SelectedIndex = DefaultIndex != INDEX_NONE ? DefaultIndex : 2;
 	}
 	
-	virtual void Apply() override
+	virtual void Apply_Implementation() override
 	{
 		if (Values.IsValidIndex(SelectedIndex))
 		{
@@ -389,7 +389,7 @@ public:
 };
 
 // Shadow Quality Setting
-UCLASS(Blueprintable, DisplayName = "Shadow Quality")
+UCLASS(Blueprintable,EditInlineNew,  DisplayName = "Extended Shadow Quality")
 class UNREALEXTENDEDFRAMEWORK_API UEFShadowQualitySetting : public UEFModularSettingsMultiSelect
 {
 	GENERATED_BODY()
@@ -415,7 +415,7 @@ public:
 		SelectedIndex = DefaultIndex != INDEX_NONE ? DefaultIndex : 2;
 	}
 	
-	virtual void Apply() override
+	virtual void Apply_Implementation() override
 	{
 		if (Values.IsValidIndex(SelectedIndex))
 		{
@@ -433,7 +433,7 @@ public:
 };
 
 // Post-Processing Quality Setting
-UCLASS(Blueprintable, DisplayName = "Post-Processing Quality")
+UCLASS(Blueprintable,EditInlineNew,  DisplayName = "Extended Post-Processing Quality")
 class UNREALEXTENDEDFRAMEWORK_API UEFPostProcessQualitySetting : public UEFModularSettingsMultiSelect
 {
 	GENERATED_BODY()
@@ -458,7 +458,7 @@ public:
 		SelectedIndex = DefaultIndex != INDEX_NONE ? DefaultIndex : 1;
 	}
 	
-	virtual void Apply() override
+	virtual void Apply_Implementation() override
 	{
 		if (Values.IsValidIndex(SelectedIndex))
 		{
@@ -476,7 +476,7 @@ public:
 };
 
 // View Distance Setting
-UCLASS(Blueprintable, DisplayName = "View Distance")
+UCLASS(Blueprintable,EditInlineNew,  DisplayName = "Extended View Distance")
 class UNREALEXTENDEDFRAMEWORK_API UEFViewDistanceSetting : public UEFModularSettingsMultiSelect
 {
 	GENERATED_BODY()
@@ -501,7 +501,7 @@ public:
 		SelectedIndex = DefaultIndex != INDEX_NONE ? DefaultIndex : 1;
 	}
 	
-	virtual void Apply() override
+	virtual void Apply_Implementation() override
 	{
 		if (Values.IsValidIndex(SelectedIndex))
 		{
@@ -519,7 +519,7 @@ public:
 };
 
 // Motion Blur Setting
-UCLASS(Blueprintable, DisplayName = "Motion Blur")
+UCLASS(Blueprintable,EditInlineNew,  DisplayName = "Extended Motion Blur")
 class UNREALEXTENDEDFRAMEWORK_API UEFMotionBlurSetting : public UEFModularSettingsBool
 {
 	GENERATED_BODY()
@@ -530,23 +530,23 @@ public:
 		SettingTag = FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.MotionBlur"));
 		DisplayName = NSLOCTEXT("Settings", "MotionBlur", "Motion Blur");
 		ConfigCategory = TEXT("Graphics");
-		DefaultValue = TEXT("false");
-		bValue = false;
+		DefaultValue = false;
+		Value = false;
 	}
 	
-	virtual void Apply() override
+	virtual void Apply_Implementation() override
 	{
 		if (GEngine)
 		{
-			FString Command = bValue ? TEXT("r.MotionBlurQuality 3") : TEXT("r.MotionBlurQuality 0");
+			FString Command = Value ? TEXT("r.MotionBlurQuality 3") : TEXT("r.MotionBlurQuality 0");
 			GEngine->Exec(GEngine->GetWorld(), *Command);
-			UE_LOG(LogTemp, Log, TEXT("Applied Motion Blur: %s"), bValue ? TEXT("Enabled") : TEXT("Disabled"));
+			UE_LOG(LogTemp, Log, TEXT("Applied Motion Blur: %s"), Value ? TEXT("Enabled") : TEXT("Disabled"));
 		}
 	}
 };
 
 // Screen Space Reflections Setting
-UCLASS(Blueprintable, DisplayName = "Screen Space Reflections")
+UCLASS(Blueprintable,EditInlineNew,  DisplayName = "Extended Screen Space Reflections")
 class UNREALEXTENDEDFRAMEWORK_API UEFSSRSetting : public UEFModularSettingsBool
 {
 	GENERATED_BODY()
@@ -557,23 +557,23 @@ public:
 		SettingTag = FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.SSR"));
 		DisplayName = NSLOCTEXT("Settings", "SSR", "Screen Space Reflections");
 		ConfigCategory = TEXT("Graphics");
-		DefaultValue = TEXT("true");
-		bValue = true;
+		DefaultValue = true;
+		Value = true;
 	}
 	
-	virtual void Apply() override
+	virtual void Apply_Implementation() override
 	{
 		if (GEngine)
 		{
-			FString Command = bValue ? TEXT("r.SSR.Quality 3") : TEXT("r.SSR.Quality 0");
+			FString Command = Value ? TEXT("r.SSR.Quality 3") : TEXT("r.SSR.Quality 0");
 			GEngine->Exec(GEngine->GetWorld(), *Command);
-			UE_LOG(LogTemp, Log, TEXT("Applied Screen Space Reflections: %s"), bValue ? TEXT("Enabled") : TEXT("Disabled"));
+			UE_LOG(LogTemp, Log, TEXT("Applied Screen Space Reflections: %s"), Value ? TEXT("Enabled") : TEXT("Disabled"));
 		}
 	}
 };
 
 // Bloom Setting
-UCLASS(Blueprintable, DisplayName = "Bloom")
+UCLASS(Blueprintable,EditInlineNew,  DisplayName = "Extended Bloom")
 class UNREALEXTENDEDFRAMEWORK_API UEFBloomSetting : public UEFModularSettingsBool
 {
 	GENERATED_BODY()
@@ -584,23 +584,23 @@ public:
 		SettingTag = FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.Bloom"));
 		DisplayName = NSLOCTEXT("Settings", "Bloom", "Bloom");
 		ConfigCategory = TEXT("Graphics");
-		DefaultValue = TEXT("true");
-		bValue = true;
+		DefaultValue = true;
+		Value = true;
 	}
 	
-	virtual void Apply() override
+	virtual void Apply_Implementation() override
 	{
 		if (GEngine)
 		{
-			FString Command = bValue ? TEXT("r.BloomQuality 5") : TEXT("r.BloomQuality 0");
+			FString Command = Value ? TEXT("r.BloomQuality 5") : TEXT("r.BloomQuality 0");
 			GEngine->Exec(GEngine->GetWorld(), *Command);
-			UE_LOG(LogTemp, Log, TEXT("Applied Bloom: %s"), bValue ? TEXT("Enabled") : TEXT("Disabled"));
+			UE_LOG(LogTemp, Log, TEXT("Applied Bloom: %s"), Value ? TEXT("Enabled") : TEXT("Disabled"));
 		}
 	}
 };
 
 // Lens Flares Setting
-UCLASS(Blueprintable, DisplayName = "Lens Flares")
+UCLASS(Blueprintable,EditInlineNew,  DisplayName = "Extended Lens Flares")
 class UNREALEXTENDEDFRAMEWORK_API UEFLensFlaresSetting : public UEFModularSettingsBool
 {
 	GENERATED_BODY()
@@ -611,23 +611,23 @@ public:
 		SettingTag = FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.LensFlares"));
 		DisplayName = NSLOCTEXT("Settings", "LensFlares", "Lens Flares");
 		ConfigCategory = TEXT("Graphics");
-		DefaultValue = TEXT("true");
-		bValue = true;
+		DefaultValue = true;
+		Value = true;
 	}
 	
-	virtual void Apply() override
+	virtual void Apply_Implementation() override
 	{
 		if (GEngine)
 		{
-			FString Command = bValue ? TEXT("r.LensFlareQuality 3") : TEXT("r.LensFlareQuality 0");
+			FString Command = Value ? TEXT("r.LensFlareQuality 3") : TEXT("r.LensFlareQuality 0");
 			GEngine->Exec(GEngine->GetWorld(), *Command);
-			UE_LOG(LogTemp, Log, TEXT("Applied Lens Flares: %s"), bValue ? TEXT("Enabled") : TEXT("Disabled"));
+			UE_LOG(LogTemp, Log, TEXT("Applied Lens Flares: %s"), Value ? TEXT("Enabled") : TEXT("Disabled"));
 		}
 	}
 };
 
 // Enhanced Graphics Quality Setting with Scalability Integration
-UCLASS(Blueprintable, DisplayName = "Overall Graphics Quality")
+UCLASS(Blueprintable,EditInlineNew, DisplayName = "Extended Overall Graphics Quality")
 class UNREALEXTENDEDFRAMEWORK_API UEFOverallGraphicsQualitySetting : public UEFModularSettingsMultiSelect
 {
 	GENERATED_BODY()
@@ -653,7 +653,7 @@ public:
 		SelectedIndex = DefaultIndex != INDEX_NONE ? DefaultIndex : 1;
 	}
 	
-	virtual void Apply() override
+	virtual void Apply_Implementation() override
 	{
 		if (Values.IsValidIndex(SelectedIndex))
 		{

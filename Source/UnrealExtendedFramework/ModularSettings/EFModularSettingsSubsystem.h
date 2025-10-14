@@ -11,6 +11,28 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnSettingsSaved);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnSettingsLoaded);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnSettingsChanged, UEFModularSettingsBase*, Setting);
 
+
+UCLASS(BlueprintType, meta = (DisplayName = "Modular Settings Container"))
+class UNREALEXTENDEDFRAMEWORK_API UEFModularSettingsContainer : public UDataAsset
+{
+	GENERATED_BODY()
+
+public:
+	UPROPERTY(EditDefaultsOnly, Instanced, Category = "Modular Settings")
+	TArray<TObjectPtr<UEFModularSettingsBase>> Settings;
+};
+
+UCLASS(Config=Game, DefaultConfig, meta=(DisplayName="Extended Settings"))
+class UNREALEXTENDEDFRAMEWORK_API UEFModularProjectSettings : public UDeveloperSettings
+{
+	GENERATED_BODY()
+
+public:
+	UPROPERTY(EditDefaultsOnly, Config, Category = "Modular Settings", meta = (AllowedClasses = "/Script/UnrealExtendedFramework.EFModularSettingsContainer"))
+	TArray<TSoftObjectPtr<UEFModularSettingsContainer>> SettingsContainers;
+};
+
+
 UCLASS()
 class UNREALEXTENDEDFRAMEWORK_API UEFModularSettingsSubsystem : public UGameInstanceSubsystem
 {
@@ -52,28 +74,21 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Modular Settings")
 	FText GetSelectedOption(FGameplayTag Tag) const;
 	
-	// Staging system
+	// New method to apply all pending changes
 	UFUNCTION(BlueprintCallable, Category = "Modular Settings")
-	void StageChanges();
+	void ApplyAllChanges();
 
+	// New method to revert all pending changes
 	UFUNCTION(BlueprintCallable, Category = "Modular Settings")
-	void ApplyStaged();
+	void RevertAllChanges();
 
+	// Check if there are unapplied changes
 	UFUNCTION(BlueprintCallable, Category = "Modular Settings")
-	void RevertStaged();
-
-	UFUNCTION(BlueprintCallable, Category = "Modular Settings")
-	bool HasStagedChanges() const;
+	bool HasPendingChanges() const;
 
 	// Default system
 	UFUNCTION(BlueprintCallable, Category = "Modular Settings")
 	void ResetToDefaults(FGameplayTag CategoryTag);
-
-	UFUNCTION(BlueprintCallable, Category = "Modular Settings")
-	void SetAsUserDefault(FGameplayTag Tag);
-
-	UFUNCTION(BlueprintCallable, Category = "Modular Settings")
-	void LoadPlatformDefaults();
 	
 	// Persistence
 	UFUNCTION(BlueprintCallable, Category = "Modular Settings")
@@ -108,16 +123,7 @@ private:
 	/* Storage */
 	UPROPERTY()
 	TMap<FGameplayTag, TObjectPtr<UEFModularSettingsBase>> Settings;
-
-	/* Staging system */
-	UPROPERTY()
-	TMap<FGameplayTag, TObjectPtr<UEFModularSettingsBase>> StagedSettings;
-
-	/* User defaults */
-	UPROPERTY()
-	TMap<FGameplayTag, FString> UserDefaults;
-
-	bool bHasStagedChanges = false;
+	
 
 	// Helper methods
 	void CopySettingValue(UEFModularSettingsBase* From, UEFModularSettingsBase* To);
