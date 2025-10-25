@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "UnrealExtendedFramework/ModularSettings/Settings/EFModularSettingsBase.h"
+#include "UnrealExtendedFramework/ModularSettings/EFModularSettingsSubsystem.h"
 #include "Engine/Engine.h"
 #include "EFGraphicsSettings.generated.h"
 
@@ -90,83 +91,6 @@ private:
 			return Width > 0 && Height > 0;
 		}
 		return false;
-	}
-};
-
-// Graphics Quality Setting
-UCLASS(Blueprintable,EditInlineNew,  DisplayName = "Extended Graphics Quality")
-class UNREALEXTENDEDFRAMEWORK_API UEFGraphicsQualitySetting : public UEFModularSettingsMultiSelect
-{
-	GENERATED_BODY()
-	
-public:
-	UEFGraphicsQualitySetting()
-	{
-		SettingTag = FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.Quality"));
-		DisplayName = NSLOCTEXT("Settings", "GraphicsQuality", "Graphics Quality");
-		ConfigCategory = TEXT("Graphics");
-		DefaultValue = TEXT("Medium");
-		
-		Values = { TEXT("Low"), TEXT("Medium"), TEXT("High"), TEXT("Ultra") };
-		DisplayNames = {
-			NSLOCTEXT("Settings", "QualityLow", "Low"),
-			NSLOCTEXT("Settings", "QualityMedium", "Medium"),
-			NSLOCTEXT("Settings", "QualityHigh", "High"),
-			NSLOCTEXT("Settings", "QualityUltra", "Ultra")
-		};
-		
-		int32 DefaultIndex = Values.Find(DefaultValue);
-		SelectedIndex = DefaultIndex != INDEX_NONE ? DefaultIndex : 1;
-	}
-	
-	virtual void Apply_Implementation() override
-	{
-		if (Values.IsValidIndex(SelectedIndex))
-		{
-			FString Quality = Values[SelectedIndex];
-			int32 QualityLevel = SelectedIndex;
-			
-			// Apply scalability settings based on quality level
-			if (GEngine)
-			{
-				// Apply to various scalability groups
-				ApplyScalabilitySettings(QualityLevel);
-				UE_LOG(LogTemp, Log, TEXT("Applied graphics quality: %s (Level %d)"), *Quality, QualityLevel);
-			}
-		}
-	}
-	
-	// Helper method to get current quality level
-	UFUNCTION(BlueprintCallable, Category = "Graphics Settings")
-	int32 GetCurrentQualityLevel() const
-	{
-		return SelectedIndex;
-	}
-	
-private:
-	void ApplyScalabilitySettings(int32 QualityLevel)
-	{
-		// This would integrate with Unreal's scalability system
-		// For now, we'll just log the intended changes
-		
-		switch (QualityLevel)
-		{
-		case 0: // Low
-			UE_LOG(LogTemp, Log, TEXT("Would apply Low quality settings"));
-			break;
-		case 1: // Medium
-			UE_LOG(LogTemp, Log, TEXT("Would apply Medium quality settings"));
-			break;
-		case 2: // High
-			UE_LOG(LogTemp, Log, TEXT("Would apply High quality settings"));
-			break;
-		case 3: // Ultra
-			UE_LOG(LogTemp, Log, TEXT("Would apply Ultra quality settings"));
-			break;
-		default:
-			UE_LOG(LogTemp, Log, TEXT("Would apply Medium quality settings (default)"));
-			break;
-		}
 	}
 };
 
@@ -655,6 +579,7 @@ public:
 	
 	virtual void Apply_Implementation() override
 	{
+		/*
 		if (Values.IsValidIndex(SelectedIndex))
 		{
 			FString Quality = Values[SelectedIndex];
@@ -666,7 +591,49 @@ public:
 				ApplyComprehensiveQualitySettings(QualityLevel);
 				UE_LOG(LogTemp, Log, TEXT("Applied Overall Graphics Quality: %s (Level %d)"), *Quality, QualityLevel);
 			}
+		}*/
+	}
+	
+	virtual void SetSelectedIndex_Implementation(int32 Index) override
+	{
+		Super::SetSelectedIndex_Implementation(Index);
+
+		if (Index >= Values.Num())
+		{
+			return;
 		}
+
+		if (Index == Values.Num() - 1) // Custom option
+		{
+			return;
+		}
+		
+		// Define all graphics settings that should be updated
+		TArray<FGameplayTag> GraphicsSettingTags = {
+			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.ViewDistance")),
+			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.ShadowQuality")),
+			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.TextureQuality")),
+			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.PostProcessQuality")),
+			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.AntiAliasing")),
+			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.MotionBlur")),
+			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.SSR")),
+			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.Bloom"))
+		};
+
+		// Update individual settings based on quality level
+		for (const FGameplayTag& Tag : GraphicsSettingTags)
+		{
+			if (UEFModularSettingsMultiSelect* Setting = ModularSettingsSubsystem->GetSetting<UEFModularSettingsMultiSelect>(Tag))
+			{
+				ModularSettingsSubsystem->SetIndex(Tag, Index);
+			}
+			else if (UEFModularSettingsBool* BoolSetting = ModularSettingsSubsystem->GetSetting<UEFModularSettingsBool>(Tag))
+			{
+				// For bool settings like MotionBlur, SSR, Bloom: disable on Low, enable on others
+				ModularSettingsSubsystem->SetBool(Tag, Index > 0);
+			}
+		}
+		
 	}
 	
 private:
@@ -722,7 +689,7 @@ private:
 			Commands.Add(TEXT("r.BloomQuality 5"));
 			break;
 		}
-		
+
 		// Execute all commands
 		for (const FString& Command : Commands)
 		{

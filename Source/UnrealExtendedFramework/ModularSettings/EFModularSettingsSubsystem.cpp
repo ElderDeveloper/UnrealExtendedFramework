@@ -39,7 +39,6 @@ void UEFModularSettingsSubsystem::Deinitialize()
 {
 	// Save settings before shutdown
 	SaveToDisk();
-	
 	Super::Deinitialize();
 }
 
@@ -58,7 +57,7 @@ void UEFModularSettingsSubsystem::SetBool(FGameplayTag Tag, bool Value)
 {
 	if (UEFModularSettingsBool* BoolSetting = GetSetting<UEFModularSettingsBool>(Tag))
 	{
-		BoolSetting->Value = Value;
+		BoolSetting->SetValue(Value);
 		OnSettingsChanged.Broadcast(BoolSetting);
 	}
 	else
@@ -82,7 +81,7 @@ void UEFModularSettingsSubsystem::SetFloat(FGameplayTag Tag, float Value)
 {
 	if (UEFModularSettingsFloat* FloatSetting = GetSetting<UEFModularSettingsFloat>(Tag))
 	{
-		FloatSetting->Value = Value;
+		FloatSetting->SetValue(Value);
 		OnSettingsChanged.Broadcast(FloatSetting);
 	}
 	else
@@ -108,7 +107,7 @@ void UEFModularSettingsSubsystem::SetIndex(FGameplayTag Tag, int32 Index)
 	{
 		if (Index >= 0 && Index < MultiSelectSetting->Values.Num())
 		{
-			MultiSelectSetting->SelectedIndex = Index;
+			MultiSelectSetting->SetSelectedIndex(Index);
 			OnSettingsChanged.Broadcast(MultiSelectSetting);
 		}
 		else
@@ -130,19 +129,19 @@ void UEFModularSettingsSubsystem::AddIndex(FGameplayTag Tag, int32 Amount)
 		
 		if (NewIndex < 0)
 		{
-			MultiSelectSetting->SelectedIndex = MultiSelectSetting->Values.Num() - 1;
+			MultiSelectSetting->SetSelectedIndex(MultiSelectSetting->Values.Num() - 1);
 			OnSettingsChanged.Broadcast(MultiSelectSetting);
 			return;
 		}
 		
 		if (NewIndex >= 0 && NewIndex < MultiSelectSetting->Values.Num())
 		{
-			MultiSelectSetting->SelectedIndex = NewIndex;
+			MultiSelectSetting->SetSelectedIndex(NewIndex);
 			OnSettingsChanged.Broadcast(MultiSelectSetting);
 		}
 		else
 		{
-			MultiSelectSetting->SelectedIndex = 0;
+			MultiSelectSetting->SetSelectedIndex(0);
 			OnSettingsChanged.Broadcast(MultiSelectSetting);
 		}
 	}
@@ -355,6 +354,7 @@ void UEFModularSettingsSubsystem::RegisterSetting(UEFModularSettingsBase* Settin
 	if (Setting && Setting->SettingTag.IsValid())
 	{
 		Settings.Add(Setting->SettingTag, Setting);
+		Setting->ModularSettingsSubsystem = this;
 		UE_LOG(LogTemp, Log, TEXT("Registered setting: %s"), *Setting->SettingTag.ToString());
 	}
 }
@@ -387,3 +387,4 @@ FString UEFModularSettingsSubsystem::GetConfigFilePath() const
 {
 	return FPaths::ProjectSavedDir() / TEXT("Config") / TEXT("ModularSettings.ini");
 }
+

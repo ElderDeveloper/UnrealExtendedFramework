@@ -5,8 +5,9 @@
 #include "CoreMinimal.h"
 #include "GameplayTagContainer.h"
 #include "Engine/Engine.h"
-
 #include "EFModularSettingsBase.generated.h"
+
+class UEFModularSettingsSubsystem;
 
 UCLASS(Abstract,BlueprintType, Blueprintable, EditInlineNew)
 class UNREALEXTENDEDFRAMEWORK_API UEFModularSettingsBase : public UObject
@@ -21,6 +22,9 @@ public:
 
 	UPROPERTY(EditDefaultsOnly,BlueprintReadOnly, Category="Settings")
 	FName ConfigCategory = TEXT("Settings");
+
+	UPROPERTY(BlueprintReadOnly, Category="Settings")
+	TObjectPtr<UEFModularSettingsSubsystem> ModularSettingsSubsystem;
 	
 	UFUNCTION(BlueprintCallable,BlueprintNativeEvent, Category = "Settings")
 	bool CanApply(const FString& Value) const;
@@ -44,6 +48,10 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "Settings")
 	virtual void ResetToDefault() {}
+
+protected:
+
+	FString PreviousValue;
 };
 
 /* Bool */
@@ -59,9 +67,12 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Settings Value")
 	bool Value = false;
 
+	UFUNCTION(BlueprintCallable,BlueprintNativeEvent, Category = "Settings")
+	void SetValue(bool NewValue);
+	virtual void SetValue_Implementation(bool NewValue) { Value = NewValue; }
+
 	virtual void SaveCurrentValue() override { SavedValue = Value;}
 	virtual void RevertToSavedValue() override { Value = SavedValue; Apply_Implementation(); }
-	
 	virtual void Apply_Implementation() override {}
 	
 	virtual FString GetValueAsString() const override
@@ -71,7 +82,7 @@ public:
 	
 	virtual void SetValueFromString(const FString& NewValue) override
 	{
-		Value = NewValue.ToBool();
+		SetValue(NewValue.ToBool());
 	}
 
 	virtual FString GetSavedValueAsString() const override
@@ -81,7 +92,7 @@ public:
 	
 	virtual void ResetToDefault() override
 	{
-		Value = DefaultValue;
+		SetValue(DefaultValue);
 	}
 
 protected:
@@ -106,6 +117,10 @@ public:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category="Settings Value")
 	float Max = 1.f;
+
+	UFUNCTION(BlueprintCallable,BlueprintNativeEvent, Category = "Settings")
+	void SetValue(float NewValue);
+	virtual void SetValue_Implementation(float NewValue) { Value = NewValue; }
 	
 	virtual void Apply_Implementation() override {}
 	virtual void SaveCurrentValue() override { SavedValue = Value;}
@@ -119,7 +134,7 @@ public:
 	
 	virtual void SetValueFromString(const FString& ValueString) override
 	{
-		Value = FMath::Clamp(FCString::Atof(*ValueString), Min, Max);
+		SetValue(FMath::Clamp(FCString::Atof(*ValueString), Min, Max));
 	}
 	
 	virtual FString GetSavedValueAsString() const override
@@ -129,7 +144,7 @@ public:
 	
 	virtual void ResetToDefault() override
 	{
-		Value = FMath::Clamp(DefaultValue, Min, Max);
+		SetValue(FMath::Clamp(DefaultValue, Min, Max));
 	}
 
 protected:
@@ -154,6 +169,10 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category="Settings Value")
 	TArray<FText> DisplayNames;
 
+	UFUNCTION(BlueprintCallable,BlueprintNativeEvent, Category = "Settings")
+	void SetSelectedIndex(int32 Index);
+	virtual void SetSelectedIndex_Implementation(int32 Index) { SelectedIndex = Index; }
+
 	virtual void Apply_Implementation() override { }
 	virtual void SaveCurrentValue() override { SavedValue = SelectedIndex; }
 	virtual void RevertToSavedValue() override { SelectedIndex = SavedValue; Apply_Implementation(); }
@@ -168,7 +187,7 @@ public:
 		int32 Index = Values.Find(Value);
 		if (Index != INDEX_NONE)
 		{
-			SelectedIndex = Index;
+			SetSelectedIndex(Index);
 		}
 	}
 
@@ -180,7 +199,7 @@ public:
 	virtual void ResetToDefault() override
 	{
 		int32 Index = Values.Find(DefaultValue);
-		SelectedIndex = Index != INDEX_NONE ? Index : 0;
+		SetSelectedIndex(Index != INDEX_NONE ? Index : 0);
 	}
 
 protected:

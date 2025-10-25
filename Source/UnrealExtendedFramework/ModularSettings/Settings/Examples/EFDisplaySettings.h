@@ -59,7 +59,7 @@ public:
 			WindowMode = EWindowMode::Fullscreen;
 		}
 		
-		if (GEngine && GEngine->GameViewport)
+		if (GetWorld() && GEngine->GameViewport)
 		{
 			UGameViewportClient* GameViewport = GEngine->GameViewport;
 			if (GameViewport->GetWindow().IsValid())
@@ -74,7 +74,7 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Display Settings")
 	FString GetCurrentWindowMode() const
 	{
-		if (GEngine && GEngine->GameViewport && GEngine->GameViewport->GetWindow().IsValid())
+		if (GetWorld() && GEngine->GameViewport && GEngine->GameViewport->GetWindow().IsValid())
 		{
 			EWindowMode::Type CurrentMode = GEngine->GameViewport->GetWindow()->GetWindowMode();
 			switch (CurrentMode)
@@ -114,14 +114,14 @@ public:
 	
 	virtual void Apply_Implementation() override
 	{
-		if (GEngine)
+		if (GetWorld())
 		{
 			FString Command = FString::Printf(TEXT("r.Tonemapper.Sharpen %f"), Value);
-			GEngine->Exec(GEngine->GetWorld(), *Command);
+			GEngine->Exec(GetWorld(), *Command);
 			
 			// Also apply gamma correction
 			FString GammaCommand = FString::Printf(TEXT("r.Gamma %f"), Value);
-			GEngine->Exec(GEngine->GetWorld(), *GammaCommand);
+			GEngine->Exec(GetWorld(), *GammaCommand);
 			
 			UE_LOG(LogTemp, Log, TEXT("Applied Brightness: %.2f"), Value);
 		}
@@ -155,11 +155,11 @@ public:
 	
 	virtual void Apply_Implementation() override
 	{
-		if (GEngine)
+		if (GetWorld())
 		{
 			// Apply contrast through post-process settings
 			FString Command = FString::Printf(TEXT("r.Color.Contrast %f"), Value);
-			GEngine->Exec(GEngine->GetWorld(), *Command);
+			GEngine->Exec(GetWorld(), *Command);
 			
 			UE_LOG(LogTemp, Log, TEXT("Applied Contrast: %.2f"), Value);
 		}
@@ -193,11 +193,11 @@ public:
 	
 	virtual void Apply_Implementation() override
 	{
-		if (GEngine)
+		if (GetWorld())
 		{
 			// Apply saturation through post-process settings
 			FString Command = FString::Printf(TEXT("r.Color.Saturation %f"), Value);
-			GEngine->Exec(GEngine->GetWorld(), *Command);
+			GEngine->Exec(GetWorld(), *Command);
 			
 			UE_LOG(LogTemp, Log, TEXT("Applied Saturation: %.2f"), Value);
 		}
@@ -231,17 +231,17 @@ public:
 	
 	virtual void Apply_Implementation() override
 	{
-		if (GEngine)
+		if (GetWorld())
 		{
 			// Apply FOV to the current player controller
-			if (APlayerController* PC = GEngine->GetFirstLocalPlayerController(GEngine->GetCurrentPlayWorld()))
+			if (APlayerController* PC = GEngine->GetFirstLocalPlayerController(GetWorld()))
 			{
 				if (APawn* Pawn = PC->GetPawn())
 				{
 					// This would need to be adapted based on your camera system
 					// For now, we'll use a console command approach
 					FString Command = FString::Printf(TEXT("fov %f"), Value);
-					GEngine->Exec(GEngine->GetWorld(), *Command);
+					GEngine->Exec(GetWorld(), *Command);
 					
 					UE_LOG(LogTemp, Log, TEXT("Applied FOV: %.1f"), Value);
 				}
@@ -274,11 +274,11 @@ public:
 	
 	virtual void Apply_Implementation() override
 	{
-		if (GEngine)
+		if (GetWorld())
 		{
 			// Enable/disable HDR output
 			FString Command = Value ? TEXT("r.HDR.Display.OutputDevice 1") : TEXT("r.HDR.Display.OutputDevice 0");
-			GEngine->Exec(GEngine->GetWorld(), *Command);
+			GEngine->Exec(GetWorld(), *Command);
 			
 			UE_LOG(LogTemp, Log, TEXT("Applied HDR: %s"), Value ? TEXT("Enabled") : TEXT("Disabled"));
 		}
@@ -329,7 +329,7 @@ public:
 		{
 			FString ColorBlindType = Values[SelectedIndex];
 			
-			if (GEngine)
+			if (GetWorld())
 			{
 				FString Command;
 				if (ColorBlindType == TEXT("None"))
@@ -349,7 +349,7 @@ public:
 					Command = TEXT("r.Color.Deficiency.Type 3; r.Color.Deficiency.Severity 1.0");
 				}
 				
-				GEngine->Exec(GEngine->GetWorld(), *Command);
+				GEngine->Exec(GetWorld(), *Command);
 				UE_LOG(LogTemp, Log, TEXT("Applied Color Blind Support: %s"), *ColorBlindType);
 			}
 		}
