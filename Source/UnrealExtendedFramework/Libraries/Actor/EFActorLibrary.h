@@ -71,9 +71,6 @@ public:
 
 	
 	
-
-
-
 	//<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< NETWORKING >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
 	UFUNCTION(BlueprintPure, meta = (CompactNodeTitle = "Is Actor Local" , DefaultToSelf = "Actor") , Category="ExtendedFramework|Actor|Networking")
@@ -85,13 +82,15 @@ public:
 
 	//<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< CLASS >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
+	// Returns true if TestClass is the same as ParentClass or is a child of ParentClass
 	UFUNCTION(BlueprintPure, Category="ExtendedFramework|Actor|Class")
 	static bool IsClassEqualOrChildOfOtherClass(TSubclassOf<AActor> TestClass , TSubclassOf<AActor> ParentClass);
 
-
+	// Get Control Rotation Forward and Right Vectors
 	UFUNCTION(BlueprintPure, meta = ( DefaultToSelf = "Pawn" , Keywords = "Controller , Forward , Right ") , Category="ExtendedFramework|Actor")
 	static void GetActorControlRotationDirection(APawn* Pawn  , FVector& Forward , FVector& Right , bool YawOnly = true);
 
+	// Get Control Rotation Yaw Only
 	UFUNCTION(BlueprintPure, meta = ( DefaultToSelf = "Pawn" , CompactNodeTitle = "ControlRotationYaw" , Keywords = "Controller , Forward , Right ") , Category="ExtendedFramework|Actor")
 	static FRotator GetActorControlRotationYaw(APawn* Pawn);
 
