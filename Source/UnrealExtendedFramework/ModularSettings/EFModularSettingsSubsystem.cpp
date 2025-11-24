@@ -2,11 +2,12 @@
 
 #include "EFModularSettingsSubsystem.h"
 #include "Engine/Engine.h"
-#include "HAL/PlatformFilemanager.h"
-#include "Misc/FileHelper.h"
-#include "Misc/Paths.h"
+#include "Kismet/GameplayStatics.h"
+#include "SaveGame/EFSettingsSaveGame.h"
 #include "Async/Async.h"
 
+static const FString SettingsSaveSlotName = TEXT("ModularSettingsSave");
+static const int32 SettingsUserIndex = 0;
 
 void UEFModularSettingsSubsystem::Initialize(FSubsystemCollectionBase& SubsystemCollectionBase)
 {
@@ -33,16 +34,29 @@ void UEFModularSettingsSubsystem::Initialize(FSubsystemCollectionBase& Subsystem
 	LoadFromDisk();
 
 	ApplyAllChanges();
+
+	// Register Console Command
+	SetCommand = IConsoleManager::Get().RegisterConsoleCommand(
+		TEXT("Settings.Set"),
+		TEXT("Set a modular setting value. Usage: Settings.Set <Tag> <Value>"),
+		FConsoleCommandWithArgsDelegate::CreateUObject(this, &UEFModularSettingsSubsystem::HandleSetCommand),
+		ECVF_Default
+	);
 }
 
 void UEFModularSettingsSubsystem::Deinitialize()
 {
 	// Save settings before shutdown
 	SaveToDisk();
+	
+	if (SetCommand)
+	{
+		IConsoleManager::Get().UnregisterConsoleObject(SetCommand);
+		SetCommand = nullptr;
+	}
+	
 	Super::Deinitialize();
 }
-
-
 
 bool UEFModularSettingsSubsystem::GetBool(FGameplayTag Tag) const
 {
@@ -66,8 +80,6 @@ void UEFModularSettingsSubsystem::SetBool(FGameplayTag Tag, bool Value)
 	}
 }
 
-
-
 float UEFModularSettingsSubsystem::GetFloat(FGameplayTag Tag) const
 {
 	if (const UEFModularSettingsFloat* FloatSetting = GetSetting<UEFModularSettingsFloat>(Tag))
@@ -90,8 +102,6 @@ void UEFModularSettingsSubsystem::SetFloat(FGameplayTag Tag, float Value)
 	}
 }
 
-
-
 int32 UEFModularSettingsSubsystem::GetIndex(FGameplayTag Tag) const
 {
 	if (const UEFModularSettingsMultiSelect* MultiSelectSetting = GetSetting<UEFModularSettingsMultiSelect>(Tag))
@@ -101,7 +111,7 @@ int32 UEFModularSettingsSubsystem::GetIndex(FGameplayTag Tag) const
 	return 0;
 }
 
-void UEFModularSettingsSubsystem::SetIndex(FGameplayTag Tag, int32 Index)
+bool UEFModularSettingsSubsystem::SetIndex(FGameplayTag Tag, int32 Index)
 {
 	if (UEFModularSettingsMultiSelect* MultiSelectSetting = GetSetting<UEFModularSettingsMultiSelect>(Tag))
 	{
@@ -109,19 +119,16 @@ void UEFModularSettingsSubsystem::SetIndex(FGameplayTag Tag, int32 Index)
 		{
 			MultiSelectSetting->SetSelectedIndex(Index);
 			OnSettingsChanged.Broadcast(MultiSelectSetting);
+			return true;
 		}
-		else
-		{
-			UE_LOG(LogTemp, Warning, TEXT("Index %d is out of bounds for setting with tag %s."), Index, *Tag.ToString());
-		}
+		UE_LOG(LogTemp, Warning, TEXT("Index %d is out of bounds for setting with tag %s."), Index, *Tag.ToString());
+		return false;
 	}
-	else
-	{
-		UE_LOG(LogTemp, Warning, TEXT("Setting with tag %s not found or is not a Multi-select setting."), *Tag.ToString());
-	}
+	UE_LOG(LogTemp, Warning, TEXT("Setting with tag %s not found or is not a Multi-select setting."), *Tag.ToString());
+	return false;
 }
 
-void UEFModularSettingsSubsystem::AddIndex(FGameplayTag Tag, int32 Amount)
+bool UEFModularSettingsSubsystem::AddIndex(FGameplayTag Tag, int32 Amount)
 {
 	if (UEFModularSettingsMultiSelect* MultiSelectSetting = GetSetting<UEFModularSettingsMultiSelect>(Tag))
 	{
@@ -131,24 +138,24 @@ void UEFModularSettingsSubsystem::AddIndex(FGameplayTag Tag, int32 Amount)
 		{
 			MultiSelectSetting->SetSelectedIndex(MultiSelectSetting->Values.Num() - 1);
 			OnSettingsChanged.Broadcast(MultiSelectSetting);
-			return;
+			return true;
 		}
 		
 		if (NewIndex >= 0 && NewIndex < MultiSelectSetting->Values.Num())
 		{
 			MultiSelectSetting->SetSelectedIndex(NewIndex);
 			OnSettingsChanged.Broadcast(MultiSelectSetting);
+			return true;
 		}
 		else
 		{
 			MultiSelectSetting->SetSelectedIndex(0);
 			OnSettingsChanged.Broadcast(MultiSelectSetting);
+			return true;
 		}
 	}
-	else
-	{
-		UE_LOG(LogTemp, Warning, TEXT("Setting with tag %s not found or is not a Multi-select setting."), *Tag.ToString());
-	}
+	UE_LOG(LogTemp, Warning, TEXT("Setting with tag %s not found or is not a Multi-select setting."), *Tag.ToString());
+	return false;
 }
 
 TArray<FText> UEFModularSettingsSubsystem::GetOptions(FGameplayTag Tag) const
@@ -172,19 +179,35 @@ FText UEFModularSettingsSubsystem::GetSelectedOption(FGameplayTag Tag) const
 	return FText::GetEmpty();
 }
 
-
+int32 UEFModularSettingsSubsystem::GetSelectedOptionIndex(FGameplayTag Tag) const
+{
+	if (const UEFModularSettingsMultiSelect* MultiSelectSetting = GetSetting<UEFModularSettingsMultiSelect>(Tag))
+	{
+		return MultiSelectSetting->SelectedIndex;
+	}
+	return INDEX_NONE;
+}
 
 void UEFModularSettingsSubsystem::ApplyAllChanges()
 {
+	bool bAnyChanged = false;
 	for (const auto& SettingPair : Settings)
 	{
 		UEFModularSettingsBase* Setting = SettingPair.Value;
-		Setting->SaveCurrentValue();
-		Setting->Apply();
+		if (Setting->IsDirty())
+		{
+			Setting->SaveCurrentValue();
+			Setting->Apply();
+			Setting->ClearDirty();
+			bAnyChanged = true;
+		}
 	}
     
-	SaveToDisk();
-	UE_LOG(LogTemp, Log, TEXT("All settings applied and saved."));
+	if (bAnyChanged)
+	{
+		SaveToDisk();
+		UE_LOG(LogTemp, Log, TEXT("Applied and saved changed settings."));
+	}
 }
 
 void UEFModularSettingsSubsystem::RevertAllChanges()
@@ -204,7 +227,7 @@ bool UEFModularSettingsSubsystem::HasPendingChanges() const
 	for (const auto& SettingPair : Settings)
 	{
 		const UEFModularSettingsBase* Setting = SettingPair.Value;
-		if (Setting->GetValueAsString() != Setting->GetSavedValueAsString())
+		if (Setting->IsDirty())
 		{
 			return true;
 		}
@@ -221,98 +244,48 @@ void UEFModularSettingsSubsystem::ResetToDefaults(FGameplayTag CategoryTag)
 		OnSettingsChanged.Broadcast(Setting);
 	}
 	
-	SaveToDisk();
+	ApplyAllChanges(); // Apply and save
 	UE_LOG(LogTemp, Log, TEXT("Settings reset to defaults."));
 }
 
-
-
 void UEFModularSettingsSubsystem::SaveToDisk()
 {
-	FString ConfigContent;
-	TMap<FName, TArray<UEFModularSettingsBase*>> SettingsByCategory;
+	UEFSettingsSaveGame* SaveGameInstance = Cast<UEFSettingsSaveGame>(UGameplayStatics::CreateSaveGameObject(UEFSettingsSaveGame::StaticClass()));
 	
-	for (const auto& SettingPair : Settings)
+	if (SaveGameInstance)
 	{
-		UEFModularSettingsBase* Setting = SettingPair.Value;
-		SettingsByCategory.FindOrAdd(Setting->ConfigCategory).Add(Setting);
-	}
-	
-	ConfigContent += TEXT("[/Settings/Meta]\n");
-	ConfigContent += TEXT("ConfigVersion=1.0\n");
-	ConfigContent += FString::Printf(TEXT("LastSaved=%s\n"), *FDateTime::Now().ToString());
-	ConfigContent += FString::Printf(TEXT("Platform=%s\n\n"), ANSI_TO_TCHAR(FPlatformProperties::PlatformName()));
-	
-	for (const auto& CategoryPair : SettingsByCategory)
-	{
-		FName CategoryName = CategoryPair.Key;
-		const TArray<UEFModularSettingsBase*>& CategorySettings = CategoryPair.Value;
-		
-		ConfigContent += FString::Printf(TEXT("[/Settings/%s]\n"), *CategoryName.ToString());
-		
-		for (UEFModularSettingsBase* Setting : CategorySettings)
+		for (const auto& SettingPair : Settings)
 		{
-			FString SettingLine = FString::Printf(TEXT("%s=%s\n"), 
-				*Setting->SettingTag.ToString(), 
-				*Setting->GetValueAsString());
-			ConfigContent += SettingLine;
+			UEFModularSettingsBase* Setting = SettingPair.Value;
+			SaveGameInstance->StoredSettings.Add(Setting->SettingTag, Setting->GetValueAsString());
 		}
-		ConfigContent += TEXT("\n");
+
+		UGameplayStatics::SaveGameToSlot(SaveGameInstance, SettingsSaveSlotName, SettingsUserIndex);
+		UE_LOG(LogTemp, Log, TEXT("Modular settings saved to slot: %s"), *SettingsSaveSlotName);
 	}
-	
-	FString ConfigPath = GetConfigFilePath();
-	FFileHelper::SaveStringToFile(ConfigContent, *ConfigPath);
-	
-	UE_LOG(LogTemp, Log, TEXT("Modular settings saved to: %s"), *ConfigPath);
 }
 
 void UEFModularSettingsSubsystem::LoadFromDisk()
 {
-	FString ConfigPath = GetConfigFilePath();
-	FString ConfigContent;
-	
-	if (FFileHelper::LoadFileToString(ConfigContent, *ConfigPath))
+	if (UGameplayStatics::DoesSaveGameExist(SettingsSaveSlotName, SettingsUserIndex))
 	{
-		TArray<FString> Lines;
-		ConfigContent.ParseIntoArray(Lines, TEXT("\n"), true);
+		UEFSettingsSaveGame* LoadedGame = Cast<UEFSettingsSaveGame>(UGameplayStatics::LoadGameFromSlot(SettingsSaveSlotName, SettingsUserIndex));
 		
-		FString CurrentSection;
-		for (const FString& Line : Lines)
+		if (LoadedGame)
 		{
-			FString TrimmedLine = Line.TrimStartAndEnd();
-			if (TrimmedLine.IsEmpty() || TrimmedLine.StartsWith(TEXT(";")))
+			for (const auto& StoredPair : LoadedGame->StoredSettings)
 			{
-				continue;
-			}
-			
-			if (TrimmedLine.StartsWith(TEXT("[")) && TrimmedLine.EndsWith(TEXT("]")))
-			{
-				CurrentSection = TrimmedLine.Mid(1, TrimmedLine.Len() - 2);
-				continue;
-			}
-			
-			FString Key, Value;
-			if (TrimmedLine.Split(TEXT("="), &Key, &Value))
-			{
-				Key = Key.TrimStartAndEnd();
-				Value = Value.TrimStartAndEnd();
-				
-				if (CurrentSection.StartsWith(TEXT("/Settings/")) && !CurrentSection.Contains(TEXT("Meta")))
+				if (UEFModularSettingsBase* Setting = Settings.FindRef(StoredPair.Key))
 				{
-					FGameplayTag Tag = FGameplayTag::RequestGameplayTag(*Key);
-					if (UEFModularSettingsBase* Setting = Settings.FindRef(Tag))
-					{
-						Setting->SetValueFromString(Value);
-					}
+					Setting->SetValueFromString(StoredPair.Value);
 				}
 			}
+			UE_LOG(LogTemp, Log, TEXT("Modular settings loaded from slot: %s"), *SettingsSaveSlotName);
 		}
-		
-		UE_LOG(LogTemp, Log, TEXT("Modular settings loaded from: %s"), *ConfigPath);
 	}
 	else
 	{
-		UE_LOG(LogTemp, Log, TEXT("No existing config file found. Using defaults."));
+		UE_LOG(LogTemp, Log, TEXT("No existing settings save found. Using defaults."));
 	}
 }
 
@@ -342,8 +315,6 @@ void UEFModularSettingsSubsystem::LoadFromDiskAsync()
 	});
 }
 
-
-
 bool UEFModularSettingsSubsystem::HasSetting(FGameplayTag Tag) const
 {
 	return Settings.Contains(Tag);
@@ -355,6 +326,7 @@ void UEFModularSettingsSubsystem::RegisterSetting(UEFModularSettingsBase* Settin
 	{
 		Settings.Add(Setting->SettingTag, Setting);
 		Setting->ModularSettingsSubsystem = this;
+		Setting->OnRegistered();
 		UE_LOG(LogTemp, Log, TEXT("Registered setting: %s"), *Setting->SettingTag.ToString());
 	}
 }
@@ -374,17 +346,129 @@ TArray<UEFModularSettingsBase*> UEFModularSettingsSubsystem::GetSettingsByCatego
 	return Result;
 }
 
-void UEFModularSettingsSubsystem::CopySettingValue(UEFModularSettingsBase* From, UEFModularSettingsBase* To)
+
+void UEFModularSettingsSubsystem::HandleSetCommand(const TArray<FString>& Args)
 {
-	if (From && To)
+	if (Args.Num() < 2)
 	{
-		FString Value = From->GetValueAsString();
-		To->SetValueFromString(Value);
+		UE_LOG(LogTemp, Warning, TEXT("Usage: Settings.Set <Tag> <Value>"));
+		return;
+	}
+
+	FString TagString = Args[0];
+	FString ValueString = Args[1];
+	
+	// Handle values with spaces (reconstruct the string)
+	if (Args.Num() > 2)
+	{
+		for (int32 i = 2; i < Args.Num(); ++i)
+		{
+			ValueString += TEXT(" ") + Args[i];
+		}
+	}
+
+	FGameplayTag Tag = FGameplayTag::RequestGameplayTag(FName(*TagString));
+	if (!Tag.IsValid())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Invalid Tag: %s"), *TagString);
+		return;
+	}
+
+	if (UEFModularSettingsBase* Setting = GetSettingByTag(Tag))
+	{
+		Setting->SetValueFromString(ValueString);
+		Setting->SaveCurrentValue();
+		Setting->Apply();
+		Setting->ClearDirty();
+		SaveToDisk(); // Optional: Auto-save on console command
+		
+		UE_LOG(LogTemp, Log, TEXT("Set %s to %s"), *TagString, *ValueString);
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Setting not found: %s"), *TagString);
 	}
 }
 
-FString UEFModularSettingsSubsystem::GetConfigFilePath() const
+void UEFModularSettingsSubsystem::RequestSafeChange(FGameplayTag Tag, FString NewValue, float RevertTime)
 {
-	return FPaths::ProjectSavedDir() / TEXT("Config") / TEXT("ModularSettings.ini");
+	if (UEFModularSettingsBase* Setting = GetSettingByTag(Tag))
+	{
+		// Cancel any existing revert
+		if (IsRevertPending())
+		{
+			ConfirmChange();
+		}
+
+		// Store current value for revert
+		PendingRevertTag = Tag;
+		PendingRevertValue = Setting->GetValueAsString();
+
+		// Apply new value
+		Setting->SetValueFromString(NewValue);
+		Setting->Apply();
+		
+		// Start timer
+		if (UWorld* World = GetWorld())
+		{
+			World->GetTimerManager().SetTimer(RevertTimerHandle, this, &UEFModularSettingsSubsystem::RevertPendingChange, RevertTime, false);
+		}
+
+		OnSafeChangeRequested.Broadcast(RevertTime);
+		UE_LOG(LogTemp, Log, TEXT("Requested safe change for %s. Reverting in %f seconds."), *Tag.ToString(), RevertTime);
+	}
 }
 
+void UEFModularSettingsSubsystem::ConfirmChange()
+{
+	if (IsRevertPending())
+	{
+		if (UWorld* World = GetWorld())
+		{
+			World->GetTimerManager().ClearTimer(RevertTimerHandle);
+		}
+		
+		// Save the new value (make it permanent)
+		if (UEFModularSettingsBase* Setting = GetSettingByTag(PendingRevertTag))
+		{
+			Setting->SaveCurrentValue();
+			SaveToDisk(); // Persist immediately
+		}
+
+		PendingRevertTag = FGameplayTag();
+		PendingRevertValue.Empty();
+		
+		UE_LOG(LogTemp, Log, TEXT("Confirmed safe change."));
+	}
+}
+
+void UEFModularSettingsSubsystem::RevertPendingChange()
+{
+	if (IsRevertPending())
+	{
+		if (UEFModularSettingsBase* Setting = GetSettingByTag(PendingRevertTag))
+		{
+			Setting->SetValueFromString(PendingRevertValue);
+			Setting->Apply();
+			Setting->SaveCurrentValue(); // Restore saved state
+			
+			OnSettingsChanged.Broadcast(Setting);
+		}
+
+		PendingRevertTag = FGameplayTag();
+		PendingRevertValue.Empty();
+		
+		if (UWorld* World = GetWorld())
+		{
+			World->GetTimerManager().ClearTimer(RevertTimerHandle);
+		}
+
+		OnSafeChangeReverted.Broadcast();
+		UE_LOG(LogTemp, Log, TEXT("Reverted safe change."));
+	}
+}
+
+bool UEFModularSettingsSubsystem::IsRevertPending() const
+{
+	return PendingRevertTag.IsValid();
+}

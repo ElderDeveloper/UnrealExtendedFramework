@@ -4,6 +4,7 @@
 #include "UnrealExtendedFramework/ModularSettings/Settings/EFModularSettingsBase.h"
 #include "UnrealExtendedFramework/ModularSettings/EFModularSettingsSubsystem.h"
 #include "Engine/Engine.h"
+#include "GameFramework/GameUserSettings.h"
 #include "EFGraphicsSettings.generated.h"
 
 // Screen Resolution Setting
@@ -550,6 +551,49 @@ public:
 	}
 };
 
+// Foliage Quality Setting
+UCLASS(Blueprintable,EditInlineNew,  DisplayName = "Extended Foliage Quality")
+class UNREALEXTENDEDFRAMEWORK_API UEFFoliageQualitySetting : public UEFModularSettingsMultiSelect
+{
+	GENERATED_BODY()
+	
+public:
+	UEFFoliageQualitySetting()
+	{
+		SettingTag = FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.FoliageQuality"));
+		DisplayName = NSLOCTEXT("Settings", "FoliageQuality", "Foliage Quality");
+		ConfigCategory = TEXT("Graphics");
+		DefaultValue = TEXT("Medium");
+		
+		Values = { TEXT("Low"), TEXT("Medium"), TEXT("High"), TEXT("Ultra") };
+		DisplayNames = {
+			NSLOCTEXT("Settings", "FoliageLow", "Low"),
+			NSLOCTEXT("Settings", "FoliageMedium", "Medium"),
+			NSLOCTEXT("Settings", "FoliageHigh", "High"),
+			NSLOCTEXT("Settings", "FoliageUltra", "Ultra")
+		};
+		
+		int32 DefaultIndex = Values.Find(DefaultValue);
+		SelectedIndex = DefaultIndex != INDEX_NONE ? DefaultIndex : 2;
+	}
+	
+	virtual void Apply_Implementation() override
+	{
+		if (Values.IsValidIndex(SelectedIndex))
+		{
+			FString Quality = Values[SelectedIndex];
+			int32 QualityLevel = SelectedIndex;
+			
+			if (GEngine)
+			{
+				FString Command = FString::Printf(TEXT("r.FoliageQuality %d"), QualityLevel);
+				GEngine->Exec(GEngine->GetWorld(), *Command);
+				UE_LOG(LogTemp, Log, TEXT("Applied Foliage Quality: %s (Level %d)"), *Quality, QualityLevel);
+			}
+		}
+	}
+};
+
 // Enhanced Graphics Quality Setting with Scalability Integration
 UCLASS(Blueprintable,EditInlineNew, DisplayName = "Extended Overall Graphics Quality")
 class UNREALEXTENDEDFRAMEWORK_API UEFOverallGraphicsQualitySetting : public UEFModularSettingsMultiSelect
@@ -617,7 +661,8 @@ public:
 			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.AntiAliasing")),
 			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.MotionBlur")),
 			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.SSR")),
-			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.Bloom"))
+			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.Bloom")),
+			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.FoliageQuality"))
 		};
 
 		// Update individual settings based on quality level
@@ -654,6 +699,7 @@ private:
 			Commands.Add(TEXT("r.MotionBlurQuality 0"));
 			Commands.Add(TEXT("r.SSR.Quality 0"));
 			Commands.Add(TEXT("r.BloomQuality 1"));
+			Commands.Add(TEXT("r.FoliageQuality 0"));
 			break;
 			
 		case 1: // Medium
@@ -665,6 +711,7 @@ private:
 			Commands.Add(TEXT("r.MotionBlurQuality 1"));
 			Commands.Add(TEXT("r.SSR.Quality 2"));
 			Commands.Add(TEXT("r.BloomQuality 3"));
+			Commands.Add(TEXT("r.FoliageQuality 1"));
 			break;
 			
 		case 2: // High
@@ -676,6 +723,7 @@ private:
 			Commands.Add(TEXT("r.MotionBlurQuality 2"));
 			Commands.Add(TEXT("r.SSR.Quality 3"));
 			Commands.Add(TEXT("r.BloomQuality 4"));
+			Commands.Add(TEXT("r.FoliageQuality 2"));
 			break;
 			
 		case 3: // Ultra
@@ -687,6 +735,7 @@ private:
 			Commands.Add(TEXT("r.MotionBlurQuality 3"));
 			Commands.Add(TEXT("r.SSR.Quality 4"));
 			Commands.Add(TEXT("r.BloomQuality 5"));
+			Commands.Add(TEXT("r.FoliageQuality 3"));
 			break;
 		}
 
@@ -696,4 +745,126 @@ private:
 			GEngine->Exec(GEngine->GetWorld(), *Command);
 		}
 	}
+	virtual void OnRegistered() override
+	{
+		if (ModularSettingsSubsystem)
+		{
+			ModularSettingsSubsystem->OnSettingsChanged.AddDynamic(this, &UEFOverallGraphicsQualitySetting::OnSettingChanged);
+		}
+	}
+
+	UFUNCTION()
+	void OnSettingChanged(UEFModularSettingsBase* ChangedSetting)
+	{
+		if (bIsUpdating || !ChangedSetting) return;
+
+		// If the changed setting is one of our managed graphics settings
+		static const TArray<FGameplayTag> GraphicsSettingTags = {
+			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.ViewDistance")),
+			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.ShadowQuality")),
+			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.TextureQuality")),
+			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.PostProcessQuality")),
+			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.AntiAliasing")),
+			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.MotionBlur")),
+			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.SSR")),
+			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.Bloom")),
+			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.FoliageQuality"))
+		};
+
+		if (GraphicsSettingTags.Contains(ChangedSetting->SettingTag))
+		{
+			// Check if we match any preset
+			int32 MatchedPreset = -1;
+			
+			// Check Low(0), Medium(1), High(2), Ultra(3)
+			for (int32 i = 0; i < 4; ++i)
+			{
+				if (MatchesPreset(i))
+				{
+					MatchedPreset = i;
+					break;
+				}
+			}
+
+			bIsUpdating = true;
+			if (MatchedPreset != -1)
+			{
+				if (SelectedIndex != MatchedPreset)
+				{
+					SetSelectedIndex(MatchedPreset);
+					Apply();
+					ModularSettingsSubsystem->OnSettingsChanged.Broadcast(this);
+				}
+			}
+			else
+			{
+				// Custom (4)
+				if (SelectedIndex != 4)
+				{
+					SetSelectedIndex(4);
+					Apply();
+					ModularSettingsSubsystem->OnSettingsChanged.Broadcast(this);
+				}
+			}
+			bIsUpdating = false;
+		}
+	}
+
+	bool MatchesPreset(int32 PresetIndex)
+	{
+		if (!ModularSettingsSubsystem) return false;
+
+		static const TArray<FGameplayTag> GraphicsSettingTags = {
+			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.ViewDistance")),
+			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.ShadowQuality")),
+			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.TextureQuality")),
+			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.PostProcessQuality")),
+			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.AntiAliasing")),
+			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.MotionBlur")),
+			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.SSR")),
+			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.Bloom")),
+			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.FoliageQuality"))
+		};
+
+		for (const FGameplayTag& Tag : GraphicsSettingTags)
+		{
+			if (UEFModularSettingsMultiSelect* Setting = ModularSettingsSubsystem->GetSetting<UEFModularSettingsMultiSelect>(Tag))
+			{
+				if (Setting->SelectedIndex != PresetIndex) return false;
+			}
+			else if (UEFModularSettingsBool* BoolSetting = ModularSettingsSubsystem->GetSetting<UEFModularSettingsBool>(Tag))
+			{
+				// Logic from SetSelectedIndex_Implementation: Index > 0 means true
+				bool bExpected = PresetIndex > 0;
+				if (BoolSetting->Value != bExpected) return false;
+			}
+		}
+		return true;
+	}
+
+	UFUNCTION(BlueprintCallable, Category = "Graphics Settings")
+	void RunBenchmark()
+	{
+		if (GEngine)
+		{
+			if (UGameUserSettings* GUS = GEngine->GetGameUserSettings())
+			{
+				GUS->RunHardwareBenchmark();
+				GUS->ApplyHardwareBenchmarkResults();
+				
+				int32 BenchmarkQuality = GUS->GetOverallScalabilityLevel();
+				// Clamp to valid range (0-3: Low, Medium, High, Ultra)
+				if (BenchmarkQuality >= 0 && BenchmarkQuality <= 3)
+				{
+					SetSelectedIndex(BenchmarkQuality);
+					Apply(); 
+				}
+				
+				UE_LOG(LogTemp, Log, TEXT("Benchmark run. Quality set to: %d"), BenchmarkQuality);
+			}
+		}
+	}
+
+private:
+	bool bIsUpdating = false;
 };

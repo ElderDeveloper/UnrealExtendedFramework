@@ -63,16 +63,19 @@ public:
 	int32 GetIndex(FGameplayTag Tag) const;
 
 	UFUNCTION(BlueprintCallable, Category = "Modular Settings")
-	void SetIndex(FGameplayTag Tag, int32 Index);
+	bool SetIndex(FGameplayTag Tag, int32 Index);
 
 	UFUNCTION(BlueprintCallable, Category = "Modular Settings")
-	void AddIndex(FGameplayTag Tag, int32 Amount);
+	bool AddIndex(FGameplayTag Tag, int32 Amount);
 
 	UFUNCTION(BlueprintCallable, Category = "Modular Settings")
 	TArray<FText> GetOptions(FGameplayTag Tag) const;
 
 	UFUNCTION(BlueprintCallable, Category = "Modular Settings")
 	FText GetSelectedOption(FGameplayTag Tag) const;
+	
+	UFUNCTION(BlueprintCallable, Category = "Modular Settings")
+	int32 GetSelectedOptionIndex(FGameplayTag Tag) const;
 	
 	// New method to apply all pending changes
 	UFUNCTION(BlueprintCallable, Category = "Modular Settings")
@@ -118,18 +121,42 @@ public:
 
 	UPROPERTY(BlueprintAssignable, Category = "Modular Settings")
 	FOnSettingsLoaded OnSettingsLoaded;
+
+	// Safety Features
+	UFUNCTION(BlueprintCallable, Category = "Modular Settings|Safety")
+	void RequestSafeChange(FGameplayTag Tag, FString NewValue, float RevertTime = 15.0f);
+
+	UFUNCTION(BlueprintCallable, Category = "Modular Settings|Safety")
+	void ConfirmChange();
+
+	UFUNCTION(BlueprintCallable, Category = "Modular Settings|Safety")
+	void RevertPendingChange();
+
+	UFUNCTION(BlueprintCallable, Category = "Modular Settings|Safety")
+	bool IsRevertPending() const;
+
+	DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnSafeChangeRequested, float, RevertTime);
+	UPROPERTY(BlueprintAssignable, Category = "Modular Settings|Safety")
+	FOnSafeChangeRequested OnSafeChangeRequested;
+
+	DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnSafeChangeReverted);
+	UPROPERTY(BlueprintAssignable, Category = "Modular Settings|Safety")
+	FOnSafeChangeReverted OnSafeChangeReverted;
 	
 private:
 	/* Storage */
 	UPROPERTY()
 	TMap<FGameplayTag, TObjectPtr<UEFModularSettingsBase>> Settings;
-	
 
-	// Helper methods
-	void CopySettingValue(UEFModularSettingsBase* From, UEFModularSettingsBase* To);
-	void SaveSettingToConfig(UEFModularSettingsBase* Setting);
-	void LoadSettingFromConfig(UEFModularSettingsBase* Setting);
-	FString GetConfigFilePath() const;
+	// Safety Storage
+	FTimerHandle RevertTimerHandle;
+	FGameplayTag PendingRevertTag;
+	FString PendingRevertValue;
+
+
+	// Console Command
+	void HandleSetCommand(const TArray<FString>& Args);
+	struct IConsoleCommand* SetCommand = nullptr;
 	
 public:
 	// Template method moved to header
@@ -143,6 +170,7 @@ public:
 		return nullptr;
 	}
 
+	UFUNCTION(BlueprintCallable, Category = "Modular Settings")
 	UEFModularSettingsBase* GetSettingByTag(FGameplayTag Tag) const
 	{
 		return Settings.FindRef(Tag);

@@ -6,7 +6,86 @@
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/PlayerInput.h"
 #include "UnrealExtendedFramework/ModularSettings/Settings/EFModularSettingsBase.h"
+#include "InputCoreTypes.h"
 #include "EFInputSettings.generated.h"
+
+
+
+// Forward declarations to avoid hard dependency if module is missing, 
+// but UPROPERTY requires full type or at least known type.
+// We assume EnhancedInput is available.
+class UInputAction;
+class UInputMappingContext;
+
+/**
+ * Setting for remapping an Enhanced Input Action.
+ */
+UCLASS(Blueprintable, BlueprintType, EditInlineNew)
+class UNREALEXTENDEDFRAMEWORK_API UEFModularSettingsInput : public UEFModularSettingsBase
+{
+	GENERATED_BODY()
+public:
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Input")
+	TObjectPtr<UInputAction> InputAction;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category="Input")
+	TObjectPtr<UInputMappingContext> MappingContext;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Input")
+	FKey CurrentKey;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Input")
+	FKey DefaultKey;
+
+	UFUNCTION(BlueprintCallable,BlueprintNativeEvent, Category = "Settings")
+	void SetKey(FKey NewKey);
+	virtual void SetKey_Implementation(FKey NewKey) 
+	{ 
+		if (CurrentKey != NewKey)
+		{
+			CurrentKey = NewKey;
+			MarkDirty();
+		}
+	}
+
+	virtual void SaveCurrentValue() override { SavedKey = CurrentKey; Super::SaveCurrentValue(); }
+	virtual void RevertToSavedValue() override { CurrentKey = SavedKey; Apply_Implementation(); Super::RevertToSavedValue(); }
+	
+	virtual void Apply_Implementation() override 
+	{
+		// Here we would interface with Enhanced Input Subsystem to remap the key.
+		// This usually involves removing the old mapping and adding a new one, 
+		// or using PlayerMappableKeySettings.
+		// For now, we just store the value.
+	}
+	
+	virtual FString GetValueAsString() const override
+	{
+		return CurrentKey.ToString();
+	}
+	
+	virtual void SetValueFromString(const FString& Value) override
+	{
+		SetKey(FKey(*Value));
+	}
+
+	virtual FString GetSavedValueAsString() const override
+	{
+		return SavedKey.ToString();
+	}
+	
+	virtual void ResetToDefault() override
+	{
+		SetKey(DefaultKey);
+	}
+
+protected:
+	FKey SavedKey;
+};
+
+
+
+
 
 // Mouse Sensitivity Setting
 UCLASS(Blueprintable, DisplayName = "Extended Mouse Sensitivity")

@@ -24,7 +24,8 @@ void UEFWaitModularSettingsChange::Activate()
 	UWorld* World = GEngine->GetWorldFromContextObject(WorldContextObject, EGetWorldErrorMode::LogAndReturnNull);
 	if (!World)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("UEFWaitModularSettingsChange: Invalid WorldContextObject provided."));
+		UE_LOG(LogTemp, Error, TEXT("UEFWaitModularSettingsChange: Invalid WorldContextObject provided."));
+		return;
 	}
 
 	if (World->GetGameInstance())

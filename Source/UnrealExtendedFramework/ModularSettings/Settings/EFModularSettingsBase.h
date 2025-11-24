@@ -23,35 +23,72 @@ public:
 	UPROPERTY(EditDefaultsOnly,BlueprintReadOnly, Category="Settings")
 	FName ConfigCategory = TEXT("Settings");
 
-	UPROPERTY(BlueprintReadOnly, Category="Settings")
-	TObjectPtr<UEFModularSettingsSubsystem> ModularSettingsSubsystem;
-	
-	UFUNCTION(BlueprintCallable,BlueprintNativeEvent, Category = "Settings")
-	bool CanApply(const FString& Value) const;
-	virtual bool CanApply_Implementation(const FString& Value) const { return true; }
+	bool Validate(const FString& Value) const;
+	virtual bool Validate_Implementation(const FString& Value) const { return true; }
 
 	UFUNCTION(BlueprintCallable,BlueprintNativeEvent, Category = "Settings")
 	void Apply();
 	virtual void Apply_Implementation() {}
 
-	virtual void SaveCurrentValue() {}
-	virtual void RevertToSavedValue() {}
+	virtual void SaveCurrentValue() 
+	{ 
+		PreviousValue = GetValueAsString();
+		bIsDirty = false; 
+	}
+	
+	virtual void RevertToSavedValue() 
+	{ 
+		SetValueFromString(PreviousValue);
+		Apply_Implementation();
+		bIsDirty = false;
+	}
 
 	UFUNCTION(BlueprintCallable, Category = "Settings")
 	virtual FString GetValueAsString() const { return TEXT(""); }
 
 	UFUNCTION(BlueprintCallable, Category = "Settings")
-	virtual void SetValueFromString(const FString& Value) {}
+	virtual void SetValueFromString(const FString& Value) 
+	{
+		// Base implementation just marks dirty if value changed
+		// Concrete classes should call Super or handle MarkDirty themselves
+		if (Value != GetValueAsString())
+		{
+			MarkDirty();
+		}
+	}
 
 	UFUNCTION(BlueprintCallable, Category = "Settings")
-	virtual FString GetSavedValueAsString() const { return TEXT(""); }
+	virtual FString GetSavedValueAsString() const { return PreviousValue; }
 
 	UFUNCTION(BlueprintCallable, Category = "Settings")
-	virtual void ResetToDefault() {}
+	virtual void ResetToDefault() 
+	{
+		// Should be overridden, but ensure we mark dirty
+		MarkDirty();
+	}
+
+	UFUNCTION(BlueprintCallable, Category = "Settings")
+	bool IsDirty() const { return bIsDirty; }
+
+	UFUNCTION(BlueprintCallable, Category = "Settings")
+	void MarkDirty() { bIsDirty = true; }
+
+	UFUNCTION(BlueprintCallable, Category = "Settings")
+	void ClearDirty() { bIsDirty = false; }
+
+	// Called when setting is registered with subsystem
+	virtual void OnRegistered() {}
+
+	// Reference to the subsystem managing this setting
+	UPROPERTY(Transient)
+	TObjectPtr<UEFModularSettingsSubsystem> ModularSettingsSubsystem;
 
 protected:
 
 	FString PreviousValue;
+	
+	UPROPERTY(Transient)
+	bool bIsDirty = false;
 };
 
 /* Bool */
@@ -69,10 +106,17 @@ public:
 
 	UFUNCTION(BlueprintCallable,BlueprintNativeEvent, Category = "Settings")
 	void SetValue(bool NewValue);
-	virtual void SetValue_Implementation(bool NewValue) { Value = NewValue; }
+	virtual void SetValue_Implementation(bool NewValue) 
+	{ 
+		if (Value != NewValue)
+		{
+			Value = NewValue;
+			MarkDirty();
+		}
+	}
 
-	virtual void SaveCurrentValue() override { SavedValue = Value;}
-	virtual void RevertToSavedValue() override { Value = SavedValue; Apply_Implementation(); }
+	virtual void SaveCurrentValue() override { SavedValue = Value; Super::SaveCurrentValue(); }
+	virtual void RevertToSavedValue() override { Value = SavedValue; Apply_Implementation(); Super::RevertToSavedValue(); }
 	virtual void Apply_Implementation() override {}
 	
 	virtual FString GetValueAsString() const override
@@ -94,8 +138,7 @@ public:
 	{
 		SetValue(DefaultValue);
 	}
-
-protected:
+	
 	bool SavedValue = false;
 };
 
@@ -120,11 +163,19 @@ public:
 
 	UFUNCTION(BlueprintCallable,BlueprintNativeEvent, Category = "Settings")
 	void SetValue(float NewValue);
-	virtual void SetValue_Implementation(float NewValue) { Value = NewValue; }
+	virtual void SetValue_Implementation(float NewValue) 
+	{ 
+		float ClampedValue = FMath::Clamp(NewValue, Min, Max);
+		if (!FMath::IsNearlyEqual(Value, ClampedValue))
+		{
+			Value = ClampedValue;
+			MarkDirty();
+		}
+	}
 	
 	virtual void Apply_Implementation() override {}
-	virtual void SaveCurrentValue() override { SavedValue = Value;}
-	virtual void RevertToSavedValue() override { Value = SavedValue; Apply_Implementation(); }
+	virtual void SaveCurrentValue() override { SavedValue = Value; Super::SaveCurrentValue(); }
+	virtual void RevertToSavedValue() override { Value = SavedValue; Apply_Implementation(); Super::RevertToSavedValue(); }
 	
 	
 	virtual FString GetValueAsString() const override
@@ -134,7 +185,7 @@ public:
 	
 	virtual void SetValueFromString(const FString& ValueString) override
 	{
-		SetValue(FMath::Clamp(FCString::Atof(*ValueString), Min, Max));
+		SetValue(FCString::Atof(*ValueString));
 	}
 	
 	virtual FString GetSavedValueAsString() const override
@@ -144,7 +195,7 @@ public:
 	
 	virtual void ResetToDefault() override
 	{
-		SetValue(FMath::Clamp(DefaultValue, Min, Max));
+		SetValue(DefaultValue);
 	}
 
 protected:
@@ -171,11 +222,18 @@ public:
 
 	UFUNCTION(BlueprintCallable,BlueprintNativeEvent, Category = "Settings")
 	void SetSelectedIndex(int32 Index);
-	virtual void SetSelectedIndex_Implementation(int32 Index) { SelectedIndex = Index; }
+	virtual void SetSelectedIndex_Implementation(int32 Index) 
+	{ 
+		if (SelectedIndex != Index)
+		{
+			SelectedIndex = Index;
+			MarkDirty();
+		}
+	}
 
 	virtual void Apply_Implementation() override { }
-	virtual void SaveCurrentValue() override { SavedValue = SelectedIndex; }
-	virtual void RevertToSavedValue() override { SelectedIndex = SavedValue; Apply_Implementation(); }
+	virtual void SaveCurrentValue() override { SavedValue = SelectedIndex; Super::SaveCurrentValue(); }
+	virtual void RevertToSavedValue() override { SelectedIndex = SavedValue; Apply_Implementation(); Super::RevertToSavedValue(); }
 	
 	virtual FString GetValueAsString() const override
 	{
