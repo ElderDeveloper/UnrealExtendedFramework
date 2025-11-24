@@ -73,7 +73,7 @@ void UEGSoftLockNotify::NotifyTick(USkeletalMeshComponent* MeshComp, UAnimSequen
 		return;
 	}
 
-	PRINT_STRING(1,Red,SoftLockActor->GetName());
+	//PRINT_STRING(1,Red,SoftLockActor->GetName());
 	
 	if (auto const Owner = MeshComp->GetOwner())
 	{

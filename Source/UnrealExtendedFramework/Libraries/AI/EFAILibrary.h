@@ -47,35 +47,45 @@ public:
 	UFUNCTION(BlueprintPure, meta=(DisplayName = "Extended Get Blackboard Vector", DefaultToSelf="OwningActor",CompactNodeTitle = "Board Vector", BlueprintThreadSafe), Category="AI|Blackboard|Get")
 	static FVector ExtendedGetBlackboardVector(AActor* OwningActor , FName KeyName);
 
-
-		//<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< BLACKBOARD SETTERS >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+	//<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< BLACKBOARD SETTERS >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+	
+	// Update Blackboard Value of Owning Actor With Key Name And Value
 	UFUNCTION(BlueprintCallable ,meta=(DefaultToSelf="OwningActor") , Category="AI|Blackboard|Set")
 	static bool ExtendedSetBlackboardBool(AActor* OwningActor , FName KeyName , bool Value);
 
+	// Update Blackboard Value of Owning Actor With Key Name And Value
 	UFUNCTION(BlueprintCallable,meta=(DefaultToSelf="OwningActor") , Category="AI|Blackboard|Set")
 	static bool ExtendedSetBlackboardClass(AActor* OwningActor , FName KeyName , TSubclassOf<UObject> Value);
 
+	// Update Blackboard Value of Owning Actor With Key Name And Value
 	UFUNCTION(BlueprintCallable ,meta=(DefaultToSelf="OwningActor") , Category="AI|Blackboard|Set")
 	static bool ExtendedSetBlackboardEnum(AActor* OwningActor , FName KeyName , uint8 Value);
 
+	// Update Blackboard Value of Owning Actor With Key Name And Value
 	UFUNCTION(BlueprintCallable ,meta=(DefaultToSelf="OwningActor") , Category="AI|Blackboard|Set")
 	static bool ExtendedSetBlackboardFloat(AActor* OwningActor , FName KeyName , float Value);
 
+	// Update Blackboard Value of Owning Actor With Key Name And Value
 	UFUNCTION(BlueprintCallable ,meta=(DefaultToSelf="OwningActor") , Category="AI|Blackboard|Set")
 	static bool ExtendedSetBlackboardInt(AActor* OwningActor , FName KeyName , int32 Value);
 
+	// Update Blackboard Value of Owning Actor With Key Name And Value
 	UFUNCTION(BlueprintCallable ,meta=(DefaultToSelf="OwningActor") ,Category="AI|Blackboard|Set")
 	static bool ExtendedSetBlackboardName(AActor* OwningActor , FName KeyName , FName Value);
 
+	// Update Blackboard Value of Owning Actor With Key Name And Value
 	UFUNCTION(BlueprintCallable ,meta=(DefaultToSelf="OwningActor") , Category="AI|Blackboard|Set")
 	static bool ExtendedSetBlackboardObject(AActor* OwningActor , FName KeyName , UObject* Value);
 
+	// Update Blackboard Value of Owning Actor With Key Name And Value
 	UFUNCTION(BlueprintCallable ,meta=(DefaultToSelf="OwningActor") ,Category="AI|Blackboard|Set")
 	static bool ExtendedSetBlackboardRotator(AActor* OwningActor , FName KeyName ,FRotator Value);
 
+	// Update Blackboard Value of Owning Actor With Key Name And Value
 	UFUNCTION(BlueprintCallable ,meta=(DefaultToSelf="OwningActor") ,Category="AI|Blackboard|Set")
 	static bool ExtendedSetBlackboardString(AActor* OwningActor , FName KeyName , FString Value);
 
+	// Update Blackboard Value of Owning Actor With Key Name And Value
 	UFUNCTION(BlueprintCallable ,meta=(DefaultToSelf="OwningActor") ,Category="AI|Blackboard|Set")
 	static bool ExtendedSetBlackboardVector(AActor* OwningActor , FName KeyName , FVector Value);
 
