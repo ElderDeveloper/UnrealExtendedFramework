@@ -30,6 +30,7 @@ Settings.Graphics.VSync,Settings.Graphics.VSync,Settings.Graphics.VSync
 Settings.Graphics.FrameRateLimit,Settings.Graphics.FrameRateLimit,Settings.Graphics.FrameRateLimit
 Settings.Graphics.AntiAliasing,Settings.Graphics.AntiAliasing,Settings.Graphics.AntiAliasing
 Settings.Graphics.TextureQuality,Settings.Graphics.TextureQuality,Settings.Graphics.TextureQuality
+Settings.Graphics.FoliageQuality,Settings.Graphics.FoliageQuality,Settings.Graphics.FoliageQuality
 Settings.Graphics.ShadowQuality,Settings.Graphics.ShadowQuality,Settings.Graphics.ShadowQuality
 Settings.Graphics.PostProcessQuality,Settings.Graphics.PostProcessQuality,Settings.Graphics.PostProcessQuality
 Settings.Graphics.ViewDistance,Settings.Graphics.ViewDistance,Settings.Graphics.ViewDistance
