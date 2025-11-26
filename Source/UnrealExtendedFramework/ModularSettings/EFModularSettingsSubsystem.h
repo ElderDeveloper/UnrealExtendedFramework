@@ -72,7 +72,7 @@ public:
 	TArray<FText> GetOptions(FGameplayTag Tag) const;
 
 	UFUNCTION(BlueprintCallable, Category = "Modular Settings")
-	FText GetSelectedOption(FGameplayTag Tag) const;
+	bool GetSelectedOption(FGameplayTag Tag, FString& Value , FText& DisplayName) const;
 	
 	UFUNCTION(BlueprintCallable, Category = "Modular Settings")
 	int32 GetSelectedOptionIndex(FGameplayTag Tag) const;

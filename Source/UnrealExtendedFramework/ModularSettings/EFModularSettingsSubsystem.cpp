@@ -33,7 +33,22 @@ void UEFModularSettingsSubsystem::Initialize(FSubsystemCollectionBase& Subsystem
 
 	LoadFromDisk();
 
-	ApplyAllChanges();
+	// Force apply all settings to ensure engine state matches loaded settings
+	for (const auto& SettingPair : Settings)
+	{
+		UEFModularSettingsBase* Setting = SettingPair.Value;
+		if (Setting)
+		{
+			// Ensure the "PreviousValue" matches what we just loaded
+			Setting->SaveCurrentValue();
+			
+			// Force apply to engine
+			Setting->Apply();
+			
+			// Mark as clean since it's now applied
+			Setting->ClearDirty();
+		}
+	}
 
 	// Register Console Command
 	SetCommand = IConsoleManager::Get().RegisterConsoleCommand(
@@ -167,16 +182,19 @@ TArray<FText> UEFModularSettingsSubsystem::GetOptions(FGameplayTag Tag) const
 	return TArray<FText>();
 }
 
-FText UEFModularSettingsSubsystem::GetSelectedOption(FGameplayTag Tag) const
+bool UEFModularSettingsSubsystem::GetSelectedOption(FGameplayTag Tag, FString& Value, FText& DisplayName) const
 {
 	if (const UEFModularSettingsMultiSelect* MultiSelectSetting = GetSetting<UEFModularSettingsMultiSelect>(Tag))
 	{
-		if (MultiSelectSetting->DisplayNames.IsValidIndex(MultiSelectSetting->SelectedIndex))
+		if (MultiSelectSetting->Values.IsValidIndex(MultiSelectSetting->SelectedIndex) &&
+			MultiSelectSetting->DisplayNames.IsValidIndex(MultiSelectSetting->SelectedIndex))
 		{
-			return MultiSelectSetting->DisplayNames[MultiSelectSetting->SelectedIndex];
+			Value = MultiSelectSetting->Values[MultiSelectSetting->SelectedIndex];
+			DisplayName = MultiSelectSetting->DisplayNames[MultiSelectSetting->SelectedIndex];
+			return true;
 		}
 	}
-	return FText::GetEmpty();
+	return false;
 }
 
 int32 UEFModularSettingsSubsystem::GetSelectedOptionIndex(FGameplayTag Tag) const

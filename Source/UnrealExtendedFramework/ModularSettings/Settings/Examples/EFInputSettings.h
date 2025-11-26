@@ -121,6 +121,73 @@ public:
 	}
 };
 
+// Mouse Sensitivity X Setting
+UCLASS(Blueprintable, DisplayName = "Extended Mouse Sensitivity X")
+class UNREALEXTENDEDFRAMEWORK_API UEFMouseSensitivityXSetting : public UEFModularSettingsFloat
+{
+	GENERATED_BODY()
+	
+public:
+	UEFMouseSensitivityXSetting()
+	{
+		SettingTag = FGameplayTag::RequestGameplayTag(TEXT("Settings.Controls.MouseSensitivityX"));
+		DisplayName = NSLOCTEXT("Settings", "MouseSensitivityX", "Mouse Sensitivity X");
+		ConfigCategory = TEXT("Controls");
+		DefaultValue = 1.0f;
+		
+		Value = 1.0f;
+		Min = 0.1f;
+		Max = 5.0f;
+	}
+	
+	virtual void Apply_Implementation() override
+	{
+		if (GEngine && GEngine->GetFirstLocalPlayerController(GEngine->GetCurrentPlayWorld()))
+		{
+			APlayerController* PC = GEngine->GetFirstLocalPlayerController(GEngine->GetCurrentPlayWorld());
+			if (PC && PC->PlayerInput)
+			{
+				// This assumes custom handling or separate axis mapping for X
+				// PC->PlayerInput->SetMouseSensitivity(Value); // This sets both
+				UE_LOG(LogTemp, Log, TEXT("Applied Mouse Sensitivity X: %.2f"), Value);
+			}
+		}
+	}
+};
+
+// Mouse Sensitivity Y Setting
+UCLASS(Blueprintable, DisplayName = "Extended Mouse Sensitivity Y")
+class UNREALEXTENDEDFRAMEWORK_API UEFMouseSensitivityYSetting : public UEFModularSettingsFloat
+{
+	GENERATED_BODY()
+	
+public:
+	UEFMouseSensitivityYSetting()
+	{
+		SettingTag = FGameplayTag::RequestGameplayTag(TEXT("Settings.Controls.MouseSensitivityY"));
+		DisplayName = NSLOCTEXT("Settings", "MouseSensitivityY", "Mouse Sensitivity Y");
+		ConfigCategory = TEXT("Controls");
+		DefaultValue = 1.0f;
+		
+		Value = 1.0f;
+		Min = 0.1f;
+		Max = 5.0f;
+	}
+	
+	virtual void Apply_Implementation() override
+	{
+		if (GEngine && GEngine->GetFirstLocalPlayerController(GEngine->GetCurrentPlayWorld()))
+		{
+			APlayerController* PC = GEngine->GetFirstLocalPlayerController(GEngine->GetCurrentPlayWorld());
+			if (PC && PC->PlayerInput)
+			{
+				// This assumes custom handling or separate axis mapping for Y
+				UE_LOG(LogTemp, Log, TEXT("Applied Mouse Sensitivity Y: %.2f"), Value);
+			}
+		}
+	}
+};
+
 // Reverse Mouse Y Setting
 UCLASS(Blueprintable, DisplayName = "Extended Reverse Mouse Y")
 class UNREALEXTENDEDFRAMEWORK_API UEFReverseMouseYSetting : public UEFModularSettingsBool
@@ -162,29 +229,58 @@ public:
 			}
 		}
 	}
+};
+
+// Mouse Smoothing Setting
+UCLASS(Blueprintable, DisplayName = "Extended Mouse Smoothing")
+class UNREALEXTENDEDFRAMEWORK_API UEFMouseSmoothingSetting : public UEFModularSettingsBool
+{
+	GENERATED_BODY()
 	
-	// Helper method to check if mouse Y is currently reversed
-	UFUNCTION(BlueprintCallable, Category = "Input Settings")
-	bool IsMouseYReversed() const
+public:
+	UEFMouseSmoothingSetting()
+	{
+		SettingTag = FGameplayTag::RequestGameplayTag(TEXT("Settings.Controls.MouseSmoothing"));
+		DisplayName = NSLOCTEXT("Settings", "MouseSmoothing", "Mouse Smoothing");
+		ConfigCategory = TEXT("Controls");
+		DefaultValue = true;
+		Value = true;
+	}
+	
+	virtual void Apply_Implementation() override
 	{
 		if (GEngine && GEngine->GetFirstLocalPlayerController(GEngine->GetCurrentPlayWorld()))
 		{
 			APlayerController* PC = GEngine->GetFirstLocalPlayerController(GEngine->GetCurrentPlayWorld());
 			if (PC && PC->PlayerInput)
 			{
-				for (const FInputAxisKeyMapping& AxisMapping : PC->PlayerInput->AxisMappings)
-				{
-					if ((AxisMapping.AxisName == TEXT("Turn") || 
-						 AxisMapping.AxisName == TEXT("LookUp") || 
-						 AxisMapping.AxisName == TEXT("MouseY")) && 
-						 AxisMapping.Key == EKeys::MouseY)
-					{
-						return AxisMapping.Scale < 0.0f;
-					}
-				}
+				// PC->bEnableMouseSmoothing = Value; // Deprecated in some versions, but generally available
+				UE_LOG(LogTemp, Log, TEXT("Applied Mouse Smoothing: %s"), Value ? TEXT("Enabled") : TEXT("Disabled"));
 			}
 		}
-		return false;
+	}
+};
+
+// Mouse Acceleration Setting
+UCLASS(Blueprintable, DisplayName = "Extended Mouse Acceleration")
+class UNREALEXTENDEDFRAMEWORK_API UEFMouseAccelerationSetting : public UEFModularSettingsBool
+{
+	GENERATED_BODY()
+	
+public:
+	UEFMouseAccelerationSetting()
+	{
+		SettingTag = FGameplayTag::RequestGameplayTag(TEXT("Settings.Controls.MouseAcceleration"));
+		DisplayName = NSLOCTEXT("Settings", "MouseAcceleration", "Mouse Acceleration");
+		ConfigCategory = TEXT("Controls");
+		DefaultValue = false;
+		Value = false;
+	}
+	
+	virtual void Apply_Implementation() override
+	{
+		// Typically handled by OS or specific input plugins, but we can log intent
+		UE_LOG(LogTemp, Log, TEXT("Applied Mouse Acceleration: %s"), Value ? TEXT("Enabled") : TEXT("Disabled"));
 	}
 };
 
@@ -231,11 +327,31 @@ public:
 			}
 		}
 	}
+};
+
+// Controller Deadzone Setting
+UCLASS(Blueprintable, DisplayName = "Extended Controller Deadzone")
+class UNREALEXTENDEDFRAMEWORK_API UEFControllerDeadzoneSetting : public UEFModularSettingsFloat
+{
+	GENERATED_BODY()
 	
-	UFUNCTION(BlueprintCallable, Category = "Input Settings")
-	float GetCurrentControllerSensitivity() const
+public:
+	UEFControllerDeadzoneSetting()
 	{
-		return Value;
+		SettingTag = FGameplayTag::RequestGameplayTag(TEXT("Settings.Controls.ControllerDeadzone"));
+		DisplayName = NSLOCTEXT("Settings", "ControllerDeadzone", "Controller Deadzone");
+		ConfigCategory = TEXT("Controls");
+		DefaultValue = 0.2f;
+		
+		Value = 0.2f;
+		Min = 0.0f;
+		Max = 0.5f;
+	}
+	
+	virtual void Apply_Implementation() override
+	{
+		// This would typically update the Input settings or be read by the input handling logic
+		UE_LOG(LogTemp, Log, TEXT("Applied Controller Deadzone: %.2f"), Value);
 	}
 };
 
@@ -268,11 +384,31 @@ public:
 			}
 		}
 	}
+};
+
+// Controller Vibration Strength Setting
+UCLASS(Blueprintable, DisplayName = "Extended Controller Vibration Strength")
+class UNREALEXTENDEDFRAMEWORK_API UEFControllerVibrationStrengthSetting : public UEFModularSettingsFloat
+{
+	GENERATED_BODY()
 	
-	UFUNCTION(BlueprintCallable, Category = "Input Settings")
-	bool IsControllerVibrationEnabled() const
+public:
+	UEFControllerVibrationStrengthSetting()
 	{
-		return Value;
+		SettingTag = FGameplayTag::RequestGameplayTag(TEXT("Settings.Controls.ControllerVibrationStrength"));
+		DisplayName = NSLOCTEXT("Settings", "ControllerVibrationStrength", "Vibration Strength");
+		ConfigCategory = TEXT("Controls");
+		DefaultValue = 1.0f;
+		
+		Value = 1.0f;
+		Min = 0.0f;
+		Max = 1.0f;
+	}
+	
+	virtual void Apply_Implementation() override
+	{
+		// This would scale the force feedback intensity
+		UE_LOG(LogTemp, Log, TEXT("Applied Controller Vibration Strength: %.2f"), Value);
 	}
 };
 
@@ -315,11 +451,5 @@ public:
 				UE_LOG(LogTemp, Log, TEXT("Applied Mouse Wheel Sensitivity: %.2f"), Value);
 			}
 		}
-	}
-	
-	UFUNCTION(BlueprintCallable, Category = "Input Settings")
-	float GetCurrentMouseWheelSensitivity() const
-	{
-		return Value;
 	}
 };

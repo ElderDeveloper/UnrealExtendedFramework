@@ -9,7 +9,7 @@
 
 class UEFModularSettingsSubsystem;
 
-UCLASS(Abstract,BlueprintType, Blueprintable, EditInlineNew)
+UCLASS(Abstract, Blueprintable, EditInlineNew, DefaultToInstanced)
 class UNREALEXTENDEDFRAMEWORK_API UEFModularSettingsBase : public UObject
 {
 	GENERATED_BODY()
@@ -80,8 +80,10 @@ public:
 	virtual void OnRegistered() {}
 
 	// Reference to the subsystem managing this setting
-	UPROPERTY(Transient)
+	UPROPERTY(Transient,BlueprintReadOnly)
 	TObjectPtr<UEFModularSettingsSubsystem> ModularSettingsSubsystem;
+	
+	virtual UWorld* GetWorld() const override;
 
 protected:
 

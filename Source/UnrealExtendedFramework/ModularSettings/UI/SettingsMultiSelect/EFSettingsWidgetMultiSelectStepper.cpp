@@ -53,18 +53,7 @@ void UEFSettingsWidgetMultiSelectStepper::OnPreviousClicked()
 {
 	if (const auto Subsystem = GetWorld()->GetGameInstance()->GetSubsystem<UEFModularSettingsSubsystem>())
 	{
-		int32 CurrentIndex = Subsystem->GetSelectedOptionIndex(SettingsTag);
-		TArray<FText> Options = Subsystem->GetOptions(SettingsTag);
-		
-		if (Options.Num() > 0)
-		{
-			int32 NewIndex = CurrentIndex - 1;
-			if (NewIndex < 0)
-			{
-				NewIndex = Options.Num() - 1;
-			}
-			Subsystem->SetIndex(SettingsTag, NewIndex);
-		}
+		Subsystem->AddIndex(SettingsTag, -1);
 	}
 }
 
@@ -72,14 +61,7 @@ void UEFSettingsWidgetMultiSelectStepper::OnNextClicked()
 {
 	if (const auto Subsystem = GetWorld()->GetGameInstance()->GetSubsystem<UEFModularSettingsSubsystem>())
 	{
-		int32 CurrentIndex = Subsystem->GetSelectedOptionIndex(SettingsTag);
-		TArray<FText> Options = Subsystem->GetOptions(SettingsTag);
-		
-		if (Options.Num() > 0)
-		{
-			int32 NewIndex = (CurrentIndex + 1) % Options.Num();
-			Subsystem->SetIndex(SettingsTag, NewIndex);
-		}
+		Subsystem->AddIndex(SettingsTag, 1);
 	}
 }
 

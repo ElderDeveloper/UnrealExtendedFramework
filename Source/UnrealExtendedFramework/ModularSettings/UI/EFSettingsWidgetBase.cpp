@@ -6,6 +6,7 @@
 
 void UEFSettingsWidgetBase::OnTrackedSettingsChanged_Implementation(UEFModularSettingsBase* ChangedSetting)
 {
+	
 }
 
 void UEFSettingsWidgetBase::SettingsPreConstruct_Implementation()
@@ -31,7 +32,6 @@ void UEFSettingsWidgetBase::NativeConstruct()
 	{
 		EFModularSettingsSubsystem->OnSettingsChanged.AddDynamic(this, &UEFSettingsWidgetBase::OnSettingChanged);
 	}
-	
 }
 
 

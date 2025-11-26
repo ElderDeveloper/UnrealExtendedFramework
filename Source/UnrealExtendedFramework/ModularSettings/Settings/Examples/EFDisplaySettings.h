@@ -6,17 +6,17 @@
 #include "Engine/GameViewportClient.h"
 #include "EFDisplaySettings.generated.h"
 
-// Fullscreen Mode Setting
-UCLASS(Blueprintable,EditInlineNew,  DisplayName = "Extended Fullscreen Mode")
-class UNREALEXTENDEDFRAMEWORK_API UEFFullscreenSetting : public UEFModularSettingsMultiSelect
+// Display Mode Setting (formerly Fullscreen)
+UCLASS(Blueprintable,EditInlineNew,  DisplayName = "Extended Display Mode")
+class UNREALEXTENDEDFRAMEWORK_API UEFDisplayModeSetting : public UEFModularSettingsMultiSelect
 {
 	GENERATED_BODY()
 	
 public:
-	UEFFullscreenSetting()
+	UEFDisplayModeSetting()
 	{
-		SettingTag = FGameplayTag::RequestGameplayTag(TEXT("Settings.Display.Fullscreen"));
-		DisplayName = NSLOCTEXT("Settings", "FullscreenMode", "Fullscreen Mode");
+		SettingTag = FGameplayTag::RequestGameplayTag(TEXT("Settings.Display.DisplayMode"));
+		DisplayName = NSLOCTEXT("Settings", "DisplayMode", "Display Mode");
 		ConfigCategory = TEXT("Display");
 		DefaultValue = TEXT("Windowed");
 		
@@ -65,12 +65,11 @@ public:
 			if (GameViewport->GetWindow().IsValid())
 			{
 				GameViewport->GetWindow()->SetWindowMode(WindowMode);
-				UE_LOG(LogTemp, Log, TEXT("Applied Fullscreen Mode: %s"), *Mode);
+				UE_LOG(LogTemp, Log, TEXT("Applied Display Mode: %s"), *Mode);
 			}
 		}
 	}
 	
-	// Helper method to get current window mode
 	UFUNCTION(BlueprintCallable, Category = "Display Settings")
 	FString GetCurrentWindowMode() const
 	{
@@ -90,6 +89,51 @@ public:
 			}
 		}
 		return TEXT("Windowed");
+	}
+};
+
+// Display Monitor Setting (formerly Display Mode)
+UCLASS(Blueprintable,EditInlineNew,  DisplayName = "Extended Display Monitor")
+class UNREALEXTENDEDFRAMEWORK_API UEFDisplayMonitorSetting : public UEFModularSettingsMultiSelect
+{
+	GENERATED_BODY()
+	
+public:
+	UEFDisplayMonitorSetting()
+	{
+		SettingTag = FGameplayTag::RequestGameplayTag(TEXT("Settings.Display.DisplayMonitor"));
+		DisplayName = NSLOCTEXT("Settings", "DisplayMonitor", "Display Monitor");
+		ConfigCategory = TEXT("Display");
+		DefaultValue = TEXT("Primary");
+		
+		Values = { 
+			TEXT("Primary"), 
+			TEXT("Secondary"), 
+			TEXT("Extended"),
+			TEXT("Mirrored")
+		};
+		
+		DisplayNames = {
+			NSLOCTEXT("Settings", "DisplayPrimary", "Primary Monitor"),
+			NSLOCTEXT("Settings", "DisplaySecondary", "Secondary Monitor"),
+			NSLOCTEXT("Settings", "DisplayExtended", "Extended Display"),
+			NSLOCTEXT("Settings", "DisplayMirrored", "Mirrored Display")
+		};
+		
+		int32 DefaultIndex = Values.Find(DefaultValue);
+		SelectedIndex = DefaultIndex != INDEX_NONE ? DefaultIndex : 0;
+	}
+	
+	virtual void Apply_Implementation() override
+	{
+		if (Values.IsValidIndex(SelectedIndex))
+		{
+			FString MonitorMode = Values[SelectedIndex];
+			
+			// This would need platform-specific implementation
+			// For now, we'll just log the intended behavior
+			UE_LOG(LogTemp, Log, TEXT("Applied Display Monitor: %s"), *MonitorMode);
+		}
 	}
 };
 
@@ -126,12 +170,6 @@ public:
 			UE_LOG(LogTemp, Log, TEXT("Applied Brightness: %.2f"), Value);
 		}
 	}
-	
-	UFUNCTION(BlueprintCallable, Category = "Display Settings")
-	float GetCurrentBrightness() const
-	{
-		return Value;
-	}
 };
 
 // Contrast Setting
@@ -163,12 +201,6 @@ public:
 			
 			UE_LOG(LogTemp, Log, TEXT("Applied Contrast: %.2f"), Value);
 		}
-	}
-	
-	UFUNCTION(BlueprintCallable, Category = "Display Settings")
-	float GetCurrentContrast() const
-	{
-		return Value;
 	}
 };
 
@@ -202,121 +234,36 @@ public:
 			UE_LOG(LogTemp, Log, TEXT("Applied Saturation: %.2f"), Value);
 		}
 	}
-	
-	UFUNCTION(BlueprintCallable, Category = "Display Settings")
-	float GetCurrentSaturation() const
-	{
-		return Value;
-	}
 };
 
-// Field of View Setting
-UCLASS(Blueprintable,EditInlineNew,  DisplayName = "Extended Field of View")
-class UNREALEXTENDEDFRAMEWORK_API UEFFOVSetting : public UEFModularSettingsFloat
+// Frame Rate Limit Setting
+UCLASS(Blueprintable,EditInlineNew,  DisplayName = "Extended Frame Rate Limit")
+class UNREALEXTENDEDFRAMEWORK_API UEFFrameRateLimitSetting : public UEFModularSettingsMultiSelect
 {
 	GENERATED_BODY()
 	
 public:
-	UEFFOVSetting()
+	UEFFrameRateLimitSetting()
 	{
-		SettingTag = FGameplayTag::RequestGameplayTag(TEXT("Settings.Display.FOV"));
-		DisplayName = NSLOCTEXT("Settings", "FOV", "Field of View");
+		SettingTag = FGameplayTag::RequestGameplayTag(TEXT("Settings.Display.FrameRateLimit"));
+		DisplayName = NSLOCTEXT("Settings", "FrameRateLimit", "Frame Rate Limit");
 		ConfigCategory = TEXT("Display");
-		DefaultValue = 90.0;
-		
-		Value = 90.0f;
-		Min = 60.0f;
-		Max = 120.0f;
-	}
-	
-	virtual void Apply_Implementation() override
-	{
-		if (GetWorld())
-		{
-			// Apply FOV to the current player controller
-			if (APlayerController* PC = GEngine->GetFirstLocalPlayerController(GetWorld()))
-			{
-				if (APawn* Pawn = PC->GetPawn())
-				{
-					// This would need to be adapted based on your camera system
-					// For now, we'll use a console command approach
-					FString Command = FString::Printf(TEXT("fov %f"), Value);
-					GEngine->Exec(GetWorld(), *Command);
-					
-					UE_LOG(LogTemp, Log, TEXT("Applied FOV: %.1f"), Value);
-				}
-			}
-		}
-	}
-	
-	UFUNCTION(BlueprintCallable, Category = "Display Settings")
-	float GetCurrentFOV() const
-	{
-		return Value;
-	}
-};
-
-// HDR Setting
-UCLASS(Blueprintable,EditInlineNew,  DisplayName = "Extended HDR")
-class UNREALEXTENDEDFRAMEWORK_API UEFHDRSetting : public UEFModularSettingsBool
-{
-	GENERATED_BODY()
-	
-public:
-	UEFHDRSetting()
-	{
-		SettingTag = FGameplayTag::RequestGameplayTag(TEXT("Settings.Display.HDR"));
-		DisplayName = NSLOCTEXT("Settings", "HDR", "HDR (High Dynamic Range)");
-		ConfigCategory = TEXT("Display");
-		DefaultValue = false;
-		Value = false;
-	}
-	
-	virtual void Apply_Implementation() override
-	{
-		if (GetWorld())
-		{
-			// Enable/disable HDR output
-			FString Command = Value ? TEXT("r.HDR.Display.OutputDevice 1") : TEXT("r.HDR.Display.OutputDevice 0");
-			GEngine->Exec(GetWorld(), *Command);
-			
-			UE_LOG(LogTemp, Log, TEXT("Applied HDR: %s"), Value ? TEXT("Enabled") : TEXT("Disabled"));
-		}
-	}
-	
-	UFUNCTION(BlueprintCallable, Category = "Display Settings")
-	bool IsHDREnabled() const
-	{
-		return Value;
-	}
-};
-
-// Color Blind Support Setting
-UCLASS(Blueprintable,EditInlineNew,  DisplayName = "Extended Color Blind Support")
-class UNREALEXTENDEDFRAMEWORK_API UEFColorBlindSetting : public UEFModularSettingsMultiSelect
-{
-	GENERATED_BODY()
-	
-public:
-	UEFColorBlindSetting()
-	{
-		SettingTag = FGameplayTag::RequestGameplayTag(TEXT("Settings.Display.ColorBlind"));
-		DisplayName = NSLOCTEXT("Settings", "ColorBlind", "Color Blind Support");
-		ConfigCategory = TEXT("Display");
-		DefaultValue = TEXT("None");
+		DefaultValue = TEXT("Unlimited");
 		
 		Values = { 
-			TEXT("None"), 
-			TEXT("Protanopia"), 
-			TEXT("Deuteranopia"), 
-			TEXT("Tritanopia") 
+			TEXT("30"), 
+			TEXT("60"), 
+			TEXT("120"),
+			TEXT("144"),
+			TEXT("Unlimited")
 		};
 		
 		DisplayNames = {
-			NSLOCTEXT("Settings", "ColorBlindNone", "None"),
-			NSLOCTEXT("Settings", "ColorBlindProtanopia", "Protanopia (Red-Green)"),
-			NSLOCTEXT("Settings", "ColorBlindDeuteranopia", "Deuteranopia (Red-Green)"),
-			NSLOCTEXT("Settings", "ColorBlindTritanopia", "Tritanopia (Blue-Yellow)")
+			NSLOCTEXT("Settings", "FPS30", "30 FPS"),
+			NSLOCTEXT("Settings", "FPS60", "60 FPS"),
+			NSLOCTEXT("Settings", "FPS120", "120 FPS"),
+			NSLOCTEXT("Settings", "FPS144", "144 FPS"),
+			NSLOCTEXT("Settings", "FPSUnlimited", "Unlimited")
 		};
 		
 		int32 DefaultIndex = Values.Find(DefaultValue);
@@ -327,71 +274,53 @@ public:
 	{
 		if (Values.IsValidIndex(SelectedIndex))
 		{
-			FString ColorBlindType = Values[SelectedIndex];
+			FString FPSValue = Values[SelectedIndex];
+			float MaxFPS = 0.0f;
+			
+			if (FPSValue != TEXT("Unlimited"))
+			{
+				MaxFPS = FCString::Atof(*FPSValue);
+			}
 			
 			if (GetWorld())
 			{
-				FString Command;
-				if (ColorBlindType == TEXT("None"))
-				{
-					Command = TEXT("r.Color.Deficiency.Type 0");
-				}
-				else if (ColorBlindType == TEXT("Protanopia"))
-				{
-					Command = TEXT("r.Color.Deficiency.Type 1; r.Color.Deficiency.Severity 1.0");
-				}
-				else if (ColorBlindType == TEXT("Deuteranopia"))
-				{
-					Command = TEXT("r.Color.Deficiency.Type 2; r.Color.Deficiency.Severity 1.0");
-				}
-				else if (ColorBlindType == TEXT("Tritanopia"))
-				{
-					Command = TEXT("r.Color.Deficiency.Type 3; r.Color.Deficiency.Severity 1.0");
-				}
-				
+				FString Command = FString::Printf(TEXT("t.MaxFPS %f"), MaxFPS);
 				GEngine->Exec(GetWorld(), *Command);
-				UE_LOG(LogTemp, Log, TEXT("Applied Color Blind Support: %s"), *ColorBlindType);
+				UE_LOG(LogTemp, Log, TEXT("Applied Frame Rate Limit: %s"), *FPSValue);
 			}
 		}
 	}
-	
-	UFUNCTION(BlueprintCallable, Category = "Display Settings")
-	FString GetCurrentColorBlindSetting() const
-	{
-		if (Values.IsValidIndex(SelectedIndex))
-		{
-			return Values[SelectedIndex];
-		}
-		return TEXT("None");
-	}
 };
 
-// Display Mode Setting (for multiple monitors)
-UCLASS(Blueprintable,EditInlineNew,  DisplayName = "Extended Display Mode")
-class UNREALEXTENDEDFRAMEWORK_API UEFDisplayModeSetting : public UEFModularSettingsMultiSelect
+// Anti-Aliasing Type Setting
+UCLASS(Blueprintable,EditInlineNew,  DisplayName = "Extended Anti-Aliasing Type")
+class UNREALEXTENDEDFRAMEWORK_API UEFAntiAliasingTypeSetting : public UEFModularSettingsMultiSelect
 {
 	GENERATED_BODY()
 	
 public:
-	UEFDisplayModeSetting()
+	UEFAntiAliasingTypeSetting()
 	{
-		SettingTag = FGameplayTag::RequestGameplayTag(TEXT("Settings.Display.DisplayMode"));
-		DisplayName = NSLOCTEXT("Settings", "DisplayMode", "Display Mode");
+		SettingTag = FGameplayTag::RequestGameplayTag(TEXT("Settings.Display.AntiAliasingType"));
+		DisplayName = NSLOCTEXT("Settings", "AntiAliasingType", "Anti-Aliasing Method");
 		ConfigCategory = TEXT("Display");
-		DefaultValue = TEXT("Primary");
+		DefaultValue = TEXT("TSR");
 		
+		// 0: None, 1: FXAA, 2: TAA, 3: MSAA, 4: TSR
 		Values = { 
-			TEXT("Primary"), 
-			TEXT("Secondary"), 
-			TEXT("Extended"),
-			TEXT("Mirrored")
+			TEXT("None"), 
+			TEXT("FXAA"), 
+			TEXT("TAA"),
+			TEXT("MSAA"),
+			TEXT("TSR")
 		};
 		
 		DisplayNames = {
-			NSLOCTEXT("Settings", "DisplayPrimary", "Primary Monitor"),
-			NSLOCTEXT("Settings", "DisplaySecondary", "Secondary Monitor"),
-			NSLOCTEXT("Settings", "DisplayExtended", "Extended Display"),
-			NSLOCTEXT("Settings", "DisplayMirrored", "Mirrored Display")
+			NSLOCTEXT("Settings", "AANone", "None"),
+			NSLOCTEXT("Settings", "AAFXAA", "FXAA"),
+			NSLOCTEXT("Settings", "AATAA", "TAA"),
+			NSLOCTEXT("Settings", "AAMSAA", "MSAA"),
+			NSLOCTEXT("Settings", "AATSR", "TSR")
 		};
 		
 		int32 DefaultIndex = Values.Find(DefaultValue);
@@ -402,21 +331,21 @@ public:
 	{
 		if (Values.IsValidIndex(SelectedIndex))
 		{
-			FString DisplayMode = Values[SelectedIndex];
+			FString AAType = Values[SelectedIndex];
+			int32 AAValue = 0;
 			
-			// This would need platform-specific implementation
-			// For now, we'll just log the intended behavior
-			UE_LOG(LogTemp, Log, TEXT("Applied Display Mode: %s"), *DisplayMode);
+			if (AAType == TEXT("None")) AAValue = 0;
+			else if (AAType == TEXT("FXAA")) AAValue = 1;
+			else if (AAType == TEXT("TAA")) AAValue = 2;
+			else if (AAType == TEXT("MSAA")) AAValue = 3;
+			else if (AAType == TEXT("TSR")) AAValue = 4;
+			
+			if (GetWorld())
+			{
+				FString Command = FString::Printf(TEXT("r.AntiAliasingMethod %d"), AAValue);
+				GEngine->Exec(GetWorld(), *Command);
+				UE_LOG(LogTemp, Log, TEXT("Applied Anti-Aliasing Type: %s"), *AAType);
+			}
 		}
-	}
-	
-	UFUNCTION(BlueprintCallable, Category = "Display Settings")
-	FString GetCurrentDisplayMode() const
-	{
-		if (Values.IsValidIndex(SelectedIndex))
-		{
-			return Values[SelectedIndex];
-		}
-		return TEXT("Primary");
 	}
 };

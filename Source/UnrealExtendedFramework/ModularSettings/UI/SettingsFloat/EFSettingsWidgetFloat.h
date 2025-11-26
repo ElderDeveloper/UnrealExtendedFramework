@@ -19,6 +19,7 @@ public:
 	UPROPERTY(BlueprintReadOnly, meta = (BindWidget), Category = "Settings")
 	class USpinBox* SpinBox;
 
+
 	virtual void NativeConstruct() override;
 	virtual void OnTrackedSettingsChanged_Implementation(UEFModularSettingsBase* ChangedSetting) override;
 
