@@ -59,19 +59,28 @@ void UEFModularSettingsSubsystem::Initialize(FSubsystemCollectionBase& Subsystem
 	);
 }
 
+/*
 void UEFModularSettingsSubsystem::Deinitialize()
 {
-	// Save settings before shutdown
-	SaveToDisk();
-	
-	if (SetCommand)
+	// Only save if we have a valid world context
+	if (UWorld* World = GetWorld())
 	{
-		IConsoleManager::Get().UnregisterConsoleObject(SetCommand);
-		SetCommand = nullptr;
+		if (World->IsGameWorld() && !World->bIsTearingDown)
+		{
+			SaveToDisk();
+		}
+		
+		// Unregister console command first
+		if (SetCommand)
+		{
+			IConsoleManager::Get().UnregisterConsoleObject(SetCommand);
+			//SetCommand = nullptr;
+		}
 	}
-	
+
 	Super::Deinitialize();
 }
+*/
 
 bool UEFModularSettingsSubsystem::GetBool(FGameplayTag Tag) const
 {

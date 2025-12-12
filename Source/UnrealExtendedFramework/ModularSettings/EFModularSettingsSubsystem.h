@@ -44,7 +44,7 @@ public:
 	FOnSettingsChanged OnSettingsChanged;
 	
 	virtual void Initialize(FSubsystemCollectionBase&) override;
-	virtual void Deinitialize() override;
+	//virtual void Deinitialize() override;
 
 	// Basic getters/setters
 	UFUNCTION(BlueprintCallable, Category = "Modular Settings")
