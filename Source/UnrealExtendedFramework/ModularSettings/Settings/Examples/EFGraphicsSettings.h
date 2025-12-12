@@ -12,7 +12,7 @@ UCLASS(Blueprintable,EditInlineNew, DisplayName = "Extended Screen Resolution")
 class UNREALEXTENDEDFRAMEWORK_API UEFResolutionSetting : public UEFModularSettingsMultiSelect
 {
 	GENERATED_BODY()
-	
+
 public:
 	UEFResolutionSetting()
 	{
@@ -20,47 +20,72 @@ public:
 		DisplayName = NSLOCTEXT("Settings", "Resolution", "Screen Resolution");
 		ConfigCategory = TEXT("Graphics");
 		DefaultValue = TEXT("1920x1080");
-		
+
 		PopulateResolutionOptions();
 	}
-	
+
 	virtual void Apply_Implementation() override
 	{
-		if (Values.IsValidIndex(SelectedIndex))
+		if (!Values.IsValidIndex(SelectedIndex) || !GEngine)
 		{
-			FString Resolution = Values[SelectedIndex];
-			int32 Width, Height;
-			
-			if (ParseResolution(Resolution, Width, Height))
-			{
-				if (GEngine && GEngine->GameViewport)
-				{
-					GEngine->GameViewport->GetWindow()->Resize(FVector2D(Width, Height));
-					UE_LOG(LogTemp, Log, TEXT("Applied resolution: %dx%d"), Width, Height);
-				}
-			}
+			return;
+		}
+
+		const FString Resolution = Values[SelectedIndex];
+		int32 Width = 0, Height = 0;
+
+		if (!ParseResolution(Resolution, Width, Height))
+		{
+			return;
+		}
+
+		if (UGameUserSettings* UserSettings = GEngine->GetGameUserSettings())
+		{
+			UserSettings->SetScreenResolution(FIntPoint(Width, Height));
+			UserSettings->ApplySettings(false);
+			UserSettings->SaveSettings();
+
+			UE_LOG(LogTemp, Log, TEXT("Applied & saved resolution via GameUserSettings: %dx%d"), Width, Height);
+			return;
+		}
+
+		// Fallback (non-persistent)
+		if (GEngine->GameViewport && GEngine->GameViewport->GetWindow().IsValid())
+		{
+			GEngine->GameViewport->GetWindow()->Resize(FVector2D(Width, Height));
+			UE_LOG(LogTemp, Warning, TEXT("Applied resolution via window resize (non-persistent): %dx%d"), Width, Height);
 		}
 	}
-	
+
 	// Helper method to get current resolution
 	UFUNCTION(BlueprintCallable, Category = "Graphics Settings")
 	FString GetCurrentResolution() const
 	{
-		if (GEngine && GEngine->GameViewport)
+		if (GEngine)
 		{
-			FVector2D ViewportSize;
-			GEngine->GameViewport->GetViewportSize(ViewportSize);
-			return FString::Printf(TEXT("%.0fx%.0f"), ViewportSize.X, ViewportSize.Y);
+			if (UGameUserSettings* UserSettings = GEngine->GetGameUserSettings())
+			{
+				const FIntPoint Res = UserSettings->GetScreenResolution();
+				return FString::Printf(TEXT("%dx%d"), Res.X, Res.Y);
+			}
+
+			if (GEngine->GameViewport)
+			{
+				FVector2D ViewportSize;
+				GEngine->GameViewport->GetViewportSize(ViewportSize);
+				return FString::Printf(TEXT("%.0fx%.0f"), ViewportSize.X, ViewportSize.Y);
+			}
 		}
+		
 		return TEXT("1920x1080");
 	}
-	
+
 private:
 	void PopulateResolutionOptions()
 	{
 		Values.Empty();
 		DisplayNames.Empty();
-		
+
 		// Common resolutions
 		TArray<FString> CommonResolutions = {
 			TEXT("1280x720"),
@@ -70,18 +95,18 @@ private:
 			TEXT("2560x1440"),
 			TEXT("3840x2160")
 		};
-		
+
 		for (const FString& Resolution : CommonResolutions)
 		{
 			Values.Add(Resolution);
 			DisplayNames.Add(FText::FromString(Resolution));
 		}
-		
+
 		// Set default index
 		int32 DefaultIndex = Values.Find(DefaultValue);
 		SelectedIndex = DefaultIndex != INDEX_NONE ? DefaultIndex : 3; // Default to 1920x1080
 	}
-	
+
 	bool ParseResolution(const FString& Resolution, int32& Width, int32& Height)
 	{
 		FString WidthStr, HeightStr;
@@ -100,7 +125,7 @@ UCLASS(Blueprintable,EditInlineNew,  DisplayName = "Extended VSync")
 class UNREALEXTENDEDFRAMEWORK_API UEFVSyncSetting : public UEFModularSettingsBool
 {
 	GENERATED_BODY()
-	
+
 public:
 	UEFVSyncSetting()
 	{
@@ -110,17 +135,29 @@ public:
 		DefaultValue = true;
 		Value = true;
 	}
-	
+
 	virtual void Apply_Implementation() override
 	{
-		if (GEngine)
+		if (!GEngine)
 		{
-			// Apply VSync setting to the engine
-			// This would typically involve console commands or engine settings
-			FString Command = Value ? TEXT("r.VSync 1") : TEXT("r.VSync 0");
-			GEngine->Exec(GEngine->GetWorld(), *Command);
-			
-			UE_LOG(LogTemp, Log, TEXT("Applied VSync: %s"), Value ? TEXT("Enabled") : TEXT("Disabled"));
+			return;
+		}
+
+		if (UGameUserSettings* UserSettings = GEngine->GetGameUserSettings())
+		{
+			UserSettings->SetVSyncEnabled(Value);
+			UserSettings->ApplySettings(false);
+			UserSettings->SaveSettings();
+
+			UE_LOG(LogTemp, Log, TEXT("Applied & saved VSync via GameUserSettings: %s"), Value ? TEXT("Enabled") : TEXT("Disabled"));
+			return;
+		}
+
+		// Fallback (non-persistent)
+		const FString Command = Value ? TEXT("r.VSync 1") : TEXT("r.VSync 0");
+		if (UWorld* World = GetWorld())
+		{
+			GEngine->Exec(World, *Command);
 		}
 	}
 };
@@ -130,7 +167,7 @@ UCLASS(Blueprintable,EditInlineNew,  DisplayName = "Extended Anti-Aliasing Quali
 class UNREALEXTENDEDFRAMEWORK_API UEFAntiAliasingQualitySetting : public UEFModularSettingsMultiSelect
 {
 	GENERATED_BODY()
-	
+
 public:
 	UEFAntiAliasingQualitySetting()
 	{
@@ -138,7 +175,7 @@ public:
 		DisplayName = NSLOCTEXT("Settings", "AntiAliasingQuality", "Anti-Aliasing Quality");
 		ConfigCategory = TEXT("Graphics");
 		DefaultValue = TEXT("High");
-		
+
 		Values = { TEXT("Low"), TEXT("Medium"), TEXT("High"), TEXT("Ultra") };
 		DisplayNames = {
 			NSLOCTEXT("Settings", "AALow", "Low"),
@@ -146,33 +183,35 @@ public:
 			NSLOCTEXT("Settings", "AAHigh", "High"),
 			NSLOCTEXT("Settings", "AAUltra", "Ultra")
 		};
-		
+
 		int32 DefaultIndex = Values.Find(DefaultValue);
 		SelectedIndex = DefaultIndex != INDEX_NONE ? DefaultIndex : 2;
 	}
-	
+
 	virtual void Apply_Implementation() override
 	{
 		if (Values.IsValidIndex(SelectedIndex))
 		{
-			FString Quality = Values[SelectedIndex];
-			int32 QualityLevel = SelectedIndex;
-			
+			const int32 QualityLevel = FMath::Clamp(SelectedIndex, 0, 3);
+
 			if (GEngine)
 			{
-				// r.PostProcessAAQuality maps to Scalability levels
-				// 0=Low, 1=Medium, 2=High, 3=Epic -> 0, 2, 4, 6
-				int32 EngineQuality = 0;
-				switch(QualityLevel) {
-					case 0: EngineQuality = 0; break;
-					case 1: EngineQuality = 2; break;
-					case 2: EngineQuality = 4; break;
-					case 3: EngineQuality = 6; break;
+				if (UGameUserSettings* UserSettings = GEngine->GetGameUserSettings())
+				{
+					UserSettings->SetAntiAliasingQuality(QualityLevel);
+					UserSettings->ApplySettings(false);
+					UserSettings->SaveSettings();
+
+					UE_LOG(LogTemp, Log, TEXT("Applied & saved Anti-Aliasing Quality via GameUserSettings: %s (Level %d)"),*Values[SelectedIndex], QualityLevel);
+					return;
 				}
-				
-				FString Command = FString::Printf(TEXT("r.PostProcessAAQuality %d"), EngineQuality);
-				GEngine->Exec(GEngine->GetWorld(), *Command);
-				UE_LOG(LogTemp, Log, TEXT("Applied Anti-Aliasing Quality: %s (Level %d)"), *Quality, QualityLevel);
+
+				// Fallback (non-persistent)
+				if (UWorld* World = GetWorld())
+				{
+					const FString Command = FString::Printf(TEXT("sg.AntiAliasingQuality %d"), QualityLevel);
+					GEngine->Exec(World, *Command);
+				}
 			}
 		}
 	}
@@ -183,7 +222,7 @@ UCLASS(Blueprintable,EditInlineNew,  DisplayName = "Extended Texture Quality")
 class UNREALEXTENDEDFRAMEWORK_API UEFTextureQualitySetting : public UEFModularSettingsMultiSelect
 {
 	GENERATED_BODY()
-	
+
 public:
 	UEFTextureQualitySetting()
 	{
@@ -191,7 +230,7 @@ public:
 		DisplayName = NSLOCTEXT("Settings", "TextureQuality", "Texture Quality");
 		ConfigCategory = TEXT("Graphics");
 		DefaultValue = TEXT("High");
-		
+
 		Values = { TEXT("Low"), TEXT("Medium"), TEXT("High"), TEXT("Ultra") };
 		DisplayNames = {
 			NSLOCTEXT("Settings", "TextureLow", "Low"),
@@ -199,23 +238,35 @@ public:
 			NSLOCTEXT("Settings", "TextureHigh", "High"),
 			NSLOCTEXT("Settings", "TextureUltra", "Ultra")
 		};
-		
+
 		int32 DefaultIndex = Values.Find(DefaultValue);
 		SelectedIndex = DefaultIndex != INDEX_NONE ? DefaultIndex : 2;
 	}
-	
+
 	virtual void Apply_Implementation() override
 	{
 		if (Values.IsValidIndex(SelectedIndex))
 		{
-			FString Quality = Values[SelectedIndex];
-			int32 QualityLevel = SelectedIndex;
-			
+			const int32 QualityLevel = FMath::Clamp(SelectedIndex, 0, 3);
+
 			if (GEngine)
 			{
-				FString Command = FString::Printf(TEXT("r.TextureQuality %d"), QualityLevel);
-				GEngine->Exec(GEngine->GetWorld(), *Command);
-				UE_LOG(LogTemp, Log, TEXT("Applied Texture Quality: %s (Level %d)"), *Quality, QualityLevel);
+				if (UGameUserSettings* UserSettings = GEngine->GetGameUserSettings())
+				{
+					UserSettings->SetTextureQuality(QualityLevel);
+					UserSettings->ApplySettings(false);
+					UserSettings->SaveSettings();
+
+					UE_LOG(LogTemp, Log, TEXT("Applied & saved Texture Quality via GameUserSettings: %s (Level %d)"),*Values[SelectedIndex], QualityLevel);
+					return;
+				}
+
+				// Fallback (non-persistent)
+				if (UWorld* World = GetWorld())
+				{
+					const FString Command = FString::Printf(TEXT("sg.TextureQuality %d"), QualityLevel);
+					GEngine->Exec(World, *Command);
+				}
 			}
 		}
 	}
@@ -253,21 +304,29 @@ public:
 	{
 		if (Values.IsValidIndex(SelectedIndex))
 		{
-			FString Quality = Values[SelectedIndex];
-			int32 Anisotropy = 0;
-			
-			if (Quality == TEXT("Trilinear")) Anisotropy = 0;
-			else if (Quality == TEXT("1x")) Anisotropy = 1;
-			else if (Quality == TEXT("2x")) Anisotropy = 2;
-			else if (Quality == TEXT("4x")) Anisotropy = 4;
-			else if (Quality == TEXT("8x")) Anisotropy = 8;
-			else if (Quality == TEXT("16x")) Anisotropy = 16;
-			
+			// Map our indices to anisotropy levels:
+			// Trilinear(0)->0, 1x(1)->1, 2x(2)->2, 4x(3)->4, 8x(4)->8, 16x(5)->16
+			int32 Aniso = 0;
+			switch (SelectedIndex)
+			{
+				case 0: Aniso = 0; break; // Trilinear
+				case 1: Aniso = 1; break;
+				case 2: Aniso = 2; break;
+				case 3: Aniso = 4; break;
+				case 4: Aniso = 8; break;
+				case 5: Aniso = 16; break;
+				default: Aniso = 8; break;
+			}
+
 			if (GEngine)
 			{
-				FString Command = FString::Printf(TEXT("r.MaxAnisotropy %d"), Anisotropy);
-				GEngine->Exec(GEngine->GetWorld(), *Command);
-				UE_LOG(LogTemp, Log, TEXT("Applied Texture Filtering Quality: %s"), *Quality);
+				// No direct UGameUserSettings API for texture filtering. Use CVar.
+				if (UWorld* World = GetWorld())
+				{
+					const FString Command = FString::Printf(TEXT("r.MaxAnisotropy %d"), Aniso);
+					GEngine->Exec(World, *Command);
+					UE_LOG(LogTemp, Log, TEXT("Applied Texture Filtering Quality (Anisotropy %d)"), Aniso);
+				}
 			}
 		}
 	}
@@ -303,14 +362,23 @@ public:
 	{
 		if (Values.IsValidIndex(SelectedIndex))
 		{
-			FString Quality = Values[SelectedIndex];
-			int32 QualityLevel = SelectedIndex;
-			
+			const int32 QualityLevel = FMath::Clamp(SelectedIndex, 0, 3);
 			if (GEngine)
 			{
-				FString Command = FString::Printf(TEXT("r.FoliageQuality %d"), QualityLevel);
-				GEngine->Exec(GEngine->GetWorld(), *Command);
-				UE_LOG(LogTemp, Log, TEXT("Applied Foliage Quality: %s (Level %d)"), *Quality, QualityLevel);
+				if (UGameUserSettings* UserSettings = GEngine->GetGameUserSettings())
+				{
+					UserSettings->SetFoliageQuality(QualityLevel);
+					UserSettings->ApplySettings(false);
+					UserSettings->SaveSettings();
+					UE_LOG(LogTemp, Log, TEXT("Applied & saved Foliage Quality via GameUserSettings: %s (Level %d)"), *Values[SelectedIndex], QualityLevel);
+					return;
+				}
+				// Fallback
+				if (UWorld* World = GetWorld())
+				{
+					const FString Command = FString::Printf(TEXT("sg.FoliageQuality %d"), QualityLevel);
+					GEngine->Exec(World, *Command);
+				}
 			}
 		}
 	}
@@ -346,14 +414,23 @@ public:
 	{
 		if (Values.IsValidIndex(SelectedIndex))
 		{
-			FString Quality = Values[SelectedIndex];
-			int32 QualityLevel = SelectedIndex;
-			
+			const int32 QualityLevel = FMath::Clamp(SelectedIndex, 0, 3);
 			if (GEngine)
 			{
-				FString Command = FString::Printf(TEXT("r.ShadowQuality %d"), QualityLevel);
-				GEngine->Exec(GEngine->GetWorld(), *Command);
-				UE_LOG(LogTemp, Log, TEXT("Applied Shadow Quality: %s (Level %d)"), *Quality, QualityLevel);
+				if (UGameUserSettings* UserSettings = GEngine->GetGameUserSettings())
+				{
+					UserSettings->SetShadowQuality(QualityLevel);
+					UserSettings->ApplySettings(false);
+					UserSettings->SaveSettings();
+					UE_LOG(LogTemp, Log, TEXT("Applied & saved Shadow Quality via GameUserSettings: %s (Level %d)"), *Values[SelectedIndex], QualityLevel);
+					return;
+				}
+				// Fallback
+				if (UWorld* World = GetWorld())
+				{
+					const FString Command = FString::Printf(TEXT("sg.ShadowQuality %d"), QualityLevel);
+					GEngine->Exec(World, *Command);
+				}
 			}
 		}
 	}
@@ -389,14 +466,23 @@ public:
 	{
 		if (Values.IsValidIndex(SelectedIndex))
 		{
-			FString Quality = Values[SelectedIndex];
-			int32 QualityLevel = SelectedIndex;
-			
+			const int32 QualityLevel = FMath::Clamp(SelectedIndex, 0, 3);
 			if (GEngine)
 			{
-				FString Command = FString::Printf(TEXT("r.ShadingQuality %d"), QualityLevel);
-				GEngine->Exec(GEngine->GetWorld(), *Command);
-				UE_LOG(LogTemp, Log, TEXT("Applied Shading Quality: %s (Level %d)"), *Quality, QualityLevel);
+				if (UGameUserSettings* UserSettings = GEngine->GetGameUserSettings())
+				{
+					UserSettings->SetShadingQuality(QualityLevel);
+					UserSettings->ApplySettings(false);
+					UserSettings->SaveSettings();
+					UE_LOG(LogTemp, Log, TEXT("Applied & saved Shading Quality via GameUserSettings: %s (Level %d)"), *Values[SelectedIndex], QualityLevel);
+					return;
+				}
+				// Fallback
+				if (UWorld* World = GetWorld())
+				{
+					const FString Command = FString::Printf(TEXT("sg.ShadingQuality %d"), QualityLevel);
+					GEngine->Exec(World, *Command);
+				}
 			}
 		}
 	}
@@ -432,15 +518,23 @@ public:
 	{
 		if (Values.IsValidIndex(SelectedIndex))
 		{
-			FString Quality = Values[SelectedIndex];
-			int32 QualityLevel = SelectedIndex;
-			
+			const int32 QualityLevel = FMath::Clamp(SelectedIndex, 0, 3);
 			if (GEngine)
 			{
-				// VFX Quality often maps to EffectsQuality
-				FString Command = FString::Printf(TEXT("sg.EffectsQuality %d"), QualityLevel);
-				GEngine->Exec(GEngine->GetWorld(), *Command);
-				UE_LOG(LogTemp, Log, TEXT("Applied VFX Quality: %s (Level %d)"), *Quality, QualityLevel);
+				if (UGameUserSettings* UserSettings = GEngine->GetGameUserSettings())
+				{
+					UserSettings->SetVisualEffectQuality(QualityLevel);
+					UserSettings->ApplySettings(false);
+					UserSettings->SaveSettings();
+					UE_LOG(LogTemp, Log, TEXT("Applied & saved VFX (Effects) Quality via GameUserSettings: %s (Level %d)"), *Values[SelectedIndex], QualityLevel);
+					return;
+				}
+				// Fallback
+				if (UWorld* World = GetWorld())
+				{
+					const FString Command = FString::Printf(TEXT("sg.EffectsQuality %d"), QualityLevel);
+					GEngine->Exec(World, *Command);
+				}
 			}
 		}
 	}
@@ -476,14 +570,23 @@ public:
 	{
 		if (Values.IsValidIndex(SelectedIndex))
 		{
-			FString Quality = Values[SelectedIndex];
-			int32 QualityLevel = SelectedIndex;
-			
+			const int32 QualityLevel = FMath::Clamp(SelectedIndex, 0, 3);
 			if (GEngine)
 			{
-				FString Command = FString::Printf(TEXT("r.PostProcessQuality %d"), QualityLevel);
-				GEngine->Exec(GEngine->GetWorld(), *Command);
-				UE_LOG(LogTemp, Log, TEXT("Applied Post-Processing Quality: %s (Level %d)"), *Quality, QualityLevel);
+				if (UGameUserSettings* UserSettings = GEngine->GetGameUserSettings())
+				{
+					UserSettings->SetPostProcessingQuality(QualityLevel);
+					UserSettings->ApplySettings(false);
+					UserSettings->SaveSettings();
+					UE_LOG(LogTemp, Log, TEXT("Applied & saved Post-Processing Quality via GameUserSettings: %s (Level %d)"), *Values[SelectedIndex], QualityLevel);
+					return;
+				}
+				// Fallback
+				if (UWorld* World = GetWorld())
+				{
+					const FString Command = FString::Printf(TEXT("sg.PostProcessQuality %d"), QualityLevel);
+					GEngine->Exec(World, *Command);
+				}
 			}
 		}
 	}
@@ -519,14 +622,23 @@ public:
 	{
 		if (Values.IsValidIndex(SelectedIndex))
 		{
-			FString Quality = Values[SelectedIndex];
-			int32 QualityLevel = SelectedIndex;
-			
+			const int32 QualityLevel = FMath::Clamp(SelectedIndex, 0, 3);
 			if (GEngine)
 			{
-				FString Command = FString::Printf(TEXT("r.ViewDistanceScale %f"), 0.5f + (QualityLevel * 0.5f));
-				GEngine->Exec(GEngine->GetWorld(), *Command);
-				UE_LOG(LogTemp, Log, TEXT("Applied View Distance: %s (Level %d)"), *Quality, QualityLevel);
+				if (UGameUserSettings* UserSettings = GEngine->GetGameUserSettings())
+				{
+					UserSettings->SetViewDistanceQuality(QualityLevel);
+					UserSettings->ApplySettings(false);
+					UserSettings->SaveSettings();
+					UE_LOG(LogTemp, Log, TEXT("Applied & saved View Distance Quality via GameUserSettings: %s (Level %d)"), *Values[SelectedIndex], QualityLevel);
+					return;
+				}
+				// Fallback
+				if (UWorld* World = GetWorld())
+				{
+					const FString Command = FString::Printf(TEXT("sg.ViewDistanceQuality %d"), QualityLevel);
+					GEngine->Exec(World, *Command);
+				}
 			}
 		}
 	}
@@ -563,15 +675,16 @@ public:
 	{
 		if (Values.IsValidIndex(SelectedIndex))
 		{
-			FString Quality = Values[SelectedIndex];
-			int32 QualityLevel = SelectedIndex;
-			
+			const int32 QualityLevel = FMath::Clamp(SelectedIndex, 0, 4); // 0..4 for SSR CVar
 			if (GEngine)
 			{
-				// r.SSR.Quality: 0=Off, 1=Low, 2=Medium, 3=High, 4=Epic
-				FString Command = FString::Printf(TEXT("r.SSR.Quality %d"), QualityLevel);
-				GEngine->Exec(GEngine->GetWorld(), *Command);
-				UE_LOG(LogTemp, Log, TEXT("Applied Screen Space Reflections: %s"), *Quality);
+				// There is no dedicated UGameUserSettings setter for SSR in UE5.6; keep CVar path.
+				if (UWorld* World = GetWorld())
+				{
+					const FString Command = FString::Printf(TEXT("r.SSR.Quality %d"), QualityLevel);
+					GEngine->Exec(World, *Command);
+					UE_LOG(LogTemp, Log, TEXT("Applied Screen Space Reflections Quality: %s (Level %d)"), *Values[SelectedIndex], QualityLevel);
+				}
 			}
 		}
 	}
@@ -682,8 +795,23 @@ public:
 	
 	virtual void Apply_Implementation() override
 	{
-		// Logic to apply overall quality is handled by updating individual settings
-	}
+		// Apply overall scalability only for presets Low..Ultra; skip for Custom
+		if (!GEngine || SelectedIndex < 0)
+		{
+			return;
+		}
+
+		if (SelectedIndex <= 3)
+		{
+			if (UGameUserSettings* UserSettings = GEngine->GetGameUserSettings())
+			{
+				UserSettings->SetOverallScalabilityLevel(SelectedIndex);
+				UserSettings->ApplySettings(false);
+				UserSettings->SaveSettings();
+				UE_LOG(LogTemp, Log, TEXT("Applied & saved Overall Scalability Level via GameUserSettings: %s (Level %d)"), *Values[SelectedIndex], SelectedIndex);
+			}
+		}
+}
 	
 	virtual void SetSelectedIndex_Implementation(int32 Index) override
 	{

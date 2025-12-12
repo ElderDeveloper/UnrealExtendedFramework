@@ -4,6 +4,7 @@
 #include "UnrealExtendedFramework/ModularSettings/Settings/EFModularSettingsBase.h"
 #include "Engine/Engine.h"
 #include "Engine/GameViewportClient.h"
+#include "GameFramework/GameUserSettings.h"
 #include "EFDisplaySettings.generated.h"
 
 // Display Mode Setting (formerly Fullscreen)
@@ -11,7 +12,7 @@ UCLASS(Blueprintable,EditInlineNew,  DisplayName = "Extended Display Mode")
 class UNREALEXTENDEDFRAMEWORK_API UEFDisplayModeSetting : public UEFModularSettingsMultiSelect
 {
 	GENERATED_BODY()
-	
+
 public:
 	UEFDisplayModeSetting()
 	{
@@ -19,33 +20,46 @@ public:
 		DisplayName = NSLOCTEXT("Settings", "DisplayMode", "Display Mode");
 		ConfigCategory = TEXT("Display");
 		DefaultValue = TEXT("Windowed");
-		
-		Values = { 
-			TEXT("Windowed"), 
-			TEXT("Borderless"), 
-			TEXT("Fullscreen") 
+
+		Values = {
+			TEXT("Windowed"),
+			TEXT("Borderless"),
+			TEXT("Fullscreen")
 		};
-		
+
 		DisplayNames = {
 			NSLOCTEXT("Settings", "Windowed", "Windowed"),
 			NSLOCTEXT("Settings", "Borderless", "Borderless Window"),
 			NSLOCTEXT("Settings", "Fullscreen", "Fullscreen")
 		};
-		
+
 		int32 DefaultIndex = Values.Find(DefaultValue);
 		SelectedIndex = DefaultIndex != INDEX_NONE ? DefaultIndex : 0;
 	}
-	
+
 	virtual void Apply_Implementation() override
 	{
 		if (!Values.IsValidIndex(SelectedIndex))
 		{
 			return;
 		}
-		
-		FString Mode = Values[SelectedIndex];
+
+		UWorld* World = GetWorld();
+		if (!World || IsRunningDedicatedServer())
+		{
+			return;
+		}
+
+#if WITH_EDITOR
+		if (GIsEditor && World->WorldType == EWorldType::PIE)
+		{
+			return;
+		}
+#endif
+
+		const FString Mode = Values[SelectedIndex];
 		EWindowMode::Type WindowMode = EWindowMode::Windowed;
-		
+
 		if (Mode == TEXT("Windowed"))
 		{
 			WindowMode = EWindowMode::Windowed;
@@ -58,36 +72,61 @@ public:
 		{
 			WindowMode = EWindowMode::Fullscreen;
 		}
-		
-		if (GetWorld() && GEngine->GameViewport)
+
+		if (GEngine)
 		{
-			UGameViewportClient* GameViewport = GEngine->GameViewport;
-			if (GameViewport->GetWindow().IsValid())
+			// Prefer GameUserSettings: persists across runs and applies using UE's platform pipeline.
+			if (UGameUserSettings* UserSettings = GEngine->GetGameUserSettings())
 			{
-				GameViewport->GetWindow()->SetWindowMode(WindowMode);
-				UE_LOG(LogTemp, Log, TEXT("Applied Display Mode: %s"), *Mode);
+				UserSettings->SetFullscreenMode(WindowMode);
+
+				// false = don't check "command line overrides" as authoritative
+				UserSettings->ApplySettings(false);
+
+				// Writes to GameUserSettings.ini
+				UserSettings->SaveSettings();
+
+				UE_LOG(LogTemp, Log, TEXT("Applied & saved Display Mode via GameUserSettings: %s"), *Mode);
+				return;
+			}
+
+			// Fallback (non-persistent): only if GameUserSettings isn't available for some reason.
+			if (GEngine->GameViewport && GEngine->GameViewport->GetWindow().IsValid())
+			{
+				GEngine->GameViewport->GetWindow()->SetWindowMode(WindowMode);
+				UE_LOG(LogTemp, Warning, TEXT("Applied Display Mode via Slate window (non-persistent): %s"), *Mode);
 			}
 		}
 	}
-	
+
 	UFUNCTION(BlueprintCallable, Category = "Display Settings")
 	FString GetCurrentWindowMode() const
 	{
-		if (GetWorld() && GEngine->GameViewport && GEngine->GameViewport->GetWindow().IsValid())
+		if (GEngine)
 		{
-			EWindowMode::Type CurrentMode = GEngine->GameViewport->GetWindow()->GetWindowMode();
-			switch (CurrentMode)
+			if (UGameUserSettings* UserSettings = GEngine->GetGameUserSettings())
 			{
-				case EWindowMode::Windowed:
-					return TEXT("Windowed");
-				case EWindowMode::WindowedFullscreen:
-					return TEXT("Borderless");
-				case EWindowMode::Fullscreen:
-					return TEXT("Fullscreen");
-				default:
-					return TEXT("Windowed");
+				switch (UserSettings->GetFullscreenMode())
+				{
+					case EWindowMode::Windowed: return TEXT("Windowed");
+					case EWindowMode::WindowedFullscreen: return TEXT("Borderless");
+					case EWindowMode::Fullscreen: return TEXT("Fullscreen");
+					default: return TEXT("Windowed");
+				}
+			}
+
+			if (GetWorld() && GEngine->GameViewport && GEngine->GameViewport->GetWindow().IsValid())
+			{
+				switch (GEngine->GameViewport->GetWindow()->GetWindowMode())
+				{
+					case EWindowMode::Windowed: return TEXT("Windowed");
+					case EWindowMode::WindowedFullscreen: return TEXT("Borderless");
+					case EWindowMode::Fullscreen: return TEXT("Fullscreen");
+					default: return TEXT("Windowed");
+				}
 			}
 		}
+
 		return TEXT("Windowed");
 	}
 };
@@ -275,18 +314,20 @@ public:
 		if (Values.IsValidIndex(SelectedIndex))
 		{
 			FString FPSValue = Values[SelectedIndex];
-			float MaxFPS = 0.0f;
+			float MaxFPS = 60.0f;
 			
 			if (FPSValue != TEXT("Unlimited"))
 			{
 				MaxFPS = FCString::Atof(*FPSValue);
 			}
 			
-			if (GetWorld())
+			if (UGameUserSettings* UserSettings = GEngine->GetGameUserSettings())
 			{
-				FString Command = FString::Printf(TEXT("t.MaxFPS %f"), MaxFPS);
-				GEngine->Exec(GetWorld(), *Command);
-				UE_LOG(LogTemp, Log, TEXT("Applied Frame Rate Limit: %s"), *FPSValue);
+				UserSettings->SetFrameRateLimit(MaxFPS);
+				UserSettings->ApplySettings(false);
+				UserSettings->SaveSettings();
+
+				UE_LOG(LogTemp, Log, TEXT("Applied & saved Frame Rate Limit via GameUserSettings: %s"), *FPSValue);
 			}
 		}
 	}
