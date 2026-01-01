@@ -4,7 +4,7 @@
 #include "EFSettingsWidgetFloatSlider.h"
 #include "Components/Slider.h"
 #include "Components/TextBlock.h"
-#include "UnrealExtendedFramework/ModularSettings/EFModularSettingsSubsystem.h"
+#include "UnrealExtendedFramework/ModularSettings/EFModularSettingsLibrary.h"
 #include "UnrealExtendedFramework/ModularSettings/Settings/EFModularSettingsBase.h"
 
 void UEFSettingsWidgetFloatSlider::NativeConstruct()
@@ -13,18 +13,15 @@ void UEFSettingsWidgetFloatSlider::NativeConstruct()
 
 	if (Slider)
 	{
-		if (const auto Subsystem = GetWorld()->GetGameInstance()->GetSubsystem<UEFModularSettingsSubsystem>())
+		if (UEFModularSettingsFloat* FloatSetting = Cast<UEFModularSettingsFloat>(UEFModularSettingsLibrary::GetModularSetting(this, SettingsTag, SettingsSource)))
 		{
-			if (const auto FloatSetting = Subsystem->GetSetting<UEFModularSettingsFloat>(SettingsTag))
+			Slider->SetMinValue(FloatSetting->Min);
+			Slider->SetMaxValue(FloatSetting->Max);
+			Slider->SetValue(FloatSetting->Value);
+			
+			if (ValueText)
 			{
-				Slider->SetMinValue(FloatSetting->Min);
-				Slider->SetMaxValue(FloatSetting->Max);
-				Slider->SetValue(FloatSetting->Value);
-				
-				if (ValueText)
-				{
-					ValueText->SetText(FText::AsNumber(FloatSetting->Value));
-				}
+				ValueText->SetText(FText::AsNumber(FloatSetting->Value));
 			}
 		}
 		
@@ -62,13 +59,10 @@ void UEFSettingsWidgetFloatSlider::SettingsPreConstruct_Implementation()
 
 void UEFSettingsWidgetFloatSlider::OnValueChanged(float NewValue)
 {
-	if (const auto Subsystem = GetWorld()->GetGameInstance()->GetSubsystem<UEFModularSettingsSubsystem>())
+	UEFModularSettingsLibrary::SetModularFloat(this, SettingsTag, NewValue, SettingsSource);
+	
+	if (ValueText)
 	{
-		Subsystem->SetFloat(SettingsTag, NewValue);
-		
-		if (ValueText)
-		{
-			ValueText->SetText(FText::AsNumber(NewValue));
-		}
+		ValueText->SetText(FText::AsNumber(NewValue));
 	}
 }

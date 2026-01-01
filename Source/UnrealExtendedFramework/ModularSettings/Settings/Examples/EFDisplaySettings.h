@@ -37,6 +37,32 @@ public:
 		SelectedIndex = DefaultIndex != INDEX_NONE ? DefaultIndex : 0;
 	}
 
+	virtual void SyncFromEngine() override
+	{
+		if (!GEngine)
+		{
+			return;
+		}
+
+		if (UGameUserSettings* UserSettings = GEngine->GetGameUserSettings())
+		{
+			FString CurrentMode;
+			switch (UserSettings->GetFullscreenMode())
+			{
+				case EWindowMode::Windowed: CurrentMode = TEXT("Windowed"); break;
+				case EWindowMode::WindowedFullscreen: CurrentMode = TEXT("Borderless"); break;
+				case EWindowMode::Fullscreen: CurrentMode = TEXT("Fullscreen"); break;
+				default: CurrentMode = TEXT("Windowed"); break;
+			}
+
+			int32 FoundIndex = Values.Find(CurrentMode);
+			if (FoundIndex != INDEX_NONE)
+			{
+				SelectedIndex = FoundIndex;
+			}
+		}
+	}
+
 	virtual void Apply_Implementation() override
 	{
 		if (!Values.IsValidIndex(SelectedIndex))
@@ -328,6 +354,36 @@ public:
 				UserSettings->SaveSettings();
 
 				UE_LOG(LogTemp, Log, TEXT("Applied & saved Frame Rate Limit via GameUserSettings: %s"), *FPSValue);
+			}
+		}
+	}
+
+	virtual void SyncFromEngine() override
+	{
+		if (!GEngine)
+		{
+			return;
+		}
+
+		if (UGameUserSettings* UserSettings = GEngine->GetGameUserSettings())
+		{
+			float CurrentLimit = UserSettings->GetFrameRateLimit();
+			
+			// Find matching value (Unlimited = 0 in GameUserSettings)
+			FString MatchedValue;
+			if (CurrentLimit <= 0.0f)
+			{
+				MatchedValue = TEXT("Unlimited");
+			}
+			else
+			{
+				MatchedValue = FString::FromInt(FMath::RoundToInt(CurrentLimit));
+			}
+
+			int32 FoundIndex = Values.Find(MatchedValue);
+			if (FoundIndex != INDEX_NONE)
+			{
+				SelectedIndex = FoundIndex;
 			}
 		}
 	}

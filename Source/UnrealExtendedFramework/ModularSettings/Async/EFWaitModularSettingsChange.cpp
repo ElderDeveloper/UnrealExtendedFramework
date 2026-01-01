@@ -5,6 +5,10 @@
 #include "Kismet/GameplayStatics.h"
 #include "Engine/World.h"
 #include "UnrealExtendedFramework/ModularSettings/EFModularSettingsSubsystem.h"
+#include "UnrealExtendedFramework/ModularSettings/Components/EFWorldSettingsComponent.h"
+#include "UnrealExtendedFramework/ModularSettings/Components/EFPlayerSettingsComponent.h"
+#include "GameFramework/GameStateBase.h"
+#include "GameFramework/PlayerState.h"
 
  
 
@@ -32,11 +36,23 @@ void UEFWaitModularSettingsChange::Activate()
 	{
 		if (const auto SettingsSubsystem = World->GetGameInstance()->GetSubsystem<UEFModularSettingsSubsystem>())
 		{
-			if (auto ChangedSetting = SettingsSubsystem->GetSettingByTag(SettingTag))
-			{
-				OnSettingChanged(ChangedSetting);
-				SettingsSubsystem->OnSettingsChanged.AddDynamic(this, &UEFWaitModularSettingsChange::OnSettingChanged);
-			}
+			SettingsSubsystem->OnSettingsChanged.AddDynamic(this, &UEFWaitModularSettingsChange::OnSettingChanged);
+		}
+	}
+
+	if (AGameStateBase* GS = World->GetGameState())
+	{
+		if (UEFWorldSettingsComponent* WorldComp = GS->FindComponentByClass<UEFWorldSettingsComponent>())
+		{
+			WorldComp->OnSettingChanged.AddDynamic(this, &UEFWaitModularSettingsChange::OnSettingChanged);
+		}
+	}
+
+	if (World->GetFirstPlayerController() && World->GetFirstPlayerController()->PlayerState)
+	{
+		if (UEFPlayerSettingsComponent* PlayerComp = World->GetFirstPlayerController()->PlayerState->FindComponentByClass<UEFPlayerSettingsComponent>())
+		{
+			PlayerComp->OnSettingChanged.AddDynamic(this, &UEFWaitModularSettingsChange::OnSettingChanged);
 		}
 	}
 }

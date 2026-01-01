@@ -4,7 +4,7 @@
 #include "EFSettingsWidgetMultiSelectStepper.h"
 #include "Components/Button.h"
 #include "Components/TextBlock.h"
-#include "UnrealExtendedFramework/ModularSettings/EFModularSettingsSubsystem.h"
+#include "UnrealExtendedFramework/ModularSettings/EFModularSettingsLibrary.h"
 #include "UnrealExtendedFramework/ModularSettings/Settings/EFModularSettingsBase.h"
 
 void UEFSettingsWidgetMultiSelectStepper::NativeConstruct()
@@ -21,12 +21,9 @@ void UEFSettingsWidgetMultiSelectStepper::NativeConstruct()
 		NextButton->OnClicked.AddDynamic(this, &UEFSettingsWidgetMultiSelectStepper::OnNextClicked);
 	}
 
-	if (const auto Subsystem = GetWorld()->GetGameInstance()->GetSubsystem<UEFModularSettingsSubsystem>())
+	if (const auto Setting = UEFModularSettingsLibrary::GetModularSetting(this, SettingsTag, SettingsSource))
 	{
-		if (const auto Setting = Subsystem->GetSettingByTag(SettingsTag))
-		{
-			UpdateText(Setting);
-		}
+		UpdateText(Setting);
 	}
 }
 
@@ -51,18 +48,12 @@ void UEFSettingsWidgetMultiSelectStepper::SettingsPreConstruct_Implementation()
 
 void UEFSettingsWidgetMultiSelectStepper::OnPreviousClicked()
 {
-	if (const auto Subsystem = GetWorld()->GetGameInstance()->GetSubsystem<UEFModularSettingsSubsystem>())
-	{
-		Subsystem->AddIndex(SettingsTag, -1);
-	}
+	UEFModularSettingsLibrary::AdjustModularIndex(this, SettingsTag, -1, true, SettingsSource);
 }
 
 void UEFSettingsWidgetMultiSelectStepper::OnNextClicked()
 {
-	if (const auto Subsystem = GetWorld()->GetGameInstance()->GetSubsystem<UEFModularSettingsSubsystem>())
-	{
-		Subsystem->AddIndex(SettingsTag, 1);
-	}
+	UEFModularSettingsLibrary::AdjustModularIndex(this, SettingsTag, 1, true, SettingsSource);
 }
 
 void UEFSettingsWidgetMultiSelectStepper::UpdateText(const UEFModularSettingsBase* Setting)
@@ -71,14 +62,28 @@ void UEFSettingsWidgetMultiSelectStepper::UpdateText(const UEFModularSettingsBas
 	{
 		if (const auto MultiSelectSetting = Cast<UEFModularSettingsMultiSelect>(Setting))
 		{
+			FText DisplayText = FText::GetEmpty();
+			
 			if (MultiSelectSetting->DisplayNames.IsValidIndex(MultiSelectSetting->SelectedIndex))
 			{
-				ValueText->SetText(MultiSelectSetting->DisplayNames[MultiSelectSetting->SelectedIndex]);
+				DisplayText = MultiSelectSetting->DisplayNames[MultiSelectSetting->SelectedIndex];
 			}
 			else if (MultiSelectSetting->Values.IsValidIndex(MultiSelectSetting->SelectedIndex))
 			{
-				ValueText->SetText(FText::FromString(MultiSelectSetting->Values[MultiSelectSetting->SelectedIndex]));
+				DisplayText = FText::FromString(MultiSelectSetting->Values[MultiSelectSetting->SelectedIndex]);
 			}
+			
+			if (MultiSelectSetting->IsIndexLocked(MultiSelectSetting->SelectedIndex))
+			{
+				DisplayText = FText::Format(NSLOCTEXT("Settings", "LockedFormat", "{0} (Locked)"), DisplayText);
+				ValueText->SetColorAndOpacity(FSlateColor(FLinearColor(1.0f, 1.0f, 1.0f, 0.5f))); // Dimmed
+			}
+			else
+			{
+				ValueText->SetColorAndOpacity(FSlateColor(FLinearColor::White));
+			}
+
+			ValueText->SetText(DisplayText);
 		}
 	}
 }

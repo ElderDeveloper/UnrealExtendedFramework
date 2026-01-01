@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Blueprint/UserWidget.h"
+#include "../EFModularSettingsLibrary.h"
 #include "../Settings/EFModularSettingsBase.h"
 #include "EFSettingsWidgetBase.generated.h"
 
@@ -39,8 +40,16 @@ protected:
 	FText SettingsDisplayName = FText::FromString("Settings Label");
 	
 	UPROPERTY(BlueprintReadOnly, EditAnywhere, Category = "Settings")
+	EEFSettingsSource SettingsSource = EEFSettingsSource::Auto;
+
+	UPROPERTY(BlueprintReadOnly, EditAnywhere, Category = "Settings")
 	float SettingsLabelFontSize = 13.5f;
 	
 	UFUNCTION()
 	void OnSettingChanged(UEFModularSettingsBase* ChangedSetting);
+
+protected:
+	void TryBindToSettingsSources();
+
+	FTimerHandle BindingRetryTimer;
 };

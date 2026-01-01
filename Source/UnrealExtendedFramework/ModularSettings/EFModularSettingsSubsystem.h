@@ -12,6 +12,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnSettingsLoaded);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnSettingsChanged, UEFModularSettingsBase*, Setting);
 
 
+
 UCLASS(BlueprintType, meta = (DisplayName = "Modular Settings Container"))
 class UNREALEXTENDEDFRAMEWORK_API UEFModularSettingsContainer : public UDataAsset
 {
@@ -29,7 +30,13 @@ class UNREALEXTENDEDFRAMEWORK_API UEFModularProjectSettings : public UDeveloperS
 
 public:
 	UPROPERTY(EditDefaultsOnly, Config, Category = "Modular Settings", meta = (AllowedClasses = "/Script/UnrealExtendedFramework.EFModularSettingsContainer"))
-	TArray<TSoftObjectPtr<UEFModularSettingsContainer>> SettingsContainers;
+	TArray<TSoftObjectPtr<UEFModularSettingsContainer>> LocalSettingsContainers;
+
+	UPROPERTY(EditDefaultsOnly, Config, Category = "Modular Settings", meta = (AllowedClasses = "/Script/UnrealExtendedFramework.EFModularSettingsContainer"))
+	TArray<TSoftObjectPtr<UEFModularSettingsContainer>> WorldSettingsContainers;
+
+	UPROPERTY(EditDefaultsOnly, Config, Category = "Modular Settings", meta = (AllowedClasses = "/Script/UnrealExtendedFramework.EFModularSettingsContainer"))
+	TArray<TSoftObjectPtr<UEFModularSettingsContainer>> PlayerSettingsContainers;
 };
 
 
@@ -44,39 +51,8 @@ public:
 	FOnSettingsChanged OnSettingsChanged;
 	
 	virtual void Initialize(FSubsystemCollectionBase&) override;
-	//virtual void Deinitialize() override;
 
 	// Basic getters/setters
-	UFUNCTION(BlueprintCallable, Category = "Modular Settings")
-	bool GetBool(FGameplayTag Tag) const;
-
-	UFUNCTION(BlueprintCallable, Category = "Modular Settings")
-	void SetBool(FGameplayTag Tag, bool bValue);
-
-	UFUNCTION(BlueprintCallable, Category = "Modular Settings")
-	float GetFloat(FGameplayTag Tag) const;
-
-	UFUNCTION(BlueprintCallable, Category = "Modular Settings")
-	void SetFloat(FGameplayTag Tag, float Value);
-
-	UFUNCTION(BlueprintCallable, Category = "Modular Settings")
-	int32 GetIndex(FGameplayTag Tag) const;
-
-	UFUNCTION(BlueprintCallable, Category = "Modular Settings")
-	bool SetIndex(FGameplayTag Tag, int32 Index);
-
-	UFUNCTION(BlueprintCallable, Category = "Modular Settings")
-	bool AddIndex(FGameplayTag Tag, int32 Amount);
-
-	UFUNCTION(BlueprintCallable, Category = "Modular Settings")
-	TArray<FText> GetOptions(FGameplayTag Tag) const;
-
-	UFUNCTION(BlueprintCallable, Category = "Modular Settings")
-	bool GetSelectedOption(FGameplayTag Tag, FString& Value , FText& DisplayName) const;
-	
-	UFUNCTION(BlueprintCallable, Category = "Modular Settings")
-	int32 GetSelectedOptionIndex(FGameplayTag Tag) const;
-	
 	// New method to apply all pending changes
 	UFUNCTION(BlueprintCallable, Category = "Modular Settings")
 	void ApplyAllChanges();
@@ -84,6 +60,9 @@ public:
 	// New method to revert all pending changes
 	UFUNCTION(BlueprintCallable, Category = "Modular Settings")
 	void RevertAllChanges();
+
+	UFUNCTION(BlueprintCallable, Category = "Modular Settings")
+	void RefreshAllSettings();
 
 	// Check if there are unapplied changes
 	UFUNCTION(BlueprintCallable, Category = "Modular Settings")

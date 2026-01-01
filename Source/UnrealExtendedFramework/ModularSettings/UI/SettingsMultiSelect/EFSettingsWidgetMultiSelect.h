@@ -23,6 +23,8 @@ public:
 	virtual void OnTrackedSettingsChanged_Implementation(UEFModularSettingsBase* ChangedSetting) override;
 
 protected:
+	void RefreshOptions();
+
 	UFUNCTION()
 	void OnSelectionChanged(FString SelectedItem, ESelectInfo::Type SelectionType);
 };

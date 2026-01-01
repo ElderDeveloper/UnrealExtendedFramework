@@ -4,7 +4,7 @@
 #include "EFSettingsWidgetBoolStepper.h"
 #include "Components/Button.h"
 #include "Components/TextBlock.h"
-#include "UnrealExtendedFramework/ModularSettings/EFModularSettingsSubsystem.h"
+#include "UnrealExtendedFramework/ModularSettings/EFModularSettingsLibrary.h"
 #include "UnrealExtendedFramework/ModularSettings/Settings/EFModularSettingsBase.h"
 
 void UEFSettingsWidgetBoolStepper::NativeConstruct()
@@ -21,10 +21,7 @@ void UEFSettingsWidgetBoolStepper::NativeConstruct()
 		NextButton->OnClicked.AddDynamic(this, &UEFSettingsWidgetBoolStepper::OnButtonClicked);
 	}
 
-	if (const auto Subsystem = GetWorld()->GetGameInstance()->GetSubsystem<UEFModularSettingsSubsystem>())
-	{
-		UpdateText(Subsystem->GetBool(SettingsTag));
-	}
+	UpdateText(UEFModularSettingsLibrary::GetModularBool(this, SettingsTag, SettingsSource));
 }
 
 void UEFSettingsWidgetBoolStepper::OnTrackedSettingsChanged_Implementation(UEFModularSettingsBase* ChangedSetting)
@@ -51,12 +48,9 @@ void UEFSettingsWidgetBoolStepper::SettingsPreConstruct_Implementation()
 
 void UEFSettingsWidgetBoolStepper::OnButtonClicked()
 {
-	if (const auto Subsystem = GetWorld()->GetGameInstance()->GetSubsystem<UEFModularSettingsSubsystem>())
-	{
-		// Toggle value
-		bool bCurrentValue = Subsystem->GetBool(SettingsTag);
-		Subsystem->SetBool(SettingsTag, !bCurrentValue);
-	}
+	// Toggle value
+	bool bCurrentValue = UEFModularSettingsLibrary::GetModularBool(this, SettingsTag, SettingsSource);
+	UEFModularSettingsLibrary::SetModularBool(this, SettingsTag, !bCurrentValue, SettingsSource);
 }
 
 void UEFSettingsWidgetBoolStepper::UpdateText(bool bValue)

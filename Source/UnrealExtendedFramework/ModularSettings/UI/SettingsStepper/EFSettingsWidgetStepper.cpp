@@ -4,7 +4,7 @@
 #include "EFSettingsWidgetStepper.h"
 #include "Components/Button.h"
 #include "Components/TextBlock.h"
-#include "UnrealExtendedFramework/ModularSettings/EFModularSettingsSubsystem.h"
+#include "UnrealExtendedFramework/ModularSettings/EFModularSettingsLibrary.h"
 #include "UnrealExtendedFramework/ModularSettings/Settings/EFModularSettingsBase.h"
 
 void UEFSettingsWidgetStepper::NativeConstruct()
@@ -21,12 +21,9 @@ void UEFSettingsWidgetStepper::NativeConstruct()
 		NextButton->OnClicked.AddDynamic(this, &UEFSettingsWidgetStepper::OnNextClicked);
 	}
 
-	if (const auto Subsystem = GetWorld()->GetGameInstance()->GetSubsystem<UEFModularSettingsSubsystem>())
+	if (const auto Setting = UEFModularSettingsLibrary::GetModularSetting(this, SettingsTag, SettingsSource))
 	{
-		if (const auto Setting = Subsystem->GetSettingByTag(SettingsTag))
-		{
-			UpdateText(Setting);
-		}
+		UpdateText(Setting);
 	}
 }
 
@@ -51,36 +48,30 @@ void UEFSettingsWidgetStepper::SettingsPreConstruct_Implementation()
 
 void UEFSettingsWidgetStepper::OnPreviousClicked()
 {
-	if (const auto Subsystem = GetWorld()->GetGameInstance()->GetSubsystem<UEFModularSettingsSubsystem>())
+	if (const auto Setting = UEFModularSettingsLibrary::GetModularSetting(this, SettingsTag, SettingsSource))
 	{
-		if (const auto Setting = Subsystem->GetSettingByTag(SettingsTag))
+		if (const auto BoolSetting = Cast<UEFModularSettingsBool>(Setting))
 		{
-			if (const auto BoolSetting = Cast<UEFModularSettingsBool>(Setting))
-			{
-				Subsystem->SetBool(SettingsTag, !BoolSetting->Value);
-			}
-			else if (const auto MultiSelectSetting = Cast<UEFModularSettingsMultiSelect>(Setting))
-			{
-				Subsystem->AddIndex(SettingsTag, -1);
-			}
+			UEFModularSettingsLibrary::SetModularBool(this, SettingsTag, !BoolSetting->Value, SettingsSource);
+		}
+		else if (const auto MultiSelectSetting = Cast<UEFModularSettingsMultiSelect>(Setting))
+		{
+			UEFModularSettingsLibrary::AdjustModularIndex(this, SettingsTag, -1, true, SettingsSource);
 		}
 	}
 }
 
 void UEFSettingsWidgetStepper::OnNextClicked()
 {
-	if (const auto Subsystem = GetWorld()->GetGameInstance()->GetSubsystem<UEFModularSettingsSubsystem>())
+	if (const auto Setting = UEFModularSettingsLibrary::GetModularSetting(this, SettingsTag, SettingsSource))
 	{
-		if (const auto Setting = Subsystem->GetSettingByTag(SettingsTag))
+		if (const auto BoolSetting = Cast<UEFModularSettingsBool>(Setting))
 		{
-			if (const auto BoolSetting = Cast<UEFModularSettingsBool>(Setting))
-			{
-				Subsystem->SetBool(SettingsTag, !BoolSetting->Value);
-			}
-			else if (const auto MultiSelectSetting = Cast<UEFModularSettingsMultiSelect>(Setting))
-			{
-				Subsystem->AddIndex(SettingsTag, 1);
-			}
+			UEFModularSettingsLibrary::SetModularBool(this, SettingsTag, !BoolSetting->Value, SettingsSource);
+		}
+		else if (const auto MultiSelectSetting = Cast<UEFModularSettingsMultiSelect>(Setting))
+		{
+			UEFModularSettingsLibrary::AdjustModularIndex(this, SettingsTag, 1, true, SettingsSource);
 		}
 	}
 }

@@ -14,6 +14,7 @@ class UNREALEXTENDEDFRAMEWORK_API UEFModularSettingsBase : public UObject
 {
 	GENERATED_BODY()
 public:
+	virtual bool IsSupportedForNetworking() const override { return true; }
 	UPROPERTY(EditDefaultsOnly,BlueprintReadOnly, Category="Settings")
 	FGameplayTag SettingTag;
 
@@ -22,9 +23,14 @@ public:
 
 	UPROPERTY(EditDefaultsOnly,BlueprintReadOnly, Category="Settings")
 	FName ConfigCategory = TEXT("Settings");
-
+	
+	UFUNCTION(BlueprintCallable, BlueprintNativeEvent, Category = "Settings")
 	bool Validate(const FString& Value) const;
 	virtual bool Validate_Implementation(const FString& Value) const { return true; }
+
+	UFUNCTION(BlueprintCallable, BlueprintNativeEvent, Category = "Settings")
+	void RefreshValues();
+	virtual void RefreshValues_Implementation() {}
 
 	UFUNCTION(BlueprintCallable,BlueprintNativeEvent, Category = "Settings")
 	void Apply();
@@ -79,11 +85,17 @@ public:
 	// Called when setting is registered with subsystem
 	virtual void OnRegistered() {}
 
+	// Called to sync setting value from engine state (e.g., GameUserSettings)
+	// Override this for settings that use GameUserSettings APIs
+	virtual void SyncFromEngine() {}
+
 	// Reference to the subsystem managing this setting
 	UPROPERTY(Transient,BlueprintReadOnly)
 	TObjectPtr<UEFModularSettingsSubsystem> ModularSettingsSubsystem;
 	
 	virtual UWorld* GetWorld() const override;
+
+	void NotifyValueChanged();
 
 protected:
 
@@ -103,8 +115,11 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Settings Value")
 	bool DefaultValue = false;
 	
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Settings Value")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, ReplicatedUsing = OnRep_Value, Category="Settings Value")
 	bool Value = false;
+
+	UFUNCTION()
+	void OnRep_Value();
 
 	UFUNCTION(BlueprintCallable,BlueprintNativeEvent, Category = "Settings")
 	void SetValue(bool NewValue);
@@ -154,8 +169,11 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Settings Value")
 	float DefaultValue = 1.f;
 	
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Settings Value")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, ReplicatedUsing = OnRep_Value, Category="Settings Value")
 	float Value = 1.f;
+
+	UFUNCTION()
+	void OnRep_Value();
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category="Settings Value")
 	float Min = 0.f;
@@ -210,16 +228,19 @@ class UNREALEXTENDEDFRAMEWORK_API UEFModularSettingsMultiSelect : public UEFModu
 {
 	GENERATED_BODY()
 public:
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Settings Value")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, ReplicatedUsing = OnRep_SelectedIndex, Category="Settings Value")
 	int32 SelectedIndex = 0;
+
+	UFUNCTION()
+	void OnRep_SelectedIndex();
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Settings Value")
 	FString DefaultValue = TEXT("");
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category="Settings Value")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Replicated, Category="Settings Value")
 	TArray<FString> Values;
 	
-	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category="Settings Value")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Replicated, Category="Settings Value")
 	TArray<FText> DisplayNames;
 
 	UFUNCTION(BlueprintCallable,BlueprintNativeEvent, Category = "Settings")
@@ -228,6 +249,18 @@ public:
 	{ 
 		if (SelectedIndex != Index)
 		{
+			// Optional: Check if the NEW index is valid and not locked?
+			if (Values.IsValidIndex(Index))
+			{
+				FString NewValue = Values[Index];
+				if (IsOptionLocked(NewValue))
+				{
+					// Rejected because it's locked
+					UE_LOG(LogTemp, Warning, TEXT("[UEFModularSettingsMultiSelect] Attempted to select locked option: %s"), *NewValue);
+					return;
+				}
+			}
+
 			SelectedIndex = Index;
 			MarkDirty();
 		}
@@ -262,6 +295,58 @@ public:
 		SetSelectedIndex(Index != INDEX_NONE ? Index : 0);
 	}
 
+	UFUNCTION(BlueprintCallable, Category = "Settings")
+	bool IsOptionLocked(const FString& OptionValue) const
+	{
+		return LockedOptions.Contains(OptionValue);
+	}
+
+	UFUNCTION(BlueprintCallable, Category = "Settings")
+	bool IsIndexLocked(int32 Index) const
+	{
+		return Values.IsValidIndex(Index) ? IsOptionLocked(Values[Index]) : false;
+	}
+
+	UFUNCTION(BlueprintCallable, Category = "Settings")
+	void SetOptionLocked(const FString& OptionValue, bool bLocked)
+	{
+		if (bLocked)
+		{
+			LockedOptions.AddUnique(OptionValue);
+		}
+		else
+		{
+			LockedOptions.Remove(OptionValue);
+		}
+		
+		OnOptionLockChanged();
+	}
+
+	void OnOptionLockChanged();
+
+	virtual bool Validate_Implementation(const FString& Value) const override
+	{
+		// Basic existence check
+		if (!Values.Contains(Value))
+		{
+			return false;
+		}
+
+		// Security check: is it locked?
+		if (IsOptionLocked(Value))
+		{
+			return false;
+		}
+
+		return true;
+	}
+
 protected:
+	UPROPERTY(Transient, ReplicatedUsing = OnRep_LockedOptions, BlueprintReadOnly, Category = "Settings")
+	TArray<FString> LockedOptions;
+
+	UFUNCTION()
+	void OnRep_LockedOptions() { OnOptionLockChanged(); }
+
 	int32 SavedValue = 0;
 };

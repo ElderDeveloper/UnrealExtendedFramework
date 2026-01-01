@@ -3,6 +3,7 @@
 
 #include "EFSettingsWidgetBool.h"
 #include "Components/CheckBox.h"
+#include "UnrealExtendedFramework/ModularSettings/EFModularSettingsLibrary.h"
 #include "UnrealExtendedFramework/ModularSettings/EFModularSettingsSubsystem.h"
 #include "UnrealExtendedFramework/ModularSettings/Settings/EFModularSettingsBase.h"
 
@@ -12,11 +13,7 @@ void UEFSettingsWidgetBool::NativeConstruct()
 
 	if (CheckBox)
 	{
-		if (const auto Subsystem = GetWorld()->GetGameInstance()->GetSubsystem<UEFModularSettingsSubsystem>())
-		{
-			CheckBox->SetIsChecked(Subsystem->GetBool(SettingsTag));
-		}
-		
+		CheckBox->SetIsChecked(UEFModularSettingsLibrary::GetModularBool(this, SettingsTag, SettingsSource));
 		CheckBox->OnCheckStateChanged.AddDynamic(this, &UEFSettingsWidgetBool::OnCheckStateChanged);
 	}
 }
@@ -34,8 +31,5 @@ void UEFSettingsWidgetBool::OnTrackedSettingsChanged_Implementation(UEFModularSe
 
 void UEFSettingsWidgetBool::OnCheckStateChanged(bool bIsChecked)
 {
-	if (const auto Subsystem = GetWorld()->GetGameInstance()->GetSubsystem<UEFModularSettingsSubsystem>())
-	{
-		Subsystem->SetBool(SettingsTag, bIsChecked);
-	}
+	UEFModularSettingsLibrary::SetModularBool(this, SettingsTag, bIsChecked, SettingsSource);
 }

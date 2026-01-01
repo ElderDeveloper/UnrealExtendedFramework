@@ -3,7 +3,7 @@
 
 #include "EFSettingsWidgetMultiSelect.h"
 #include "Components/ComboBoxString.h"
-#include "UnrealExtendedFramework/ModularSettings/EFModularSettingsSubsystem.h"
+#include "UnrealExtendedFramework/ModularSettings/EFModularSettingsLibrary.h"
 #include "UnrealExtendedFramework/ModularSettings/Settings/EFModularSettingsBase.h"
 
 void UEFSettingsWidgetMultiSelect::NativeConstruct()
@@ -12,19 +12,29 @@ void UEFSettingsWidgetMultiSelect::NativeConstruct()
 
 	if (ComboBox)
 	{
-		if (const auto Subsystem = GetWorld()->GetGameInstance()->GetSubsystem<UEFModularSettingsSubsystem>())
-		{
-			ComboBox->ClearOptions();
-			for (const FText& Option : Subsystem->GetOptions(SettingsTag))
-			{
-				ComboBox->AddOption(Option.ToString());
-			}
-			
-			ComboBox->SetSelectedIndex(Subsystem->GetSelectedOptionIndex(SettingsTag));
-		}
-		
+		RefreshOptions();
 		ComboBox->OnSelectionChanged.AddDynamic(this, &UEFSettingsWidgetMultiSelect::OnSelectionChanged);
 	}
+}
+
+void UEFSettingsWidgetMultiSelect::RefreshOptions()
+{
+	if (!ComboBox) return;
+
+	ComboBox->ClearOptions();
+	TArray<FText> Options = UEFModularSettingsLibrary::GetModularOptions(this, SettingsTag, SettingsSource);
+	
+	for (int32 i = 0; i < Options.Num(); ++i)
+	{
+		FString OptionStr = Options[i].ToString();
+		if (UEFModularSettingsLibrary::IsModularOptionLocked(this, SettingsTag, i, SettingsSource))
+		{
+			OptionStr += TEXT(" (Locked)");
+		}
+		ComboBox->AddOption(OptionStr);
+	}
+	
+	ComboBox->SetSelectedIndex(UEFModularSettingsLibrary::GetModularSelectedIndex(this, SettingsTag, SettingsSource));
 }
 
 void UEFSettingsWidgetMultiSelect::OnTrackedSettingsChanged_Implementation(UEFModularSettingsBase* ChangedSetting)
@@ -33,17 +43,13 @@ void UEFSettingsWidgetMultiSelect::OnTrackedSettingsChanged_Implementation(UEFMo
 	{
 		if (const auto MultiSelectSetting = Cast<UEFModularSettingsMultiSelect>(ChangedSetting))
 		{
-			// Refresh options if they changed? 
-			// For now assuming options don't change at runtime, just selection.
-			ComboBox->SetSelectedIndex(MultiSelectSetting->SelectedIndex);
+			// Always refresh options to catch lock state changes
+			RefreshOptions();
 		}
 	}
 }
 
 void UEFSettingsWidgetMultiSelect::OnSelectionChanged(FString SelectedItem, ESelectInfo::Type SelectionType)
 {
-	if (const auto Subsystem = GetWorld()->GetGameInstance()->GetSubsystem<UEFModularSettingsSubsystem>())
-	{
-		Subsystem->SetIndex(SettingsTag, ComboBox->FindOptionIndex(SelectedItem));
-	}
+	UEFModularSettingsLibrary::SetModularSelectedIndex(this, SettingsTag, ComboBox->FindOptionIndex(SelectedItem), SettingsSource);
 }
