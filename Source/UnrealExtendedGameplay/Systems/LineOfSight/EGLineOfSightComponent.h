@@ -9,8 +9,11 @@
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnLineOfSightChanged, AActor*, Target, bool, bIsVisible);
 
+USTRUCT(BlueprintType,Blueprintable)
 struct FEGLOSTargetInfo
 {
+	GENERATED_BODY()
+	
 	TWeakObjectPtr<AActor> TargetActor;
 	TWeakObjectPtr<USkeletalMeshComponent> SkeletalMesh;
 	TArray<FName> BoneNames;
@@ -53,6 +56,9 @@ public:
 	
 	UFUNCTION(BlueprintCallable, Category = "Line Of Sight")
 	bool IsActorVisible(AActor* TargetActor) const;
+	
+	UFUNCTION(BlueprintPure, Category = "Line Of Sight")
+	TArray<FEGLOSTargetInfo> GetRegisteredTargets() const { return RegisteredTargets; }
 
 	UPROPERTY(BlueprintAssignable, Category = "Line Of Sight")
 	FOnLineOfSightChanged OnLineOfSightChanged;

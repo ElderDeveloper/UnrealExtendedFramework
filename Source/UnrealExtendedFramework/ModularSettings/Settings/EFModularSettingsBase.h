@@ -85,10 +85,6 @@ public:
 	// Called when setting is registered with subsystem
 	virtual void OnRegistered() {}
 
-	// Called to sync setting value from engine state (e.g., GameUserSettings)
-	// Override this for settings that use GameUserSettings APIs
-	virtual void SyncFromEngine() {}
-
 	// Reference to the subsystem managing this setting
 	UPROPERTY(Transient,BlueprintReadOnly)
 	TObjectPtr<UEFModularSettingsSubsystem> ModularSettingsSubsystem;

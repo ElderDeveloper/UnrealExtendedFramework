@@ -58,26 +58,6 @@ public:
 		}
 	}
 
-	virtual void SyncFromEngine() override
-	{
-		if (!GEngine)
-		{
-			return;
-		}
-
-		if (UGameUserSettings* UserSettings = GEngine->GetGameUserSettings())
-		{
-			const FIntPoint Res = UserSettings->GetScreenResolution();
-			FString CurrentRes = FString::Printf(TEXT("%dx%d"), Res.X, Res.Y);
-			
-			int32 FoundIndex = Values.Find(CurrentRes);
-			if (FoundIndex != INDEX_NONE)
-			{
-				SelectedIndex = FoundIndex;
-			}
-		}
-	}
-
 	// Helper method to get current resolution
 	UFUNCTION(BlueprintCallable, Category = "Graphics Settings")
 	FString GetCurrentResolution() const
@@ -181,19 +161,6 @@ public:
 			GEngine->Exec(World, *Command);
 		}
 	}
-
-	virtual void SyncFromEngine() override
-	{
-		if (!GEngine)
-		{
-			return;
-		}
-
-		if (UGameUserSettings* UserSettings = GEngine->GetGameUserSettings())
-		{
-			Value = UserSettings->IsVSyncEnabled();
-		}
-	}
 };
 
 // Anti-Aliasing Quality Setting
@@ -249,23 +216,6 @@ public:
 			}
 		}
 	}
-
-	virtual void SyncFromEngine() override
-	{
-		if (!GEngine)
-		{
-			return;
-		}
-
-		if (UGameUserSettings* UserSettings = GEngine->GetGameUserSettings())
-		{
-			int32 QualityLevel = UserSettings->GetAntiAliasingQuality();
-			if (QualityLevel >= 0 && QualityLevel < Values.Num())
-			{
-				SelectedIndex = QualityLevel;
-			}
-		}
-	}
 };
 
 // Texture Quality Setting
@@ -318,23 +268,6 @@ public:
 					const FString Command = FString::Printf(TEXT("sg.TextureQuality %d"), QualityLevel);
 					GEngine->Exec(World, *Command);
 				}
-			}
-		}
-	}
-
-	virtual void SyncFromEngine() override
-	{
-		if (!GEngine)
-		{
-			return;
-		}
-
-		if (UGameUserSettings* UserSettings = GEngine->GetGameUserSettings())
-		{
-			int32 QualityLevel = UserSettings->GetTextureQuality();
-			if (QualityLevel >= 0 && QualityLevel < Values.Num())
-			{
-				SelectedIndex = QualityLevel;
 			}
 		}
 	}
@@ -450,23 +383,6 @@ public:
 			}
 		}
 	}
-
-	virtual void SyncFromEngine() override
-	{
-		if (!GEngine)
-		{
-			return;
-		}
-
-		if (UGameUserSettings* UserSettings = GEngine->GetGameUserSettings())
-		{
-			int32 QualityLevel = UserSettings->GetFoliageQuality();
-			if (QualityLevel >= 0 && QualityLevel < Values.Num())
-			{
-				SelectedIndex = QualityLevel;
-			}
-		}
-	}
 };
 
 // Shadow Quality Setting
@@ -516,23 +432,6 @@ public:
 					const FString Command = FString::Printf(TEXT("sg.ShadowQuality %d"), QualityLevel);
 					GEngine->Exec(World, *Command);
 				}
-			}
-		}
-	}
-
-	virtual void SyncFromEngine() override
-	{
-		if (!GEngine)
-		{
-			return;
-		}
-
-		if (UGameUserSettings* UserSettings = GEngine->GetGameUserSettings())
-		{
-			int32 QualityLevel = UserSettings->GetShadowQuality();
-			if (QualityLevel >= 0 && QualityLevel < Values.Num())
-			{
-				SelectedIndex = QualityLevel;
 			}
 		}
 	}
@@ -588,23 +487,6 @@ public:
 			}
 		}
 	}
-
-	virtual void SyncFromEngine() override
-	{
-		if (!GEngine)
-		{
-			return;
-		}
-
-		if (UGameUserSettings* UserSettings = GEngine->GetGameUserSettings())
-		{
-			int32 QualityLevel = UserSettings->GetShadingQuality();
-			if (QualityLevel >= 0 && QualityLevel < Values.Num())
-			{
-				SelectedIndex = QualityLevel;
-			}
-		}
-	}
 };
 
 // VFX Quality Setting
@@ -654,23 +536,6 @@ public:
 					const FString Command = FString::Printf(TEXT("sg.EffectsQuality %d"), QualityLevel);
 					GEngine->Exec(World, *Command);
 				}
-			}
-		}
-	}
-
-	virtual void SyncFromEngine() override
-	{
-		if (!GEngine)
-		{
-			return;
-		}
-
-		if (UGameUserSettings* UserSettings = GEngine->GetGameUserSettings())
-		{
-			int32 QualityLevel = UserSettings->GetVisualEffectQuality();
-			if (QualityLevel >= 0 && QualityLevel < Values.Num())
-			{
-				SelectedIndex = QualityLevel;
 			}
 		}
 	}
@@ -726,23 +591,6 @@ public:
 			}
 		}
 	}
-
-	virtual void SyncFromEngine() override
-	{
-		if (!GEngine)
-		{
-			return;
-		}
-
-		if (UGameUserSettings* UserSettings = GEngine->GetGameUserSettings())
-		{
-			int32 QualityLevel = UserSettings->GetPostProcessingQuality();
-			if (QualityLevel >= 0 && QualityLevel < Values.Num())
-			{
-				SelectedIndex = QualityLevel;
-			}
-		}
-	}
 };
 
 // View Distance Setting
@@ -792,23 +640,6 @@ public:
 					const FString Command = FString::Printf(TEXT("sg.ViewDistanceQuality %d"), QualityLevel);
 					GEngine->Exec(World, *Command);
 				}
-			}
-		}
-	}
-
-	virtual void SyncFromEngine() override
-	{
-		if (!GEngine)
-		{
-			return;
-		}
-
-		if (UGameUserSettings* UserSettings = GEngine->GetGameUserSettings())
-		{
-			int32 QualityLevel = UserSettings->GetViewDistanceQuality();
-			if (QualityLevel >= 0 && QualityLevel < Values.Num())
-			{
-				SelectedIndex = QualityLevel;
 			}
 		}
 	}
@@ -982,28 +813,6 @@ public:
 			}
 		}
 }
-	
-	virtual void SyncFromEngine() override
-	{
-		if (!GEngine)
-		{
-			return;
-		}
-
-		if (UGameUserSettings* UserSettings = GEngine->GetGameUserSettings())
-		{
-			int32 OverallLevel = UserSettings->GetOverallScalabilityLevel();
-			// -1 means "Custom" in GameUserSettings
-			if (OverallLevel == -1)
-			{
-				SelectedIndex = 4; // Custom
-			}
-			else if (OverallLevel >= 0 && OverallLevel < 4)
-			{
-				SelectedIndex = OverallLevel;
-			}
-		}
-	}
 	
 	virtual void SetSelectedIndex_Implementation(int32 Index) override
 	{

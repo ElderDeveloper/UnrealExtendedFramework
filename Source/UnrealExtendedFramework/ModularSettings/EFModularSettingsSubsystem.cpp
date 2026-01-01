@@ -31,17 +31,6 @@ void UEFModularSettingsSubsystem::Initialize(FSubsystemCollectionBase& Subsystem
 		}
 	}
 
-	// Sync settings that use GameUserSettings APIs from engine state BEFORE loading from disk
-	// This ensures the settings reflect actual engine state, not just defaults
-	for (const auto& SettingPair : Settings)
-	{
-		UEFModularSettingsBase* Setting = SettingPair.Value;
-		if (Setting)
-		{
-			Setting->SyncFromEngine();
-		}
-	}
-
 	LoadFromDisk();
 
 	// Force apply all settings to ensure engine state matches loaded settings
