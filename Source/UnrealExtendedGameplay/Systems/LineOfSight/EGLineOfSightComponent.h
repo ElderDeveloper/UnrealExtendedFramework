@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
+#include "NavigationSystem.h"
 #include "EGLineOfSightComponent.generated.h"
 
 
@@ -20,6 +21,8 @@ struct FEGLOSTargetInfo
 	
 	bool bIsVisible;
 	bool bWasVisible; // For detecting changes
+	bool bIsNavMeshReachable; // Navmesh reachability state
+	float LastNavMeshCheckTime;
 
 	// State tracking for async traces
 	int32 PendingTraces;
@@ -29,10 +32,18 @@ struct FEGLOSTargetInfo
 	FEGLOSTargetInfo()
 		: bIsVisible(false)
 		, bWasVisible(false)
+		, bIsNavMeshReachable(true)
+		, LastNavMeshCheckTime(0.0f)
 		, PendingTraces(0)
 		, VisibleCount(0)
 		, TotalScheduledTraces(0)
 	{}
+};
+
+struct FPendingLOSChange
+{
+	AActor* Target;
+	bool bIsVisible;
 };
 
 UCLASS(ClassGroup=(Custom), meta=(BlueprintSpawnableComponent))
@@ -55,6 +66,9 @@ public:
 	void RegisterLineOfSightActor(AActor* TargetActor, USkeletalMeshComponent* SkeletalMesh, const TArray<FName>& BoneNames);
 	
 	UFUNCTION(BlueprintCallable, Category = "Line Of Sight")
+	void RegisterAllPlayerActors(const TArray<FName>& BoneNames);
+	
+	UFUNCTION(BlueprintCallable, Category = "Line Of Sight")
 	bool IsActorVisible(AActor* TargetActor) const;
 	
 	UFUNCTION(BlueprintPure, Category = "Line Of Sight")
@@ -66,6 +80,9 @@ public:
 protected:
 	void PerformAsyncTraces();
 	void OnTraceCompleted(const FTraceHandle& Handle, FTraceDatum& Datum);
+	void UpdateTargetVisibility(FEGLOSTargetInfo& Info, bool bNewVisibility);
+	bool CheckNavMeshReachability(FEGLOSTargetInfo& Info);
+	void ProcessPendingBroadcasts();
 
 	UPROPERTY(Transient)
 	USceneComponent* EyeComponent;
@@ -74,6 +91,8 @@ protected:
 	// Map TraceHandle to a specific Target Index and what we are tracing for (if complex)
 	// For simplicity, we might just store the Index and completion status
 	TMap<FTraceHandle, int32> TraceHandleToTargetIndex;
+	
+	TArray<FPendingLOSChange> PendingBroadcasts;
 
 	FTraceDelegate TraceDelegate;
 	
@@ -102,7 +121,19 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Line Of Sight|Settings")
 	float FieldOfViewDegrees = 120.0f; // Half-angle, so 120° = 240° total cone
 
+	// NavMesh Reachability Check - treats targets as not visible if they cannot be reached via navmesh
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Line Of Sight|NavMesh")
+	bool bRequireNavMeshReachability = false;
+	
+	// How often to check navmesh reachability (in seconds). Lower = more responsive, higher = better performance.
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Line Of Sight|NavMesh", meta=(EditCondition="bRequireNavMeshReachability", ClampMin="0.1", ClampMax="5.0"))
+	float NavMeshReachabilityCheckInterval = 0.5f;
+
 	// Debug drawing
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Line Of Sight|Debug")
 	bool bDebugLineOfSight = false;
+	
+	UFUNCTION(BlueprintCallable, Category = "Line Of Sight|Settings")
+	void UpdateLineOfSightConfig(const float NewFieldOfViewDegrees, const float NewMaxSightDistance);
+	
 };

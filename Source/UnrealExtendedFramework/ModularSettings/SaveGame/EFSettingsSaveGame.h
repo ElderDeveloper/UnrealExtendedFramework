@@ -12,13 +12,15 @@
  * We store values as strings mapped to GameplayTags for maximum flexibility.
  */
 UCLASS()
-class UNREALEXTENDEDFRAMEWORK_API UEFSettingsSaveGame : public USaveGame
-{
-	GENERATED_BODY()
+class UNREALEXTENDEDFRAMEWORK_API UEFSettingsSaveGame : public USaveGame {
+  GENERATED_BODY()
 
 public:
-	
-	// Map of Setting Tag -> Value as String
-	UPROPERTY(VisibleAnywhere, Category = "Settings")
-	TMap<FGameplayTag, FString> StoredSettings;
+  // Map of Setting Tag -> Value as String (for local subsystem settings)
+  UPROPERTY(VisibleAnywhere, Category = "Settings")
+  TMap<FGameplayTag, FString> StoredSettings;
+
+  // Map of Setting Tag -> Value as String (for player component settings)
+  UPROPERTY(VisibleAnywhere, Category = "Settings")
+  TMap<FGameplayTag, FString> PlayerSettings;
 };

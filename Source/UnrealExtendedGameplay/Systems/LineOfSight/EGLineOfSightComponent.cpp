@@ -4,6 +4,13 @@
 #include "EGLineOfSightComponent.h"
 #include "Engine/World.h"
 #include "DrawDebugHelpers.h"
+#include "NavigationPath.h"
+#include "GameFramework/Character.h"
+#include "GameFramework/GameStateBase.h"
+#include "GameFramework/PlayerState.h"
+#include "Kismet/GameplayStatics.h"
+#include "NavigationSystem.h"
+#include "AI/Navigation/NavigationTypes.h"
 
 UEGLineOfSightComponent::UEGLineOfSightComponent()
 {
@@ -23,6 +30,13 @@ void UEGLineOfSightComponent::TickComponent(float DeltaTime, ELevelTick TickType
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 	PerformAsyncTraces();
+	ProcessPendingBroadcasts(); // Process all pending broadcasts once at end of tick
+}
+
+void UEGLineOfSightComponent::UpdateLineOfSightConfig(const float NewFieldOfViewDegrees, const float NewMaxSightDistance)
+{
+	FieldOfViewDegrees = NewFieldOfViewDegrees;
+	MaxSightDistance = NewMaxSightDistance;
 }
 
 
@@ -36,17 +50,49 @@ void UEGLineOfSightComponent::RegisterLineOfSightActor(AActor* TargetActor, USke
 {
 	if (!TargetActor)
 		return;
+	
+	// Clean up stale entries and check for duplicates simultaneously
+	for (int32 i = RegisteredTargets.Num() - 1; i >= 0; --i)
+	{
+		AActor* ExistingTarget = RegisteredTargets[i].TargetActor.Get();
+		if (!ExistingTarget)
+		{
+			RegisteredTargets.RemoveAt(i); // Use RemoveAt instead of RemoveAtSwap to preserve indices
+			continue;
+		}
+
+		if (ExistingTarget == TargetActor)
+		{
+			// Update existing entry instead of returning
+			RegisteredTargets[i].SkeletalMesh = SkeletalMesh;
+			RegisteredTargets[i].BoneNames = BoneNames;
+			return;
+		}
+	}
 
 	FEGLOSTargetInfo NewTarget;
 	NewTarget.TargetActor = TargetActor;
 	NewTarget.SkeletalMesh = SkeletalMesh;
 	NewTarget.BoneNames = BoneNames;
 	
-	// If no bones are specified but we have a generic actor, we might want to trace to the actor location.
-	// We will assume that if BoneNames is empty, we just trace to ActorLocation.
-	// But clearer is to just add NAME_None or handle empty implicitly as Root.
-
 	RegisteredTargets.Add(NewTarget);
+}
+
+void UEGLineOfSightComponent::RegisterAllPlayerActors(const TArray<FName>& BoneNames)
+{
+	if (const auto GameState = UGameplayStatics::GetGameState(this))
+	{
+		for (const auto PlayerStates : GameState->PlayerArray)
+		{
+			if (PlayerStates && PlayerStates->GetPawn()) // Added null check for PlayerStates
+			{
+				if (const auto Character = Cast<ACharacter>(PlayerStates->GetPawn()))
+				{
+					RegisterLineOfSightActor(Character, Character->GetMesh(), BoneNames);
+				}
+			}
+		}
+	}
 }
 
 
@@ -85,12 +131,21 @@ void UEGLineOfSightComponent::PerformAsyncTraces()
 	FCollisionQueryParams QueryParams;
 	QueryParams.AddIgnoredActor(GetOwner());
 
+	// Clean up invalid targets first (iterate backwards to safely remove)
+	for (int32 i = RegisteredTargets.Num() - 1; i >= 0; --i)
+	{
+		if (!RegisteredTargets[i].TargetActor.IsValid())
+		{
+			RegisteredTargets.RemoveAt(i);
+		}
+	}
+
 	for (int32 i = 0; i < RegisteredTargets.Num(); ++i)
 	{
 		FEGLOSTargetInfo& Info = RegisteredTargets[i];
 		AActor* TargetActor = Info.TargetActor.Get();
 
-		// Cleanup invalid targets
+		// Already cleaned up above, but double-check
 		if (!TargetActor)
 		{
 			continue;
@@ -108,13 +163,10 @@ void UEGLineOfSightComponent::PerformAsyncTraces()
 		{
 			// Too far
 			Info.VisibleCount = 0;
-			Info.bIsVisible = false;
-			
-			// Check if visibility changed to trigger delegate
-			if (Info.bIsVisible != Info.bWasVisible)
+			UpdateTargetVisibility(Info, false);
+			if (bDebugLineOfSight)
 			{
-				Info.bWasVisible = Info.bIsVisible;
-				OnLineOfSightChanged.Broadcast(TargetActor, Info.bIsVisible);
+				DrawDebugPoint(World, TargetActor->GetActorLocation(), 15.0f, FColor::Orange, false, 0.1f);
 			}
 			continue;
 		}
@@ -132,14 +184,27 @@ void UEGLineOfSightComponent::PerformAsyncTraces()
 
 		if (DotProduct < AngleThreshold)
 		{
+			UpdateTargetVisibility(Info, false);
 			// Target is outside FOV - mark not visible, skip traces
-			Info.bIsVisible = false;
-			if (Info.bIsVisible != Info.bWasVisible)
+			if (bDebugLineOfSight)
 			{
-				Info.bWasVisible = Info.bIsVisible;
-				OnLineOfSightChanged.Broadcast(TargetActor, Info.bIsVisible);
+				DrawDebugPoint(World, TargetActor->GetActorLocation(), 15.0f, FColor::Yellow, false, 0.1f);
 			}
 			continue;
+		}
+
+		// NavMesh reachability check - if enabled, treat unreachable targets as not visible
+		if (bRequireNavMeshReachability)
+		{
+			if (!CheckNavMeshReachability(Info))
+			{
+				UpdateTargetVisibility(Info, false);
+				if (bDebugLineOfSight)
+				{
+					DrawDebugPoint(World, TargetActor->GetActorLocation(), 15.0f, FColor::Purple, false, 0.1f);
+				}
+				continue;
+			}
 		}
 
 		// Determine trace points
@@ -167,10 +232,11 @@ void UEGLineOfSightComponent::PerformAsyncTraces()
 			TraceHandleToTargetIndex.Add(Handle, i);
 			if (bDebugLineOfSight)
 			{
-				DrawDebugLine(World, StartLocation, EndLoc, FColor::Cyan, false, 0.f,0,0.2);
+				DrawDebugLine(World, StartLocation, EndLoc, FColor::Cyan, false, 0.f, 0, 0.2f);
 			}
 		}
 	}
+	// Removed ProcessPendingBroadcasts() call here - now called once in TickComponent
 }
 
 
@@ -186,83 +252,184 @@ void UEGLineOfSightComponent::OnTraceCompleted(const FTraceHandle& Handle, FTrac
 	int32 Index = *TargetIndexPtr;
 	TraceHandleToTargetIndex.Remove(Handle);
 
-	if (RegisteredTargets.IsValidIndex(Index))
+	if (!RegisteredTargets.IsValidIndex(Index))
 	{
-		FEGLOSTargetInfo& Info = RegisteredTargets[Index];
+		return;
+	}
+
+	FEGLOSTargetInfo& Info = RegisteredTargets[Index];
+	
+	// Check if target is still valid
+	AActor* TargetActor = Info.TargetActor.Get();
+	if (!TargetActor)
+	{
+		Info.PendingTraces = 0;
+		return;
+	}
+	
+	Info.PendingTraces--; // Decrement pending count
+
+	// Check Visibility
+	bool bHitTarget = false;
+	if (Datum.OutHits.Num() > 0)
+	{
+		const FHitResult& Hit = Datum.OutHits[0];
+		AActor* HitActor = Hit.GetActor();
 		
-		Info.PendingTraces--; // Decrement pending count
-
-		// Check Visibility
-		bool bHitTarget = false;
-		if (Datum.OutHits.Num() > 0)
+		if (Hit.bBlockingHit)
 		{
-			const FHitResult& Hit = Datum.OutHits[0];
-			AActor* HitActor = Hit.GetActor();
-			AActor* TargetActor = Info.TargetActor.Get();
-
-			// If bBlockingHit is true:
-			//    Visible if HitActor == Target.
-			//    Not Visible if HitActor != Target.
-			// If bBlockingHit is false:
-			//    Visible (reached end point uninterrupted).
-			
-			if (Hit.bBlockingHit)
+			if (HitActor && (HitActor == TargetActor || HitActor->IsAttachedTo(TargetActor)))
 			{
-				if (HitActor && (HitActor == TargetActor || HitActor->IsAttachedTo(TargetActor)))
+				bHitTarget = true;
+				if (bDebugLineOfSight)
 				{
-					bHitTarget = true;
-					if (bDebugLineOfSight)
-					{
-						DrawDebugPoint(GetWorld(), Hit.ImpactPoint, 10.0f, FColor::Green, false, 0.5f);
-					}
-				}
-				else
-				{
-					// Blocked by something else
-					if (bDebugLineOfSight)
-					{
-						DrawDebugPoint(GetWorld(), Hit.ImpactPoint, 10.0f, FColor::Red, false, 0.5f);
-					}
+					DrawDebugPoint(GetWorld(), Hit.ImpactPoint, 10.0f, FColor::Green, false, 0.5f);
 				}
 			}
 			else
 			{
-				// No blocking hit -> Trace continued to end -> Visible
-				bHitTarget = true;
-			}
-		}
-		// If sweep doesn't hit anything, it might just mean it didn't block. 
-
-		if (bHitTarget)
-		{
-			Info.VisibleCount++;
-		}
-		
-		// If all traces for this batch returned
-		if (Info.PendingTraces <= 0)
-		{
-			Info.PendingTraces = 0;
-
-			// Calculate Final Visibility for this frame
-			float Ratio = 0.0f;
-			if (Info.TotalScheduledTraces > 0)
-			{
-				Ratio = (float)Info.VisibleCount / (float)Info.TotalScheduledTraces;
-			}
-
-			Info.bIsVisible = (Ratio >= MinVisibilityRatio);
-
-			// Check for State Change
-			if (Info.bIsVisible != Info.bWasVisible)
-			{
-				Info.bWasVisible = Info.bIsVisible;
-				// Broadcast change
-				if (AActor* Target = Info.TargetActor.Get())
+				// Blocked by something else
+				if (bDebugLineOfSight)
 				{
-					OnLineOfSightChanged.Broadcast(Target, Info.bIsVisible);
+					DrawDebugPoint(GetWorld(), Hit.ImpactPoint, 10.0f, FColor::Red, false, 0.5f);
 				}
 			}
+		}
+		else
+		{
+			// No blocking hit means nothing blocked the trace - target is visible
+			bHitTarget = true;
+			if (bDebugLineOfSight)
+			{
+				DrawDebugPoint(GetWorld(), Datum.End, 10.0f, FColor::Blue, false, 0.5f);
+			}
+		}
+	}
+	else
+	{
+		// No hits at all - trace reached end unobstructed
+		bHitTarget = true;
+		if (bDebugLineOfSight)
+		{
+			DrawDebugPoint(GetWorld(), Datum.End, 10.0f, FColor::Blue, false, 0.5f);
+		}
+	}
+
+	if (bHitTarget)
+	{
+		Info.VisibleCount++;
+	}
+	
+	// If all traces for this batch returned
+	if (Info.PendingTraces <= 0)
+	{
+		Info.PendingTraces = 0;
+
+		// Calculate Final Visibility for this frame
+		float Ratio = 0.0f;
+		if (Info.TotalScheduledTraces > 0)
+		{
+			Ratio = (float)Info.VisibleCount / (float)Info.TotalScheduledTraces;
+		}
+		
+		UpdateTargetVisibility(Info, (Ratio >= MinVisibilityRatio));
+	}
+
+	// Removed ProcessPendingBroadcasts() call here - now called once in TickComponent
+}
+
+void UEGLineOfSightComponent::UpdateTargetVisibility(FEGLOSTargetInfo& Info, bool bNewVisibility)
+{
+	Info.bIsVisible = bNewVisibility;
+
+	if (Info.bIsVisible != Info.bWasVisible)
+	{
+		Info.bWasVisible = Info.bIsVisible;
+        
+		// Don't broadcast yet! Just store the data.
+		if (AActor* Target = Info.TargetActor.Get())
+		{
+			FPendingLOSChange Change;
+			Change.Target = Target;
+			Change.bIsVisible = Info.bIsVisible;
+			PendingBroadcasts.Add(Change);
 		}
 	}
 }
 
+void UEGLineOfSightComponent::ProcessPendingBroadcasts()
+{
+	for (const FPendingLOSChange& Change : PendingBroadcasts)
+	{
+		if (bDebugLineOfSight)
+			UE_LOG(LogTemp, Log, TEXT("Target '%s' visibility: %d"), *GetNameSafe(Change.Target), Change.bIsVisible);
+		OnLineOfSightChanged.Broadcast(Change.Target, Change.bIsVisible);
+	}
+	PendingBroadcasts.Reset();
+}
+
+bool UEGLineOfSightComponent::CheckNavMeshReachability(FEGLOSTargetInfo& Info)
+{
+	AActor* TargetActor = Info.TargetActor.Get();
+	if (!TargetActor)
+	{
+		return false;
+	}
+
+	// Throttle navmesh checks based on interval
+	const float CurrentTime = GetWorld()->GetTimeSeconds();
+	if (CurrentTime - Info.LastNavMeshCheckTime < NavMeshReachabilityCheckInterval)
+	{
+		// Return cached result
+		return Info.bIsNavMeshReachable;
+	}
+	Info.LastNavMeshCheckTime = CurrentTime;
+
+	AActor* Owner = GetOwner();
+	if (!Owner)
+	{
+		return true; // Fail open if no owner
+	}
+
+	UNavigationSystemV1* NavSys = FNavigationSystem::GetCurrent<UNavigationSystemV1>(GetWorld());
+	if (!NavSys)
+	{
+		// No navigation system - fail open (assume reachable)
+		Info.bIsNavMeshReachable = true;
+		return true;
+	}
+
+	const FVector StartLocation = Owner->GetActorLocation();
+	const FVector TargetLocation = TargetActor->GetActorLocation();
+
+	// Use synchronous path finding to check reachability
+	UNavigationPath* NavPath = NavSys->FindPathToLocationSynchronously(GetWorld(), StartLocation, TargetLocation, Owner);
+
+	if (NavPath && NavPath->IsValid() && !NavPath->IsPartial())
+	{
+		// Full path exists - target is reachable
+		Info.bIsNavMeshReachable = true;
+		
+		if (bDebugLineOfSight)
+		{
+			// Draw path in green
+			for (int32 j = 0; j < NavPath->PathPoints.Num() - 1; ++j)
+			{
+				DrawDebugLine(GetWorld(), NavPath->PathPoints[j], NavPath->PathPoints[j + 1], FColor::Green, false, NavMeshReachabilityCheckInterval, 0, 2.0f);
+			}
+		}
+	}
+	else
+	{
+		// No path or partial path - target is unreachable
+		Info.bIsNavMeshReachable = false;
+		
+		if (bDebugLineOfSight)
+		{
+			// Draw a line to target in purple to indicate unreachable
+			DrawDebugLine(GetWorld(), StartLocation, TargetLocation, FColor::Purple, false, NavMeshReachabilityCheckInterval, 0, 2.0f);
+		}
+	}
+
+	return Info.bIsNavMeshReachable;
+}

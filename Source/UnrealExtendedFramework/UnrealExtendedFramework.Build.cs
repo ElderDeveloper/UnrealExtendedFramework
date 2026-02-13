@@ -41,6 +41,7 @@ public class UnrealExtendedFramework : ModuleRules
 				"Niagara",
 				"NavigationSystem",
 				"GameplayAbilities",
+				"GameplayTags",
 				"GameplayTasks",
 				"XmlParser",
 				"EngineSettings",

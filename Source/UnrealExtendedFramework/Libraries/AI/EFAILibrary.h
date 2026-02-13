@@ -16,6 +16,10 @@ class UNREALEXTENDEDFRAMEWORK_API UEFAILibrary : public UBlueprintFunctionLibrar
 
 	
 public:
+	
+	UFUNCTION(BlueprintCallable, meta = (WorldContext = "WorldContextObject")  , Category="ExtendedFramework|AI" )
+	static void ForceRebuildNavigationMesh(const UObject* WorldContextObject);
+	
 	//<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< BLACKBOARD GETTERS >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 	UFUNCTION(BlueprintPure, meta=(DisplayName = "Extended Get Blackboard Bool",DefaultToSelf="OwningActor", CompactNodeTitle = "Board Bool", BlueprintThreadSafe),Category="AI|Blackboard|Get")
 	static bool ExtendedGetBlackboardBool(AActor* OwningActor , FName KeyName);

@@ -73,6 +73,7 @@ UEFModularSettingsBase* UEFModularSettingsLibrary::GetModularSetting(const UObje
 	}
 }
 
+
 bool UEFModularSettingsLibrary::GetModularBool(const UObject* WorldContextObject, FGameplayTag Tag, EEFSettingsSource Source, APlayerState* SpecificPlayer)
 {
 	if (UEFModularSettingsBool* Setting = Cast<UEFModularSettingsBool>(GetModularSetting(WorldContextObject, Tag, Source, SpecificPlayer)))
@@ -81,6 +82,7 @@ bool UEFModularSettingsLibrary::GetModularBool(const UObject* WorldContextObject
 	}
 	return false;
 }
+
 
 void UEFModularSettingsLibrary::SetModularBool(const UObject* WorldContextObject, FGameplayTag Tag, bool bValue, EEFSettingsSource Source, APlayerState* SpecificPlayer)
 {
@@ -113,6 +115,7 @@ void UEFModularSettingsLibrary::SetModularBool(const UObject* WorldContextObject
 	}
 }
 
+
 float UEFModularSettingsLibrary::GetModularFloat(const UObject* WorldContextObject, FGameplayTag Tag, EEFSettingsSource Source, APlayerState* SpecificPlayer)
 {
 	if (UEFModularSettingsFloat* Setting = Cast<UEFModularSettingsFloat>(GetModularSetting(WorldContextObject, Tag, Source, SpecificPlayer)))
@@ -121,6 +124,7 @@ float UEFModularSettingsLibrary::GetModularFloat(const UObject* WorldContextObje
 	}
 	return 0.0f;
 }
+
 
 void UEFModularSettingsLibrary::SetModularFloat(const UObject* WorldContextObject, FGameplayTag Tag, float Value, EEFSettingsSource Source, APlayerState* SpecificPlayer)
 {
@@ -153,6 +157,7 @@ void UEFModularSettingsLibrary::SetModularFloat(const UObject* WorldContextObjec
 	}
 }
 
+
 int32 UEFModularSettingsLibrary::GetModularSelectedIndex(const UObject* WorldContextObject, FGameplayTag Tag, EEFSettingsSource Source, APlayerState* SpecificPlayer)
 {
 	if (UEFModularSettingsMultiSelect* Setting = Cast<UEFModularSettingsMultiSelect>(GetModularSetting(WorldContextObject, Tag, Source, SpecificPlayer)))
@@ -161,6 +166,7 @@ int32 UEFModularSettingsLibrary::GetModularSelectedIndex(const UObject* WorldCon
 	}
 	return INDEX_NONE;
 }
+
 
 bool UEFModularSettingsLibrary::SetModularSelectedIndex(const UObject* WorldContextObject, FGameplayTag Tag, int32 Index, EEFSettingsSource Source, APlayerState* SpecificPlayer)
 {
@@ -198,6 +204,7 @@ bool UEFModularSettingsLibrary::SetModularSelectedIndex(const UObject* WorldCont
 	return false;
 }
 
+
 FString UEFModularSettingsLibrary::GetModularSelectedOption(const UObject* WorldContextObject, FGameplayTag Tag,EEFSettingsSource Source, APlayerState* SpecificPlayer)
 {
 	if (UEFModularSettingsMultiSelect* Setting = Cast<UEFModularSettingsMultiSelect>(GetModularSetting(WorldContextObject, Tag, Source, SpecificPlayer)))
@@ -206,6 +213,7 @@ FString UEFModularSettingsLibrary::GetModularSelectedOption(const UObject* World
 	}
 	return TEXT("");
 }
+
 
 void UEFModularSettingsLibrary::AdjustModularIndex(const UObject* WorldContextObject, FGameplayTag Tag, int32 Amount, bool bWrap, EEFSettingsSource Source, APlayerState* SpecificPlayer)
 {
@@ -274,6 +282,7 @@ TArray<FText> UEFModularSettingsLibrary::GetModularOptions(const UObject* WorldC
 	return TArray<FText>();
 }
 
+
 void UEFModularSettingsLibrary::ApplyModularSetting(const UObject* WorldContextObject, FGameplayTag Tag, EEFSettingsSource Source, APlayerState* SpecificPlayer)
 {
 	if (UEFModularSettingsBase* Setting = GetModularSetting(WorldContextObject, Tag, Source, SpecificPlayer))
@@ -281,6 +290,7 @@ void UEFModularSettingsLibrary::ApplyModularSetting(const UObject* WorldContextO
 		Setting->Apply();
 	}
 }
+
 
 bool UEFModularSettingsLibrary::IsModularOptionLocked(const UObject* WorldContextObject, FGameplayTag Tag, int32 Index, EEFSettingsSource Source, APlayerState* SpecificPlayer)
 {
@@ -290,6 +300,7 @@ bool UEFModularSettingsLibrary::IsModularOptionLocked(const UObject* WorldContex
 	}
 	return false;
 }
+
 
 void UEFModularSettingsLibrary::SetModularOptionLocked(const UObject* WorldContextObject, FGameplayTag Tag, int32 Index, bool bLocked, EEFSettingsSource Source, APlayerState* SpecificPlayer)
 {

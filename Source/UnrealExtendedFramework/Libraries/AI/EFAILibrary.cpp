@@ -10,6 +10,17 @@
 #include "Blueprint/AIBlueprintHelperLibrary.h"
 
 
+void UEFAILibrary::ForceRebuildNavigationMesh(const UObject* WorldContextObject)
+{
+	if (UWorld* World = GEngine->GetWorldFromContextObjectChecked(WorldContextObject))
+	{
+		if (UNavigationSystemV1* NavSys = FNavigationSystem::GetCurrent<UNavigationSystemV1>(World))
+		{
+			NavSys->Build();
+		}
+	}
+}
+
 bool UEFAILibrary::ExtendedGetBlackboardBool(AActor* OwningActor , FName KeyName)
 {
 	if (const auto Blackboard = UAIBlueprintHelperLibrary::GetBlackboard(OwningActor))

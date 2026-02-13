@@ -42,7 +42,7 @@ void UEFSettingsWidgetBoolStepper::SettingsPreConstruct_Implementation()
 		ValueTextFontInfo.Size = ValueTextFontSize;
 		ValueText->SetFont(FSlateFontInfo(ValueTextFontInfo));
 
-		ValueText->SetText(FText::FromString("Disabled"));
+		ValueText->SetText(DisabledText);
 	}
 }
 
@@ -57,6 +57,6 @@ void UEFSettingsWidgetBoolStepper::UpdateText(bool bValue)
 {
 	if (ValueText)
 	{
-		ValueText->SetText(bValue ? FText::FromString(TEXT("Enabled")) : FText::FromString(TEXT("Disabled")));
+		ValueText->SetText(bValue ? EnabledText : DisabledText);
 	}
 }

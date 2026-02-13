@@ -15,9 +15,25 @@ class UNREALEXTENDEDFRAMEWORK_API UBTComposite_SelectRandomWeight : public UBTCo
 public:
 	UBTComposite_SelectRandomWeight(const FObjectInitializer& ObjectInitializer);
 
+	/**
+	 * The base weight for each child node.
+	 * - Array size must match the number of children
+	 * - Higher values = higher selection probability
+	 * - Values are relative (e.g., [0.8, 0.2] = 80%/20% split)
+	 * - Automatically resized to match child count
+	 */
 	UPROPERTY(EditAnywhere, Category = "Weights")
 	mutable TArray<float> ChildWeights;
 	
+	
+	/**
+	 * How much each execution reduces the effective weight.
+	 * - Applied per execution: Effective Weight = Base Weight - (Executions × Decay Factor)
+	 * - Higher values = stronger balancing effect
+	 * - 0.0 = no decay (pure weighted random)
+	 * - Recommended range: 0.05 - 0.2
+	 * - Example: Weight 1.0, Decay 0.1, after 5 executions = effective weight 0.5
+	 */
 	UPROPERTY(EditAnywhere, Category = "Weights")
 	float DecayFactor;
 	

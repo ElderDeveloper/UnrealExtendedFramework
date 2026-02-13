@@ -5,6 +5,7 @@
 #include "Kismet/GameplayStatics.h"
 #include "SaveGame/EFSettingsSaveGame.h"
 #include "Async/Async.h"
+#include "GameFramework/GameUserSettings.h"
 
 static const FString SettingsSaveSlotName = TEXT("ModularSettingsSave");
 static const int32 SettingsUserIndex = 0;
@@ -13,8 +14,7 @@ void UEFModularSettingsSubsystem::Initialize(FSubsystemCollectionBase& Subsystem
 {
 	Super::Initialize(SubsystemCollectionBase);
 
-	const UEFModularProjectSettings* ProjectSettings = GetDefault<UEFModularProjectSettings>();
-	if (ProjectSettings)
+	if (const UEFModularProjectSettings* ProjectSettings = GetDefault<UEFModularProjectSettings>())
 	{
 		for (const TSoftObjectPtr<UEFModularSettingsContainer>& ContainerPtr : ProjectSettings->LocalSettingsContainers)
 		{
@@ -36,16 +36,11 @@ void UEFModularSettingsSubsystem::Initialize(FSubsystemCollectionBase& Subsystem
 	// Force apply all settings to ensure engine state matches loaded settings
 	for (const auto& SettingPair : Settings)
 	{
-		UEFModularSettingsBase* Setting = SettingPair.Value;
-		if (Setting)
+		if (UEFModularSettingsBase* Setting = SettingPair.Value)
 		{
 			// Ensure the "PreviousValue" matches what we just loaded
 			Setting->SaveCurrentValue();
-			
-			// Force apply to engine
 			Setting->Apply();
-			
-			// Mark as clean since it's now applied
 			Setting->ClearDirty();
 		}
 	}
@@ -170,7 +165,48 @@ void UEFModularSettingsSubsystem::LoadFromDisk()
 	}
 	else
 	{
-		UE_LOG(LogTemp, Log, TEXT("No existing settings save found. Using defaults."));
+		UE_LOG(LogTemp, Log, TEXT("No existing settings save found. Running hardware benchmark to detect optimal settings."));
+		
+		// Use Unreal Engine's built-in hardware benchmark to auto-detect appropriate settings
+		if (GEngine)
+		{
+			if (UGameUserSettings* UserSettings = GEngine->GetGameUserSettings())
+			{
+				// RunHardwareBenchmark analyzes GPU, CPU, and memory to determine optimal settings
+				UserSettings->RunHardwareBenchmark();
+				
+				// Apply the benchmark results to all scalability settings
+				UserSettings->ApplyHardwareBenchmarkResults();
+				
+				// Get the detected overall quality level for logging and syncing modular settings
+				const int32 DetectedQuality = UserSettings->GetOverallScalabilityLevel();
+				
+				// Apply and save the benchmark-determined settings
+				UserSettings->ApplySettings(false);
+				UserSettings->SaveSettings();
+				
+				UE_LOG(LogTemp, Log, TEXT("Hardware benchmark complete. Detected optimal quality level: %d (0=Low, 1=Medium, 2=High, 3=Ultra, -1=Custom)"), DetectedQuality);
+				
+				// Sync the modular settings to match the benchmark results
+				// This updates our settings objects to reflect what the engine is now using
+				const FGameplayTag OverallQualityTag = FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.OverallQuality"), false);
+				if (OverallQualityTag.IsValid())
+				{
+					if (UEFModularSettingsBase* OverallSetting = Settings.FindRef(OverallQualityTag))
+					{
+						// Map the detected level to our setting values
+						FString DetectedValue;
+						if (DetectedQuality == 0) DetectedValue = TEXT("Low");
+						else if (DetectedQuality == 1) DetectedValue = TEXT("Medium");
+						else if (DetectedQuality == 2) DetectedValue = TEXT("High");
+						else if (DetectedQuality == 3) DetectedValue = TEXT("Ultra");
+						else DetectedValue = TEXT("Custom"); // -1 or mixed results
+						
+						OverallSetting->SetValueFromString(DetectedValue);
+					}
+				}
+			}
+		}
 	}
 }
 
@@ -360,6 +396,7 @@ void UEFModularSettingsSubsystem::RevertPendingChange()
 		UE_LOG(LogTemp, Log, TEXT("Reverted safe change."));
 	}
 }
+
 
 bool UEFModularSettingsSubsystem::IsRevertPending() const
 {

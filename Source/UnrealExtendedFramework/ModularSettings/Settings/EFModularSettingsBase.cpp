@@ -1,90 +1,91 @@
 #include "EFModularSettingsBase.h"
 
-#include "UnrealExtendedFramework/ModularSettings/EFModularSettingsSubsystem.h"
-#include "UnrealExtendedFramework/ModularSettings/Components/EFWorldSettingsComponent.h"
-#include "UnrealExtendedFramework/ModularSettings/Components/EFPlayerSettingsComponent.h"
 #include "Net/UnrealNetwork.h"
+#include "UnrealExtendedFramework/ModularSettings/Components/EFPlayerSettingsComponent.h"
+#include "UnrealExtendedFramework/ModularSettings/Components/EFWorldSettingsComponent.h"
+#include "UnrealExtendedFramework/ModularSettings/EFModularSettingsSubsystem.h"
 
-
-UWorld* UEFModularSettingsBase::GetWorld() const
+UWorld *UEFModularSettingsBase::GetWorld() const 
 {
-    if (IsTemplate())
-    {
-        return nullptr;
-    }
-
-    if (ModularSettingsSubsystem)
-    {
-         return ModularSettingsSubsystem->GetWorld();
-    }
-    if (GetOuter())
-    {
-        return GetOuter()->GetWorld();
-    }
+  if (IsTemplate()) 
+  {
     return nullptr;
+  }
+
+  if (ModularSettingsSubsystem) 
+  {
+    return ModularSettingsSubsystem->GetWorld();
+  }
+  if (GetOuter()) 
+  {
+    return GetOuter()->GetWorld();
+  }
+  return nullptr;
 }
 
-void UEFModularSettingsBase::NotifyValueChanged()
+void UEFModularSettingsBase::NotifyValueChanged() 
 {
-    UObject* CurrentOuter = GetOuter();
-    while (CurrentOuter)
+  UObject *CurrentOuter = GetOuter();
+  while (CurrentOuter) 
+  {
+    if (UEFWorldSettingsComponent* WorldComp =Cast<UEFWorldSettingsComponent>(CurrentOuter)) 
     {
-        if (UEFWorldSettingsComponent* WorldComp = Cast<UEFWorldSettingsComponent>(CurrentOuter))
-        {
-            WorldComp->OnSettingChanged.Broadcast(this);
-            return;
-        }
-        if (UEFPlayerSettingsComponent* PlayerComp = Cast<UEFPlayerSettingsComponent>(CurrentOuter))
-        {
-            PlayerComp->OnSettingChanged.Broadcast(this);
-            return;
-        }
-        CurrentOuter = CurrentOuter->GetOuter();
+      WorldComp->OnSettingChanged.Broadcast(this);
+      return;
     }
-
-    if (ModularSettingsSubsystem)
+    if (UEFPlayerSettingsComponent* PlayerComp = Cast<UEFPlayerSettingsComponent>(CurrentOuter)) 
     {
-        ModularSettingsSubsystem->OnSettingsChanged.Broadcast(this);
+      PlayerComp->OnSettingChanged.Broadcast(this);
+      // NOTE: Do NOT auto-save here. Saving is handled explicitly in ServerUpdateSetting_Implementation
+      // after the server applies the value. This prevents replication from overwriting saved settings.
+      return;
     }
+    CurrentOuter = CurrentOuter->GetOuter();
+  }
+
+  if (ModularSettingsSubsystem) 
+  {
+    ModularSettingsSubsystem->OnSettingsChanged.Broadcast(this);
+  }
 }
 
-void UEFModularSettingsBool::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
+void UEFModularSettingsBool::GetLifetimeReplicatedProps(TArray<FLifetimeProperty> &OutLifetimeProps) const 
 {
-	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
-	DOREPLIFETIME(UEFModularSettingsBool, Value);
+  Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+  DOREPLIFETIME(UEFModularSettingsBool, Value);
 }
 
-void UEFModularSettingsBool::OnRep_Value()
+void UEFModularSettingsBool::OnRep_Value() 
 {
-    NotifyValueChanged();
+  NotifyValueChanged();
 }
 
-void UEFModularSettingsFloat::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
+void UEFModularSettingsFloat::GetLifetimeReplicatedProps(TArray<FLifetimeProperty> &OutLifetimeProps) const 
 {
-	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
-	DOREPLIFETIME(UEFModularSettingsFloat, Value);
+  Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+  DOREPLIFETIME(UEFModularSettingsFloat, Value);
 }
 
-void UEFModularSettingsFloat::OnRep_Value()
+void UEFModularSettingsFloat::OnRep_Value() 
 {
-    NotifyValueChanged();
+  NotifyValueChanged();
 }
 
-void UEFModularSettingsMultiSelect::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
+void UEFModularSettingsMultiSelect::GetLifetimeReplicatedProps(TArray<FLifetimeProperty> &OutLifetimeProps) const 
 {
-	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
-	DOREPLIFETIME(UEFModularSettingsMultiSelect, SelectedIndex);
-	DOREPLIFETIME(UEFModularSettingsMultiSelect, LockedOptions);
-	DOREPLIFETIME(UEFModularSettingsMultiSelect, Values);
-	DOREPLIFETIME(UEFModularSettingsMultiSelect, DisplayNames);
+  Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+  DOREPLIFETIME(UEFModularSettingsMultiSelect, SelectedIndex);
+  DOREPLIFETIME(UEFModularSettingsMultiSelect, LockedOptions);
+  DOREPLIFETIME(UEFModularSettingsMultiSelect, Values);
+  DOREPLIFETIME(UEFModularSettingsMultiSelect, DisplayNames);
 }
 
-void UEFModularSettingsMultiSelect::OnRep_SelectedIndex()
+void UEFModularSettingsMultiSelect::OnRep_SelectedIndex() 
 {
-    NotifyValueChanged();
+  NotifyValueChanged();
 }
 
-void UEFModularSettingsMultiSelect::OnOptionLockChanged()
+void UEFModularSettingsMultiSelect::OnOptionLockChanged() 
 {
-    NotifyValueChanged();
+  NotifyValueChanged();
 }

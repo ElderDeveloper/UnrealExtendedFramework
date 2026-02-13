@@ -24,6 +24,13 @@ public:
 
 	UPROPERTY(BlueprintReadOnly, meta = (BindWidget), Category = "Settings")
 	class UTextBlock* ValueText;
+	
+	
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Settings")
+	FText EnabledText = FText::FromString("Enabled");
+	
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Settings")
+	FText DisabledText = FText::FromString("Disabled");
 
 	virtual void NativeConstruct() override;
 	virtual void OnTrackedSettingsChanged_Implementation(UEFModularSettingsBase* ChangedSetting) override;
