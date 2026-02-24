@@ -20,3 +20,14 @@ void UEFMobileLibrary::RequestExit(bool Force)
 	FPlatformMisc::RequestExit(Force);
 }
 
+
+FString UEFMobileLibrary::GetDeviceName()
+{
+	return FPlatformMisc::GetDefaultDeviceProfileName();
+}
+
+
+FString UEFMobileLibrary::GetOperatingSystemVersion()
+{
+	return FPlatformMisc::GetOSVersion();
+}

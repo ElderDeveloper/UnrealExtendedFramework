@@ -5,215 +5,199 @@
 #include "GenericPlatform/GenericApplication.h"
 #include "Kismet/KismetSystemLibrary.h"
 
+
+// ================================ SHARED HELPER ================================
+
+EMonitorAspectRatio UEFMonitorLibrary::ClassifyAspectRatio(int32 Width, int32 Height, float& Ratio, bool& IsWide)
+{
+	// BUG FIX: Guard against division by zero
+	if (Height <= 0)
+	{
+		Ratio = 0.f;
+		IsWide = false;
+		return EMonitorAspectRatio::Custom;
+	}
+
+	Ratio = (float)Width / (float)Height;
+	EMonitorAspectRatio AspRatio = EMonitorAspectRatio::Custom;
+
+	float asp = ((float)Width / 4.0f) * 3.0f;
+	if ((int32)asp == Height)
+	{
+		AspRatio = EMonitorAspectRatio::Aspect4_3;
+		IsWide = false;
+	}
+	asp = ((float)Width / 5.0f) * 4.0f;
+	if ((int32)asp == Height)
+	{
+		AspRatio = EMonitorAspectRatio::Aspect5_4;
+		IsWide = false;
+	}
+	asp = ((float)Width / 16.0f) * 9.0f;
+	if ((int32)asp == Height)
+	{
+		AspRatio = EMonitorAspectRatio::Aspect16_9;
+		IsWide = true;
+	}
+	asp = ((float)Width / 16.0f) * 10.0f;
+	if ((int32)asp == Height)
+	{
+		AspRatio = EMonitorAspectRatio::Aspect16_10;
+		IsWide = true;
+	}
+	if (AspRatio == EMonitorAspectRatio::Custom)
+	{
+		IsWide = Ratio > 1.334f;
+	}
+	return AspRatio;
+}
+
+
+// ================================ MONITOR INFO ================================
+
 FDisplayInfo UEFMonitorLibrary::GetMonitorInfoByIndex(const int32 Index)
 {
-	FDisplayMetrics* DisplayMetrics;
-	DisplayMetrics = new(FDisplayMetrics);
-	DisplayMetrics->RebuildDisplayMetrics(*DisplayMetrics);
+	// BUG FIX: Previously allocated FDisplayMetrics on heap with new/delete.
+	// Stack allocation is sufficient and avoids leak risk.
+	FDisplayMetrics DisplayMetrics;
+	FDisplayMetrics::RebuildDisplayMetrics(DisplayMetrics);
+
 	FDisplayInfo mi;
-	mi.Name = DisplayMetrics->MonitorInfo[Index].Name;
-	mi.ID = DisplayMetrics->MonitorInfo[Index].ID;
-	mi.NativeWidth = DisplayMetrics->MonitorInfo[Index].NativeWidth;
-	mi.NativeHeight = DisplayMetrics->MonitorInfo[Index].NativeHeight;
-	mi.MaxResolution = DisplayMetrics->MonitorInfo[Index].MaxResolution;
+
+	// BUG FIX: Added bounds check to prevent crash on invalid index
+	if (!DisplayMetrics.MonitorInfo.IsValidIndex(Index))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("GetMonitorInfoByIndex: Index %d out of range (have %d monitors)"), Index, DisplayMetrics.MonitorInfo.Num());
+		return mi;
+	}
+
+	const auto& Monitor = DisplayMetrics.MonitorInfo[Index];
+	mi.Name = Monitor.Name;
+	mi.ID = Monitor.ID;
+	mi.NativeWidth = Monitor.NativeWidth;
+	mi.NativeHeight = Monitor.NativeHeight;
+	mi.MaxResolution = Monitor.MaxResolution;
 	if (mi.MaxResolution.X == 0 || mi.MaxResolution.Y == 0)
 	{
 		mi.MaxResolution.X = mi.NativeWidth;
 		mi.MaxResolution.Y = mi.NativeHeight;
 	}
-	mi.DisplayRect.Left = DisplayMetrics->MonitorInfo[Index].DisplayRect.Left;
-	mi.DisplayRect.Top = DisplayMetrics->MonitorInfo[Index].DisplayRect.Top;
-	mi.DisplayRect.Right = DisplayMetrics->MonitorInfo[Index].DisplayRect.Right;
-	mi.DisplayRect.Bottom = DisplayMetrics->MonitorInfo[Index].DisplayRect.Bottom;
-	mi.WorkArea.Left = DisplayMetrics->MonitorInfo[Index].WorkArea.Left;
-	mi.WorkArea.Top = DisplayMetrics->MonitorInfo[Index].WorkArea.Top;
-	mi.WorkArea.Right = DisplayMetrics->MonitorInfo[Index].WorkArea.Right;
-	mi.WorkArea.Bottom = DisplayMetrics->MonitorInfo[Index].WorkArea.Bottom;
-	mi.bIsPrimary = DisplayMetrics->MonitorInfo[Index].bIsPrimary;
-	mi.DPI = DisplayMetrics->MonitorInfo[Index].DPI;
-	delete DisplayMetrics;
+	mi.DisplayRect.Left = Monitor.DisplayRect.Left;
+	mi.DisplayRect.Top = Monitor.DisplayRect.Top;
+	mi.DisplayRect.Right = Monitor.DisplayRect.Right;
+	mi.DisplayRect.Bottom = Monitor.DisplayRect.Bottom;
+	mi.WorkArea.Left = Monitor.WorkArea.Left;
+	mi.WorkArea.Top = Monitor.WorkArea.Top;
+	mi.WorkArea.Right = Monitor.WorkArea.Right;
+	mi.WorkArea.Bottom = Monitor.WorkArea.Bottom;
+	mi.bIsPrimary = Monitor.bIsPrimary;
+	mi.DPI = Monitor.DPI;
 	return mi;
 }
 
 int32 UEFMonitorLibrary::GetNAttachedMonitors()
 {
-	FDisplayMetrics* DisplayMetrics;
-	DisplayMetrics = new(FDisplayMetrics);
-	DisplayMetrics->RebuildDisplayMetrics(*DisplayMetrics);
-	int32 Num = DisplayMetrics->MonitorInfo.Num();
-	delete DisplayMetrics;
-	return Num;
+	FDisplayMetrics DisplayMetrics;
+	FDisplayMetrics::RebuildDisplayMetrics(DisplayMetrics);
+	return DisplayMetrics.MonitorInfo.Num();
 }
 
 EMonitorAspectRatio UEFMonitorLibrary::GetMonitorAspectRatio(int32 Index, float& Ratio, bool& IsWide)
 {
-	FDisplayMetrics* DisplayMetrics;
-	DisplayMetrics = new(FDisplayMetrics);
-	DisplayMetrics->RebuildDisplayMetrics(*DisplayMetrics);
-	int32 width = DisplayMetrics->MonitorInfo[Index].NativeWidth;
-	int32 height = DisplayMetrics->MonitorInfo[Index].NativeHeight;
-	delete DisplayMetrics;
-	EMonitorAspectRatio aspRatio = EMonitorAspectRatio::Custom;
-	Ratio = (float)width / height;
-	float asp = ((float)width / 4.0f) * 3.0f;
-	if ((int32)asp == height)
+	FDisplayMetrics DisplayMetrics;
+	FDisplayMetrics::RebuildDisplayMetrics(DisplayMetrics);
+
+	if (!DisplayMetrics.MonitorInfo.IsValidIndex(Index))
 	{
-		aspRatio = EMonitorAspectRatio::Aspect4_3;
+		Ratio = 0.f;
 		IsWide = false;
+		return EMonitorAspectRatio::Custom;
 	}
-	asp = ((float)width / 5.0f) * 4.0f;
-	if ((int32)asp == height)
-	{
-		aspRatio = EMonitorAspectRatio::Aspect5_4;
-		IsWide = false;
-	}
-	asp = ((float)width / 16.0f) * 9.0f;
-	if ((int32)asp == height)
-	{
-		aspRatio = EMonitorAspectRatio::Aspect16_9;
-		IsWide = true;
-	}
-	asp = ((float)width / 16.0f) * 10.0f;
-	if ((int32)asp == height)
-	{
-		aspRatio = EMonitorAspectRatio::Aspect16_10;
-		IsWide = true;
-	}
-	if (aspRatio == EMonitorAspectRatio::Custom)
-	{
-		if (Ratio > 1.334f)
-		{
-			IsWide = true;
-		}
-		else
-		{
-			IsWide = false;
-		}
-	}
-	return aspRatio;
+
+	return ClassifyAspectRatio(
+		DisplayMetrics.MonitorInfo[Index].NativeWidth,
+		DisplayMetrics.MonitorInfo[Index].NativeHeight,
+		Ratio, IsWide);
 }
 
 int32 UEFMonitorLibrary::GetPrimaryMonitorIndex()
 {
-	FDisplayMetrics* DisplayMetrics;
-	DisplayMetrics = new(FDisplayMetrics);
-	DisplayMetrics->RebuildDisplayMetrics(*DisplayMetrics);
-	int32 Primary = -1;
-	for (int32 i = 0; i < DisplayMetrics->MonitorInfo.Num(); i++)
+	FDisplayMetrics DisplayMetrics;
+	FDisplayMetrics::RebuildDisplayMetrics(DisplayMetrics);
+	for (int32 i = 0; i < DisplayMetrics.MonitorInfo.Num(); i++)
 	{
-		if (DisplayMetrics->MonitorInfo[i].bIsPrimary)
+		if (DisplayMetrics.MonitorInfo[i].bIsPrimary)
 		{
-			Primary = i;
-			break;
+			return i;
 		}
 	}
-	delete DisplayMetrics;
-	return Primary;
+	return -1;
 }
 
 FIntPoint UEFMonitorLibrary::GetMaxMonitorResolution(int32 Index)
 {
-	FDisplayMetrics* DisplayMetrics;
-	DisplayMetrics = new(FDisplayMetrics);
-	DisplayMetrics->RebuildDisplayMetrics(*DisplayMetrics);
-	FIntPoint maxRes = DisplayMetrics->MonitorInfo[Index].MaxResolution;
+	FDisplayMetrics DisplayMetrics;
+	FDisplayMetrics::RebuildDisplayMetrics(DisplayMetrics);
+
+	if (!DisplayMetrics.MonitorInfo.IsValidIndex(Index))
+	{
+		return FIntPoint(ForceInitToZero);
+	}
+
+	FIntPoint maxRes = DisplayMetrics.MonitorInfo[Index].MaxResolution;
 	if (maxRes.X == 0 || maxRes.Y == 0)
 	{
-		maxRes.X = DisplayMetrics->MonitorInfo[Index].NativeWidth;
-		maxRes.Y = DisplayMetrics->MonitorInfo[Index].NativeHeight;
+		maxRes.X = DisplayMetrics.MonitorInfo[Index].NativeWidth;
+		maxRes.Y = DisplayMetrics.MonitorInfo[Index].NativeHeight;
 	}
-	delete DisplayMetrics;
 	return maxRes;
 }
 
 void UEFMonitorLibrary::GetMonitorSafeAreas(FRect& TitleSafeArea, float& TitleSafeRatio, FRect& ActionSafeArea)
 {
-	FDisplayMetrics* DisplayMetrics;
-	DisplayMetrics = new(FDisplayMetrics);
-	DisplayMetrics->RebuildDisplayMetrics(*DisplayMetrics);
-	TitleSafeArea.Left = DisplayMetrics->TitleSafePaddingSize.X;
-	TitleSafeArea.Top = DisplayMetrics->TitleSafePaddingSize.Y;
-	TitleSafeArea.Right = DisplayMetrics->TitleSafePaddingSize.Z;
-	TitleSafeArea.Bottom = DisplayMetrics->TitleSafePaddingSize.W;
-	TitleSafeRatio = DisplayMetrics->GetDebugTitleSafeZoneRatio();
-	ActionSafeArea.Left = DisplayMetrics->ActionSafePaddingSize.X;
-	ActionSafeArea.Top = DisplayMetrics->ActionSafePaddingSize.Y;
-	ActionSafeArea.Right = DisplayMetrics->ActionSafePaddingSize.Z;
-	ActionSafeArea.Bottom = DisplayMetrics->ActionSafePaddingSize.W;
-	delete DisplayMetrics;
+	FDisplayMetrics DisplayMetrics;
+	FDisplayMetrics::RebuildDisplayMetrics(DisplayMetrics);
+	TitleSafeArea.Left = DisplayMetrics.TitleSafePaddingSize.X;
+	TitleSafeArea.Top = DisplayMetrics.TitleSafePaddingSize.Y;
+	TitleSafeArea.Right = DisplayMetrics.TitleSafePaddingSize.Z;
+	TitleSafeArea.Bottom = DisplayMetrics.TitleSafePaddingSize.W;
+	TitleSafeRatio = DisplayMetrics.GetDebugTitleSafeZoneRatio();
+	ActionSafeArea.Left = DisplayMetrics.ActionSafePaddingSize.X;
+	ActionSafeArea.Top = DisplayMetrics.ActionSafePaddingSize.Y;
+	ActionSafeArea.Right = DisplayMetrics.ActionSafePaddingSize.Z;
+	ActionSafeArea.Bottom = DisplayMetrics.ActionSafePaddingSize.W;
 }
 
 void UEFMonitorLibrary::GetPrimaryDisplayResolution(int32& Width, int32& Height)
 {
-	FDisplayMetrics* DisplayMetrics;
-	DisplayMetrics = new(FDisplayMetrics);
-	DisplayMetrics->RebuildDisplayMetrics(*DisplayMetrics);
-	Width = DisplayMetrics->PrimaryDisplayWidth;
-	Height = DisplayMetrics->PrimaryDisplayHeight;
-	delete DisplayMetrics;
+	FDisplayMetrics DisplayMetrics;
+	FDisplayMetrics::RebuildDisplayMetrics(DisplayMetrics);
+	Width = DisplayMetrics.PrimaryDisplayWidth;
+	Height = DisplayMetrics.PrimaryDisplayHeight;
 }
 
 void UEFMonitorLibrary::PrintDisplayInfoToLog()
 {
-	FDisplayMetrics* DisplayMetrics;
-	DisplayMetrics = new(FDisplayMetrics);
-	DisplayMetrics->RebuildDisplayMetrics(*DisplayMetrics);
-	DisplayMetrics->PrintToLog();
-	delete DisplayMetrics;
+	FDisplayMetrics DisplayMetrics;
+	FDisplayMetrics::RebuildDisplayMetrics(DisplayMetrics);
+	DisplayMetrics.PrintToLog();
 }
 
 EMonitorAspectRatio UEFMonitorLibrary::GetResolutionAspectRatio(FIntPoint Resolution, float& Ratio, bool& IsWide)
 {
-	int width = Resolution.X;
-	int height = Resolution.Y;
-	EMonitorAspectRatio aspRatio = EMonitorAspectRatio::Custom;
-	Ratio = (float)width / height;
-	float asp = ((float)width / 4.0f) * 3.0f;
-	if ((int32)asp == height)
-	{
-		aspRatio = EMonitorAspectRatio::Aspect4_3;
-		IsWide = false;
-	}
-	asp = ((float)width / 5.0f) * 4.0f;
-	if ((int32)asp == height)
-	{
-		aspRatio = EMonitorAspectRatio::Aspect5_4;
-		IsWide = false;
-	}
-	asp = ((float)width / 16.0f) * 9.0f;
-	if ((int32)asp == height)
-	{
-		aspRatio = EMonitorAspectRatio::Aspect16_9;
-		IsWide = true;
-	}
-	asp = ((float)width / 16.0f) * 10.0f;
-	if ((int32)asp == height)
-	{
-		aspRatio = EMonitorAspectRatio::Aspect16_10;
-		IsWide = true;
-	}
-	if (aspRatio == EMonitorAspectRatio::Custom)
-	{
-		if (Ratio > 1.334f)
-		{
-			IsWide = true;
-		}
-		else
-		{
-			IsWide = false;
-		}
-	}
-	return aspRatio;
+	return ClassifyAspectRatio(Resolution.X, Resolution.Y, Ratio, IsWide);
 }
+
+
+// ================================ GAME WINDOW MONITOR ================================
 
 int32 UEFMonitorLibrary::GetGameWindowMonitorIndex()
 {
 	if (!FSlateApplication::IsInitialized())
 	{
-		return 0; // Default to primary monitor if Slate is not initialized
+		return 0;
 	}
 
-	// Get the game window
 	TSharedPtr<SWindow> GameWindow = nullptr;
 	if (GEngine && GEngine->GameViewport)
 	{
@@ -222,22 +206,18 @@ int32 UEFMonitorLibrary::GetGameWindowMonitorIndex()
 
 	if (!GameWindow.IsValid())
 	{
-		return 0; // Default to primary monitor if window is not valid
+		return 0;
 	}
 
-	// Get the window's position
 	FVector2D WindowPosition = GameWindow->GetPositionInScreen();
 
-	// Get display metrics
 	FDisplayMetrics DisplayMetrics;
 	FDisplayMetrics::RebuildDisplayMetrics(DisplayMetrics);
 
-	// Find which monitor contains this window
 	for (int32 MonitorIndex = 0; MonitorIndex < DisplayMetrics.MonitorInfo.Num(); ++MonitorIndex)
 	{
 		const FMonitorInfo& Monitor = DisplayMetrics.MonitorInfo[MonitorIndex];
 		
-		// Check if window position is within this monitor's bounds
 		if (WindowPosition.X >= Monitor.DisplayRect.Left && 
 			WindowPosition.X < Monitor.DisplayRect.Right &&
 			WindowPosition.Y >= Monitor.DisplayRect.Top && 
@@ -247,7 +227,6 @@ int32 UEFMonitorLibrary::GetGameWindowMonitorIndex()
 		}
 	}
 
-	// Default to primary monitor if no match found
 	for (int32 MonitorIndex = 0; MonitorIndex < DisplayMetrics.MonitorInfo.Num(); ++MonitorIndex)
 	{
 		if (DisplayMetrics.MonitorInfo[MonitorIndex].bIsPrimary)
@@ -261,14 +240,11 @@ int32 UEFMonitorLibrary::GetGameWindowMonitorIndex()
 
 void UEFMonitorLibrary::GetCurrentMonitorResolution(int32& OutWidth, int32& OutHeight)
 {
-	// Get the monitor index that the game window is on
 	int32 MonitorIndex = GetGameWindowMonitorIndex();
 
-	// Get display metrics
 	FDisplayMetrics DisplayMetrics;
 	FDisplayMetrics::RebuildDisplayMetrics(DisplayMetrics);
 
-	// Make sure the monitor index is valid
 	if (MonitorIndex >= 0 && MonitorIndex < DisplayMetrics.MonitorInfo.Num())
 	{
 		OutWidth = DisplayMetrics.MonitorInfo[MonitorIndex].NativeWidth;
@@ -276,7 +252,6 @@ void UEFMonitorLibrary::GetCurrentMonitorResolution(int32& OutWidth, int32& OutH
 	}
 	else
 	{
-		// Default to primary display resolution if monitor index is invalid
 		OutWidth = DisplayMetrics.PrimaryDisplayWidth;
 		OutHeight = DisplayMetrics.PrimaryDisplayHeight;
 	}
@@ -286,17 +261,13 @@ TArray<FIntPoint> UEFMonitorLibrary::GetCurrentMonitorSupportedResolutions()
 {
 	TArray<FIntPoint> SupportedResolutions;
 
-	// Get the monitor index that the game window is on
 	int32 MonitorIndex = GetGameWindowMonitorIndex();
 
-	// Get all supported resolutions
 	UKismetSystemLibrary::GetSupportedFullscreenResolutions(SupportedResolutions);
 
-	// Get the current monitor's resolution
 	int32 MonitorWidth, MonitorHeight;
 	GetCurrentMonitorResolution(MonitorWidth, MonitorHeight);
 
-	// Filter resolutions that exceed the current monitor's capabilities
 	TArray<FIntPoint> FilteredResolutions;
 	for (const FIntPoint& Resolution : SupportedResolutions)
 	{
@@ -311,18 +282,48 @@ TArray<FIntPoint> UEFMonitorLibrary::GetCurrentMonitorSupportedResolutions()
 
 bool UEFMonitorLibrary::IsGameOnPrimaryMonitor()
 {
-	// Get the monitor index that the game window is on
 	int32 MonitorIndex = GetGameWindowMonitorIndex();
 
-	// Get display metrics
 	FDisplayMetrics DisplayMetrics;
 	FDisplayMetrics::RebuildDisplayMetrics(DisplayMetrics);
 
-	// Check if the monitor index is valid and if it's the primary monitor
 	if (MonitorIndex >= 0 && MonitorIndex < DisplayMetrics.MonitorInfo.Num())
 	{
 		return DisplayMetrics.MonitorInfo[MonitorIndex].bIsPrimary;
 	}
 
-	return true; // Default to true if we can't determine
+	return true;
+}
+
+
+int32 UEFMonitorLibrary::GetMonitorRefreshRate(int32 Index)
+{
+	FDisplayMetrics DisplayMetrics;
+	FDisplayMetrics::RebuildDisplayMetrics(DisplayMetrics);
+
+	if (Index < 0 || Index >= DisplayMetrics.MonitorInfo.Num())
+	{
+		return 0;
+	}
+
+	// Get all supported resolutions and find the max refresh rate
+	// that fits within this monitor's native resolution
+	TArray<FScreenResolutionRHI> Resolutions;
+	if (RHIGetAvailableResolutions(Resolutions, true))
+	{
+		const FMonitorInfo& Monitor = DisplayMetrics.MonitorInfo[Index];
+		int32 MaxRefreshRate = 0;
+
+		for (const FScreenResolutionRHI& Res : Resolutions)
+		{
+			if (static_cast<int32>(Res.Width) <= Monitor.NativeWidth &&
+				static_cast<int32>(Res.Height) <= Monitor.NativeHeight)
+			{
+				MaxRefreshRate = FMath::Max(MaxRefreshRate, static_cast<int32>(Res.RefreshRate));
+			}
+		}
+		return MaxRefreshRate;
+	}
+
+	return 0;
 }

@@ -2,33 +2,65 @@
 
 
 #include "EFHitResultLibrary.h"
+#include "PhysicalMaterials/PhysicalMaterial.h"
 
 
-
-FVector UEFHitResultLibrary::GetHitLocationFromHitResult(FHitResult HitResult)
+FVector UEFHitResultLibrary::GetHitLocationFromHitResult(const FHitResult& HitResult)
 {
 	return HitResult.Location;
 }
 
-FVector UEFHitResultLibrary::GetTraceEndFromHitResult(FHitResult HitResult)
+FVector UEFHitResultLibrary::GetTraceEndFromHitResult(const FHitResult& HitResult)
 {
 	return HitResult.TraceEnd;
 }
 
-AActor* UEFHitResultLibrary::GetHitActorFromHitResult(FHitResult HitResult)
+FVector UEFHitResultLibrary::GetTraceStartFromHitResult(const FHitResult& HitResult)
+{
+	return HitResult.TraceStart;
+}
+
+AActor* UEFHitResultLibrary::GetHitActorFromHitResult(const FHitResult& HitResult)
 {
 	return HitResult.GetActor();
 }
 
-USceneComponent* UEFHitResultLibrary::GetHitComponentFromHitResult(FHitResult HitResult)
+USceneComponent* UEFHitResultLibrary::GetHitComponentFromHitResult(const FHitResult& HitResult)
 {
 	return HitResult.GetComponent();
 }
 
-float UEFHitResultLibrary::GetHitDistance(FHitResult HitResult)
+float UEFHitResultLibrary::GetHitDistance(const FHitResult& HitResult)
 {
-	return FMath::Sqrt(
-	HitResult.TraceStart.X	* HitResult.Location.X +
-		HitResult.TraceStart.Y * HitResult.Location.Y +
-		HitResult.TraceStart.Z * HitResult.Location.Z);
+	return FVector::Dist(HitResult.TraceStart, HitResult.Location);
+}
+
+FVector UEFHitResultLibrary::GetHitImpactNormal(const FHitResult& HitResult)
+{
+	return HitResult.ImpactNormal;
+}
+
+FVector UEFHitResultLibrary::GetHitImpactPoint(const FHitResult& HitResult)
+{
+	return HitResult.ImpactPoint;
+}
+
+FVector UEFHitResultLibrary::GetHitNormal(const FHitResult& HitResult)
+{
+	return HitResult.Normal;
+}
+
+bool UEFHitResultLibrary::IsBlockingHit(const FHitResult& HitResult)
+{
+	return HitResult.bBlockingHit;
+}
+
+FName UEFHitResultLibrary::GetHitBoneName(const FHitResult& HitResult)
+{
+	return HitResult.BoneName;
+}
+
+UPhysicalMaterial* UEFHitResultLibrary::GetHitPhysMaterial(const FHitResult& HitResult)
+{
+	return HitResult.PhysMaterial.Get();
 }

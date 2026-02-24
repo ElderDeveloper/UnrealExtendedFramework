@@ -1,15 +1,15 @@
-// KeyConflictWidget.cpp
-// Implementation of the KeyConflictWidget class
+// EFKeyConflictWidget.cpp
+// Implementation of the EFKeyConflictWidget class
 
-#include "KeyConflictWidget.h"
-#include "UnrealExtendedFramework/Settings/Input/InputBindingSubsystem.h"
+#include "EFKeyConflictWidget.h"
+#include "UnrealExtendedFramework/ModularSettings/Settings/InputBinding/EFInputBindingSubsystem.h"
 
-void UKeyConflictWidget::NativeConstruct()
+void UEFKeyConflictWidget::NativeConstruct()
 {
     Super::NativeConstruct();
     
     // Get the input binding subsystem
-    InputBindingSubsystem = GetGameInstance()->GetSubsystem<UInputBindingSubsystem>();
+    InputBindingSubsystem = GetGameInstance()->GetSubsystem<UEFInputBindingSubsystem>();
     
     // Initialize default values
     NewInputAction = nullptr;
@@ -17,7 +17,7 @@ void UKeyConflictWidget::NativeConstruct()
     ConflictingKey = FKey();
 }
 
-void UKeyConflictWidget::InitializeWithConflict(UInputAction* NewAction, UInputAction* ExistingAction, const FKey& ConflictKey)
+void UEFKeyConflictWidget::InitializeWithConflict(UInputAction* NewAction, UInputAction* ExistingAction, const FKey& ConflictKey)
 {
     // Store the conflict information
     NewInputAction = NewAction;
@@ -25,41 +25,41 @@ void UKeyConflictWidget::InitializeWithConflict(UInputAction* NewAction, UInputA
     ConflictingKey = ConflictKey;
 }
 
-void UKeyConflictWidget::ChooseSwapBindings()
+void UEFKeyConflictWidget::ChooseSwapBindings()
 {
     bool bSuccess = false;
     
     if (NewInputAction && ExistingInputAction && ConflictingKey.IsValid() && InputBindingSubsystem)
     {
         // Swap the key bindings between the two actions
-        //bSuccess = InputBindingSubsystem->SwapKeyBindings(NewInputAction, ExistingInputAction);
+        bSuccess = InputBindingSubsystem->SwapKeyBindings(NewInputAction, ExistingInputAction);
     }
     
     // Notify that the conflict has been resolved
     OnConflictResolved.Broadcast(bSuccess);
 }
 
-void UKeyConflictWidget::ChooseOverrideBinding()
+void UEFKeyConflictWidget::ChooseOverrideBinding()
 {
     bool bSuccess = false;
     
     if (NewInputAction && ConflictingKey.IsValid() && InputBindingSubsystem)
     {
         // Set the new key binding, which will override any existing bindings
-        //bSuccess = InputBindingSubsystem->SetKeyBinding(NewInputAction, ConflictingKey);
+        bSuccess = InputBindingSubsystem->SetKeyBinding(NewInputAction, ConflictingKey);
     }
     
     // Notify that the conflict has been resolved
     OnConflictResolved.Broadcast(bSuccess);
 }
 
-void UKeyConflictWidget::ChooseCancel()
+void UEFKeyConflictWidget::ChooseCancel()
 {
     // No changes made, just notify that the conflict resolution was cancelled
     OnConflictResolved.Broadcast(false);
 }
 
-FText UKeyConflictWidget::GetNewActionNameText() const
+FText UEFKeyConflictWidget::GetNewActionNameText() const
 {
     if (NewInputAction)
     {
@@ -69,7 +69,7 @@ FText UKeyConflictWidget::GetNewActionNameText() const
     return FText::GetEmpty();
 }
 
-FText UKeyConflictWidget::GetExistingActionNameText() const
+FText UEFKeyConflictWidget::GetExistingActionNameText() const
 {
     if (ExistingInputAction)
     {
@@ -79,7 +79,7 @@ FText UKeyConflictWidget::GetExistingActionNameText() const
     return FText::GetEmpty();
 }
 
-FText UKeyConflictWidget::GetConflictingKeyText() const
+FText UEFKeyConflictWidget::GetConflictingKeyText() const
 {
     if (ConflictingKey.IsValid())
     {

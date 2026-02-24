@@ -4,21 +4,40 @@
 #include "Engine/Engine.h"
 #include "Engine/LocalPlayer.h"
 #include "GameFramework/PlayerController.h"
-#include "GameFramework/PlayerInput.h"
 #include "UnrealExtendedFramework/ModularSettings/Settings/EFModularSettingsBase.h"
 #include "InputCoreTypes.h"
+#include "EnhancedInputSubsystems.h"
+#include "InputAction.h"
+#include "InputMappingContext.h"
+#include "EnhancedInput/Public/UserSettings/EnhancedInputUserSettings.h"
+#include "PlayerMappableKeySettings.h"
 #include "EFInputSettings.generated.h"
 
 
 
-// Forward declarations to avoid hard dependency if module is missing, 
-// but UPROPERTY requires full type or at least known type.
-// We assume EnhancedInput is available.
+// Forward declarations
 class UInputAction;
 class UInputMappingContext;
 
+namespace EFInputSettingsHelper
+{
+	inline UEnhancedInputLocalPlayerSubsystem* GetEnhancedInputSubsystem()
+	{
+		if (!GEngine) return nullptr;
+		
+		APlayerController* PC = GEngine->GetFirstLocalPlayerController(GEngine->GetCurrentPlayWorld());
+		if (!PC) return nullptr;
+		
+		ULocalPlayer* LP = PC->GetLocalPlayer();
+		if (!LP) return nullptr;
+		
+		return LP->GetSubsystem<UEnhancedInputLocalPlayerSubsystem>();
+	}
+}
+
 /**
  * Setting for remapping an Enhanced Input Action.
+ * Uses Enhanced Input's PlayerMappableKey system for proper key rebinding.
  */
 UCLASS(Blueprintable, BlueprintType, EditInlineNew)
 class UNREALEXTENDEDFRAMEWORK_API UEFModularSettingsInput : public UEFModularSettingsBase
@@ -53,10 +72,40 @@ public:
 	
 	virtual void Apply_Implementation() override 
 	{
-		// Here we would interface with Enhanced Input Subsystem to remap the key.
-		// This usually involves removing the old mapping and adding a new one, 
-		// or using PlayerMappableKeySettings.
-		// For now, we just store the value.
+		if (!InputAction || !CurrentKey.IsValid()) return;
+		
+		if (UEnhancedInputLocalPlayerSubsystem* EIS = EFInputSettingsHelper::GetEnhancedInputSubsystem())
+		{
+			if (UEnhancedInputUserSettings* UserSettings = EIS->GetUserSettings())
+			{
+				// Get the mapping name from the input action's player mappable key settings
+				FName MappingName = NAME_None;
+				if (const UPlayerMappableKeySettings* KeySettings = InputAction->GetPlayerMappableKeySettings())
+				{
+					MappingName = KeySettings->GetMappingName();
+				}
+				else
+				{
+					// Fallback to the input action's FName
+					MappingName = InputAction->GetFName();
+				}
+
+				FMapPlayerKeyArgs Args;
+				Args.MappingName = MappingName;
+				Args.NewKey = CurrentKey;
+				Args.Slot = EPlayerMappableKeySlot::First;
+
+				FGameplayTagContainer FailureReason;
+				UserSettings->MapPlayerKey(Args, FailureReason);
+				
+				EIS->RequestRebuildControlMappings(FModifyContextOptions());
+				
+				if (!FailureReason.IsEmpty())
+				{
+					UE_LOG(LogTemp, Warning, TEXT("[UEFModularSettingsInput] MapPlayerKey failed: %s"), *FailureReason.ToString());
+				}
+			}
+		}
 	}
 	
 	virtual FString GetValueAsString() const override
@@ -113,7 +162,6 @@ public:
 			APlayerController* PC = GEngine->GetFirstLocalPlayerController(GEngine->GetCurrentPlayWorld());
 			if (PC && PC->PlayerInput)
 			{
-				// Apply_Implementation to mouse sensitivity
 				PC->PlayerInput->SetMouseSensitivity(Value);
 				UE_LOG(LogTemp, Log, TEXT("Applied Mouse Sensitivity: %.2f"), Value);
 			}
@@ -142,16 +190,9 @@ public:
 	
 	virtual void Apply_Implementation() override
 	{
-		if (GEngine && GEngine->GetFirstLocalPlayerController(GEngine->GetCurrentPlayWorld()))
-		{
-			APlayerController* PC = GEngine->GetFirstLocalPlayerController(GEngine->GetCurrentPlayWorld());
-			if (PC && PC->PlayerInput)
-			{
-				// This assumes custom handling or separate axis mapping for X
-				// PC->PlayerInput->SetMouseSensitivity(Value); // This sets both
-				UE_LOG(LogTemp, Log, TEXT("Applied Mouse Sensitivity X: %.2f"), Value);
-			}
-		}
+		// Per-axis sensitivity is typically handled by a custom look input modifier 
+		// on the Enhanced Input action. Store the value for the game to query.
+		UE_LOG(LogTemp, Log, TEXT("Applied Mouse Sensitivity X: %.2f"), Value);
 	}
 };
 
@@ -176,19 +217,13 @@ public:
 	
 	virtual void Apply_Implementation() override
 	{
-		if (GEngine && GEngine->GetFirstLocalPlayerController(GEngine->GetCurrentPlayWorld()))
-		{
-			APlayerController* PC = GEngine->GetFirstLocalPlayerController(GEngine->GetCurrentPlayWorld());
-			if (PC && PC->PlayerInput)
-			{
-				// This assumes custom handling or separate axis mapping for Y
-				UE_LOG(LogTemp, Log, TEXT("Applied Mouse Sensitivity Y: %.2f"), Value);
-			}
-		}
+		// Per-axis sensitivity is typically handled by a custom look input modifier 
+		// on the Enhanced Input action. Store the value for the game to query.
+		UE_LOG(LogTemp, Log, TEXT("Applied Mouse Sensitivity Y: %.2f"), Value);
 	}
 };
 
-// Reverse Mouse Y Setting
+// Reverse Mouse Y Setting — Enhanced Input approach: negate the Y-axis via input modifier
 UCLASS(Blueprintable, DisplayName = "Extended Reverse Mouse Y")
 class UNREALEXTENDEDFRAMEWORK_API UEFReverseMouseYSetting : public UEFModularSettingsBool
 {
@@ -206,28 +241,14 @@ public:
 	
 	virtual void Apply_Implementation() override
 	{
-		if (GEngine && GEngine->GetFirstLocalPlayerController(GEngine->GetCurrentPlayWorld()))
-		{
-			APlayerController* PC = GEngine->GetFirstLocalPlayerController(GEngine->GetCurrentPlayWorld());
-			if (PC && PC->PlayerInput)
-			{
-				// Find the mouse Y axis binding and invert it
-				for (FInputAxisKeyMapping& AxisMapping : PC->PlayerInput->AxisMappings)
-				{
-					if (AxisMapping.AxisName == TEXT("Turn") || 
-						AxisMapping.AxisName == TEXT("LookUp") || 
-						AxisMapping.AxisName == TEXT("MouseY"))
-					{
-						if (AxisMapping.Key == EKeys::MouseY)
-						{
-							AxisMapping.Scale = Value ? -FMath::Abs(AxisMapping.Scale) : FMath::Abs(AxisMapping.Scale);
-						}
-					}
-				}
-				
-				UE_LOG(LogTemp, Log, TEXT("Applied Reverse Mouse Y: %s"), Value ? TEXT("Enabled") : TEXT("Disabled"));
-			}
-		}
+		// With Enhanced Input, Y-axis inversion is best handled by toggling a Negate modifier
+		// on the Look action's Y component. The game's input configuration should query this
+		// setting value and apply the negate modifier accordingly.
+		// 
+		// This can be done by:
+		//   1. Having a custom UInputModifier subclass that reads this setting
+		//   2. Or querying this value in your PlayerController and applying the sign
+		UE_LOG(LogTemp, Log, TEXT("Applied Reverse Mouse Y: %s"), Value ? TEXT("Enabled") : TEXT("Disabled"));
 	}
 };
 
@@ -249,15 +270,9 @@ public:
 	
 	virtual void Apply_Implementation() override
 	{
-		if (GEngine && GEngine->GetFirstLocalPlayerController(GEngine->GetCurrentPlayWorld()))
-		{
-			APlayerController* PC = GEngine->GetFirstLocalPlayerController(GEngine->GetCurrentPlayWorld());
-			if (PC && PC->PlayerInput)
-			{
-				// PC->bEnableMouseSmoothing = Value; // Deprecated in some versions, but generally available
-				UE_LOG(LogTemp, Log, TEXT("Applied Mouse Smoothing: %s"), Value ? TEXT("Enabled") : TEXT("Disabled"));
-			}
-		}
+		// Mouse smoothing with Enhanced Input is typically handled by a Smooth modifier
+		// on the relevant input action. The game should query this setting to toggle that modifier.
+		UE_LOG(LogTemp, Log, TEXT("Applied Mouse Smoothing: %s"), Value ? TEXT("Enabled") : TEXT("Disabled"));
 	}
 };
 
@@ -279,13 +294,13 @@ public:
 	
 	virtual void Apply_Implementation() override
 	{
-		// Typically handled by OS or specific input plugins, but we can log intent
+		// Typically handled by OS or by a custom Enhanced Input modifier
 		UE_LOG(LogTemp, Log, TEXT("Applied Mouse Acceleration: %s"), Value ? TEXT("Enabled") : TEXT("Disabled"));
 	}
 };
 
 
-// Controller Sensitivity Setting
+// Controller Sensitivity Setting — Enhanced Input approach
 UCLASS(Blueprintable, DisplayName = "Extended Controller Sensitivity")
 class UNREALEXTENDEDFRAMEWORK_API UEFControllerSensitivitySetting : public UEFModularSettingsFloat
 {
@@ -306,26 +321,10 @@ public:
 	
 	virtual void Apply_Implementation() override
 	{
-		if (GEngine && GEngine->GetFirstLocalPlayerController(GEngine->GetCurrentPlayWorld()))
-		{
-			APlayerController* PC = GEngine->GetFirstLocalPlayerController(GEngine->GetCurrentPlayWorld());
-			if (PC && PC->PlayerInput)
-			{
-				// Apply_Implementation to gamepad/controller axis mappings
-				for (FInputAxisKeyMapping& AxisMapping : PC->PlayerInput->AxisMappings)
-				{
-					if (AxisMapping.Key.IsGamepadKey())
-					{
-						if (AxisMapping.AxisName == TEXT("Turn") || AxisMapping.AxisName == TEXT("LookUp"))
-						{
-							float BaseScale = AxisMapping.Scale < 0 ? -1.0f : 1.0f;
-							AxisMapping.Scale = BaseScale * Value;
-						}
-					}
-				}
-				UE_LOG(LogTemp, Log, TEXT("Applied Controller Sensitivity: %.2f"), Value);
-			}
-		}
+		// With Enhanced Input, controller sensitivity is best applied through a Scalar modifier
+		// on the gamepad look input action. The game's input configuration should query this
+		// setting value and scale the modifier accordingly.
+		UE_LOG(LogTemp, Log, TEXT("Applied Controller Sensitivity: %.2f"), Value);
 	}
 };
 
@@ -350,7 +349,8 @@ public:
 	
 	virtual void Apply_Implementation() override
 	{
-		// This would typically update the Input settings or be read by the input handling logic
+		// With Enhanced Input, deadzone is configured via UInputModifierDeadZone on the action.
+		// The game should query this value and apply it to the deadzone modifier.
 		UE_LOG(LogTemp, Log, TEXT("Applied Controller Deadzone: %.2f"), Value);
 	}
 };
@@ -407,13 +407,13 @@ public:
 	
 	virtual void Apply_Implementation() override
 	{
-		// This would scale the force feedback intensity
+		// Force feedback intensity scaling
 		UE_LOG(LogTemp, Log, TEXT("Applied Controller Vibration Strength: %.2f"), Value);
 	}
 };
 
 
-// Mouse Wheel Sensitivity Setting
+// Mouse Wheel Sensitivity Setting — Enhanced Input approach
 UCLASS(Blueprintable, DisplayName = "Extended Mouse Wheel Sensitivity")
 class UNREALEXTENDEDFRAMEWORK_API UEFMouseWheelSensitivitySetting : public UEFModularSettingsFloat
 {
@@ -434,22 +434,8 @@ public:
 	
 	virtual void Apply_Implementation() override
 	{
-		if (GEngine && GEngine->GetFirstLocalPlayerController(GEngine->GetCurrentPlayWorld()))
-		{
-			APlayerController* PC = GEngine->GetFirstLocalPlayerController(GEngine->GetCurrentPlayWorld());
-			if (PC && PC->PlayerInput)
-			{
-				// Apply_Implementation to mouse wheel axis mappings
-				for (FInputAxisKeyMapping& AxisMapping : PC->PlayerInput->AxisMappings)
-				{
-					if (AxisMapping.Key == EKeys::MouseWheelAxis)
-					{
-						float BaseScale = AxisMapping.Scale < 0 ? -1.0f : 1.0f;
-						AxisMapping.Scale = BaseScale * Value;
-					}
-				}
-				UE_LOG(LogTemp, Log, TEXT("Applied Mouse Wheel Sensitivity: %.2f"), Value);
-			}
-		}
+		// With Enhanced Input, mouse wheel sensitivity is handled via a Scalar modifier
+		// on the scroll/zoom input action. The game should query this value and apply it.
+		UE_LOG(LogTemp, Log, TEXT("Applied Mouse Wheel Sensitivity: %.2f"), Value);
 	}
 };

@@ -6,6 +6,8 @@
 #include "Misc/Paths.h"
 #include "Engine/Engine.h"
 
+DEFINE_LOG_CATEGORY(LogExtendedFramework);
+
 #define LOCTEXT_NAMESPACE "FUnrealExtendedFrameworkModule"
 
 void FUnrealExtendedFrameworkModule::StartupModule()
@@ -30,7 +32,7 @@ void FUnrealExtendedFrameworkModule::InitializeGameplayTags()
 	FString CSVContent;
 	if (!FFileHelper::LoadFileToString(CSVContent, *CSVPath))
 	{
-		UE_LOG(LogTemp, Warning, TEXT("Failed to read ExtendedSettingTags.csv"));
+		UE_LOG(LogExtendedFramework, Warning, TEXT("Failed to read ExtendedSettingTags.csv"));
 		return;
 	}
 
@@ -109,16 +111,16 @@ void FUnrealExtendedFrameworkModule::InitializeGameplayTags()
 		// Write the updated content back to file
 		if (FFileHelper::SaveStringToFile(IniContent, *ConfigPath))
 		{
-			UE_LOG(LogTemp, Log, TEXT("Successfully created/updated ExtendedSettingsTags.ini with %d new tags"), NewTagsToAdd.Num());
+			UE_LOG(LogExtendedFramework, Log, TEXT("Successfully created/updated ExtendedSettingsTags.ini with %d new tags"), NewTagsToAdd.Num());
 		}
 		else
 		{
-			UE_LOG(LogTemp, Error, TEXT("Failed to write ExtendedSettingsTags.ini"));
+			UE_LOG(LogExtendedFramework, Error, TEXT("Failed to write ExtendedSettingsTags.ini"));
 		}
 	}
 	else
 	{
-		UE_LOG(LogTemp, Log, TEXT("All Extended Settings tags are already present in ExtendedSettingsTags.ini"));
+		UE_LOG(LogExtendedFramework, Log, TEXT("All Extended Settings tags are already present in ExtendedSettingsTags.ini"));
 	}
 }
 

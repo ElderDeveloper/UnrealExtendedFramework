@@ -7,81 +7,103 @@
 
 void UEFGlobalSubsystem::SetGlobalActor(FGameplayTag Tag, AActor* Actor)
 {
-	EFGlobalActors.Emplace(Tag,Actor);
+	EFGlobalActors.Emplace(Tag, Actor);
 }
 
-
-
-
-AActor* UEFGlobalSubsystem::GetGlobalActor(FGameplayTag Tag , bool& Valid)
+AActor* UEFGlobalSubsystem::GetGlobalActor(FGameplayTag Tag, bool& Valid)
 {
-	if (EFGlobalActors.Contains(Tag))
+	if (AActor** Found = EFGlobalActors.Find(Tag))
 	{
-		Valid = IsValid(EFGlobalActors[Tag]);
-		return EFGlobalActors[Tag];
+		Valid = IsValid(*Found);
+		return *Found;
 	}
-	EFGlobalActors.Add(Tag,nullptr);
+	// BUG FIX: Previously auto-inserted a nullptr entry for missing tags (map pollution).
+	// Now returns nullptr without modifying the map.
 	Valid = false;
 	return nullptr;
 }
 
+bool UEFGlobalSubsystem::RemoveGlobalActor(FGameplayTag Tag)
+{
+	return EFGlobalActors.Remove(Tag) > 0;
+}
 
+bool UEFGlobalSubsystem::ContainsGlobalActor(FGameplayTag Tag) const
+{
+	return EFGlobalActors.Contains(Tag);
+}
+
+void UEFGlobalSubsystem::ClearAllGlobalActors()
+{
+	EFGlobalActors.Empty();
+}
 
 void UEFGlobalSubsystem::SetGlobalObject(FGameplayTag Tag, UObject* Object)
 {
-	EFGlobalObjects.Add(Tag,Object);
+	EFGlobalObjects.Emplace(Tag, Object);
 }
 
-
-
-
-UObject* UEFGlobalSubsystem::GetGlobalObject(FGameplayTag Tag , bool& Valid)
+UObject* UEFGlobalSubsystem::GetGlobalObject(FGameplayTag Tag, bool& Valid)
 {
-	if (EFGlobalObjects.Contains(Tag))
+	if (UObject** Found = EFGlobalObjects.Find(Tag))
 	{
-		Valid = IsValid(EFGlobalObjects[Tag]);
-		return EFGlobalObjects[Tag];
+		Valid = IsValid(*Found);
+		return *Found;
 	}
-	EFGlobalObjects.Add(Tag,nullptr);
+	// BUG FIX: Same map pollution fix as GetGlobalActor.
 	Valid = false;
 	return nullptr;
 }
 
+bool UEFGlobalSubsystem::RemoveGlobalObject(FGameplayTag Tag)
+{
+	return EFGlobalObjects.Remove(Tag) > 0;
+}
 
+bool UEFGlobalSubsystem::ContainsGlobalObject(FGameplayTag Tag) const
+{
+	return EFGlobalObjects.Contains(Tag);
+}
 
+void UEFGlobalSubsystem::ClearAllGlobalObjects()
+{
+	EFGlobalObjects.Empty();
+}
 
-void UEFGlobalSubsystem::GetAllGlobalActors(bool Print ,TArray<FGameplayTag>& Tags, TArray<AActor*>& Actors)
+void UEFGlobalSubsystem::GetAllGlobalActors(bool Print, TArray<FGameplayTag>& Tags, TArray<AActor*>& Actors)
 {
 	if (EFGlobalActors.Num() == 0)
 	{
-		UE_LOG(LogTemp,Warning,TEXT("Global Actor Array Empty"));
+		UE_LOG(LogTemp, Warning, TEXT("Global Actor Array Empty"));
 		return;
 	}
 	
-	for (const auto i : EFGlobalActors)
+	// BUG FIX: Use const reference to avoid copying each TMap entry
+	for (const auto& i : EFGlobalActors)
 	{
 		Tags.Add(i.Key);
 		Actors.Add(i.Value);
 		
 		if (Print)
 		{
-			FString S = IsValid(i.Value)? i.Value->GetName() : "";
-			PRINT_STRING(1 , Green , i.Key.ToString() + " : " + S );
+			FString S = IsValid(i.Value) ? i.Value->GetName() : "";
+			PRINT_STRING(1, Green, i.Key.ToString() + " : " + S);
 		}
 	}
 }
 
-void UEFGlobalSubsystem::GetAllGlobalObjects(bool Print ,TArray<FGameplayTag>& Tags, TArray<UObject*>& Objects)
+void UEFGlobalSubsystem::GetAllGlobalObjects(bool Print, TArray<FGameplayTag>& Tags, TArray<UObject*>& Objects)
 {
-	for (const auto i : EFGlobalObjects)
+	// BUG FIX: Use const reference to avoid copying each TMap entry
+	for (const auto& i : EFGlobalObjects)
 	{
 		Tags.Add(i.Key);
 		Objects.Add(i.Value);
 		
 		if (Print)
 		{
-			FString S = IsValid(i.Value)? i.Value->GetName() : "";
-			PRINT_STRING(1 , Green , i.Key.ToString() + " : " + S );
+			FString S = IsValid(i.Value) ? i.Value->GetName() : "";
+			PRINT_STRING(1, Green, i.Key.ToString() + " : " + S);
 		}
 	}
 }

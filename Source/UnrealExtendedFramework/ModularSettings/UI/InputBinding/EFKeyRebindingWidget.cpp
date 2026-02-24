@@ -1,16 +1,16 @@
-// KeyRebindingWidget.cpp
-// Implementation of the KeyRebindingWidget class
+// EFKeyRebindingWidget.cpp
+// Implementation of the EFKeyRebindingWidget class
 
-#include "KeyRebindingWidget.h"
-#include "UnrealExtendedFramework/Settings/Input/InputBindingSubsystem.h"
+#include "EFKeyRebindingWidget.h"
+#include "UnrealExtendedFramework/ModularSettings/Settings/InputBinding/EFInputBindingSubsystem.h"
 
 
-void UKeyRebindingWidget::NativeConstruct()
+void UEFKeyRebindingWidget::NativeConstruct()
 {
     Super::NativeConstruct();
     
     // Get the input binding subsystem
-    InputBindingSubsystem = GetGameInstance()->GetSubsystem<UInputBindingSubsystem>();
+    InputBindingSubsystem = GetGameInstance()->GetSubsystem<UEFInputBindingSubsystem>();
     
     // Initialize default values
     bIsListeningForInput = false;
@@ -19,7 +19,7 @@ void UKeyRebindingWidget::NativeConstruct()
     NewKey = FKey();
 }
 
-void UKeyRebindingWidget::InitializeForRebinding(UInputAction* ActionToRebind, int32 MappingGroup)
+void UEFKeyRebindingWidget::InitializeForRebinding(UInputAction* ActionToRebind, int32 MappingGroup)
 {
     TargetInputAction = ActionToRebind;
     CurrentMappingGroup = MappingGroup;
@@ -31,7 +31,7 @@ void UKeyRebindingWidget::InitializeForRebinding(UInputAction* ActionToRebind, i
     bIsListeningForInput = false;
 }
 
-void UKeyRebindingWidget::StartRebinding()
+void UEFKeyRebindingWidget::StartRebinding()
 {
     if (TargetInputAction)
     {
@@ -40,7 +40,7 @@ void UKeyRebindingWidget::StartRebinding()
     }
 }
 
-void UKeyRebindingWidget::CancelRebinding()
+void UEFKeyRebindingWidget::CancelRebinding()
 {
     // Stop listening for input
     bIsListeningForInput = false;
@@ -52,15 +52,15 @@ void UKeyRebindingWidget::CancelRebinding()
     OnRebindingComplete.Broadcast(TargetInputAction, NewKey, false);
 }
 
-void UKeyRebindingWidget::ConfirmRebinding()
+void UEFKeyRebindingWidget::ConfirmRebinding()
 {
     if (TargetInputAction && NewKey.IsValid() && InputBindingSubsystem)
     {
         // Set the new key binding
-        //bool bSuccess = InputBindingSubsystem->SetKeyBinding(TargetInputAction, NewKey, CurrentMappingGroup);
+        bool bSuccess = InputBindingSubsystem->SetKeyBinding(TargetInputAction, NewKey, CurrentMappingGroup);
         
         // Notify that rebinding is complete
-       // OnRebindingComplete.Broadcast(TargetInputAction, NewKey, bSuccess);
+        OnRebindingComplete.Broadcast(TargetInputAction, NewKey, bSuccess);
     }
     else
     {
@@ -72,7 +72,7 @@ void UKeyRebindingWidget::ConfirmRebinding()
     bIsListeningForInput = false;
 }
 
-FText UKeyRebindingWidget::GetCurrentKeyBindingText() const
+FText UEFKeyRebindingWidget::GetCurrentKeyBindingText() const
 {
     if (TargetInputAction && InputBindingSubsystem)
     {
@@ -86,7 +86,7 @@ FText UKeyRebindingWidget::GetCurrentKeyBindingText() const
     return FText::FromString(TEXT("Not Bound"));
 }
 
-FText UKeyRebindingWidget::GetActionNameText() const
+FText UEFKeyRebindingWidget::GetActionNameText() const
 {
     if (TargetInputAction)
     {
@@ -96,7 +96,7 @@ FText UKeyRebindingWidget::GetActionNameText() const
     return FText::GetEmpty();
 }
 
-FReply UKeyRebindingWidget::NativeOnKeyDown(const FGeometry& InGeometry, const FKeyEvent& InKeyEvent)
+FReply UEFKeyRebindingWidget::NativeOnKeyDown(const FGeometry& InGeometry, const FKeyEvent& InKeyEvent)
 {
     if (bIsListeningForInput)
     {
@@ -113,7 +113,7 @@ FReply UKeyRebindingWidget::NativeOnKeyDown(const FGeometry& InGeometry, const F
     return Super::NativeOnKeyDown(InGeometry, InKeyEvent);
 }
 
-FReply UKeyRebindingWidget::NativeOnMouseButtonDown(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
+FReply UEFKeyRebindingWidget::NativeOnMouseButtonDown(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
 {
     if (bIsListeningForInput)
     {
@@ -130,7 +130,7 @@ FReply UKeyRebindingWidget::NativeOnMouseButtonDown(const FGeometry& InGeometry,
     return Super::NativeOnMouseButtonDown(InGeometry, InMouseEvent);
 }
 
-void UKeyRebindingWidget::HandleKeySelected(const FKey& SelectedKey)
+void UEFKeyRebindingWidget::HandleKeySelected(const FKey& SelectedKey)
 {
     if (SelectedKey.IsValid() && TargetInputAction && InputBindingSubsystem)
     {
@@ -141,7 +141,6 @@ void UKeyRebindingWidget::HandleKeySelected(const FKey& SelectedKey)
         UInputAction* BoundAction = nullptr;
         int32 BoundMappingGroup = 0;
 
-        /*
         if (InputBindingSubsystem->IsKeyAlreadyBound(NewKey, BoundAction, BoundMappingGroup) && 
             BoundAction != TargetInputAction)
         {
@@ -152,7 +151,7 @@ void UKeyRebindingWidget::HandleKeySelected(const FKey& SelectedKey)
         {
             // No conflict, confirm the rebinding
             ConfirmRebinding();
-        }*/
+        }
         
         // Stop listening for input
         bIsListeningForInput = false;

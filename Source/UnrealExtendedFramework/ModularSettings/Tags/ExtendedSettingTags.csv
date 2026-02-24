@@ -11,7 +11,7 @@ Settings.Display.DisplayMode,Settings.Display.DisplayMode,Settings.Display.Displ
 Settings.Display.DisplayMonitor,Settings.Display.DisplayMonitor,Settings.Display.DisplayMonitor
 Settings.Display.FrameRateLimit,Settings.Display.FrameRateLimit,Settings.Display.FrameRateLimit
 Settings.Display.AntiAliasingType,Settings.Display.AntiAliasingType,Settings.Display.AntiAliasingType
-Settings.Display.MotionBlurAmount,Settings.Display.MotionBlurAmount,Settings.Display.MotionBlurAmount
+Settings.Graphics.MotionBlurAmount,Settings.Graphics.MotionBlurAmount,Settings.Graphics.MotionBlurAmount
 Settings.Display.Language,Settings.Display.Language,Settings.Display.Language
 Settings.Controls.MouseSensitivity,Settings.Controls.MouseSensitivity,Settings.Controls.MouseSensitivity
 Settings.Controls.ReverseMouseY,Settings.Controls.ReverseMouseY,Settings.Controls.ReverseMouseY
@@ -45,3 +45,7 @@ Settings.Audio.MusicVolume,Settings.Audio.MusicVolume,Settings.Audio.MusicVolume
 Settings.Audio.SFXVolume,Settings.Audio.SFXVolume,Settings.Audio.SFXVolume
 Settings.Audio.VoiceVolume,Settings.Audio.VoiceVolume,Settings.Audio.VoiceVolume
 Settings.Audio.AmbientVolume,Settings.Audio.AmbientVolume,Settings.Audio.AmbientVolume
+Settings.Accessibility.SubtitlesEnabled,Settings.Accessibility.SubtitlesEnabled,Settings.Accessibility.SubtitlesEnabled
+Settings.Accessibility.SubtitleTextSize,Settings.Accessibility.SubtitleTextSize,Settings.Accessibility.SubtitleTextSize
+Settings.Accessibility.SubtitleBgOpacity,Settings.Accessibility.SubtitleBgOpacity,Settings.Accessibility.SubtitleBgOpacity
+Settings.Accessibility.SubtitleSpeakerLabels,Settings.Accessibility.SubtitleSpeakerLabels,Settings.Accessibility.SubtitleSpeakerLabels

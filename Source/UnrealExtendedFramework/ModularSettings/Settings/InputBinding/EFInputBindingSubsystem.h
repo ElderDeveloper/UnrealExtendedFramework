@@ -1,4 +1,4 @@
-// InputBindingSubsystem.h
+// EFInputBindingSubsystem.h
 // A subsystem that manages key bindings for Enhanced Input actions
 
 #pragma once
@@ -9,14 +9,14 @@
 #include "InputMappingContext.h"
 #include "EnhancedInput/Public/UserSettings/EnhancedInputUserSettings.h"
 #include "EnhancedInputSubsystems.h"
-#include "InputBindingSubsystem.generated.h"
+#include "EFInputBindingSubsystem.generated.h"
 
 /**
  * Subsystem that manages key bindings for Enhanced Input actions
  * Provides functions to get, set, save, and load key bindings
  */
 UCLASS()
-class UInputBindingSubsystem : public UGameInstanceSubsystem
+class UNREALEXTENDEDFRAMEWORK_API UEFInputBindingSubsystem : public UGameInstanceSubsystem
 {
     GENERATED_BODY()
 
@@ -35,9 +35,24 @@ public:
     UFUNCTION(BlueprintCallable, Category = "Input")
     FKey GetCurrentKeyBinding(UInputAction* InputAction) const;
 
+    // Set a new key binding for an input action
+    // MappingContext is optional — if nullptr, the system will search all active contexts
+    UFUNCTION(BlueprintCallable, Category = "Input")
+    bool SetKeyBinding(UInputAction* InputAction, FKey NewKey, int32 MappingGroup = 0, UInputMappingContext* MappingContext = nullptr);
+
+    // Check if a key is already bound to another action
+    // Returns true if bound, and fills OutBoundAction / OutMappingGroup
+    UFUNCTION(BlueprintCallable, Category = "Input")
+    bool IsKeyAlreadyBound(FKey Key, UInputAction*& OutBoundAction, int32& OutMappingGroup) const;
+
+    // Swap key bindings between two actions
+    UFUNCTION(BlueprintCallable, Category = "Input")
+    bool SwapKeyBindings(UInputAction* ActionA, UInputAction* ActionB);
+
 private:
     // Get the Enhanced Input subsystem for the local player
     UEnhancedInputLocalPlayerSubsystem* GetEnhancedInputSubsystem() const;
-    
 
+    // Helper: get user settings from the Enhanced Input subsystem
+    UEnhancedInputUserSettings* GetUserSettings() const;
 };

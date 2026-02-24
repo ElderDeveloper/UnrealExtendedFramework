@@ -6,6 +6,8 @@
 #include "Modules/ModuleManager.h"
 #include "Interfaces/IPluginManager.h"
 
+/** Plugin-wide log category for UnrealExtendedFramework. */
+UNREALEXTENDEDFRAMEWORK_API DECLARE_LOG_CATEGORY_EXTERN(LogExtendedFramework, Log, All);
 
 #define SET_TIMER_MACRO(Handle,Object,Function,Time,Loop) if(GetWorld()) GetWorld()->GetTimerManager().SetTimer(Handle,Object,Function,Time,Loop)
 

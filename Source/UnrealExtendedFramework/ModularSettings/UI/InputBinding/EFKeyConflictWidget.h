@@ -1,4 +1,4 @@
-// KeyConflictWidget.h
+// EFKeyConflictWidget.h
 // A widget that handles key binding conflicts
 
 #pragma once
@@ -6,7 +6,7 @@
 #include "CoreMinimal.h"
 #include "Blueprint/UserWidget.h"
 #include "InputAction.h"
-#include "KeyConflictWidget.generated.h"
+#include "EFKeyConflictWidget.generated.h"
 
 // Delegate for when a conflict is resolved
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnConflictResolved, bool, bSuccessful);
@@ -16,7 +16,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnConflictResolved, bool, bSuccessf
  * Allows the user to swap bindings, override, or cancel
  */
 UCLASS()
-class UKeyConflictWidget : public UUserWidget
+class UNREALEXTENDEDFRAMEWORK_API UEFKeyConflictWidget : public UUserWidget
 {
     GENERATED_BODY()
 
@@ -70,5 +70,5 @@ private:
     
     // Reference to the input binding subsystem
     UPROPERTY()
-    class UInputBindingSubsystem* InputBindingSubsystem;
+    class UEFInputBindingSubsystem* InputBindingSubsystem;
 };

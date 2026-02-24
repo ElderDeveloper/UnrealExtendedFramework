@@ -91,6 +91,12 @@ public:
 
 class UDataTable;
 
+/**
+ * Comprehensive Blueprint function library for file I/O operations including
+ * text/byte/CSV/JSON/XML reading and writing, Base64 encoding/decoding,
+ * filesystem operations, DataTable import/export, config INI access,
+ * project/engine path queries, and screenshot capture.
+ */
 UCLASS()
 class UNREALEXTENDEDFRAMEWORK_API UEFFileLibrary : public UBlueprintFunctionLibrary
 {
@@ -318,6 +324,19 @@ public:
 	UFUNCTION(BlueprintPure, meta = (DisplayName = "PathParts", Keywords = "File plugin path parts", ToolTip = "Gets the parts of a path"), Category = "FileSystem")
 	static void GetPathParts(FString Path, FString& PathPart, FString& BasePart, FString& ExtensionPart, FString& FileName);
 
+	/** Returns just the file extension (without the dot) from a file path. */
+	UFUNCTION(BlueprintPure, meta = (DisplayName = "GetFileExtension", CompactNodeTitle = "Extension", Keywords = "File plugin extension type", ToolTip = "Gets the file extension from a path"), Category = "FileSystem")
+	static FString GetFileExtension(FString Path);
+
+	/**
+	 * Returns the last modification time of a file.
+	 * @param FilePath The absolute path to the file
+	 * @param Success Set to true if the file exists and the time was retrieved
+	 * @return The last modification time as FDateTime
+	 */
+	UFUNCTION(BlueprintCallable, meta = (DisplayName = "GetFileModificationTime", CompactNodeTitle = "ModTime", Keywords = "File plugin modification time date", ToolTip = "Gets the last modification time of a file"), Category = "FileSystem")
+	static FDateTime GetFileModificationTime(FString FilePath, bool& Success);
+
 	
 	/* Screenshot */
 	UFUNCTION(BlueprintCallable, meta = (DisplayName = "TakeScreenshot", CompactNodeTitle = "Screenshot", Keywords = "File plugin screenshot save image", ToolTip = "Take a screenshot and save"), Category = "Screenshot")
@@ -344,8 +363,7 @@ public:
 	UFUNCTION(BlueprintCallable, meta = (DisplayName = "JSONToDataTable", Keywords = "File plugin datatable json convert import", ToolTip = "Converts a json string to datatable"), Category = "Datatable")
 	static UDataTable* JSONToDataTable(FString JSON, UScriptStruct* Struct, bool& Success);
 
-	
-	// static bool SaveDatatableToCSV(UDataTable* Table, FString Path, TArray<FString> Rows, TArray<FString> Columns, int32& Count, bool Force = false);
+
 	/* Config file ini */
 	UFUNCTION(BlueprintCallable, Category = "Config", CustomThunk, meta = (CustomStructureParam = "OutValue"))
 	static void ReadConfig(FString FilePath, FString Section, FString Key, bool& Success, bool SingleLineArrayRead, UStruct*& OutValue);

@@ -16,11 +16,8 @@ UWorld *UEFModularSettingsBase::GetWorld() const
   {
     return ModularSettingsSubsystem->GetWorld();
   }
-  if (GetOuter()) 
-  {
-    return GetOuter()->GetWorld();
-  }
-  return nullptr;
+
+  return GEngine->GetCurrentPlayWorld();
 }
 
 void UEFModularSettingsBase::NotifyValueChanged() 

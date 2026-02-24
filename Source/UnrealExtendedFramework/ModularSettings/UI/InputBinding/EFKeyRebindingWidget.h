@@ -1,4 +1,4 @@
-// KeyRebindingWidget.h
+// EFKeyRebindingWidget.h
 // A widget that allows players to rebind keys for input actions
 
 #pragma once
@@ -6,7 +6,7 @@
 #include "CoreMinimal.h"
 #include "Blueprint/UserWidget.h"
 #include "InputAction.h"
-#include "KeyRebindingWidget.generated.h"
+#include "EFKeyRebindingWidget.generated.h"
 
 // Delegate for when rebinding is complete
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOnRebindingComplete, UInputAction*, InputAction, FKey, NewKey, bool, bSuccessful);
@@ -19,7 +19,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOnKeyConflictDetected, UInputAct
  * Captures key presses and assigns them to the specified input action
  */
 UCLASS()
-class UKeyRebindingWidget : public UUserWidget
+class UNREALEXTENDEDFRAMEWORK_API UEFKeyRebindingWidget : public UUserWidget
 {
     GENERATED_BODY()
 
@@ -82,7 +82,7 @@ private:
     
     // Reference to the input binding subsystem
     UPROPERTY()
-    class UInputBindingSubsystem* InputBindingSubsystem;
+    class UEFInputBindingSubsystem* InputBindingSubsystem;
     
     // Handle a new key selection
     void HandleKeySelected(const FKey& SelectedKey);

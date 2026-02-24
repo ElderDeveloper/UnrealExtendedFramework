@@ -8,6 +8,8 @@
 #include "UnrealExtendedFramework/Data/EFMacro.h"
 
 
+// ================================ GET LOCATION ================================
+
 float UEFActorLibrary::GetActorLocationX(AActor* Actor)
 {
 	if (Actor) return Actor->GetActorLocation().X;
@@ -25,6 +27,9 @@ float UEFActorLibrary::GetActorLocationZ(AActor* Actor)
 	if (Actor) return Actor->GetActorLocation().Z;
 	return 0;
 }
+
+
+// ================================ GET ROTATION ================================
 
 float UEFActorLibrary::GetActorRotationYaw(AActor* Actor)
 {
@@ -45,6 +50,28 @@ float UEFActorLibrary::GetActorRotationRoll(AActor* Actor)
 }
 
 
+// ================================ DIRECTION VECTORS ================================
+
+FVector UEFActorLibrary::GetActorForwardVector(AActor* Actor)
+{
+	if (Actor) return Actor->GetActorForwardVector();
+	return FVector::ZeroVector;
+}
+
+FVector UEFActorLibrary::GetActorRightVector(AActor* Actor)
+{
+	if (Actor) return Actor->GetActorRightVector();
+	return FVector::ZeroVector;
+}
+
+FVector UEFActorLibrary::GetActorUpVector(AActor* Actor)
+{
+	if (Actor) return Actor->GetActorUpVector();
+	return FVector::ZeroVector;
+}
+
+
+// ================================ SET ROTATION ================================
 
 void UEFActorLibrary::RotateToObjectYaw(AActor* From, AActor* To)
 {
@@ -56,9 +83,6 @@ void UEFActorLibrary::RotateToObjectYaw(AActor* From, AActor* To)
 	}
 }
 
-
-
-
 void UEFActorLibrary::RotateToObject(AActor* From, AActor* To)
 {
 	if (From && To)
@@ -67,77 +91,84 @@ void UEFActorLibrary::RotateToObject(AActor* From, AActor* To)
 	}
 }
 
-
-
-
-void UEFActorLibrary::RotateToObjectInterpYaw(const UObject* WorldContextObject, AActor* From, AActor* To,float InterpSpeed , bool UseFindLookAtRotation)
+void UEFActorLibrary::RotateToObjectInterpYaw(const UObject* WorldContextObject, AActor* From, AActor* To, float InterpSpeed, bool UseFindLookAtRotation)
 {
-	if (From && To)
+	if (!From || !To || !WorldContextObject || !WorldContextObject->GetWorld())
 	{
-		if (UseFindLookAtRotation)
-		{
-			FRotator Rot = From->GetActorRotation();
-			Rot.Yaw = UKismetMathLibrary::FInterpTo(
-				Rot.Yaw,
-				UKismetMathLibrary::FindLookAtRotation(From->GetActorLocation(),To->GetActorLocation()).Yaw,
-				WorldContextObject->GetWorld()->GetDeltaSeconds(),
-				InterpSpeed);
-		 
-			From->SetActorRotation(Rot);
-		}
-		else
-		{
-			float current = From->GetActorRotation().Yaw;
-			const FRotator LookAtRotation = UKismetMathLibrary::FindLookAtRotation(From->GetActorLocation(),To->GetActorLocation());
-			const int Difference = LookAtRotation.Yaw - current;
-			const float shortest_angle=(((Difference % 360) + 540) % 360) - 180;
-			const float deltaMove = shortest_angle * FMath::Clamp(WorldContextObject->GetWorld()->GetDeltaSeconds() * InterpSpeed, 0.0f, 1.0f);
-			From->SetActorRotation(FRotator(0,current += deltaMove,0));
-		}
+		return;
+	}
+
+	const float DeltaSeconds = WorldContextObject->GetWorld()->GetDeltaSeconds();
+	const FRotator LookAtRotation = UKismetMathLibrary::FindLookAtRotation(From->GetActorLocation(), To->GetActorLocation());
+
+	if (UseFindLookAtRotation)
+	{
+		// BUG FIX: Previously used FInterpTo on raw yaw which doesn't handle angular
+		// wraparound (e.g. 350->10 would go the 340-degree long way around).
+		// Now uses NormalizeAxis to always interpolate via the shortest angular path.
+		FRotator Rot = From->GetActorRotation();
+		const float ShortestAngle = FRotator::NormalizeAxis(LookAtRotation.Yaw - Rot.Yaw);
+		Rot.Yaw = FRotator::NormalizeAxis(Rot.Yaw + ShortestAngle * FMath::Clamp(DeltaSeconds * InterpSpeed, 0.0f, 1.0f));
+		From->SetActorRotation(Rot);
+	}
+	else
+	{
+		const FRotator CurrentRotation = From->GetActorRotation();
+		const float ShortestAngle = FRotator::NormalizeAxis(LookAtRotation.Yaw - CurrentRotation.Yaw);
+		const float DeltaMove = ShortestAngle * FMath::Clamp(DeltaSeconds * InterpSpeed, 0.0f, 1.0f);
+		From->SetActorRotation(FRotator(0, CurrentRotation.Yaw + DeltaMove, 0));
 	}
 }
 
-void UEFActorLibrary::RotateToLocationInterpYaw(const UObject* WorldContextObject, AActor* From, const FVector& To,float InterpSpeed, bool UseFindLookAtRotation)
+void UEFActorLibrary::RotateToLocationInterpYaw(const UObject* WorldContextObject, AActor* From, const FVector& To, float InterpSpeed, bool UseFindLookAtRotation)
 {
-	if (From)
+	if (!From || !WorldContextObject || !WorldContextObject->GetWorld())
 	{
-		if (UseFindLookAtRotation)
-		{
-			FRotator Rot = From->GetActorRotation();
-			Rot.Yaw = UKismetMathLibrary::FInterpTo(
-				Rot.Yaw,
-				UKismetMathLibrary::FindLookAtRotation(From->GetActorLocation(),To).Yaw,
-				WorldContextObject->GetWorld()->GetDeltaSeconds(),
-				InterpSpeed);
-		 
-			From->SetActorRotation(Rot);
-		}
-		else
-		{
-			float current = From->GetActorRotation().Yaw;
-			const FRotator LookAtRotation = UKismetMathLibrary::FindLookAtRotation(From->GetActorLocation(), To);
-			const int Difference = LookAtRotation.Yaw - current;
-			const float shortest_angle = (((Difference % 360) + 540) % 360) - 180;
-			const float deltaMove = shortest_angle * FMath::Clamp(WorldContextObject->GetWorld()->GetDeltaSeconds() * InterpSpeed, 0.0f, 1.0f);
-			From->SetActorRotation(FRotator(0, current += deltaMove, 0));
-		}
+		return;
+	}
+
+	const float DeltaSeconds = WorldContextObject->GetWorld()->GetDeltaSeconds();
+	const FRotator LookAtRotation = UKismetMathLibrary::FindLookAtRotation(From->GetActorLocation(), To);
+
+	if (UseFindLookAtRotation)
+	{
+		// BUG FIX: Same wraparound fix as RotateToObjectInterpYaw.
+		FRotator Rot = From->GetActorRotation();
+		const float ShortestAngle = FRotator::NormalizeAxis(LookAtRotation.Yaw - Rot.Yaw);
+		Rot.Yaw = FRotator::NormalizeAxis(Rot.Yaw + ShortestAngle * FMath::Clamp(DeltaSeconds * InterpSpeed, 0.0f, 1.0f));
+		From->SetActorRotation(Rot);
+	}
+	else
+	{
+		const FRotator CurrentRotation = From->GetActorRotation();
+		const float ShortestAngle = FRotator::NormalizeAxis(LookAtRotation.Yaw - CurrentRotation.Yaw);
+		const float DeltaMove = ShortestAngle * FMath::Clamp(DeltaSeconds * InterpSpeed, 0.0f, 1.0f);
+		From->SetActorRotation(FRotator(0, CurrentRotation.Yaw + DeltaMove, 0));
 	}
 }
 
 
-void UEFActorLibrary::RotateToObjectInterp(const UObject* WorldContextObject, AActor* From, AActor* To,float InterpSpeed)
+void UEFActorLibrary::RotateToObjectInterp(const UObject* WorldContextObject, AActor* From, AActor* To, float InterpSpeed)
 {
-	if (From && To)
+	if (!From || !To || !WorldContextObject || !WorldContextObject->GetWorld())
 	{
-		From->SetActorRotation(UKismetMathLibrary::RInterpTo(
-			From->GetActorRotation() ,
-			UKismetMathLibrary::FindLookAtRotation(From->GetActorLocation(),To->GetActorLocation())
-			, WorldContextObject->GetWorld()->GetDeltaSeconds() , InterpSpeed));
+		return;
 	}
+
+	From->SetActorRotation(UKismetMathLibrary::RInterpTo(
+		From->GetActorRotation() ,
+		UKismetMathLibrary::FindLookAtRotation(From->GetActorLocation(),To->GetActorLocation())
+		, WorldContextObject->GetWorld()->GetDeltaSeconds() , InterpSpeed));
 }
 
-void UEFActorLibrary::RotateToLocationInterp(const UObject* WorldContextObject, AActor* From, const FVector& To,float InterpSpeed , float MaxDegreePerSecond)
+void UEFActorLibrary::RotateToLocationInterp(const UObject* WorldContextObject, AActor* From, const FVector& To, float InterpSpeed, float MaxDegreePerSecond)
 {
+	// BUG FIX: Added null check on From — all other rotation functions had this, but this one didn't.
+	if (!From || !WorldContextObject || !WorldContextObject->GetWorld())
+	{
+		return;
+	}
+
 	FRotator current = From->GetActorRotation();
 	const FRotator LookAtRotation = UKismetMathLibrary::FindLookAtRotation(From->GetActorLocation(), To);
 	const FRotator DeltaRotation = UKismetMathLibrary::NormalizedDeltaRotator(LookAtRotation, current);
@@ -152,16 +183,20 @@ void UEFActorLibrary::RotateToLocationInterp(const UObject* WorldContextObject, 
 }
 
 
+// ================================ NETWORKING ================================
+
 bool UEFActorLibrary::IsActorLocal(AActor* Actor)
 {
 	if (!Actor) return false;
 	
-	if(const auto& Pawn = Cast<APawn>(Actor)) return Pawn->IsLocallyControlled();
+	if (const APawn* Pawn = Cast<APawn>(Actor)) return Pawn->IsLocallyControlled();
 	
-	if (const auto& Controller = Cast<AController>(Actor)) return Controller->IsLocalController();
+	if (const AController* Controller = Cast<AController>(Actor)) return Controller->IsLocalController();
 	
-	if (const auto& PS = Cast<APlayerState>(Actor))
-		if (const auto& Controller = Cast<AController>(PS->GetOwner())) return Controller->IsLocalController();
+	if (const APlayerState* PS = Cast<APlayerState>(Actor))
+	{
+		if (const AController* Controller = Cast<AController>(PS->GetOwner())) return Controller->IsLocalController();
+	}
 
 	return false;
 }
@@ -171,12 +206,18 @@ void UEFActorLibrary::SwitchIsLocallyControlled(AActor* Actor, TEnumAsByte<EFCon
 	IsActorLocal(Actor) ? OutPins = UEF_True :  OutPins = UEF_False;
 }
 
+
+// ================================ CLASS ================================
+
 bool UEFActorLibrary::IsClassEqualOrChildOfOtherClass(TSubclassOf<AActor> TestClass, TSubclassOf<AActor> ParentClass)
 {
 	return TestClass == ParentClass || UKismetMathLibrary::ClassIsChildOf(TestClass,ParentClass);
 }
 
-void UEFActorLibrary::GetActorControlRotationDirection(APawn* Pawn, FVector& Forward, FVector& Right , bool YawOnly)
+
+// ================================ CONTROL ROTATION ================================
+
+void UEFActorLibrary::GetActorControlRotationDirection(APawn* Pawn, FVector& Forward, FVector& Right, bool YawOnly)
 {
 	Forward = FVector::ZeroVector;
 	Right = FVector::ZeroVector;
@@ -197,6 +238,9 @@ FRotator UEFActorLibrary::GetActorControlRotationYaw(APawn* Pawn)
 	return Return;
 }
 
+
+// ================================ COORDINATE SPACE ================================
+
 FVector UEFActorLibrary::WorldToLocal(const AActor* Actor, const FVector& WorldLocation)
 {
 	if (Actor)
@@ -208,9 +252,30 @@ FVector UEFActorLibrary::WorldToLocal(const AActor* Actor, const FVector& WorldL
 
 FVector UEFActorLibrary::LocalToWorld(const AActor* Actor, const FVector& LocalLocation)
 {
-	if ( Actor)
+	if (Actor)
 	{
 		return UKismetMathLibrary::TransformLocation(Actor->GetActorTransform(), LocalLocation);
 	}
 	return FVector::ZeroVector;
+}
+
+
+// ================================ DISTANCE ================================
+
+float UEFActorLibrary::DistanceBetweenActors(const AActor* ActorA, const AActor* ActorB)
+{
+	if (!ActorA || !ActorB)
+	{
+		return -1.0f;
+	}
+	return FVector::Dist(ActorA->GetActorLocation(), ActorB->GetActorLocation());
+}
+
+float UEFActorLibrary::DistanceBetweenActors2D(const AActor* ActorA, const AActor* ActorB)
+{
+	if (!ActorA || !ActorB)
+	{
+		return -1.0f;
+	}
+	return FVector::Dist2D(ActorA->GetActorLocation(), ActorB->GetActorLocation());
 }

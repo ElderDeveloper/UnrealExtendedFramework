@@ -8,9 +8,8 @@
 #include "EFTraceData.generated.h"
 
 
-
-
-UENUM(BlueprintType,Blueprintable)
+/** Specifies whether the trace uses a collision channel, profile name, or object type filter. */
+UENUM(BlueprintType, Blueprintable)
 enum ETraceTypes
 {
 	TraceType		UMETA(DisplayName = "Channel"),
@@ -18,7 +17,8 @@ enum ETraceTypes
 	ObjectsType		UMETA(DisplayName = "Object"),
 };
 
-UENUM(BlueprintType,Blueprintable)
+/** Specifies the geometric shape used for the trace sweep. */
+UENUM(BlueprintType, Blueprintable)
 enum ETraceShapes
 {
 	Line	UMETA(DisplayName = "Line Trace"),
@@ -28,110 +28,38 @@ enum ETraceShapes
 };
 
 
-
-
-
+/**
+ * Shared helper functions for accessing FHitResult data from trace structs.
+ * All trace structs inherit from this to avoid duplicating ~12 accessor functions.
+ */
 USTRUCT(BlueprintType)
-struct FLineTraceStruct
+struct FTraceHitHelpers
 {
 	GENERATED_BODY()
 
 public:
-	UPROPERTY(EditAnywhere,BlueprintReadWrite)
-	TEnumAsByte<ETraceTypes> TraceType = ETraceTypes::TraceType;
-	
 	UPROPERTY(BlueprintReadWrite)
 	FHitResult HitResult;
 
 	UPROPERTY(BlueprintReadWrite)
 	TArray<FHitResult> HitResults;
 
-	UPROPERTY(EditAnywhere,BlueprintReadWrite)
-	FVector Start = FVector::ZeroVector;
-
-	UPROPERTY(EditAnywhere,BlueprintReadWrite)
-	FVector End = FVector::ZeroVector ;
-
-	UPROPERTY(EditAnywhere,BlueprintReadWrite , meta = (EditCondition = "TraceType==ETraceTypes::TraceType"))
-	TEnumAsByte<ETraceTypeQuery> TraceChannel = ETraceTypeQuery::TraceTypeQuery1;
-
-	UPROPERTY(EditAnywhere,BlueprintReadWrite , meta = (EditCondition = "TraceType==ETraceTypes::ProfileType"))
-	FName TraceProfileName = FName();
-
-	UPROPERTY(EditAnywhere,BlueprintReadWrite, meta = (EditCondition = "TraceType==ETraceTypes::ObjectsType"))
-	TArray<TEnumAsByte<EObjectTypeQuery>> TraceObjectTypes;
-
-	UPROPERTY(EditAnywhere,BlueprintReadWrite)
-	bool bTraceComplex = false;
-
-	UPROPERTY(BlueprintReadWrite)
-	TArray<AActor*> ActorsToIgnore;
-
-	UPROPERTY(EditAnywhere,BlueprintReadWrite)
-	TEnumAsByte<EDrawDebugTrace::Type> DrawDebugType = EDrawDebugTrace::Type::None;
-
-	UPROPERTY(EditAnywhere,BlueprintReadWrite)
-	bool bIgnoreSelf = true;
-
-	UPROPERTY(EditAnywhere,BlueprintReadWrite)
-	FLinearColor TraceColor = FLinearColor::Red;
-
-	UPROPERTY(EditAnywhere,BlueprintReadWrite)
-	FLinearColor TraceHitColor = FLinearColor::Green;
-
-	UPROPERTY(EditAnywhere,BlueprintReadWrite)
-	float DrawTime = 5.f;
-
-	FLineTraceStruct()
-	{
-		
-	}
-
-	FLineTraceStruct(FVector start , FVector end )
-	{
-		Start =start;
-		End = end;
-	}
-
-
-	/**
-	 * Location in world space of the actual contact of the trace shape (box, sphere, ray, etc) with the impacted object.
-	 * Example: for a sphere trace test, this is the point where the surface of the sphere touches the other object.
-	 * @note: In the case of initial overlap (bStartPenetrating=true), ImpactPoint will be the same as Location because there is no meaningful single impact point to report.
-	 */
+	/** Location in world space of the actual contact point with the impacted object. */
 	FVector GetHitImpactPoint() const { return HitResult.ImpactPoint; }
 
-	/**
-	 * Normal of the hit in world space, for the object that was hit by the sweep, if any.
-	 * For example if a sphere hits a flat plane, this is a normalized vector pointing out from the plane.
-	 * In the case of impact with a corner or edge of a surface, usually the "most opposing" normal (opposed to the query direction) is chosen.
-	 */
+	/** Normal of the hit in world space, for the object that was hit. */
 	FVector GetHitImpactNormal() const { return HitResult.ImpactNormal; }
 
-	/**
-	 * The location in world space where the moving shape would end up against the impacted object, if there is a hit. Equal to the point of impact for line tests.
-	 * Example: for a sphere trace test, this is the point where the center of the sphere would be located when it touched the other object.
-	 * For swept movement (but not queries) this may not equal the final location of the shape since hits are pulled back slightly to prevent precision issues from overlapping another surface.
-	 */
+	/** The location where the moving shape would end up against the impacted object. */
 	FVector GetHitLocation() const { return HitResult.Location; }
 
-	/**
-	 * Normal of the hit in world space, for the object that was swept. Equal to ImpactNormal for line tests.
-	 * This is computed for capsules and spheres, otherwise it will be the same as ImpactNormal.
-	 * Example: for a sphere trace test, this is a normalized vector pointing in towards the center of the sphere at the point of impact.
-	 */
+	/** Normal of the hit for the swept object. Equal to ImpactNormal for line tests. */
 	FVector GetHitNormal() const { return HitResult.Normal; }
 
-	/**
-	 * Start location of the trace.
-	 * For example if a sphere is swept against the world, this is the starting location of the center of the sphere.
-	 */
+	/** Start location of the trace. */
 	FVector GetHitTraceStart() const { return HitResult.TraceStart; }
 
-	/**
-	 * End location of the trace; this is NOT where the impact occurred (if any), but the furthest point in the attempted sweep.
-	 * For example if a sphere is swept against the world, this would be the center of the sphere if there was no blocking hit.
-	 */
+	/** End location of the trace (furthest point in the attempted sweep). */
 	FVector GetHitTraceEnd() const { return HitResult.TraceEnd; }
 
 	/** Actor hit by the trace. */
@@ -140,476 +68,272 @@ public:
 	/** PrimitiveComponent hit by the trace. */
 	UPrimitiveComponent* GetHitComponent() const { return HitResult.Component.Get(); }
 
-	/** The distance from the TraceStart to the Location in world space. This value is 0 if there was an initial overlap (trace started inside another colliding object). */
+	/** Distance from TraceStart to the hit Location. 0 if initial overlap. */
 	float GetHitDistance() const { return HitResult.Distance; }
 
-	/** Indicates if this hit was a result of blocking collision. If false, there was no hit or it was an overlap/touch instead. */
+	/** True if this was a blocking hit. */
 	bool GetHitBlockingHit() const { return HitResult.bBlockingHit; }
 
-	/** Name of bone we hit (for skeletal meshes). */
+	/** Name of the bone hit (for skeletal meshes). */
 	FName GetHitBoneName() const { return HitResult.BoneName; }
 
-	/**
-	 * Physical material that was hit.
-	 * @note Must set bReturnPhysicalMaterial on the swept PrimitiveComponent or in the query params for this to be returned.
-	 */
-	UPhysicalMaterial* GetHitPhysMaterial() const { return HitResult.PhysMaterial.Get();}
-	
-	/** Returns All GetActor() From Hit Result  */
+	/** Physical material that was hit. Requires bReturnPhysicalMaterial. */
+	UPhysicalMaterial* GetHitPhysMaterial() const { return HitResult.PhysMaterial.Get(); }
+
+	/** Populates Array with all actors from the multi-hit results. */
 	void GetAllActorsFromHitArray(TArray<AActor*>& Array) const
 	{
-		for (const auto i : HitResults) Array.Add(i.GetActor());
+		Array.Reserve(Array.Num() + HitResults.Num());
+		for (const auto& Hit : HitResults)
+		{
+			Array.Add(Hit.GetActor());
+		}
 	}
-	
 };
 
 
-
-
-
 USTRUCT(BlueprintType)
-struct FSphereTraceStruct
+struct FLineTraceStruct : public FTraceHitHelpers
 {
 	GENERATED_BODY()
 
 public:
-
-	UPROPERTY(EditAnywhere,BlueprintReadWrite)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
 	TEnumAsByte<ETraceTypes> TraceType = ETraceTypes::TraceType;
-	
-	UPROPERTY(BlueprintReadWrite)
-	FHitResult HitResult;
 
-	UPROPERTY(BlueprintReadWrite)
-	TArray<FHitResult> HitResults;
-
-	UPROPERTY(EditAnywhere,BlueprintReadWrite)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
 	FVector Start = FVector::ZeroVector;
 
-	UPROPERTY(EditAnywhere,BlueprintReadWrite)
-	FVector End = FVector::ZeroVector ;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	FVector End = FVector::ZeroVector;
 
-	UPROPERTY(EditAnywhere,BlueprintReadWrite)
-	float Radius = 20.f;
-
-	UPROPERTY(EditAnywhere,BlueprintReadWrite , meta = (EditCondition = "TraceType==ETraceTypes::TraceType"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, meta = (EditCondition = "TraceType==ETraceTypes::TraceType"))
 	TEnumAsByte<ETraceTypeQuery> TraceChannel = ETraceTypeQuery::TraceTypeQuery1;
 
-	UPROPERTY(EditAnywhere,BlueprintReadWrite , meta = (EditCondition = "TraceType==ETraceTypes::ProfileType"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, meta = (EditCondition = "TraceType==ETraceTypes::ProfileType"))
 	FName TraceProfileName = FName();
 
-	UPROPERTY(EditAnywhere,BlueprintReadWrite, meta = (EditCondition = "TraceType==ETraceTypes::ObjectsType"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, meta = (EditCondition = "TraceType==ETraceTypes::ObjectsType"))
 	TArray<TEnumAsByte<EObjectTypeQuery>> TraceObjectTypes;
 
-	UPROPERTY(EditAnywhere,BlueprintReadWrite)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
 	bool bTraceComplex = false;
 
 	UPROPERTY(BlueprintReadWrite)
 	TArray<AActor*> ActorsToIgnore;
 
-	UPROPERTY(EditAnywhere,BlueprintReadWrite)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
 	TEnumAsByte<EDrawDebugTrace::Type> DrawDebugType = EDrawDebugTrace::Type::None;
 
-	UPROPERTY(EditAnywhere,BlueprintReadWrite)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
 	bool bIgnoreSelf = true;
 
-	UPROPERTY(EditAnywhere,BlueprintReadWrite)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
 	FLinearColor TraceColor = FLinearColor::Red;
 
-	UPROPERTY(EditAnywhere,BlueprintReadWrite)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
 	FLinearColor TraceHitColor = FLinearColor::Green;
 
-	UPROPERTY(EditAnywhere,BlueprintReadWrite)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
 	float DrawTime = 5.f;
-	
-	FSphereTraceStruct()
-	{
-		Start = FVector::ZeroVector;
-		End  = FVector::ZeroVector;
-	}
 
-	FSphereTraceStruct( float radius)
-	{
-		Start = FVector::ZeroVector;
-		End  = FVector::ZeroVector;
-		Radius = radius;
-	}
-	
-	FSphereTraceStruct(FVector start , FVector end , float radius )
-	{
-		Start =start;
-		End = end;
-		Radius = radius;
-	}
+	FLineTraceStruct() {}
 
-
-	/**
-	 * Location in world space of the actual contact of the trace shape (box, sphere, ray, etc) with the impacted object.
-	 * Example: for a sphere trace test, this is the point where the surface of the sphere touches the other object.
-	 * @note: In the case of initial overlap (bStartPenetrating=true), ImpactPoint will be the same as Location because there is no meaningful single impact point to report.
-	 */
-	FVector GetHitImpactPoint() const { return HitResult.ImpactPoint; }
-
-	/**
-	 * Normal of the hit in world space, for the object that was hit by the sweep, if any.
-	 * For example if a sphere hits a flat plane, this is a normalized vector pointing out from the plane.
-	 * In the case of impact with a corner or edge of a surface, usually the "most opposing" normal (opposed to the query direction) is chosen.
-	 */
-	FVector GetHitImpactNormal() const { return HitResult.ImpactNormal; }
-
-	/**
-	 * The location in world space where the moving shape would end up against the impacted object, if there is a hit. Equal to the point of impact for line tests.
-	 * Example: for a sphere trace test, this is the point where the center of the sphere would be located when it touched the other object.
-	 * For swept movement (but not queries) this may not equal the final location of the shape since hits are pulled back slightly to prevent precision issues from overlapping another surface.
-	 */
-	FVector GetHitLocation() const { return HitResult.Location; }
-
-	/**
-	 * Normal of the hit in world space, for the object that was swept. Equal to ImpactNormal for line tests.
-	 * This is computed for capsules and spheres, otherwise it will be the same as ImpactNormal.
-	 * Example: for a sphere trace test, this is a normalized vector pointing in towards the center of the sphere at the point of impact.
-	 */
-	FVector GetHitNormal() const { return HitResult.Normal; }
-
-	/**
-	 * Start location of the trace.
-	 * For example if a sphere is swept against the world, this is the starting location of the center of the sphere.
-	 */
-	FVector GetHitTraceStart() const { return HitResult.TraceStart; }
-
-	/**
-	 * End location of the trace; this is NOT where the impact occurred (if any), but the furthest point in the attempted sweep.
-	 * For example if a sphere is swept against the world, this would be the center of the sphere if there was no blocking hit.
-	 */
-	FVector GetHitTraceEnd() const { return HitResult.TraceEnd; }
-
-	/** Actor hit by the trace. */
-	AActor* GetHitActor() const { return HitResult.GetActor(); }
-
-	/** PrimitiveComponent hit by the trace. */
-	UPrimitiveComponent* GetHitComponent() const { return HitResult.Component.Get(); }
-
-	/** The distance from the TraceStart to the Location in world space. This value is 0 if there was an initial overlap (trace started inside another colliding object). */
-	float GetHitDistance() const { return HitResult.Distance; }
-
-	/** Indicates if this hit was a result of blocking collision. If false, there was no hit or it was an overlap/touch instead. */
-	bool GetHitBlockingHit() const { return HitResult.bBlockingHit; }
-
-	/** Name of bone we hit (for skeletal meshes). */
-	FName GetHitBoneName() const { return HitResult.BoneName; }
-
-	/**
-	 * Physical material that was hit.
-	 * @note Must set bReturnPhysicalMaterial on the swept PrimitiveComponent or in the query params for this to be returned.
-	 */
-	UPhysicalMaterial* GetHitPhysMaterial() const { return HitResult.PhysMaterial.Get();}
-
-	/** Returns All GetActor() From Hit Result  */
-	void GetAllActorsFromHitArray(TArray<AActor*>& Array) const
-	{
-		for (const auto i : HitResults) Array.Add(i.GetActor());
-	}
-	
+	FLineTraceStruct(FVector start, FVector end)
+		: Start(start), End(end)
+	{}
 };
 
 
 
 
-
 USTRUCT(BlueprintType)
-struct FCapsuleTraceStruct
+struct FSphereTraceStruct : public FTraceHitHelpers
 {
 	GENERATED_BODY()
 
 public:
-	UPROPERTY(EditAnywhere,BlueprintReadWrite)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
 	TEnumAsByte<ETraceTypes> TraceType = ETraceTypes::TraceType;
-	
-	UPROPERTY(BlueprintReadWrite)
-	FHitResult HitResult;
 
-	UPROPERTY(BlueprintReadWrite)
-	TArray<FHitResult> HitResults;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	FVector Start = FVector::ZeroVector;
 
-	UPROPERTY(BlueprintReadWrite)
-	FVector Start = FVector::ZeroVector ;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	FVector End = FVector::ZeroVector;
 
-	UPROPERTY(BlueprintReadWrite)
-	FVector End  = FVector::ZeroVector;
-
-	UPROPERTY(EditAnywhere,BlueprintReadWrite)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
 	float Radius = 20.f;
 
-	UPROPERTY(EditAnywhere,BlueprintReadWrite)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, meta = (EditCondition = "TraceType==ETraceTypes::TraceType"))
+	TEnumAsByte<ETraceTypeQuery> TraceChannel = ETraceTypeQuery::TraceTypeQuery1;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, meta = (EditCondition = "TraceType==ETraceTypes::ProfileType"))
+	FName TraceProfileName = FName();
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, meta = (EditCondition = "TraceType==ETraceTypes::ObjectsType"))
+	TArray<TEnumAsByte<EObjectTypeQuery>> TraceObjectTypes;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	bool bTraceComplex = false;
+
+	UPROPERTY(BlueprintReadWrite)
+	TArray<AActor*> ActorsToIgnore;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	TEnumAsByte<EDrawDebugTrace::Type> DrawDebugType = EDrawDebugTrace::Type::None;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	bool bIgnoreSelf = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	FLinearColor TraceColor = FLinearColor::Red;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	FLinearColor TraceHitColor = FLinearColor::Green;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	float DrawTime = 5.f;
+	
+	FSphereTraceStruct() {}
+
+	FSphereTraceStruct(float radius)
+		: Radius(radius)
+	{}
+	
+	FSphereTraceStruct(FVector start, FVector end, float radius)
+		: Start(start), End(end), Radius(radius)
+	{}
+};
+
+
+
+
+USTRUCT(BlueprintType)
+struct FCapsuleTraceStruct : public FTraceHitHelpers
+{
+	GENERATED_BODY()
+
+public:
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	TEnumAsByte<ETraceTypes> TraceType = ETraceTypes::TraceType;
+
+	UPROPERTY(BlueprintReadWrite)
+	FVector Start = FVector::ZeroVector;
+
+	UPROPERTY(BlueprintReadWrite)
+	FVector End = FVector::ZeroVector;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	float Radius = 20.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
 	float HalfHeight = 0.f;
 	
 	UPROPERTY(EditDefaultsOnly, meta = (EditCondition = "TraceType==ETraceTypes::TraceType"))
 	TEnumAsByte<ETraceTypeQuery> TraceChannel = ETraceTypeQuery::TraceTypeQuery1;
 
-	UPROPERTY(EditDefaultsOnly , meta = (EditCondition = "TraceType==ETraceTypes::ProfileType"))
+	UPROPERTY(EditDefaultsOnly, meta = (EditCondition = "TraceType==ETraceTypes::ProfileType"))
 	FName TraceProfileName = FName();
 
 	UPROPERTY(EditDefaultsOnly, meta = (EditCondition = "TraceType==ETraceTypes::ObjectsType"))
 	TArray<TEnumAsByte<EObjectTypeQuery>> TraceObjectTypes;
 
-	UPROPERTY(EditAnywhere,BlueprintReadWrite)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
 	bool bTraceComplex = false;
 
 	UPROPERTY(BlueprintReadWrite)
 	TArray<AActor*> ActorsToIgnore;
 
-	UPROPERTY(EditAnywhere,BlueprintReadWrite)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
 	TEnumAsByte<EDrawDebugTrace::Type> DrawDebugType = EDrawDebugTrace::Type::None;
 
-	UPROPERTY(EditAnywhere,BlueprintReadWrite)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
 	bool bIgnoreSelf = true;
 
-	UPROPERTY(EditAnywhere,BlueprintReadWrite)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
 	FLinearColor TraceColor = FLinearColor::Red;
 
-	UPROPERTY(EditAnywhere,BlueprintReadWrite)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
 	FLinearColor TraceHitColor = FLinearColor::Green;
 
-	UPROPERTY(EditAnywhere,BlueprintReadWrite)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
 	float DrawTime = 5.f;
 
-	FCapsuleTraceStruct()
-	{
-	}
+	FCapsuleTraceStruct() {}
 	
-	FCapsuleTraceStruct( float radius , float halfHeight)
-	{
-		Start = FVector::ZeroVector;
-		End  = FVector::ZeroVector;
-		Radius = radius;
-		HalfHeight = halfHeight;
-	}
+	FCapsuleTraceStruct(float radius, float halfHeight)
+		: Radius(radius), HalfHeight(halfHeight)
+	{}
 	
-	FCapsuleTraceStruct(FVector start , FVector end , float radius , float halfHeight )
-	{
-		Start =start;
-		End = end;
-		Radius = radius;
-		HalfHeight = halfHeight;
-	}
-
-
-	/**
-	 * Location in world space of the actual contact of the trace shape (box, sphere, ray, etc) with the impacted object.
-	 * Example: for a sphere trace test, this is the point where the surface of the sphere touches the other object.
-	 * @note: In the case of initial overlap (bStartPenetrating=true), ImpactPoint will be the same as Location because there is no meaningful single impact point to report.
-	 */
-	FVector GetHitImpactPoint() const { return HitResult.ImpactPoint; }
-
-	/**
-	 * Normal of the hit in world space, for the object that was hit by the sweep, if any.
-	 * For example if a sphere hits a flat plane, this is a normalized vector pointing out from the plane.
-	 * In the case of impact with a corner or edge of a surface, usually the "most opposing" normal (opposed to the query direction) is chosen.
-	 */
-	FVector GetHitImpactNormal() const { return HitResult.ImpactNormal; }
-
-	/**
-	 * The location in world space where the moving shape would end up against the impacted object, if there is a hit. Equal to the point of impact for line tests.
-	 * Example: for a sphere trace test, this is the point where the center of the sphere would be located when it touched the other object.
-	 * For swept movement (but not queries) this may not equal the final location of the shape since hits are pulled back slightly to prevent precision issues from overlapping another surface.
-	 */
-	FVector GetHitLocation() const { return HitResult.Location; }
-
-	/**
-	 * Normal of the hit in world space, for the object that was swept. Equal to ImpactNormal for line tests.
-	 * This is computed for capsules and spheres, otherwise it will be the same as ImpactNormal.
-	 * Example: for a sphere trace test, this is a normalized vector pointing in towards the center of the sphere at the point of impact.
-	 */
-	FVector GetHitNormal() const { return HitResult.Normal; }
-
-	/**
-	 * Start location of the trace.
-	 * For example if a sphere is swept against the world, this is the starting location of the center of the sphere.
-	 */
-	FVector GetHitTraceStart() const { return HitResult.TraceStart; }
-
-	/**
-	 * End location of the trace; this is NOT where the impact occurred (if any), but the furthest point in the attempted sweep.
-	 * For example if a sphere is swept against the world, this would be the center of the sphere if there was no blocking hit.
-	 */
-	FVector GetHitTraceEnd() const { return HitResult.TraceEnd; }
-
-	/** Actor hit by the trace. */
-	AActor* GetHitActor() const { return HitResult.GetActor(); }
-
-	/** PrimitiveComponent hit by the trace. */
-	UPrimitiveComponent* GetHitComponent() const { return HitResult.Component.Get(); }
-
-	/** The distance from the TraceStart to the Location in world space. This value is 0 if there was an initial overlap (trace started inside another colliding object). */
-	float GetHitDistance() const { return HitResult.Distance; }
-
-	/** Indicates if this hit was a result of blocking collision. If false, there was no hit or it was an overlap/touch instead. */
-	bool GetHitBlockingHit() const { return HitResult.bBlockingHit; }
-
-	/** Name of bone we hit (for skeletal meshes). */
-	FName GetHitBoneName() const { return HitResult.BoneName; }
-
-	/**
-	 * Physical material that was hit.
-	 * @note Must set bReturnPhysicalMaterial on the swept PrimitiveComponent or in the query params for this to be returned.
-	 */
-	UPhysicalMaterial* GetHitPhysMaterial() const { return HitResult.PhysMaterial.Get();}
-
-	/** Returns All GetActor() From Hit Result  */
-	void GetAllActorsFromHitArray(TArray<AActor*>& Array) const
-	{
-		for (const auto i : HitResults) Array.Add(i.GetActor());
-	}
+	FCapsuleTraceStruct(FVector start, FVector end, float radius, float halfHeight)
+		: Start(start), End(end), Radius(radius), HalfHeight(halfHeight)
+	{}
 };
 
 
 
 
-
 USTRUCT(BlueprintType)
-struct FBoxTraceStruct
+struct FBoxTraceStruct : public FTraceHitHelpers
 {
 	GENERATED_BODY()
 
 public:
-	UPROPERTY(EditAnywhere,BlueprintReadWrite)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
 	TEnumAsByte<ETraceTypes> TraceType = ETraceTypes::TraceType;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	FVector Start = FVector::ZeroVector;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	FVector End = FVector::ZeroVector;
 	
-	UPROPERTY(BlueprintReadOnly)
-	FHitResult HitResult;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
+	FVector HalfSize = FVector(32, 32, 32);
 
-	UPROPERTY(BlueprintReadOnly)
-	TArray<FHitResult> HitResults;
-
-	UPROPERTY(EditAnywhere,BlueprintReadWrite)
-	FVector Start = FVector::ZeroVector ;
-
-	UPROPERTY(EditAnywhere,BlueprintReadWrite)
-	FVector End = FVector::ZeroVector ;
-	
-	UPROPERTY(EditAnywhere,BlueprintReadWrite)
-	FVector HalfSize = FVector(32,32,32);
-
-	UPROPERTY(EditAnywhere,BlueprintReadWrite)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
 	FRotator Orientation = FRotator::ZeroRotator;
 	
 	UPROPERTY(EditDefaultsOnly, meta = (EditCondition = "TraceType==ETraceTypes::TraceType"))
 	TEnumAsByte<ETraceTypeQuery> TraceChannel = ETraceTypeQuery::TraceTypeQuery1;
 
-	UPROPERTY(EditDefaultsOnly , meta = (EditCondition = "TraceType==ETraceTypes::ProfileType"))
+	UPROPERTY(EditDefaultsOnly, meta = (EditCondition = "TraceType==ETraceTypes::ProfileType"))
 	FName TraceProfileName = FName();
 
 	UPROPERTY(EditDefaultsOnly, meta = (EditCondition = "TraceType==ETraceTypes::ObjectsType"))
 	TArray<TEnumAsByte<EObjectTypeQuery>> TraceObjectTypes;
 
-	UPROPERTY(EditAnywhere,BlueprintReadWrite)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
 	bool bTraceComplex = false;
 
 	UPROPERTY(BlueprintReadWrite)
 	TArray<AActor*> ActorsToIgnore;
 
-	UPROPERTY(EditAnywhere,BlueprintReadWrite)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
 	TEnumAsByte<EDrawDebugTrace::Type> DrawDebugType = EDrawDebugTrace::Type::None;
 
-	UPROPERTY(EditAnywhere,BlueprintReadWrite)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
 	bool bIgnoreSelf = true;
 
-	UPROPERTY(EditAnywhere,BlueprintReadWrite)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
 	FLinearColor TraceColor = FLinearColor::Red;
 
-	UPROPERTY(EditAnywhere,BlueprintReadWrite)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
 	FLinearColor TraceHitColor = FLinearColor::Green;
 
-	UPROPERTY(EditAnywhere,BlueprintReadWrite)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite)
 	float DrawTime = 5.f;
 
-	FBoxTraceStruct()
-	{
-		
-	}
+	FBoxTraceStruct() {}
 
-	FBoxTraceStruct(FVector halfSize , FRotator orientation )
-	{
-		HalfSize = halfSize;
-		Orientation = orientation;
-	}
+	FBoxTraceStruct(FVector halfSize, FRotator orientation)
+		: HalfSize(halfSize), Orientation(orientation)
+	{}
 	
-	FBoxTraceStruct(FVector start , FVector end , FVector halfSize , FRotator orientation )
-	{
-		Start =start;
-		End = end;
-		HalfSize = halfSize;
-		Orientation = orientation;
-	}
-
-
-	/**
-	 * Location in world space of the actual contact of the trace shape (box, sphere, ray, etc) with the impacted object.
-	 * Example: for a sphere trace test, this is the point where the surface of the sphere touches the other object.
-	 * @note: In the case of initial overlap (bStartPenetrating=true), ImpactPoint will be the same as Location because there is no meaningful single impact point to report.
-	 */
-	FVector GetHitImpactPoint() const { return HitResult.ImpactPoint; }
-
-	/**
-	 * Normal of the hit in world space, for the object that was hit by the sweep, if any.
-	 * For example if a sphere hits a flat plane, this is a normalized vector pointing out from the plane.
-	 * In the case of impact with a corner or edge of a surface, usually the "most opposing" normal (opposed to the query direction) is chosen.
-	 */
-	FVector GetHitImpactNormal() const { return HitResult.ImpactNormal; }
-
-	/**
-	 * The location in world space where the moving shape would end up against the impacted object, if there is a hit. Equal to the point of impact for line tests.
-	 * Example: for a sphere trace test, this is the point where the center of the sphere would be located when it touched the other object.
-	 * For swept movement (but not queries) this may not equal the final location of the shape since hits are pulled back slightly to prevent precision issues from overlapping another surface.
-	 */
-	FVector GetHitLocation() const { return HitResult.Location; }
-
-	/**
-	 * Normal of the hit in world space, for the object that was swept. Equal to ImpactNormal for line tests.
-	 * This is computed for capsules and spheres, otherwise it will be the same as ImpactNormal.
-	 * Example: for a sphere trace test, this is a normalized vector pointing in towards the center of the sphere at the point of impact.
-	 */
-	FVector GetHitNormal() const { return HitResult.Normal; }
-
-	/**
-	 * Start location of the trace.
-	 * For example if a sphere is swept against the world, this is the starting location of the center of the sphere.
-	 */
-	FVector GetHitTraceStart() const { return HitResult.TraceStart; }
-
-	/**
-	 * End location of the trace; this is NOT where the impact occurred (if any), but the furthest point in the attempted sweep.
-	 * For example if a sphere is swept against the world, this would be the center of the sphere if there was no blocking hit.
-	 */
-	FVector GetHitTraceEnd() const { return HitResult.TraceEnd; }
-
-	/** Actor hit by the trace. */
-	AActor* GetHitActor() const { return HitResult.GetActor(); }
-
-	/** PrimitiveComponent hit by the trace. */
-	UPrimitiveComponent* GetHitComponent() const { return HitResult.Component.Get(); }
-
-	/** The distance from the TraceStart to the Location in world space. This value is 0 if there was an initial overlap (trace started inside another colliding object). */
-	float GetHitDistance() const { return HitResult.Distance; }
-
-	/** Indicates if this hit was a result of blocking collision. If false, there was no hit or it was an overlap/touch instead. */
-	bool GetHitBlockingHit() const { return HitResult.bBlockingHit; }
-
-	/** Name of bone we hit (for skeletal meshes). */
-	FName GetHitBoneName() const { return HitResult.BoneName; }
-
-	/**
-	 * Physical material that was hit.
-	 * @note Must set bReturnPhysicalMaterial on the swept PrimitiveComponent or in the query params for this to be returned.
-	 */
-	UPhysicalMaterial* GetHitPhysMaterial() const { return HitResult.PhysMaterial.Get();}
-
-
-	/** Returns All GetActor() From Hit Result  */
-	void GetAllActorsFromHitArray(TArray<AActor*>& Array) const
-	{
-		for (const auto i : HitResults) Array.Add(i.GetActor());
-	}
+	FBoxTraceStruct(FVector start, FVector end, FVector halfSize, FRotator orientation)
+		: Start(start), End(end), HalfSize(halfSize), Orientation(orientation)
+	{}
 };
 
 

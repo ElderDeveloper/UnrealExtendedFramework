@@ -6,13 +6,16 @@
 #include "Perception/AIPerceptionTypes.h"
 #include "EFPerceptionLibrary.generated.h"
 
-/**
- * 
- */
+
 class UAIPerceptionComponent;
 class UAISenseConfig;
 class UAISense;
 
+/**
+ * Blueprint function library for runtime modification of AI Perception Component
+ * sense configurations (Sight, Hearing). Provides getters and setters for
+ * sense parameters that are normally only editable in the editor.
+ */
 UCLASS()
 class UNREALEXTENDEDFRAMEWORK_API UEFPerceptionLibrary : public UBlueprintFunctionLibrary
 {
@@ -20,94 +23,135 @@ class UNREALEXTENDEDFRAMEWORK_API UEFPerceptionLibrary : public UBlueprintFuncti
 
 public:
 
+	/**
+	 * Returns the sense config for the specified sense class on a perception component.
+	 * @param Perception The AI perception component
+	 * @param SenseClass The sense class to look up
+	 * @return The sense config, or nullptr if not found
+	 */
 	static UAISenseConfig* GetPerceptionSenseConfig(UAIPerceptionComponent* Perception, TSubclassOf<UAISense> SenseClass);
 	
-	//Force the AI Perception Component to forget a specific perceived Actor.
+	/**
+	 * Forces the perception component to forget a specific actor.
+	 * @param Perception The AI perception component
+	 * @param Actor The actor to forget
+	 * @return True on success
+	 */
 	UFUNCTION(BlueprintCallable, Category = "ExtendedFramework|AI|Perception")
 	static bool ForgetActor(UAIPerceptionComponent* Perception, AActor* Actor);
 
-	
-	//Force the AI Perception Component to forget all perceived Actors.
+	/**
+	 * Forces the perception component to forget all perceived actors.
+	 * @param Perception The AI perception component
+	 * @return True on success
+	 */
 	UFUNCTION(BlueprintCallable, Category = "ExtendedFramework|AI|Perception")
 	static bool ForgetAll(UAIPerceptionComponent* Perception);
 
-	
-	//Get the current Dominant Sense of the AI Perception Component.
+	/**
+	 * Returns the dominant sense class of the perception component.
+	 * @param Perception The AI perception component
+	 * @return The dominant sense class, or nullptr if unavailable
+	 */
 	UFUNCTION(BlueprintPure, Category = "ExtendedFramework|AI|Perception")
 	static TSubclassOf<UAISense> GetDominantSense(UAIPerceptionComponent* Perception);
 
-	
-	//Set a new Dominant Sense for the AI Perception Component.
+	/**
+	 * Sets the dominant sense for the perception component.
+	 * @param Perception The AI perception component
+	 * @param SenseClass The sense class to set as dominant
+	 * @return True on success
+	 */
 	UFUNCTION(BlueprintCallable, Category = "ExtendedFramework|AI|Perception")
 	static bool SetDominantSense(UAIPerceptionComponent* Perception, TSubclassOf<UAISense> SenseClass);
 
-	
-	//Get the Detection By Affiliation values for the chosen Sense of the AI Perception Component.
+	/**
+	 * Returns the detection-by-affiliation filter for the specified sense.
+	 * Supports Sight and Hearing sense types.
+	 * @param Perception The AI perception component
+	 * @param SenseClass The sense class to query
+	 */
 	UFUNCTION(BlueprintPure, Category = "ExtendedFramework|AI|Perception")
 	static FAISenseAffiliationFilter GetDetectionByAffiliation(UAIPerceptionComponent* Perception, TSubclassOf<UAISense> SenseClass);
 
-	
-	//Set the Detection By Affiliation values for the chosen Sense of the AI Perception Component.
+	/**
+	 * Sets the detection-by-affiliation filter for the specified sense.
+	 * Supports Sight and Hearing sense types.
+	 * @return True on success
+	 */
 	UFUNCTION(BlueprintCallable, Category = "ExtendedFramework|AI|Perception")
 	static bool SetDetectionByAffiliation(UAIPerceptionComponent* Perception, TSubclassOf<UAISense> SenseClass, bool DetectEnemies, bool DetectNeutrals, bool DetectFriendlies);
 
-	
-	//Get the Max Age for the chosen Sense of the AI Perception Component.
+	/**
+	 * Returns the MaxAge for the specified sense config.
+	 * @return MaxAge in seconds, or -1 on failure
+	 */
 	UFUNCTION(BlueprintPure, Category = "ExtendedFramework|AI|Perception")
 	static float GetMaxAge(UAIPerceptionComponent* Perception, TSubclassOf<UAISense> SenseClass);
 
-	
-	//Set the Max Age for the chosen Sense of the AI Perception Component.
+	/**
+	 * Sets the MaxAge for the specified sense config.
+	 * @return True on success
+	 */
 	UFUNCTION(BlueprintCallable, Category = "ExtendedFramework|AI|Perception")
 	static bool SetMaxAge(UAIPerceptionComponent* Perception, TSubclassOf<UAISense> SenseClass, float MaxAge);
 
-	
-	//Get the current Sight Radius of the AI Perception Component's Sight Config.
+	/** Returns the current Sight Radius. Returns 0 on failure. */
 	UFUNCTION(BlueprintPure, Category = "ExtendedFramework|AI|Perception")
 	static float GetSightRange(UAIPerceptionComponent* Perception);
 
-	
-	//Set a new Sight Radius for the AI Perception Component's Sight Config.
+	/**
+	 * Sets a new Sight Radius, automatically adjusting LoseSightRadius
+	 * to maintain the same offset. Calls RequestStimuliListenerUpdate.
+	 * @return True on success
+	 */
 	UFUNCTION(BlueprintCallable, Category = "ExtendedFramework|AI|Perception")
 	static bool SetSightRange(UAIPerceptionComponent* Perception, float SightRange);
 
-	
-	//Get the current Lose Sight Radius of the AI Perception Component's Sight Config
+	/** Returns the current Lose Sight Radius. Returns 0 on failure. */
 	UFUNCTION(BlueprintPure, Category = "ExtendedFramework|AI|Perception")
 	static float GetLoseSightRange(UAIPerceptionComponent* Perception);
 
-	
-	//Set a new Lose Sight Radius for the AI Perception Component's Sight Config.
+	/**
+	 * Sets a new Lose Sight Radius. Clamped to be >= SightRadius.
+	 * Calls RequestStimuliListenerUpdate.
+	 * @return True on success
+	 */
 	UFUNCTION(BlueprintCallable, Category = "ExtendedFramework|AI|Perception")
 	static bool SetLoseSightRange(UAIPerceptionComponent* Perception, float LoseSightRange);
 
-	
-	//Get the current Peripheral Vision Angle of the AI Perception Component's Sight Config.
+	/** Returns the full peripheral vision angle in degrees (diameter). Returns 0 on failure. */
 	UFUNCTION(BlueprintPure, Category = "ExtendedFramework|AI|Perception")
 	static float GetVisionAngle(UAIPerceptionComponent* Perception);
 
-	
-	//Set a new Peripheral Vision Angle for the AI Perception Component's Sight Config.
+	/**
+	 * Sets the peripheral vision angle in degrees (full cone, divided by 2 internally).
+	 * Calls RequestStimuliListenerUpdate.
+	 * @return True on success
+	 */
 	UFUNCTION(BlueprintCallable, Category = "ExtendedFramework|AI|Perception")
 	static bool SetVisionAngle(UAIPerceptionComponent* Perception, float VisionAngle);
 
-	
-	//Get the current Hearing Range of the AI Perception Component's Hearing Config.
+	/** Returns the current Hearing Range. Returns 0 on failure. */
 	UFUNCTION(BlueprintPure, Category = "ExtendedFramework|AI|Perception")
 	static float GetHearingRange(UAIPerceptionComponent* Perception);
 
-	
-	//Set a new Hearing Range for the AI Perception Component's Hearing Config.
+	/**
+	 * Sets a new Hearing Range. Calls RequestStimuliListenerUpdate.
+	 * @return True on success
+	 */
 	UFUNCTION(BlueprintCallable, Category = "ExtendedFramework|AI|Perception")
 	static bool SetHearingRange(UAIPerceptionComponent* Perception, float HearingRange);
 
-	
-	//Get the current LoS Hearing Range of the AI Perception Component's Hearing Config.
-	UFUNCTION(BlueprintPure, Category = "ExtendedFramework|AI|Perception")
+	/** Returns the current Line-of-Sight Hearing Range. Returns 0 on failure. @deprecated LoSHearingRange is deprecated since UE 5.2. */
+	UFUNCTION(BlueprintPure, Category = "ExtendedFramework|AI|Perception", meta=(DeprecatedFunction, DeprecationMessage="LoSHearingRange is deprecated since UE 5.2. Use HearingRange instead."))
 	static float GetLoSHearingRange(UAIPerceptionComponent* Perception);
 
-	
-	//Set a new LoS Hearing Range for the AI Perception Component's Hearing Config.
-	UFUNCTION(BlueprintCallable, Category = "ExtendedFramework|AI|Perception")
+	/**
+	 * Sets a new Line-of-Sight Hearing Range. Calls RequestStimuliListenerUpdate.
+	 * @return True on success
+	 * @deprecated LoSHearingRange is deprecated since UE 5.2.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "ExtendedFramework|AI|Perception", meta=(DeprecatedFunction, DeprecationMessage="LoSHearingRange is deprecated since UE 5.2. Use HearingRange instead."))
 	static bool SetLoSHearingRange(UAIPerceptionComponent* Perception, float LoSHearingRange);
 };

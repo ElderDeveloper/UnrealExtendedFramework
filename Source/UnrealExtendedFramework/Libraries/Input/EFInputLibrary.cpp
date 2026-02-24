@@ -2,34 +2,27 @@
 
 
 #include "EFInputLibrary.h"
+#include "HAL/PlatformApplicationMisc.h"
 
-#if PLATFORM_WINDOWS
-#include "Windows/AllowWindowsPlatformTypes.h"
-#include <Windows.h>
-#include "Windows/HideWindowsPlatformTypes.h"
-#endif
 
-bool UEFInputLibrary::DoesKeyExistInActionMapping(UInputSettings* InputSettings,FKey Key ,FInputActionKeyMapping& FoundMapping)
+bool UEFInputLibrary::DoesKeyExistInActionMapping(UInputSettings* InputSettings, FKey Key, FInputActionKeyMapping& FoundMapping)
 {
 	if (InputSettings)
 	{
 		TArray<FName> ActionNames;
 		InputSettings->GetActionNames(ActionNames);
 
-		if (ActionNames.IsValidIndex(0))
+		for (const auto& ActionName : ActionNames)
 		{
-			for (const auto i : ActionNames)
-			{
-				TArray<FInputActionKeyMapping> AllActionMappings;
-				InputSettings->GetActionMappingByName(i,AllActionMappings);
+			TArray<FInputActionKeyMapping> AllActionMappings;
+			InputSettings->GetActionMappingByName(ActionName, AllActionMappings);
 
-				for (const auto j : AllActionMappings)
+			for (const auto& Mapping : AllActionMappings)
+			{
+				if (Mapping.Key == Key)
 				{
-					if (j.Key == Key)
-					{
-						FoundMapping = j;
-						return true;
-					}
+					FoundMapping = Mapping;
+					return true;
 				}
 			}
 		}
@@ -37,27 +30,26 @@ bool UEFInputLibrary::DoesKeyExistInActionMapping(UInputSettings* InputSettings,
 	return false;
 }
 
-bool UEFInputLibrary::DoesKeyExistInAxisMapping(UInputSettings* InputSettings, FKey Key,FInputAxisKeyMapping& FoundMapping)
+bool UEFInputLibrary::DoesKeyExistInAxisMapping(UInputSettings* InputSettings, FKey Key, FInputAxisKeyMapping& FoundMapping)
 {
 	if (InputSettings)
 	{
-		TArray<FName> ActionNames;
-		InputSettings->GetActionNames(ActionNames);
+		// BUG FIX: Previously called GetActionNames() instead of GetAxisNames(),
+		// which meant axis-only bindings were never found.
+		TArray<FName> AxisNames;
+		InputSettings->GetAxisNames(AxisNames);
 
-		if (ActionNames.IsValidIndex(0))
+		for (const auto& AxisName : AxisNames)
 		{
-			for (const auto i : ActionNames)
-			{
-				TArray<FInputAxisKeyMapping> AxisKeyMappings;
-				InputSettings->GetAxisMappingByName(i,AxisKeyMappings);
+			TArray<FInputAxisKeyMapping> AxisKeyMappings;
+			InputSettings->GetAxisMappingByName(AxisName, AxisKeyMappings);
 
-				for (const auto j : AxisKeyMappings)
+			for (const auto& Mapping : AxisKeyMappings)
+			{
+				if (Mapping.Key == Key)
 				{
-					if (j.Key == Key)
-					{
-						FoundMapping = j;
-						return true;
-					}
+					FoundMapping = Mapping;
+					return true;
 				}
 			}
 		}
@@ -68,13 +60,13 @@ bool UEFInputLibrary::DoesKeyExistInAxisMapping(UInputSettings* InputSettings, F
 
 FName UEFInputLibrary::GetKeyBindingName(UInputSettings* InputSettings, FKey Key)
 {
-	FInputActionKeyMapping ActionKeyMapping = FInputActionKeyMapping();
-	if (DoesKeyExistInActionMapping(InputSettings,Key,ActionKeyMapping))
+	FInputActionKeyMapping ActionKeyMapping;
+	if (DoesKeyExistInActionMapping(InputSettings, Key, ActionKeyMapping))
 	{
 		return ActionKeyMapping.ActionName;
 	}
-	FInputAxisKeyMapping AxisKeyMapping = FInputAxisKeyMapping();
-	if (DoesKeyExistInAxisMapping(InputSettings,Key,AxisKeyMapping))
+	FInputAxisKeyMapping AxisKeyMapping;
+	if (DoesKeyExistInAxisMapping(InputSettings, Key, AxisKeyMapping))
 	{
 		return AxisKeyMapping.AxisName;
 	}
@@ -83,17 +75,28 @@ FName UEFInputLibrary::GetKeyBindingName(UInputSettings* InputSettings, FKey Key
 
 bool UEFInputLibrary::UpdateKeyBindingAction(FInputActionKeyMapping ChangeActionMapping)
 {
-	if(const auto Settings = GetMutableDefault<UInputSettings>())
+	if (const auto Settings = GetMutableDefault<UInputSettings>())
 	{
-		for(const auto key : Settings->GetActionMappings())
+		// BUG FIX: Copy the matching mapping before modifying the array to avoid
+		// undefined behavior from modifying during iteration.
+		FInputActionKeyMapping OldMapping;
+		bool bFound = false;
+		for (const auto& key : Settings->GetActionMappings())
 		{
 			if (key.ActionName == ChangeActionMapping.ActionName)
 			{
-				Settings->RemoveActionMapping(key);
-				Settings->AddActionMapping(ChangeActionMapping);
-				Settings->SaveKeyMappings();
-				return true;
+				OldMapping = key;
+				bFound = true;
+				break;
 			}
+		}
+
+		if (bFound)
+		{
+			Settings->RemoveActionMapping(OldMapping);
+			Settings->AddActionMapping(ChangeActionMapping);
+			Settings->SaveKeyMappings();
+			return true;
 		}
 	}
 	return false;
@@ -101,9 +104,9 @@ bool UEFInputLibrary::UpdateKeyBindingAction(FInputActionKeyMapping ChangeAction
 
 bool UEFInputLibrary::AddKeyBindingAction(FInputActionKeyMapping ChangeActionMapping)
 {
-	if(const auto Settings = GetMutableDefault<UInputSettings>())
+	if (const auto Settings = GetMutableDefault<UInputSettings>())
 	{
-		for(const auto key : Settings->GetActionMappings())
+		for (const auto& key : Settings->GetActionMappings())
 		{
 			if (key.ActionName == ChangeActionMapping.ActionName)
 				return false;
@@ -117,16 +120,26 @@ bool UEFInputLibrary::AddKeyBindingAction(FInputActionKeyMapping ChangeActionMap
 
 bool UEFInputLibrary::RemoveKeyBindingAction(FInputActionKeyMapping ChangeActionMapping)
 {
-	if(const auto Settings = GetMutableDefault<UInputSettings>())
+	if (const auto Settings = GetMutableDefault<UInputSettings>())
 	{
-		for(const auto key : Settings->GetActionMappings())
+		// BUG FIX: Same iteration-while-modifying fix as UpdateKeyBindingAction
+		FInputActionKeyMapping OldMapping;
+		bool bFound = false;
+		for (const auto& key : Settings->GetActionMappings())
 		{
 			if (key.ActionName == ChangeActionMapping.ActionName)
 			{
-				Settings->RemoveActionMapping(key);
-				Settings->SaveKeyMappings();
-				return true;
+				OldMapping = key;
+				bFound = true;
+				break;
 			}
+		}
+
+		if (bFound)
+		{
+			Settings->RemoveActionMapping(OldMapping);
+			Settings->SaveKeyMappings();
+			return true;
 		}
 	}
 	return false;
@@ -137,17 +150,26 @@ bool UEFInputLibrary::RemoveKeyBindingAction(FInputActionKeyMapping ChangeAction
 
 bool UEFInputLibrary::UpdateKeyBindingAxis(FInputAxisKeyMapping ChangeAxisMapping)
 {
-	if(const auto Settings = GetMutableDefault<UInputSettings>())
+	if (const auto Settings = GetMutableDefault<UInputSettings>())
 	{
-		for(const auto key : Settings->GetAxisMappings())
+		FInputAxisKeyMapping OldMapping;
+		bool bFound = false;
+		for (const auto& key : Settings->GetAxisMappings())
 		{
 			if (key.AxisName == ChangeAxisMapping.AxisName)
 			{
-				Settings->RemoveAxisMapping(key);
-				Settings->AddAxisMapping(ChangeAxisMapping);
-				Settings->SaveKeyMappings();
-				return true;
+				OldMapping = key;
+				bFound = true;
+				break;
 			}
+		}
+
+		if (bFound)
+		{
+			Settings->RemoveAxisMapping(OldMapping);
+			Settings->AddAxisMapping(ChangeAxisMapping);
+			Settings->SaveKeyMappings();
+			return true;
 		}
 	}
 	return false;
@@ -155,9 +177,9 @@ bool UEFInputLibrary::UpdateKeyBindingAxis(FInputAxisKeyMapping ChangeAxisMappin
 
 bool UEFInputLibrary::AddKeyBindingAxis(FInputAxisKeyMapping ChangeAxisMapping)
 {
-	if(const auto Settings = GetMutableDefault<UInputSettings>())
+	if (const auto Settings = GetMutableDefault<UInputSettings>())
 	{
-		for(const auto key : Settings->GetAxisMappings())
+		for (const auto& key : Settings->GetAxisMappings())
 		{
 			if (key.AxisName == ChangeAxisMapping.AxisName)
 				return false;
@@ -171,92 +193,65 @@ bool UEFInputLibrary::AddKeyBindingAxis(FInputAxisKeyMapping ChangeAxisMapping)
 
 bool UEFInputLibrary::RemoveKeyBindingAxis(FInputAxisKeyMapping ChangeAxisMapping)
 {
-	if(const auto Settings = GetMutableDefault<UInputSettings>())
+	if (const auto Settings = GetMutableDefault<UInputSettings>())
 	{
-		for(const auto key : Settings->GetAxisMappings())
+		FInputAxisKeyMapping OldMapping;
+		bool bFound = false;
+		for (const auto& key : Settings->GetAxisMappings())
 		{
 			if (key.AxisName == ChangeAxisMapping.AxisName)
 			{
-				Settings->RemoveAxisMapping(key);
-				Settings->SaveKeyMappings();
-				return true;
+				OldMapping = key;
+				bFound = true;
+				break;
 			}
+		}
+
+		if (bFound)
+		{
+			Settings->RemoveAxisMapping(OldMapping);
+			Settings->SaveKeyMappings();
+			return true;
 		}
 	}
 	return false;
 }
 
 
+TArray<FName> UEFInputLibrary::GetAllActionMappingNames()
+{
+	TArray<FName> Names;
+	if (const auto Settings = GetDefault<UInputSettings>())
+	{
+		Settings->GetActionNames(Names);
+	}
+	return Names;
+}
 
+
+TArray<FName> UEFInputLibrary::GetAllAxisMappingNames()
+{
+	TArray<FName> Names;
+	if (const auto Settings = GetDefault<UInputSettings>())
+	{
+		Settings->GetAxisNames(Names);
+	}
+	return Names;
+}
+
+
+// BUG FIX: Replaced raw Win32 API (OpenClipboard, GlobalAlloc, etc.) with
+// FPlatformApplicationMisc which is cross-platform (Windows, Mac, Linux, etc.)
 bool UEFInputLibrary::CopyStringToClipboard(const FString& TextToCopy)
 {
-#if PLATFORM_WINDOWS
-	if (!OpenClipboard(nullptr))
-		return false;
-	    
-	EmptyClipboard();
-	    
-	// Convert FString to wide string and calculate size
-	const TCHAR* WideStr = *TextToCopy;
-	SIZE_T WideStrLen = TextToCopy.Len() + 1; // +1 for null terminator
-	SIZE_T BufferSize = WideStrLen * sizeof(TCHAR);
-	    
-	// Allocate global memory
-	HGLOBAL HGlobal = GlobalAlloc(GMEM_MOVEABLE, BufferSize);
-	if (!HGlobal)
-	{
-		CloseClipboard();
-		return false;
-	}
-	    
-	// Lock the memory and copy the text
-	void* Buffer = GlobalLock(HGlobal);
-	if (!Buffer)
-	{
-		GlobalFree(HGlobal);
-		CloseClipboard();
-		return false;
-	}
-	    
-	FMemory::Memcpy(Buffer, WideStr, BufferSize);
-	GlobalUnlock(HGlobal);
-	    
-	// Set the clipboard data (using Unicode for wide strings)
-	UINT Format = CF_UNICODETEXT;
-	HANDLE Result = SetClipboardData(Format, HGlobal);
-	    
-	CloseClipboard();
-	return Result != nullptr;
-#else
-	// Not implemented for other platforms
-	return false;
-#endif
+	FPlatformApplicationMisc::ClipboardCopy(*TextToCopy);
+	return true;
 }
 
 
 FString UEFInputLibrary::GetStringFromClipboard()
 {
 	FString ClipboardContent;
-    
-#if PLATFORM_WINDOWS
-	if (!OpenClipboard(nullptr))
-		return ClipboardContent;
-	    
-	// Try to get Unicode text from clipboard
-	HANDLE HGlobal = GetClipboardData(CF_UNICODETEXT);
-	    
-	if (HGlobal)
-	{
-		const WCHAR* Text = static_cast<const WCHAR*>(GlobalLock(HGlobal));
-		if (Text)
-		{
-			ClipboardContent = FString(Text);
-			GlobalUnlock(HGlobal);
-		}
-	}
-	    
-	CloseClipboard();
-#endif
-    
+	FPlatformApplicationMisc::ClipboardPaste(ClipboardContent);
 	return ClipboardContent;
 }

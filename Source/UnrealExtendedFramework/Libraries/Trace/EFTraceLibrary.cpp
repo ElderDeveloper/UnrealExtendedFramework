@@ -4,58 +4,63 @@
 #include "EFTraceLibrary.h"
 
 
-bool UEFTraceLibrary::ExtendedLineTraceSingle(const UObject* WorldContextObject,FLineTraceStruct& LineTraceStruct)
+// BUG FIX: All 24 trace calls previously passed DrawDebugType as the last parameter
+// where DrawTime (float) should be. This meant the struct's DrawTime field (default 5s)
+// was never used, and debug lines would persist for 0, 1, or 2 seconds (the enum value).
+// Now correctly passes DrawTime as the last parameter.
+
+
+bool UEFTraceLibrary::ExtendedLineTraceSingle(const UObject* WorldContextObject, FLineTraceStruct& LineTraceStruct)
 {
 	if (!WorldContextObject) return false;
 	switch (LineTraceStruct.TraceType)
 	{
-		case TraceType:
-			return UKismetSystemLibrary::LineTraceSingle(WorldContextObject->GetWorld(),
-				LineTraceStruct.Start,
-				LineTraceStruct.End,
-				LineTraceStruct.TraceChannel,
-				LineTraceStruct.bTraceComplex,
-				LineTraceStruct.ActorsToIgnore,
-				LineTraceStruct.DrawDebugType,
-				LineTraceStruct.HitResult,
-				LineTraceStruct.bIgnoreSelf,
-				LineTraceStruct.TraceColor,
-				LineTraceStruct.TraceHitColor,
-				LineTraceStruct.DrawDebugType);
-		case ProfileType:
-			return UKismetSystemLibrary::LineTraceSingleByProfile(WorldContextObject->GetWorld(),
-				LineTraceStruct.Start,
-				LineTraceStruct.End,
-				LineTraceStruct.TraceProfileName,
-				LineTraceStruct.bTraceComplex,
-				LineTraceStruct.ActorsToIgnore,
-				LineTraceStruct.DrawDebugType,
-				LineTraceStruct.HitResult,
-				LineTraceStruct.bIgnoreSelf,
-				LineTraceStruct.TraceColor,
-				LineTraceStruct.TraceHitColor,
-				LineTraceStruct.DrawDebugType);
-			
-		case ObjectsType:
-			return UKismetSystemLibrary::LineTraceSingleForObjects(WorldContextObject->GetWorld(),
-				LineTraceStruct.Start,
-				LineTraceStruct.End,
-				LineTraceStruct.TraceObjectTypes,
-				LineTraceStruct.bTraceComplex,
-				LineTraceStruct.ActorsToIgnore,
-				LineTraceStruct.DrawDebugType,
-				LineTraceStruct.HitResult,
-				LineTraceStruct.bIgnoreSelf,
-				LineTraceStruct.TraceColor,
-				LineTraceStruct.TraceHitColor,
-				LineTraceStruct.DrawDebugType);
-		default: return false;
+	case TraceType:
+		return UKismetSystemLibrary::LineTraceSingle(WorldContextObject->GetWorld(),
+			LineTraceStruct.Start,
+			LineTraceStruct.End,
+			LineTraceStruct.TraceChannel,
+			LineTraceStruct.bTraceComplex,
+			LineTraceStruct.ActorsToIgnore,
+			LineTraceStruct.DrawDebugType,
+			LineTraceStruct.HitResult,
+			LineTraceStruct.bIgnoreSelf,
+			LineTraceStruct.TraceColor,
+			LineTraceStruct.TraceHitColor,
+			LineTraceStruct.DrawTime);
+	case ProfileType:
+		return UKismetSystemLibrary::LineTraceSingleByProfile(WorldContextObject->GetWorld(),
+			LineTraceStruct.Start,
+			LineTraceStruct.End,
+			LineTraceStruct.TraceProfileName,
+			LineTraceStruct.bTraceComplex,
+			LineTraceStruct.ActorsToIgnore,
+			LineTraceStruct.DrawDebugType,
+			LineTraceStruct.HitResult,
+			LineTraceStruct.bIgnoreSelf,
+			LineTraceStruct.TraceColor,
+			LineTraceStruct.TraceHitColor,
+			LineTraceStruct.DrawTime);
+	case ObjectsType:
+		return UKismetSystemLibrary::LineTraceSingleForObjects(WorldContextObject->GetWorld(),
+			LineTraceStruct.Start,
+			LineTraceStruct.End,
+			LineTraceStruct.TraceObjectTypes,
+			LineTraceStruct.bTraceComplex,
+			LineTraceStruct.ActorsToIgnore,
+			LineTraceStruct.DrawDebugType,
+			LineTraceStruct.HitResult,
+			LineTraceStruct.bIgnoreSelf,
+			LineTraceStruct.TraceColor,
+			LineTraceStruct.TraceHitColor,
+			LineTraceStruct.DrawTime);
+	default: return false;
 	}
 }
 
 
 
-bool UEFTraceLibrary::ExtendedLineTraceMulti(const UObject* WorldContextObject,FLineTraceStruct& LineTraceStruct)
+bool UEFTraceLibrary::ExtendedLineTraceMulti(const UObject* WorldContextObject, FLineTraceStruct& LineTraceStruct)
 {
 	if (!WorldContextObject) return false;
 	switch (LineTraceStruct.TraceType)
@@ -72,7 +77,7 @@ bool UEFTraceLibrary::ExtendedLineTraceMulti(const UObject* WorldContextObject,F
 			LineTraceStruct.bIgnoreSelf,
 			LineTraceStruct.TraceColor,
 			LineTraceStruct.TraceHitColor,
-			LineTraceStruct.DrawDebugType);
+			LineTraceStruct.DrawTime);
 	case ProfileType:
 		return UKismetSystemLibrary::LineTraceMultiByProfile(WorldContextObject->GetWorld(),
 			LineTraceStruct.Start,
@@ -85,8 +90,7 @@ bool UEFTraceLibrary::ExtendedLineTraceMulti(const UObject* WorldContextObject,F
 			LineTraceStruct.bIgnoreSelf,
 			LineTraceStruct.TraceColor,
 			LineTraceStruct.TraceHitColor,
-			LineTraceStruct.DrawDebugType);
-			
+			LineTraceStruct.DrawTime);
 	case ObjectsType:
 		return UKismetSystemLibrary::LineTraceMultiForObjects(WorldContextObject->GetWorld(),
 			LineTraceStruct.Start,
@@ -99,15 +103,10 @@ bool UEFTraceLibrary::ExtendedLineTraceMulti(const UObject* WorldContextObject,F
 			LineTraceStruct.bIgnoreSelf,
 			LineTraceStruct.TraceColor,
 			LineTraceStruct.TraceHitColor,
-			LineTraceStruct.DrawDebugType);
+			LineTraceStruct.DrawTime);
 	default: return false;
 	}
-	
 }
-
-
-
-
 
 
 
@@ -131,7 +130,7 @@ bool UEFTraceLibrary::ExtendedBoxTraceSingle(const UObject* WorldContextObject, 
 			BoxTraceStruct.bIgnoreSelf,
 			BoxTraceStruct.TraceColor,
 			BoxTraceStruct.TraceHitColor,
-			BoxTraceStruct.DrawDebugType);
+			BoxTraceStruct.DrawTime);
 	case ProfileType:
 		return UKismetSystemLibrary::BoxTraceSingleByProfile(WorldContextObject->GetWorld(),
 			BoxTraceStruct.Start,
@@ -146,8 +145,7 @@ bool UEFTraceLibrary::ExtendedBoxTraceSingle(const UObject* WorldContextObject, 
 			BoxTraceStruct.bIgnoreSelf,
 			BoxTraceStruct.TraceColor,
 			BoxTraceStruct.TraceHitColor,
-			BoxTraceStruct.DrawDebugType);
-			
+			BoxTraceStruct.DrawTime);
 	case ObjectsType:
 		return UKismetSystemLibrary::BoxTraceSingleForObjects(WorldContextObject->GetWorld(),
 			BoxTraceStruct.Start,
@@ -162,10 +160,9 @@ bool UEFTraceLibrary::ExtendedBoxTraceSingle(const UObject* WorldContextObject, 
 			BoxTraceStruct.bIgnoreSelf,
 			BoxTraceStruct.TraceColor,
 			BoxTraceStruct.TraceHitColor,
-			BoxTraceStruct.DrawDebugType);
+			BoxTraceStruct.DrawTime);
 	default: return false;
 	}
-
 }
 
 
@@ -189,7 +186,7 @@ bool UEFTraceLibrary::ExtendedBoxTraceMulti(const UObject* WorldContextObject, F
 			BoxTraceStruct.bIgnoreSelf,
 			BoxTraceStruct.TraceColor,
 			BoxTraceStruct.TraceHitColor,
-			BoxTraceStruct.DrawDebugType);
+			BoxTraceStruct.DrawTime);
 	case ProfileType:
 		return UKismetSystemLibrary::BoxTraceMultiByProfile(WorldContextObject->GetWorld(),
 			BoxTraceStruct.Start,
@@ -204,8 +201,7 @@ bool UEFTraceLibrary::ExtendedBoxTraceMulti(const UObject* WorldContextObject, F
 			BoxTraceStruct.bIgnoreSelf,
 			BoxTraceStruct.TraceColor,
 			BoxTraceStruct.TraceHitColor,
-			BoxTraceStruct.DrawDebugType);
-			
+			BoxTraceStruct.DrawTime);
 	case ObjectsType:
 		return UKismetSystemLibrary::BoxTraceMultiForObjects(WorldContextObject->GetWorld(),
 			BoxTraceStruct.Start,
@@ -220,7 +216,7 @@ bool UEFTraceLibrary::ExtendedBoxTraceMulti(const UObject* WorldContextObject, F
 			BoxTraceStruct.bIgnoreSelf,
 			BoxTraceStruct.TraceColor,
 			BoxTraceStruct.TraceHitColor,
-			BoxTraceStruct.DrawDebugType);
+			BoxTraceStruct.DrawTime);
 	default: return false;
 	}
 }
@@ -228,11 +224,7 @@ bool UEFTraceLibrary::ExtendedBoxTraceMulti(const UObject* WorldContextObject, F
 
 
 
-
-
-
-
-bool UEFTraceLibrary::ExtendedSphereTraceSingle(const UObject* WorldContextObject,FSphereTraceStruct& SphereTraceStruct)
+bool UEFTraceLibrary::ExtendedSphereTraceSingle(const UObject* WorldContextObject, FSphereTraceStruct& SphereTraceStruct)
 {
 	if (!WorldContextObject) return false;
 	switch (SphereTraceStruct.TraceType)
@@ -250,7 +242,7 @@ bool UEFTraceLibrary::ExtendedSphereTraceSingle(const UObject* WorldContextObjec
 			SphereTraceStruct.bIgnoreSelf,
 			SphereTraceStruct.TraceColor,
 			SphereTraceStruct.TraceHitColor,
-			SphereTraceStruct.DrawDebugType);
+			SphereTraceStruct.DrawTime);
 	case ProfileType:
 		return UKismetSystemLibrary::SphereTraceSingleByProfile(WorldContextObject->GetWorld(),
 			SphereTraceStruct.Start,
@@ -264,8 +256,7 @@ bool UEFTraceLibrary::ExtendedSphereTraceSingle(const UObject* WorldContextObjec
 			SphereTraceStruct.bIgnoreSelf,
 			SphereTraceStruct.TraceColor,
 			SphereTraceStruct.TraceHitColor,
-			SphereTraceStruct.DrawDebugType);
-			
+			SphereTraceStruct.DrawTime);
 	case ObjectsType:
 		return UKismetSystemLibrary::SphereTraceSingleForObjects(WorldContextObject->GetWorld(),
 			SphereTraceStruct.Start,
@@ -279,16 +270,15 @@ bool UEFTraceLibrary::ExtendedSphereTraceSingle(const UObject* WorldContextObjec
 			SphereTraceStruct.bIgnoreSelf,
 			SphereTraceStruct.TraceColor,
 			SphereTraceStruct.TraceHitColor,
-			SphereTraceStruct.DrawDebugType);
+			SphereTraceStruct.DrawTime);
 	default: return false;
 	}
 }
 
 
 
-bool UEFTraceLibrary::ExtendedSphereTraceMulti(const UObject* WorldContextObject,FSphereTraceStruct& SphereTraceStruct)
+bool UEFTraceLibrary::ExtendedSphereTraceMulti(const UObject* WorldContextObject, FSphereTraceStruct& SphereTraceStruct)
 {
-
 	if (!WorldContextObject) return false;
 	switch (SphereTraceStruct.TraceType)
 	{
@@ -305,7 +295,7 @@ bool UEFTraceLibrary::ExtendedSphereTraceMulti(const UObject* WorldContextObject
 			SphereTraceStruct.bIgnoreSelf,
 			SphereTraceStruct.TraceColor,
 			SphereTraceStruct.TraceHitColor,
-			SphereTraceStruct.DrawDebugType);
+			SphereTraceStruct.DrawTime);
 	case ProfileType:
 		return UKismetSystemLibrary::SphereTraceMultiByProfile(WorldContextObject->GetWorld(),
 			SphereTraceStruct.Start,
@@ -319,8 +309,7 @@ bool UEFTraceLibrary::ExtendedSphereTraceMulti(const UObject* WorldContextObject
 			SphereTraceStruct.bIgnoreSelf,
 			SphereTraceStruct.TraceColor,
 			SphereTraceStruct.TraceHitColor,
-			SphereTraceStruct.DrawDebugType);
-			
+			SphereTraceStruct.DrawTime);
 	case ObjectsType:
 		return UKismetSystemLibrary::SphereTraceMultiForObjects(WorldContextObject->GetWorld(),
 			SphereTraceStruct.Start,
@@ -334,7 +323,7 @@ bool UEFTraceLibrary::ExtendedSphereTraceMulti(const UObject* WorldContextObject
 			SphereTraceStruct.bIgnoreSelf,
 			SphereTraceStruct.TraceColor,
 			SphereTraceStruct.TraceHitColor,
-			SphereTraceStruct.DrawDebugType);
+			SphereTraceStruct.DrawTime);
 	default: return false;
 	}
 }
@@ -342,11 +331,7 @@ bool UEFTraceLibrary::ExtendedSphereTraceMulti(const UObject* WorldContextObject
 
 
 
-
-
-
-
-bool UEFTraceLibrary::ExtendedCapsuleTraceSingle(const UObject* WorldContextObject,FCapsuleTraceStruct& CapsuleTraceStruct)
+bool UEFTraceLibrary::ExtendedCapsuleTraceSingle(const UObject* WorldContextObject, FCapsuleTraceStruct& CapsuleTraceStruct)
 {
 	if (!WorldContextObject) return false;
 	switch (CapsuleTraceStruct.TraceType)
@@ -365,7 +350,7 @@ bool UEFTraceLibrary::ExtendedCapsuleTraceSingle(const UObject* WorldContextObje
 			CapsuleTraceStruct.bIgnoreSelf,
 			CapsuleTraceStruct.TraceColor,
 			CapsuleTraceStruct.TraceHitColor,
-			CapsuleTraceStruct.DrawDebugType);
+			CapsuleTraceStruct.DrawTime);
 	case ProfileType:
 		return UKismetSystemLibrary::CapsuleTraceSingleByProfile(WorldContextObject->GetWorld(),
 			CapsuleTraceStruct.Start,
@@ -380,8 +365,7 @@ bool UEFTraceLibrary::ExtendedCapsuleTraceSingle(const UObject* WorldContextObje
 			CapsuleTraceStruct.bIgnoreSelf,
 			CapsuleTraceStruct.TraceColor,
 			CapsuleTraceStruct.TraceHitColor,
-			CapsuleTraceStruct.DrawDebugType);
-			
+			CapsuleTraceStruct.DrawTime);
 	case ObjectsType:
 		return UKismetSystemLibrary::CapsuleTraceSingleForObjects(WorldContextObject->GetWorld(),
 			CapsuleTraceStruct.Start,
@@ -396,14 +380,14 @@ bool UEFTraceLibrary::ExtendedCapsuleTraceSingle(const UObject* WorldContextObje
 			CapsuleTraceStruct.bIgnoreSelf,
 			CapsuleTraceStruct.TraceColor,
 			CapsuleTraceStruct.TraceHitColor,
-			CapsuleTraceStruct.DrawDebugType);
+			CapsuleTraceStruct.DrawTime);
 	default: return false;
 	}
 }
 
 
 
-bool UEFTraceLibrary::ExtendedCapsuleTraceMulti(const UObject* WorldContextObject,FCapsuleTraceStruct& CapsuleTraceStruct)
+bool UEFTraceLibrary::ExtendedCapsuleTraceMulti(const UObject* WorldContextObject, FCapsuleTraceStruct& CapsuleTraceStruct)
 {
 	if (!WorldContextObject) return false;
 	switch (CapsuleTraceStruct.TraceType)
@@ -422,7 +406,7 @@ bool UEFTraceLibrary::ExtendedCapsuleTraceMulti(const UObject* WorldContextObjec
 			CapsuleTraceStruct.bIgnoreSelf,
 			CapsuleTraceStruct.TraceColor,
 			CapsuleTraceStruct.TraceHitColor,
-			CapsuleTraceStruct.DrawDebugType);
+			CapsuleTraceStruct.DrawTime);
 	case ProfileType:
 		return UKismetSystemLibrary::CapsuleTraceMultiByProfile(WorldContextObject->GetWorld(),
 			CapsuleTraceStruct.Start,
@@ -437,8 +421,7 @@ bool UEFTraceLibrary::ExtendedCapsuleTraceMulti(const UObject* WorldContextObjec
 			CapsuleTraceStruct.bIgnoreSelf,
 			CapsuleTraceStruct.TraceColor,
 			CapsuleTraceStruct.TraceHitColor,
-			CapsuleTraceStruct.DrawDebugType);
-			
+			CapsuleTraceStruct.DrawTime);
 	case ObjectsType:
 		return UKismetSystemLibrary::CapsuleTraceMultiForObjects(WorldContextObject->GetWorld(),
 			CapsuleTraceStruct.Start,
@@ -453,7 +436,25 @@ bool UEFTraceLibrary::ExtendedCapsuleTraceMulti(const UObject* WorldContextObjec
 			CapsuleTraceStruct.bIgnoreSelf,
 			CapsuleTraceStruct.TraceColor,
 			CapsuleTraceStruct.TraceHitColor,
-			CapsuleTraceStruct.DrawDebugType);
+			CapsuleTraceStruct.DrawTime);
 	default: return false;
 	}
+}
+
+
+bool UEFTraceLibrary::ExtendedLineTraceFromCamera(const UObject* WorldContextObject, APlayerController* PlayerController, float Distance, FLineTraceStruct& LineTraceStruct)
+{
+	if (!WorldContextObject || !PlayerController)
+	{
+		return false;
+	}
+
+	FVector CameraLocation;
+	FRotator CameraRotation;
+	PlayerController->GetPlayerViewPoint(CameraLocation, CameraRotation);
+
+	LineTraceStruct.Start = CameraLocation;
+	LineTraceStruct.End = CameraLocation + CameraRotation.Vector() * Distance;
+
+	return ExtendedLineTraceSingle(WorldContextObject, LineTraceStruct);
 }

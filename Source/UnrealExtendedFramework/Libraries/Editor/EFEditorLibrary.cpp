@@ -4,68 +4,84 @@
 #include "Kismet/GameplayStatics.h"
 
 
-void UEFEditorLibrary::ExtendedBlueprintLOG(EExtendedLog ExtendedLogType , FString Log)
+void UEFEditorLibrary::ExtendedBlueprintLOG(EExtendedLog ExtendedLogType, FString Log)
 {
 	switch (ExtendedLogType)
 	{
-	case EExtendedLog::Log :
-		UE_LOG(LogTemp,Log,TEXT("Extended Log : %s"), *Log);
+	case EExtendedLog::Log:
+		UE_LOG(LogTemp, Log, TEXT("Extended Log : %s"), *Log);
 		break;
 
-	case EExtendedLog::Warning :
-		UE_LOG(LogTemp,Warning,TEXT("Extended Log : %s"), *Log);
+	case EExtendedLog::Warning:
+		UE_LOG(LogTemp, Warning, TEXT("Extended Log : %s"), *Log);
 		break;
 
 	case EExtendedLog::Error:
-		UE_LOG(LogTemp,Error,TEXT("Extended Log : %s"), *Log);
+		UE_LOG(LogTemp, Error, TEXT("Extended Log : %s"), *Log);
 		break;
 	default: break;
-	};
+	}
 }
 
 
-
-
-void UEFEditorLibrary::ExecuteFunction(UObject* RequestOwner , UObject* TargetObject, const FString FunctionToExecute)
+void UEFEditorLibrary::ExecuteFunction(UObject* RequestOwner, UObject* TargetObject, const FString FunctionToExecute)
 {
-	if(TargetObject && RequestOwner)
+	if (!TargetObject || !RequestOwner)
 	{
-		UE_LOG(LogTemp,Warning,TEXT("Request Owner: %s") , *RequestOwner->GetName());
+		return;
+	}
 
-
-		//FindFunction will return a pointer to a UFunction based on a
-		//given FName. We use an asterisk before our FString in order to
-		//convert the FString variable to FName
-		if(const auto Function = TargetObject->FindFunction(*FunctionToExecute))
-		{
-			//The following pointer is a void pointer,
-			//this means that it can point to anything - from raw memory to all the known types -
-			void* locals = nullptr;
- 
-			//In order to execute our function we need to reserve a chunk of memory in 
-			//the execution stack for it.
-			if(const auto frame = new FFrame(RequestOwner, Function, locals))
-			{
-				//Unfortunately the source code of the engine doesn't explain what the locals
-				//pointer is used for.
-				//After some trial and error I ended up on this code which actually works without any problem.
-		
-				//Actual call of our UFunction
-				TargetObject->CallFunction(*frame, locals, Function);
- 
-				//delete our pointer to avoid memory leaks!
-			}
-		}
+	// BUG FIX: Previously used `new FFrame` + `CallFunction` which leaked memory
+	// (FFrame was never deleted). ProcessEvent is the standard, safe UE pattern
+	// for calling UFUNCTIONs by name.
+	if (UFunction* Function = TargetObject->FindFunction(*FunctionToExecute))
+	{
+		TargetObject->ProcessEvent(Function, nullptr);
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("UEFEditorLibrary::ExecuteFunction : Function '%s' not found on %s"),
+			*FunctionToExecute, *TargetObject->GetName());
 	}
 }
 
 
 float UEFEditorLibrary::GetGameplayFramePerSecond(const UObject* WorldContextObject)
 {
-	if (const auto World = Cast<UWorld>(WorldContextObject))
-		return (1/World->GetDeltaSeconds())* UGameplayStatics::GetGlobalTimeDilation(World);
-	return 0;
+	// BUG FIX: Previously cast WorldContextObject directly to UWorld, which almost always
+	// returned nullptr (WorldContext is typically an Actor, not a UWorld).
+	// Now uses the engine's proper world resolution.
+	if (!WorldContextObject)
+	{
+		return 0.f;
+	}
+
+	if (UWorld* World = GEngine->GetWorldFromContextObject(WorldContextObject, EGetWorldErrorMode::LogAndReturnNull))
+	{
+		const float DeltaSeconds = World->GetDeltaSeconds();
+		if (DeltaSeconds > 0.f)
+		{
+			return (1.f / DeltaSeconds) * UGameplayStatics::GetGlobalTimeDilation(World);
+		}
+	}
+	return 0.f;
 }
+
+
+float UEFEditorLibrary::GetDeltaSeconds(const UObject* WorldContextObject)
+{
+	if (!WorldContextObject)
+	{
+		return 0.f;
+	}
+
+	if (UWorld* World = GEngine->GetWorldFromContextObject(WorldContextObject, EGetWorldErrorMode::LogAndReturnNull))
+	{
+		return World->GetDeltaSeconds();
+	}
+	return 0.f;
+}
+
 
 void UEFEditorLibrary::SetDefaultGameMap(const FString& MapName)
 {
@@ -95,12 +111,19 @@ FString UEFEditorLibrary::GetProjectVersion()
 {
 	FString ProjectVersion;
 
+	// BUG FIX: GGameIni is deprecated in UE 5.x.
+	// Read directly from DefaultGame.ini using the project config path.
 	GConfig->GetString(
 		TEXT("/Script/EngineSettings.GeneralProjectSettings"),
 		TEXT("ProjectVersion"),
 		ProjectVersion,
-		GGameIni
+		FPaths::ProjectConfigDir() / TEXT("DefaultGame.ini")
 	);
 
 	return ProjectVersion;
+}
+
+FString UEFEditorLibrary::GetPlatformName()
+{
+	return FString(FPlatformProperties::IniPlatformName());
 }

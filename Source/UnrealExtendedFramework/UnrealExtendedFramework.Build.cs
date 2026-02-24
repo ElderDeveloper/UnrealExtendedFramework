@@ -67,8 +67,9 @@ public class UnrealExtendedFramework : ModuleRules
 				"JsonUtilities",
 				"Json",
 				"XmlParser",
-				"ApplicationCore", "AnimGraphRuntime", "Niagara"
-				// ... add private dependencies that you statically link with here ...	
+				"ApplicationCore", "AnimGraphRuntime", "Niagara",
+				"PhysicsCore",
+				"RHI"
 			}
 			);
 		

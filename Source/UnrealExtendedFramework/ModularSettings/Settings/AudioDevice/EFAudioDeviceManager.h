@@ -4,7 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "UObject/Object.h"
-#include "EFAudioDevice.generated.h"
+#include "EFAudioDeviceManager.generated.h"
 
 USTRUCT(BlueprintType)
 struct FEFAudioDeviceInfo

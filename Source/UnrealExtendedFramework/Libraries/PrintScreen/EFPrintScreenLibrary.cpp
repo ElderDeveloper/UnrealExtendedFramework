@@ -4,11 +4,10 @@
 #include "EFPrintScreenLibrary.h"
 
 #include "Kismet/KismetSystemLibrary.h"
-#include "UnrealExtendedFramework/Libraries/Conversion/EFConversionLibrary.h"
 
 
-void UEFPrintScreenLibrary::PrintZeroString(const UObject* WorldContextObject, FString String, float Time,FLinearColor Color, const bool bPrintToLog)
+void UEFPrintScreenLibrary::PrintZeroString(const UObject* WorldContextObject, FString String, float Time, FLinearColor Color, const bool bPrintToLog)
 {
 	if (!WorldContextObject) return;
-	UKismetSystemLibrary::PrintString(WorldContextObject->GetWorld(),String,true,bPrintToLog,Color,Time);
+	UKismetSystemLibrary::PrintString(WorldContextObject->GetWorld(), String, true, bPrintToLog, Color, Time);
 }

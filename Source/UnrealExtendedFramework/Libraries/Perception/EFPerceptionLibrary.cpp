@@ -3,27 +3,25 @@
 
 #include "EFPerceptionLibrary.h"
 
+#include "UnrealExtendedFramework/UnrealExtendedFramework.h"
 #include "Perception/AIPerceptionComponent.h"
 #include "Perception/AISenseConfig_Hearing.h"
 #include "Perception/AISenseConfig_Sight.h"
-
-
-#define LOG_Error(Text)  UE_LOG(LogTemp,Error,TEXT(Text)); 
 
 
 UAISenseConfig* UEFPerceptionLibrary::GetPerceptionSenseConfig(UAIPerceptionComponent* Perception, TSubclassOf<UAISense> SenseClass)
 {
     if (!Perception)
     {
-        LOG_Error("GetPerceptionSenseConfig: Wrong Sense ID")
+        UE_LOG(LogExtendedFramework, Error, TEXT("GetPerceptionSenseConfig: Perception == nullptr"));
         return nullptr;
     }
     
-    if(const auto Id = UAISense::GetSenseID(SenseClass))
-        return  Perception->GetSenseConfig(Id);
+    if (const auto Id = UAISense::GetSenseID(SenseClass))
+        return Perception->GetSenseConfig(Id);
     
-    LOG_Error("GetPerceptionSenseConfig: Wrong Sense ID"); return nullptr;
-
+    UE_LOG(LogExtendedFramework, Error, TEXT("GetPerceptionSenseConfig: Wrong Sense ID"));
+    return nullptr;
 }
 
 
@@ -37,7 +35,7 @@ bool UEFPerceptionLibrary::ForgetActor(UAIPerceptionComponent* Perception, AActo
         return true;
     }
 
-    LOG_Error("ForgetActor: Perception or Actor == nullptr");
+    UE_LOG(LogExtendedFramework, Error, TEXT("ForgetActor: Perception or Actor == nullptr"));
     return false;
 }
 
@@ -52,7 +50,7 @@ bool UEFPerceptionLibrary::ForgetAll(UAIPerceptionComponent* Perception)
         return true;
     }
     
-    LOG_Error("ForgetAll: Perception == nullptr");
+    UE_LOG(LogExtendedFramework, Error, TEXT("ForgetAll: Perception == nullptr"));
     return false;
 }
 
@@ -64,7 +62,7 @@ TSubclassOf<UAISense> UEFPerceptionLibrary::GetDominantSense(UAIPerceptionCompon
     if (Perception)
         return Perception->GetDominantSense();
     
-    LOG_Error("GetDominantSense: Perception == nullptr");
+    UE_LOG(LogExtendedFramework, Error, TEXT("GetDominantSense: Perception == nullptr"));
     return nullptr;
 }
 
@@ -78,7 +76,7 @@ bool UEFPerceptionLibrary::SetDominantSense(UAIPerceptionComponent* Perception, 
         Perception->SetDominantSense(SenseClass);
         return true;
     }
-    LOG_Error("SetDominantSense: Perception or SenseClass == nullptr");
+    UE_LOG(LogExtendedFramework, Error, TEXT("SetDominantSense: Perception or SenseClass == nullptr"));
     return false;
 }
 
@@ -89,16 +87,16 @@ FAISenseAffiliationFilter UEFPerceptionLibrary::GetDetectionByAffiliation(UAIPer
 {
     if (Perception && SenseClass)
     {
-        if (const auto config = GetPerceptionSenseConfig(Perception , SenseClass))
+        if (const auto config = GetPerceptionSenseConfig(Perception, SenseClass))
         {
             if (const auto sightConfig = Cast<UAISenseConfig_Sight>(config))
-                return  sightConfig->DetectionByAffiliation;
+                return sightConfig->DetectionByAffiliation;
             
             if (const auto hearingSenseConfig = Cast<UAISenseConfig_Hearing>(config))
                 return hearingSenseConfig->DetectionByAffiliation;
         }
     }
-    LOG_Error("GetDetectionByAffiliation: Perception or Sense Config == nullptr");
+    UE_LOG(LogExtendedFramework, Error, TEXT("GetDetectionByAffiliation: Perception or Sense Config == nullptr"));
     return FAISenseAffiliationFilter();
 }
 
@@ -109,7 +107,7 @@ bool UEFPerceptionLibrary::SetDetectionByAffiliation(UAIPerceptionComponent* Per
 {
     if (Perception && SenseClass)
     {
-        if (const auto config = GetPerceptionSenseConfig(Perception , SenseClass))
+        if (const auto config = GetPerceptionSenseConfig(Perception, SenseClass))
         {
             if (const auto sightConfig = Cast<UAISenseConfig_Sight>(config))
             {
@@ -127,7 +125,7 @@ bool UEFPerceptionLibrary::SetDetectionByAffiliation(UAIPerceptionComponent* Per
             return true;
         }
     }
-    LOG_Error("SetDetectionByAffiliation: Perception or SenseClass == nullptr");
+    UE_LOG(LogExtendedFramework, Error, TEXT("SetDetectionByAffiliation: Perception or SenseClass == nullptr"));
     return false;
 }
 
@@ -138,17 +136,17 @@ float UEFPerceptionLibrary::GetMaxAge(UAIPerceptionComponent* Perception, TSubcl
 {
     if (Perception && SenseClass)
     {
-        if (const auto config = GetPerceptionSenseConfig(Perception , SenseClass))
+        if (const auto config = GetPerceptionSenseConfig(Perception, SenseClass))
         {
             if (const auto sightConfig = Cast<UAISenseConfig_Sight>(config))
-                return   sightConfig->GetMaxAge();
+                return sightConfig->GetMaxAge();
             
             if (const auto hearingSenseConfig = Cast<UAISenseConfig_Hearing>(config))
                 return hearingSenseConfig->GetMaxAge();
         }
     }
 
-    LOG_Error("GetMaxAge: Perception or SenseClass == nullptr");
+    UE_LOG(LogExtendedFramework, Error, TEXT("GetMaxAge: Perception or SenseClass == nullptr"));
     return -1;
 }
 
@@ -159,7 +157,7 @@ bool UEFPerceptionLibrary::SetMaxAge(UAIPerceptionComponent* Perception, TSubcla
 {
     if (Perception && SenseClass)
     {
-        if (const auto config = GetPerceptionSenseConfig(Perception , SenseClass))
+        if (const auto config = GetPerceptionSenseConfig(Perception, SenseClass))
         {
             if (const auto sightConfig = Cast<UAISenseConfig_Sight>(config))
                 sightConfig->SetMaxAge(MaxAge);
@@ -170,7 +168,7 @@ bool UEFPerceptionLibrary::SetMaxAge(UAIPerceptionComponent* Perception, TSubcla
             return true;
         }
     }
-    LOG_Error("SetMaxAge: Perception or SenseClass == nullptr");
+    UE_LOG(LogExtendedFramework, Error, TEXT("SetMaxAge: Perception or SenseClass == nullptr"));
     return false;
 }
 
@@ -181,13 +179,13 @@ float UEFPerceptionLibrary::GetSightRange(UAIPerceptionComponent* Perception)
 {
     if (Perception)
     {
-        if (const auto config = GetPerceptionSenseConfig(Perception , UAISense_Sight::StaticClass()))
+        if (const auto config = GetPerceptionSenseConfig(Perception, UAISense_Sight::StaticClass()))
         {
             if (const auto sightConfig = Cast<UAISenseConfig_Sight>(config))
                 return sightConfig->SightRadius;
         }
     }
-    LOG_Error("GetSightRange: Config == nullptr");
+    UE_LOG(LogExtendedFramework, Error, TEXT("GetSightRange: Config == nullptr"));
     return 0;
 }
 
@@ -198,23 +196,20 @@ bool UEFPerceptionLibrary::SetSightRange(UAIPerceptionComponent* Perception, flo
 {
     if (Perception)
     {
-        if (const auto config = GetPerceptionSenseConfig(Perception , UAISense_Sight::StaticClass()))
+        if (const auto config = GetPerceptionSenseConfig(Perception, UAISense_Sight::StaticClass()))
         {
             if (const auto sightConfig = Cast<UAISenseConfig_Sight>(config))
             {
-                // Save original lose range
-                const float LoseRange = sightConfig->LoseSightRadius - sightConfig->SightRadius;
-        
-                // Apply lose range to new radius of the sight
-                sightConfig->LoseSightRadius = sightConfig->SightRadius + LoseRange;
+                const float LoseOffset = sightConfig->LoseSightRadius - sightConfig->SightRadius;
                 sightConfig->SightRadius = SightRange;
+                sightConfig->LoseSightRadius = SightRange + LoseOffset;
                 
                 Perception->RequestStimuliListenerUpdate();
                 return true;
             }
         }
     }
-    LOG_Error("SetSightRange: Perception or Config == nullptr");
+    UE_LOG(LogExtendedFramework, Error, TEXT("SetSightRange: Perception or Config == nullptr"));
     return false;
 }
 
@@ -225,13 +220,13 @@ float UEFPerceptionLibrary::GetLoseSightRange(UAIPerceptionComponent* Perception
 {
     if (Perception)
     {
-        if (const auto config = GetPerceptionSenseConfig(Perception , UAISense_Sight::StaticClass()))
+        if (const auto config = GetPerceptionSenseConfig(Perception, UAISense_Sight::StaticClass()))
         {
             if (const auto sightConfig = Cast<UAISenseConfig_Sight>(config))
                 return sightConfig->LoseSightRadius;
         }
     }
-    LOG_Error("GetLoseSightRange: Config == nullptr");
+    UE_LOG(LogExtendedFramework, Error, TEXT("GetLoseSightRange: Config == nullptr"));
     return 0;
 }
 
@@ -242,7 +237,7 @@ bool UEFPerceptionLibrary::SetLoseSightRange(UAIPerceptionComponent* Perception,
 {
     if (Perception)
     {
-        if (const auto config = GetPerceptionSenseConfig(Perception , UAISense_Sight::StaticClass()))
+        if (const auto config = GetPerceptionSenseConfig(Perception, UAISense_Sight::StaticClass()))
         {
             if (const auto sightConfig = Cast<UAISenseConfig_Sight>(config))
             {
@@ -255,7 +250,7 @@ bool UEFPerceptionLibrary::SetLoseSightRange(UAIPerceptionComponent* Perception,
             }
         }
     }
-    LOG_Error("SetLoseSightRange: Perception or Config == nullptr");
+    UE_LOG(LogExtendedFramework, Error, TEXT("SetLoseSightRange: Perception or Config == nullptr"));
     return false;
 }
 
@@ -266,13 +261,13 @@ float UEFPerceptionLibrary::GetVisionAngle(UAIPerceptionComponent* Perception)
 {
     if (Perception)
     {
-        if (const auto config = GetPerceptionSenseConfig(Perception , UAISense_Sight::StaticClass()))
+        if (const auto config = GetPerceptionSenseConfig(Perception, UAISense_Sight::StaticClass()))
         {
             if (const auto sightConfig = Cast<UAISenseConfig_Sight>(config))
                 return sightConfig->PeripheralVisionAngleDegrees * 2;
         }
     }
-    LOG_Error("GetVisionAngle: Config == nullptr");
+    UE_LOG(LogExtendedFramework, Error, TEXT("GetVisionAngle: Config == nullptr"));
     return 0;
 }
 
@@ -283,7 +278,7 @@ bool UEFPerceptionLibrary::SetVisionAngle(UAIPerceptionComponent* Perception, fl
 {
     if (Perception)
     {
-        if (const auto config = GetPerceptionSenseConfig(Perception , UAISense_Sight::StaticClass()))
+        if (const auto config = GetPerceptionSenseConfig(Perception, UAISense_Sight::StaticClass()))
         {
             if (const auto sightConfig = Cast<UAISenseConfig_Sight>(config))
             {
@@ -294,7 +289,7 @@ bool UEFPerceptionLibrary::SetVisionAngle(UAIPerceptionComponent* Perception, fl
             }
         }
     }
-    LOG_Error("SetVisionAngle: Perception or Config == nullptr");
+    UE_LOG(LogExtendedFramework, Error, TEXT("SetVisionAngle: Perception or Config == nullptr"));
     return false;
 }
 
@@ -305,13 +300,13 @@ float UEFPerceptionLibrary::GetHearingRange(UAIPerceptionComponent* Perception)
 {
     if (Perception)
     {
-        if (const auto config  = GetPerceptionSenseConfig(Perception , UAISense_Hearing::StaticClass()))
+        if (const auto config = GetPerceptionSenseConfig(Perception, UAISense_Hearing::StaticClass()))
         {
             if (const auto hearConfig = Cast<UAISenseConfig_Hearing>(config))
                 return hearConfig->HearingRange;
         }
     }
-    LOG_Error("GetHearingRange: Perception or Config == nullptr");
+    UE_LOG(LogExtendedFramework, Error, TEXT("GetHearingRange: Perception or Config == nullptr"));
     return 0;
 }
 
@@ -322,7 +317,7 @@ bool UEFPerceptionLibrary::SetHearingRange(UAIPerceptionComponent* Perception, f
 {
     if (Perception)
     {
-        if (const auto config  = GetPerceptionSenseConfig(Perception , UAISense_Hearing::StaticClass()))
+        if (const auto config = GetPerceptionSenseConfig(Perception, UAISense_Hearing::StaticClass()))
         {
             if (const auto hearConfig = Cast<UAISenseConfig_Hearing>(config))
             {
@@ -332,10 +327,9 @@ bool UEFPerceptionLibrary::SetHearingRange(UAIPerceptionComponent* Perception, f
             }
         }
     }
-    LOG_Error("SetHearingRange: Perception or Config == nullptr");
+    UE_LOG(LogExtendedFramework, Error, TEXT("SetHearingRange: Perception or Config == nullptr"));
     return false;
 }
-
 
 
 
@@ -344,14 +338,18 @@ float UEFPerceptionLibrary::GetLoSHearingRange(UAIPerceptionComponent* Perceptio
 {
     if (Perception)
     {
-        if (const auto config  = GetPerceptionSenseConfig(Perception , UAISense_Hearing::StaticClass()))
+        if (const auto config = GetPerceptionSenseConfig(Perception, UAISense_Hearing::StaticClass()))
         {
             if (const auto hearConfig = Cast<UAISenseConfig_Hearing>(config))
-                return hearConfig->HearingRange;
+            {
+PRAGMA_DISABLE_DEPRECATION_WARNINGS
+                return hearConfig->LoSHearingRange;
+PRAGMA_ENABLE_DEPRECATION_WARNINGS
+            }
         }
     }
-    LOG_Error("GetLoSHearingRange: Perception or Config == nullptr");
-    return false;
+    UE_LOG(LogExtendedFramework, Error, TEXT("GetLoSHearingRange: Perception or Config == nullptr"));
+    return 0.f;
 }
 
 
@@ -361,16 +359,18 @@ bool UEFPerceptionLibrary::SetLoSHearingRange(UAIPerceptionComponent* Perception
 {
     if (Perception)
     {
-        if (const auto config  = GetPerceptionSenseConfig(Perception , UAISense_Hearing::StaticClass()))
+        if (const auto config = GetPerceptionSenseConfig(Perception, UAISense_Hearing::StaticClass()))
         {
             if (const auto hearConfig = Cast<UAISenseConfig_Hearing>(config))
             {
-                hearConfig->HearingRange = LoSHearingRange;
+PRAGMA_DISABLE_DEPRECATION_WARNINGS
+                hearConfig->LoSHearingRange = LoSHearingRange;
+PRAGMA_ENABLE_DEPRECATION_WARNINGS
                 Perception->RequestStimuliListenerUpdate();
                 return true;
             }
         }
     }
-    LOG_Error("SetLoSHearingRange: Perception or Config == nullptr");
+    UE_LOG(LogExtendedFramework, Error, TEXT("SetLoSHearingRange: Perception or Config == nullptr"));
     return false;
 }

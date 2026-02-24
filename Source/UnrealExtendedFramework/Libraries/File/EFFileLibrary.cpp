@@ -625,7 +625,7 @@ bool UEFFileLibrary::JsonValueToAnyStruct(TSharedPtr<FJsonValue> JsonValue, FPro
 				PropValue = StaticAllocateObject(objectProperty->PropertyClass, GetTransientPackage(), NAME_None,
 				                                 EObjectFlags::RF_NoFlags, EInternalObjectFlags::None, false);
 				(*objectProperty->PropertyClass->ClassConstructor)(
-				FObjectInitializer(PropValue,objectProperty->PropertyClass->ClassDefaultObject,EObjectInitializerOptions::InitializeProperties));
+				FObjectInitializer(PropValue,objectProperty->PropertyClass->GetDefaultObject(),EObjectInitializerOptions::InitializeProperties));
 				objectProperty->SetObjectPropertyValue(ValuePtr, PropValue);
 			}
 			const auto JsonObject = JsonValue->AsObject();
@@ -2106,4 +2106,24 @@ void UEFFileLibrary::WriteJSONValueWithOptionalIdentifier(
 	{
 		JsonWriter->WriteValue(InValue);
 	}
+}
+
+
+// ================================ NEW UTILITY FUNCTIONS ================================
+
+FString UEFFileLibrary::GetFileExtension(FString Path)
+{
+	return FPaths::GetExtension(Path);
+}
+
+FDateTime UEFFileLibrary::GetFileModificationTime(FString FilePath, bool& Success)
+{
+	IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
+	if (PlatformFile.FileExists(*FilePath))
+	{
+		Success = true;
+		return PlatformFile.GetTimeStamp(*FilePath);
+	}
+	Success = false;
+	return FDateTime::MinValue();
 }

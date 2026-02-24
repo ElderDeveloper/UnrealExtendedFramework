@@ -7,339 +7,301 @@
 #include "EFGlobalLibrary.generated.h"
 
 
-static TMap<FGameplayTag , TSubclassOf<UObject>> EFGlobalClass;
-static TMap<FGameplayTag , bool> EFGlobalBool;
-static TMap<FGameplayTag , uint8 > EFGlobalByte;
-static TMap<FGameplayTag , float> EFGlobalFloat;
-static TMap<FGameplayTag , int32> EFGlobalInt;
-static TMap<FGameplayTag , int64> EFGlobalInt64;
-static TMap<FGameplayTag , FName> EFGlobalName;
-static TMap<FGameplayTag , FString> EFGlobalString;
-static TMap<FGameplayTag , FText> EFGlobalText;
-static TMap<FGameplayTag , FVector> EFGlobalVector;
-static TMap<FGameplayTag , FRotator> EFGlobalRotator;
-static TMap<FGameplayTag , FTransform> EFGlobalTransform;
-
-	
-
-
-
-
+/**
+ * Blueprint function library providing a lightweight global variable system keyed by GameplayTags.
+ * Supports primitive types (bool, int, float, string, etc.) and composite types (Vector, Rotator, Transform).
+ *
+ * Actor and Object globals use UEFGlobalSubsystem (engine subsystem, persistent across levels).
+ * Primitive globals use process-lifetime static storage (also persistent across levels).
+ */
 UCLASS()
 class UNREALEXTENDEDFRAMEWORK_API UEFGlobalLibrary : public UBlueprintFunctionLibrary
 {
 	GENERATED_BODY()
 
 public:
-	UFUNCTION(BlueprintPure , Category="Global Library|Get")
-	static TSubclassOf<UObject> GetGlobalClass(FGameplayTag Tag)
-	{
-		return ReturnGlobalVariable<FGameplayTag , TSubclassOf<UObject>>(EFGlobalClass , Tag,nullptr);
-	}
-	
-	
-	UFUNCTION(BlueprintPure , Category="Global Library|Get")
-	static bool GetGlobalBool(FGameplayTag Tag)
-	{
-		return ReturnGlobalVariable<FGameplayTag , bool>(EFGlobalBool , Tag,false);
-	}
 
-	
-	UFUNCTION(BlueprintPure , Category="Global Library|Get")
-	static uint8 GetGlobalByte(FGameplayTag Tag)
-	{
-		return ReturnGlobalVariable<FGameplayTag , uint8>(EFGlobalByte , Tag,0);
-	}
+	// <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< GETTERS >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
-	
-	UFUNCTION(BlueprintPure , Category="Global Library|Get")
-	static float GetGlobalFloat(FGameplayTag Tag)
-	{
-		return ReturnGlobalVariable<FGameplayTag , float>(EFGlobalFloat , Tag,0);
-	}
+	/** Returns the global class stored for the tag, or nullptr if not set. */
+	UFUNCTION(BlueprintPure, Category="Global Library|Get")
+	static TSubclassOf<UObject> GetGlobalClass(FGameplayTag Tag);
 
-	UFUNCTION(BlueprintPure  , Category="Global Library|Get")
-	static int32 GetGlobalInt(FGameplayTag Tag)
-	{
-		return ReturnGlobalVariable<FGameplayTag , int32>(EFGlobalInt , Tag,0);
-	}
+	/** Returns the global bool stored for the tag, or false if not set. */
+	UFUNCTION(BlueprintPure, Category="Global Library|Get")
+	static bool GetGlobalBool(FGameplayTag Tag);
 
-	
-	UFUNCTION(BlueprintPure  , Category="Global Library|Get")
-	static int64 GetGlobalInt64(FGameplayTag Tag)
-	{
-		return ReturnGlobalVariable<FGameplayTag , int64>(EFGlobalInt64 , Tag,0);
-	}
-	
-	
-	UFUNCTION(BlueprintPure  , Category="Global Library|Get")
-	static FName GetGlobalName(FGameplayTag Tag)
-	{
-		return ReturnGlobalVariable<FGameplayTag , FName>(EFGlobalName , Tag,FName());
-	}
-	
+	/** Returns the global byte stored for the tag, or 0 if not set. */
+	UFUNCTION(BlueprintPure, Category="Global Library|Get")
+	static uint8 GetGlobalByte(FGameplayTag Tag);
 
-	UFUNCTION(BlueprintPure , Category="Global Library|Get")
-	static FString GetGlobalString(FGameplayTag Tag)
-	{
-		return ReturnGlobalVariable<FGameplayTag , FString>(EFGlobalString , Tag,FString());
-	}
+	/** Returns the global float stored for the tag, or 0 if not set. */
+	UFUNCTION(BlueprintPure, Category="Global Library|Get")
+	static float GetGlobalFloat(FGameplayTag Tag);
 
-	
-	UFUNCTION(BlueprintPure , Category="Global Library|Get")
-	static FText GetGlobalText(FGameplayTag Tag)
-	{
-		return ReturnGlobalVariable<FGameplayTag , FText>(EFGlobalText , Tag,FText());
-	}
+	/** Returns the global int32 stored for the tag, or 0 if not set. */
+	UFUNCTION(BlueprintPure, Category="Global Library|Get")
+	static int32 GetGlobalInt(FGameplayTag Tag);
+
+	/** Returns the global int64 stored for the tag, or 0 if not set. */
+	UFUNCTION(BlueprintPure, Category="Global Library|Get")
+	static int64 GetGlobalInt64(FGameplayTag Tag);
+
+	/** Returns the global FName stored for the tag, or NAME_None if not set. */
+	UFUNCTION(BlueprintPure, Category="Global Library|Get")
+	static FName GetGlobalName(FGameplayTag Tag);
+
+	/** Returns the global FString stored for the tag, or empty string if not set. */
+	UFUNCTION(BlueprintPure, Category="Global Library|Get")
+	static FString GetGlobalString(FGameplayTag Tag);
+
+	/** Returns the global FText stored for the tag, or empty text if not set. */
+	UFUNCTION(BlueprintPure, Category="Global Library|Get")
+	static FText GetGlobalText(FGameplayTag Tag);
+
+	/** Returns the global FVector stored for the tag, or ZeroVector if not set. */
+	UFUNCTION(BlueprintPure, Category="Global Library|Get")
+	static FVector GetGlobalVector(FGameplayTag Tag);
+
+	/** Returns the global FRotator stored for the tag, or ZeroRotator if not set. */
+	UFUNCTION(BlueprintPure, Category="Global Library|Get")
+	static FRotator GetGlobalRotator(FGameplayTag Tag);
+
+	/** Returns the global FTransform stored for the tag, or identity transform if not set. */
+	UFUNCTION(BlueprintPure, Category="Global Library|Get")
+	static FTransform GetGlobalTransform(FGameplayTag Tag);
 
 
-	UFUNCTION(BlueprintPure  , Category="Global Library|Get")
-	static FVector GetGlobalVector(FGameplayTag Tag)
-	{
-		return ReturnGlobalVariable<FGameplayTag , FVector>(EFGlobalVector , Tag,FVector::ZeroVector);
-	}
+	// <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< SETTERS >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
-	
-	UFUNCTION(BlueprintPure  , Category="Global Library|Get")
-	static FRotator GetGlobalRotator(FGameplayTag Tag)
-	{
-		return ReturnGlobalVariable<FGameplayTag , FRotator>(EFGlobalRotator , Tag,FRotator::ZeroRotator);
-	}
+	/** Sets a global class and returns the stored value. */
+	UFUNCTION(BlueprintCallable, Category="Global Library|Set")
+	static TSubclassOf<UObject> SetGlobalClass(FGameplayTag Tag, TSubclassOf<UObject> Value);
 
-	
-	UFUNCTION(BlueprintPure , Category="Global Library|Get")
-	static FTransform GetGlobalTransform(FGameplayTag Tag)
-	{
-		return ReturnGlobalVariable<FGameplayTag , FTransform>(EFGlobalTransform , Tag,FTransform());
-	}
+	/** Sets a global bool and returns the stored value. */
+	UFUNCTION(BlueprintCallable, Category="Global Library|Set")
+	static bool SetGlobalBool(FGameplayTag Tag, bool Value);
 
+	/** Sets a global byte and returns the stored value. */
+	UFUNCTION(BlueprintCallable, Category="Global Library|Set")
+	static uint8 SetGlobalByte(FGameplayTag Tag, uint8 Value);
 
-	
+	/** Sets a global float and returns the stored value. */
+	UFUNCTION(BlueprintCallable, Category="Global Library|Set")
+	static float SetGlobalFloat(FGameplayTag Tag, float Value);
 
-	UFUNCTION(BlueprintCallable , Category="Global Library|Set")
-	static TSubclassOf<UObject> SetGlobalClass(FGameplayTag Tag , TSubclassOf<UObject> Value)
-	{
-		return CreateNewGlobalVariable<FGameplayTag , TSubclassOf<UObject>>(EFGlobalClass , Tag,Value);
-	}
+	/** Sets a global int32 and returns the stored value. */
+	UFUNCTION(BlueprintCallable, Category="Global Library|Set")
+	static int32 SetGlobalInt(FGameplayTag Tag, int32 Value);
 
+	/** Sets a global int64 and returns the stored value. */
+	UFUNCTION(BlueprintCallable, Category="Global Library|Set")
+	static int64 SetGlobalInt64(FGameplayTag Tag, int64 Value);
 
-	UFUNCTION(BlueprintCallable , Category="Global Library|Set")
-	static bool SetGlobalBool(FGameplayTag Tag , bool Value)
-	{
-		return CreateNewGlobalVariable<FGameplayTag , bool>(EFGlobalBool , Tag,Value);
-	}
+	/** Sets a global FName and returns the stored value. */
+	UFUNCTION(BlueprintCallable, Category="Global Library|Set")
+	static FName SetGlobalName(FGameplayTag Tag, FName Value);
 
-	
-	UFUNCTION(BlueprintCallable , Category="Global Library|Set")
-	static uint8 SetGlobalByte(FGameplayTag Tag , uint8 Value)
-	{
-		return CreateNewGlobalVariable<FGameplayTag , uint8>(EFGlobalByte , Tag,Value);
-	}
+	/** Sets a global FString and returns the stored value. */
+	UFUNCTION(BlueprintCallable, Category="Global Library|Set")
+	static FString SetGlobalString(FGameplayTag Tag, FString Value);
 
-	
-	UFUNCTION(BlueprintCallable , Category="Global Library|Set")
-	static float SetGlobalFloat(FGameplayTag Tag , float Value)
-	{
-		return CreateNewGlobalVariable<FGameplayTag , float>(EFGlobalFloat , Tag,Value);
-	}
+	/** Sets a global FText and returns the stored value. */
+	UFUNCTION(BlueprintCallable, Category="Global Library|Set")
+	static FText SetGlobalText(FGameplayTag Tag, FText Value);
 
-	UFUNCTION(BlueprintCallable , Category="Global Library|Set")
-	static int32 SetGlobalInt(FGameplayTag Tag , int32 Value)
-	{
-		return CreateNewGlobalVariable<FGameplayTag , int32>(EFGlobalInt , Tag,Value);
-	}
+	/** Sets a global FVector and returns the stored value. */
+	UFUNCTION(BlueprintCallable, Category="Global Library|Set")
+	static FVector SetGlobalVector(FGameplayTag Tag, FVector Value);
 
-	
-	UFUNCTION(BlueprintCallable , Category="Global Library|Set")
-	static int64 SetGlobalInt64(FGameplayTag Tag , int64 Value)
-	{
-		return CreateNewGlobalVariable<FGameplayTag , int64>(EFGlobalInt64 , Tag,Value);
-	}
-	
-	
-	UFUNCTION(BlueprintCallable , Category="Global Library|Set")
-	static FName SetGlobalName(FGameplayTag Tag , FName Value)
-	{
-		return CreateNewGlobalVariable<FGameplayTag , FName>(EFGlobalName , Tag,Value);
-	}
-	
+	/** Sets a global FRotator and returns the stored value. */
+	UFUNCTION(BlueprintCallable, Category="Global Library|Set")
+	static FRotator SetGlobalRotator(FGameplayTag Tag, FRotator Value);
 
-	UFUNCTION(BlueprintCallable , Category="Global Library|Set")
-	static FString SetGlobalString(FGameplayTag Tag , FString Value)
-	{
-		return CreateNewGlobalVariable<FGameplayTag , FString>(EFGlobalString , Tag,Value);
-	}
-
-	
-	UFUNCTION(BlueprintCallable , Category="Global Library|Set")
-	static FText SetGlobalText(FGameplayTag Tag , FText Value)
-	{
-		return CreateNewGlobalVariable<FGameplayTag , FText>(EFGlobalText , Tag,Value);
-	}
+	/** Sets a global FTransform and returns the stored value. */
+	UFUNCTION(BlueprintCallable, Category="Global Library|Set")
+	static FTransform SetGlobalTransform(FGameplayTag Tag, FTransform Value);
 
 
-	UFUNCTION(BlueprintCallable , Category="Global Library|Set")
-	static FVector SetGlobalVector(FGameplayTag Tag , FVector Value)
-	{
-		return CreateNewGlobalVariable<FGameplayTag , FVector>(EFGlobalVector , Tag,Value);
-	}
+	// <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< REMOVE >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
-	
-	UFUNCTION(BlueprintCallable , Category="Global Library|Set")
-	static FRotator SetGlobalRotator(FGameplayTag Tag , FRotator Value)
-	{
-		return CreateNewGlobalVariable<FGameplayTag , FRotator>(EFGlobalRotator , Tag,Value);
-	}
+	/** Removes the global class entry for the given tag. Returns true if removed. */
+	UFUNCTION(BlueprintCallable, Category="Global Library|Remove")
+	static bool RemoveGlobalClass(FGameplayTag Tag);
 
-	
-	UFUNCTION(BlueprintCallable , Category="Global Library|Set")
-	static FTransform SetGlobalTransform(FGameplayTag Tag , FTransform Value)
-	{
-		return CreateNewGlobalVariable<FGameplayTag , FTransform>(EFGlobalTransform , Tag,Value);
-	}
+	/** Removes the global bool entry for the given tag. Returns true if removed. */
+	UFUNCTION(BlueprintCallable, Category="Global Library|Remove")
+	static bool RemoveGlobalBool(FGameplayTag Tag);
 
-	
+	/** Removes the global byte entry for the given tag. Returns true if removed. */
+	UFUNCTION(BlueprintCallable, Category="Global Library|Remove")
+	static bool RemoveGlobalByte(FGameplayTag Tag);
 
-	UFUNCTION(BlueprintCallable , Category="Global Library|All")
-	static void GetAllGlobalClass(TArray<FGameplayTag>& Tags , TArray<TSubclassOf<UObject>>& Values)
-	{
-		Tags = ReturnGlobalVariableArrayKeys<TSubclassOf<UObject>>(EFGlobalClass);
-		Values = ReturnGlobalVariableArrayValues<TSubclassOf<UObject>>(EFGlobalClass);
-	}
-	
-	
-	UFUNCTION(BlueprintCallable , Category="Global Library|All")
-	static void GetAllGlobalBool(TArray<FGameplayTag>& Tags , TArray<bool>& Values)
-	{
-		Tags = ReturnGlobalVariableArrayKeys<bool>(EFGlobalBool);
-		Values = ReturnGlobalVariableArrayValues<bool>(EFGlobalBool);
-	}
+	/** Removes the global float entry for the given tag. Returns true if removed. */
+	UFUNCTION(BlueprintCallable, Category="Global Library|Remove")
+	static bool RemoveGlobalFloat(FGameplayTag Tag);
 
-	UFUNCTION(BlueprintCallable , Category="Global Library|All")
-	static void GetAllGlobalByte(TArray<FGameplayTag>& Tags , TArray<uint8>& Values)
-	{
-		Tags = ReturnGlobalVariableArrayKeys<uint8>(EFGlobalByte);
-		Values = ReturnGlobalVariableArrayValues<uint8>(EFGlobalByte);
-	}
+	/** Removes the global int32 entry for the given tag. Returns true if removed. */
+	UFUNCTION(BlueprintCallable, Category="Global Library|Remove")
+	static bool RemoveGlobalInt(FGameplayTag Tag);
 
-	UFUNCTION(BlueprintCallable , Category="Global Library|All")
-	static void GetAllGlobalFloat(TArray<FGameplayTag>& Tags , TArray<float>& Values)
-	{
-		Tags = ReturnGlobalVariableArrayKeys<float>(EFGlobalFloat);
-		Values = ReturnGlobalVariableArrayValues<float>(EFGlobalFloat);
-	}
+	/** Removes the global int64 entry for the given tag. Returns true if removed. */
+	UFUNCTION(BlueprintCallable, Category="Global Library|Remove")
+	static bool RemoveGlobalInt64(FGameplayTag Tag);
 
-	UFUNCTION(BlueprintCallable , Category="Global Library|All")
-	static void GetAllGlobalInt(TArray<FGameplayTag>& Tags , TArray<int32>& Values)
-	{
-		Tags = ReturnGlobalVariableArrayKeys<int32>(EFGlobalInt);
-		Values = ReturnGlobalVariableArrayValues<int32>(EFGlobalInt);
-	}
+	/** Removes the global FName entry for the given tag. Returns true if removed. */
+	UFUNCTION(BlueprintCallable, Category="Global Library|Remove")
+	static bool RemoveGlobalName(FGameplayTag Tag);
 
-	UFUNCTION(BlueprintCallable , Category="Global Library|All")
-	static void GetAllGlobalInt64(TArray<FGameplayTag>& Tags , TArray<int64>& Values)
-	{
-		Tags = ReturnGlobalVariableArrayKeys<int64>(EFGlobalInt64);
-		Values = ReturnGlobalVariableArrayValues<int64>(EFGlobalInt64);
-	}
+	/** Removes the global FString entry for the given tag. Returns true if removed. */
+	UFUNCTION(BlueprintCallable, Category="Global Library|Remove")
+	static bool RemoveGlobalString(FGameplayTag Tag);
 
-	UFUNCTION(BlueprintCallable , Category="Global Library|All")
-	static void GetAllGlobalName(TArray<FGameplayTag>& Tags , TArray<FName>& Values)
-	{
-		Tags = ReturnGlobalVariableArrayKeys<FName>(EFGlobalName);
-		Values = ReturnGlobalVariableArrayValues<FName>(EFGlobalName);
-	}
+	/** Removes the global FText entry for the given tag. Returns true if removed. */
+	UFUNCTION(BlueprintCallable, Category="Global Library|Remove")
+	static bool RemoveGlobalText(FGameplayTag Tag);
 
-	UFUNCTION(BlueprintCallable , Category="Global Library|All")
-	static void GetAllGlobalString(TArray<FGameplayTag>& Tags , TArray<FString>& Values)
-	{
-		Tags = ReturnGlobalVariableArrayKeys<FString>(EFGlobalString);
-		Values = ReturnGlobalVariableArrayValues<FString>(EFGlobalString);
-	}
+	/** Removes the global FVector entry for the given tag. Returns true if removed. */
+	UFUNCTION(BlueprintCallable, Category="Global Library|Remove")
+	static bool RemoveGlobalVector(FGameplayTag Tag);
 
-	UFUNCTION(BlueprintCallable , Category="Global Library|All")
-	static void GetAllGlobalText(TArray<FGameplayTag>& Tags , TArray<FText>& Values)
-	{
-		Tags = ReturnGlobalVariableArrayKeys<FText>(EFGlobalText);
-		Values = ReturnGlobalVariableArrayValues<FText>(EFGlobalText);
-	}
+	/** Removes the global FRotator entry for the given tag. Returns true if removed. */
+	UFUNCTION(BlueprintCallable, Category="Global Library|Remove")
+	static bool RemoveGlobalRotator(FGameplayTag Tag);
 
-	UFUNCTION(BlueprintCallable , Category="Global Library|All")
-	static void GetAllGlobalVector(TArray<FGameplayTag>& Tags , TArray<FVector>& Values)
-	{
-		Tags = ReturnGlobalVariableArrayKeys<FVector>(EFGlobalVector);
-		Values = ReturnGlobalVariableArrayValues<FVector>(EFGlobalVector);
-	}
-
-	UFUNCTION(BlueprintCallable , Category="Global Library|All")
-	static void GetAllGlobalRotator(TArray<FGameplayTag>& Tags , TArray<FRotator>& Values)
-	{
-		Tags = ReturnGlobalVariableArrayKeys<FRotator>(EFGlobalRotator);
-		Values = ReturnGlobalVariableArrayValues<FRotator>(EFGlobalRotator);
-	}
-
-	UFUNCTION(BlueprintCallable , Category="Global Library|All")
-	static void GetAllGlobalTransform(TArray<FGameplayTag>& Tags , TArray<FTransform>& Values)
-	{
-		Tags = ReturnGlobalVariableArrayKeys<FTransform>(EFGlobalTransform);
-		Values = ReturnGlobalVariableArrayValues<FTransform>(EFGlobalTransform);
-	}
+	/** Removes the global FTransform entry for the given tag. Returns true if removed. */
+	UFUNCTION(BlueprintCallable, Category="Global Library|Remove")
+	static bool RemoveGlobalTransform(FGameplayTag Tag);
 
 
+	// <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< CONTAINS >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+	/** Returns true if a global class entry exists for the given tag. */
+	UFUNCTION(BlueprintPure, Category="Global Library|Contains")
+	static bool ContainsGlobalClass(FGameplayTag Tag);
+
+	/** Returns true if a global bool entry exists for the given tag. */
+	UFUNCTION(BlueprintPure, Category="Global Library|Contains")
+	static bool ContainsGlobalBool(FGameplayTag Tag);
+
+	/** Returns true if a global byte entry exists for the given tag. */
+	UFUNCTION(BlueprintPure, Category="Global Library|Contains")
+	static bool ContainsGlobalByte(FGameplayTag Tag);
+
+	/** Returns true if a global float entry exists for the given tag. */
+	UFUNCTION(BlueprintPure, Category="Global Library|Contains")
+	static bool ContainsGlobalFloat(FGameplayTag Tag);
+
+	/** Returns true if a global int32 entry exists for the given tag. */
+	UFUNCTION(BlueprintPure, Category="Global Library|Contains")
+	static bool ContainsGlobalInt(FGameplayTag Tag);
+
+	/** Returns true if a global int64 entry exists for the given tag. */
+	UFUNCTION(BlueprintPure, Category="Global Library|Contains")
+	static bool ContainsGlobalInt64(FGameplayTag Tag);
+
+	/** Returns true if a global FName entry exists for the given tag. */
+	UFUNCTION(BlueprintPure, Category="Global Library|Contains")
+	static bool ContainsGlobalName(FGameplayTag Tag);
+
+	/** Returns true if a global FString entry exists for the given tag. */
+	UFUNCTION(BlueprintPure, Category="Global Library|Contains")
+	static bool ContainsGlobalString(FGameplayTag Tag);
+
+	/** Returns true if a global FText entry exists for the given tag. */
+	UFUNCTION(BlueprintPure, Category="Global Library|Contains")
+	static bool ContainsGlobalText(FGameplayTag Tag);
+
+	/** Returns true if a global FVector entry exists for the given tag. */
+	UFUNCTION(BlueprintPure, Category="Global Library|Contains")
+	static bool ContainsGlobalVector(FGameplayTag Tag);
+
+	/** Returns true if a global FRotator entry exists for the given tag. */
+	UFUNCTION(BlueprintPure, Category="Global Library|Contains")
+	static bool ContainsGlobalRotator(FGameplayTag Tag);
+
+	/** Returns true if a global FTransform entry exists for the given tag. */
+	UFUNCTION(BlueprintPure, Category="Global Library|Contains")
+	static bool ContainsGlobalTransform(FGameplayTag Tag);
 
 
+	// <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< GET ALL >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+	/** Returns all global class entries as parallel tag/value arrays. */
+	UFUNCTION(BlueprintCallable, Category="Global Library|All")
+	static void GetAllGlobalClass(TArray<FGameplayTag>& Tags, TArray<TSubclassOf<UObject>>& Values);
+
+	/** Returns all global bool entries as parallel tag/value arrays. */
+	UFUNCTION(BlueprintCallable, Category="Global Library|All")
+	static void GetAllGlobalBool(TArray<FGameplayTag>& Tags, TArray<bool>& Values);
+
+	/** Returns all global byte entries as parallel tag/value arrays. */
+	UFUNCTION(BlueprintCallable, Category="Global Library|All")
+	static void GetAllGlobalByte(TArray<FGameplayTag>& Tags, TArray<uint8>& Values);
+
+	/** Returns all global float entries as parallel tag/value arrays. */
+	UFUNCTION(BlueprintCallable, Category="Global Library|All")
+	static void GetAllGlobalFloat(TArray<FGameplayTag>& Tags, TArray<float>& Values);
+
+	/** Returns all global int32 entries as parallel tag/value arrays. */
+	UFUNCTION(BlueprintCallable, Category="Global Library|All")
+	static void GetAllGlobalInt(TArray<FGameplayTag>& Tags, TArray<int32>& Values);
+
+	/** Returns all global int64 entries as parallel tag/value arrays. */
+	UFUNCTION(BlueprintCallable, Category="Global Library|All")
+	static void GetAllGlobalInt64(TArray<FGameplayTag>& Tags, TArray<int64>& Values);
+
+	/** Returns all global FName entries as parallel tag/value arrays. */
+	UFUNCTION(BlueprintCallable, Category="Global Library|All")
+	static void GetAllGlobalName(TArray<FGameplayTag>& Tags, TArray<FName>& Values);
+
+	/** Returns all global FString entries as parallel tag/value arrays. */
+	UFUNCTION(BlueprintCallable, Category="Global Library|All")
+	static void GetAllGlobalString(TArray<FGameplayTag>& Tags, TArray<FString>& Values);
+
+	/** Returns all global FText entries as parallel tag/value arrays. */
+	UFUNCTION(BlueprintCallable, Category="Global Library|All")
+	static void GetAllGlobalText(TArray<FGameplayTag>& Tags, TArray<FText>& Values);
+
+	/** Returns all global FVector entries as parallel tag/value arrays. */
+	UFUNCTION(BlueprintCallable, Category="Global Library|All")
+	static void GetAllGlobalVector(TArray<FGameplayTag>& Tags, TArray<FVector>& Values);
+
+	/** Returns all global FRotator entries as parallel tag/value arrays. */
+	UFUNCTION(BlueprintCallable, Category="Global Library|All")
+	static void GetAllGlobalRotator(TArray<FGameplayTag>& Tags, TArray<FRotator>& Values);
+
+	/** Returns all global FTransform entries as parallel tag/value arrays. */
+	UFUNCTION(BlueprintCallable, Category="Global Library|All")
+	static void GetAllGlobalTransform(TArray<FGameplayTag>& Tags, TArray<FTransform>& Values);
 
 
-	UFUNCTION(BlueprintCallable, meta = (WorldContext = "WorldContextObject" , ExpandBoolAsExecs = "Valid"))
-	static AActor* GetGlobalActor(const UObject* WorldContextObject , FGameplayTag Tag , bool& Valid);
+	// <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< ACTOR / OBJECT (via Subsystem) >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
+	/**
+	 * Retrieves a global actor from the engine subsystem.
+	 * @param WorldContextObject World context
+	 * @param Tag The GameplayTag to look up
+	 * @param Valid Execution pin — true if the actor is found and valid
+	 */
+	UFUNCTION(BlueprintCallable, meta = (WorldContext = "WorldContextObject", ExpandBoolAsExecs = "Valid"))
+	static AActor* GetGlobalActor(const UObject* WorldContextObject, FGameplayTag Tag, bool& Valid);
+
+	/** Registers an actor in the global engine subsystem under the given tag. */
 	UFUNCTION(BlueprintCallable, meta = (WorldContext = "WorldContextObject"))
-	static void SetGlobalActor(const UObject* WorldContextObject , FGameplayTag Tag , AActor* Value);
-	
+	static void SetGlobalActor(const UObject* WorldContextObject, FGameplayTag Tag, AActor* Value);
 
-	UFUNCTION(BlueprintCallable, meta = (WorldContext = "WorldContextObject" , ExpandBoolAsExecs = "Valid"))
-	static UObject* GetGlobalObject(const UObject* WorldContextObject , FGameplayTag Tag , bool& Valid);
+	/**
+	 * Retrieves a global object from the engine subsystem.
+	 * @param WorldContextObject World context
+	 * @param Tag The GameplayTag to look up
+	 * @param Valid Execution pin — true if the object is found and valid
+	 */
+	UFUNCTION(BlueprintCallable, meta = (WorldContext = "WorldContextObject", ExpandBoolAsExecs = "Valid"))
+	static UObject* GetGlobalObject(const UObject* WorldContextObject, FGameplayTag Tag, bool& Valid);
 
+	/** Registers an object in the global engine subsystem under the given tag. */
 	UFUNCTION(BlueprintCallable, meta = (WorldContext = "WorldContextObject"))
-	static void SetGlobalObject(const UObject* WorldContextObject , FGameplayTag Tag , UObject* Value);
+	static void SetGlobalObject(const UObject* WorldContextObject, FGameplayTag Tag, UObject* Value);
 
-
-private:
-	
-	template< typename  T , typename V >
-	static V CreateNewGlobalVariable(TMap<FGameplayTag, V >& Type ,T Tag , V Value)
-	{
-		Type.Add(Tag ,Value);
-		return Type[Tag];
-	}
-
-	template< typename  T , typename V >
-	static V ReturnGlobalVariable(TMap<FGameplayTag, V >& Type ,T Tag , V CustomValue)
-	{
-		if (Type.Contains(Tag))
-		{
-			return Type[Tag];
-		}
-		Type.Add(Tag , CustomValue);
-		return Type[Tag];
-	}
-
-	template<typename T >
-	static TArray<T> ReturnGlobalVariableArrayValues(const TMap<FGameplayTag,T>& Type)
-	{
-		TArray<T> Array;
-		for (const auto i : Type)
-			Array .Add(i.Value);
-		return Array;
-	}
-
-	template<typename T >
-	static TArray<FGameplayTag> ReturnGlobalVariableArrayKeys(const TMap<FGameplayTag,T>& Type)
-		{
-			TArray<FGameplayTag> Array;
-			for (const auto i : Type)
-				Array .Add(i.Key);
-			return Array;
-		}
-	
 };
