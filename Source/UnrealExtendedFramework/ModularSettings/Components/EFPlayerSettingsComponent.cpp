@@ -1,5 +1,6 @@
 // Fill out your copyright notice in the Description page of Project Settings.
 
+
 #include "EFPlayerSettingsComponent.h"
 
 #include "Engine/ActorChannel.h"
@@ -8,11 +9,13 @@
 #include "GameFramework/PlayerState.h"
 #include "Kismet/GameplayStatics.h"
 #include "Net/UnrealNetwork.h"
+#include "TimerManager.h"
 #include "UnrealExtendedFramework/ModularSettings/EFModularSettingsSubsystem.h"
 #include "UnrealExtendedFramework/ModularSettings/SaveGame/EFSettingsSaveGame.h"
 
-static const FString PlayerSettingsSaveSlotName = TEXT("PlayerSettingsSave");
-static const int32 PlayerSettingsUserIndex = 0;
+const FString UEFPlayerSettingsComponent::OldSaveSlotName = TEXT("PlayerSettingsSave");
+const FString UEFPlayerSettingsComponent::NewSaveSlotName = TEXT("EFPlayerSettings");
+const int32 UEFPlayerSettingsComponent::SaveUserIndex = 0;
 
 UEFPlayerSettingsComponent::UEFPlayerSettingsComponent() 
 {
@@ -117,8 +120,55 @@ void UEFPlayerSettingsComponent::BeginPlay()
     ConsumeTemplate(Template);
   }
 
-  // Load saved settings for local player after all settings are created
-  LoadPlayerSettings();
+  // --- Deferred load: check if we can identify the local player now ---
+  if (IsLocalPlayerComponent())
+  {
+    LoadState = EPlayerSettingsLoadState::LoadingFromDisk;
+    LoadPlayerSettings();
+  }
+  else
+  {
+    // PlayerState may not have replicated yet. Retry on a timer.
+    LoadState = EPlayerSettingsLoadState::WaitingForOwner;
+    OwnerRetryCount = 0;
+    
+    if (UWorld* World = GetWorld())
+    {
+      World->GetTimerManager().SetTimer(
+        OwnerRetryTimer, this, &UEFPlayerSettingsComponent::RetryIdentifyOwner,
+        0.1f, true); // Every 100ms
+    }
+  }
+}
+
+void UEFPlayerSettingsComponent::RetryIdentifyOwner()
+{
+  OwnerRetryCount++;
+  
+  if (IsLocalPlayerComponent())
+  {
+    // Found the local player — stop retrying and load
+    if (UWorld* World = GetWorld())
+    {
+      World->GetTimerManager().ClearTimer(OwnerRetryTimer);
+    }
+    
+    LoadState = EPlayerSettingsLoadState::LoadingFromDisk;
+    LoadPlayerSettings();
+    return;
+  }
+  
+  if (OwnerRetryCount >= MaxOwnerRetries)
+  {
+    // Give up — this component is not for the local player
+    if (UWorld* World = GetWorld())
+    {
+      World->GetTimerManager().ClearTimer(OwnerRetryTimer);
+    }
+    
+    LoadState = EPlayerSettingsLoadState::Ready;
+    UE_LOG(LogTemp, Log, TEXT("[UEFPlayerSettingsComponent] Not local player component after %d retries. Skipping load."), OwnerRetryCount);
+  }
 }
 
 void UEFPlayerSettingsComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const 
@@ -169,15 +219,30 @@ TArray<UEFModularSettingsBase*> UEFPlayerSettingsComponent::GetSettingsByCategor
   return FoundSettings;
 }
 
-void UEFPlayerSettingsComponent::RequestUpdateSetting(FGameplayTag Tag, const FString &NewValue) 
+void UEFPlayerSettingsComponent::RequestUpdateSetting(FGameplayTag Tag, const FString &NewValue, bool bFromLoad) 
 {
   if (GetOwnerRole() == ROLE_Authority) 
   {
-    ServerUpdateSetting_Implementation(Tag, NewValue);
+    // Authority path (listen-server host or dedicated server)
+    if (UEFModularSettingsBase *Setting = GetSettingByTag(Tag)) 
+    {
+      if (Setting->Validate(NewValue)) 
+      {
+        Setting->SetValueFromString(NewValue);
+        Setting->Apply();
+        OnSettingChanged.Broadcast(Setting);
+
+        // Only save on explicit user changes, NOT during load
+        if (!bFromLoad)
+        {
+          RequestSave();
+        }
+      }
+    }
   } 
   else 
   {
-    // Client: apply value locally first, save, then tell server
+    // Client: apply value locally first, then tell server
     if (UEFModularSettingsBase *Setting = GetSettingByTag(Tag)) 
     {
       if (Setting->Validate(NewValue)) 
@@ -186,8 +251,11 @@ void UEFPlayerSettingsComponent::RequestUpdateSetting(FGameplayTag Tag, const FS
         Setting->Apply();
         OnSettingChanged.Broadcast(Setting);
         
-        // Save locally on client
-        SavePlayerSettings();
+        // Only save on explicit user changes, NOT during load
+        if (!bFromLoad)
+        {
+          RequestSave();
+        }
       }
     }
     
@@ -213,15 +281,22 @@ void UEFPlayerSettingsComponent::ServerUpdateSetting_Implementation(FGameplayTag
       Setting->Apply();
       OnSettingChanged.Broadcast(Setting);
 
-      // For server/listen-server player: OnRep doesn't fire, so we need to save
-      // here SavePlayerSettings() internally checks IsLocalPlayerComponent()
-      SavePlayerSettings();
+      // For server/listen-server player: OnRep doesn't fire, so save here.
+      // Uses coalescing to batch multiple updates.
+      RequestSave();
     }
   }
 }
 
 void UEFPlayerSettingsComponent::OnRep_Settings() 
 {
+  // If we haven't loaded our saved values yet, don't broadcast server defaults
+  // to the UI — they would be overwritten shortly anyway.
+  if (LoadState < EPlayerSettingsLoadState::SyncingWithServer)
+  {
+    return;
+  }
+
   for (auto Setting : Settings) 
   {
     if (Setting) 
@@ -230,8 +305,8 @@ void UEFPlayerSettingsComponent::OnRep_Settings()
     }
   }
 
-  // NOTE: Do NOT save here. This fires on replication which may contain server defaults.
-  // Saving is handled in ServerUpdateSetting_Implementation when user explicitly changes settings.
+  // Try to apply any pending values for newly replicated settings
+  TryApplyPendingValues();
 }
 
 void UEFPlayerSettingsComponent::OnRep_SettingDefinitions() 
@@ -265,14 +340,8 @@ void UEFPlayerSettingsComponent::OnRep_SettingDefinitions()
     AddSettingFromTemplate_Local(Template);
   }
 
-  // For clients: after settings definitions are replicated (settings may already exist from subobject replication),
-  // load and apply saved settings to restore client's preferences
-  // Only do this once to avoid repeatedly applying on every replication update
-  if (!bHasAppliedSavedSettings && IsLocalPlayerComponent()) 
-  {
-    bHasAppliedSavedSettings = true;
-    ApplySavedSettingsToExisting();
-  }
+  // Try to apply pending values to any newly created settings
+  TryApplyPendingValues();
 }
 
 UEFModularSettingsBool *UEFPlayerSettingsComponent::AddBoolSetting(FGameplayTag Tag, FText DisplayName, FName ConfigCategory,bool DefaultValue, bool InitialValue) 
@@ -482,14 +551,8 @@ void UEFPlayerSettingsComponent::OnRep_RuntimeSettingDefinitions()
     CreateSettingFromRuntimeDefinition(Def);
   }
 
-  // For clients: after runtime settings definitions are replicated,
-  // load and apply saved settings to restore client's preferences
-  // Only do this once to avoid repeatedly applying on every replication update
-  if (!bHasAppliedSavedSettings && IsLocalPlayerComponent()) 
-  {
-    bHasAppliedSavedSettings = true;
-    ApplySavedSettingsToExisting();
-  }
+  // Try to apply pending values to any newly created settings
+  TryApplyPendingValues();
 }
 
 // ============================================================================
@@ -540,10 +603,43 @@ bool UEFPlayerSettingsComponent::IsLocalPlayerComponent() const
 
 FString UEFPlayerSettingsComponent::GetPlayerSettingsSaveSlotName() const 
 {
-  // Single slot for local player settings
-  return PlayerSettingsSaveSlotName;
+  return NewSaveSlotName;
 }
 
+// ============================================================================
+// Save Coalescing
+// ============================================================================
+
+void UEFPlayerSettingsComponent::RequestSave()
+{
+  // Only save for local player
+  if (!IsLocalPlayerComponent())
+  {
+    return;
+  }
+
+  bSavePending = true;
+
+  // Reset the coalescing timer — actual save happens after 0.5s of inactivity
+  if (UWorld* World = GetWorld())
+  {
+    World->GetTimerManager().ClearTimer(SaveCoalesceTimer);
+    World->GetTimerManager().SetTimer(
+      SaveCoalesceTimer, this, &UEFPlayerSettingsComponent::ExecutePendingSave,
+      0.5f, false);
+  }
+}
+
+void UEFPlayerSettingsComponent::ExecutePendingSave()
+{
+  if (!bSavePending)
+  {
+    return;
+  }
+
+  bSavePending = false;
+  SavePlayerSettings();
+}
 
 void UEFPlayerSettingsComponent::SavePlayerSettings() 
 {
@@ -561,17 +657,7 @@ void UEFPlayerSettingsComponent::SavePlayerSettings()
     return;
   }
 
-  // First, load existing save to preserve other data
-  if (UGameplayStatics::DoesSaveGameExist(GetPlayerSettingsSaveSlotName(),PlayerSettingsUserIndex)) 
-  {
-    if (UEFSettingsSaveGame*ExistingSave = Cast<UEFSettingsSaveGame>(UGameplayStatics::LoadGameFromSlot(GetPlayerSettingsSaveSlotName(), PlayerSettingsUserIndex))) 
-    {
-      // Preserve subsystem settings
-      SaveGameInstance->StoredSettings = ExistingSave->StoredSettings;
-    }
-  }
-
-  // Save all player settings
+  // Write ONLY player settings — no read-modify-write of other data
   SaveGameInstance->PlayerSettings.Empty();
   for (UEFModularSettingsBase* Setting : Settings) 
   {
@@ -581,8 +667,8 @@ void UEFPlayerSettingsComponent::SavePlayerSettings()
     }
   }
 
-  // Write to disk
-  if (UGameplayStatics::SaveGameToSlot(SaveGameInstance,GetPlayerSettingsSaveSlotName(),PlayerSettingsUserIndex)) 
+  // Write to disk using the dedicated player settings slot
+  if (UGameplayStatics::SaveGameToSlot(SaveGameInstance,GetPlayerSettingsSaveSlotName(),SaveUserIndex)) 
   {
     UE_LOG(LogTemp, Log,TEXT("[UEFPlayerSettingsComponent] Saved %d player settings to ""slot: %s"),SaveGameInstance->PlayerSettings.Num(),*GetPlayerSettingsSaveSlotName());
   } 
@@ -590,6 +676,35 @@ void UEFPlayerSettingsComponent::SavePlayerSettings()
   {
     UE_LOG(LogTemp, Warning,TEXT("[UEFPlayerSettingsComponent] Failed to save player settings."));
   }
+}
+
+// ============================================================================
+// Load + Deferred Application
+// ============================================================================
+
+bool UEFPlayerSettingsComponent::TryMigrateFromOldSaveFormat()
+{
+  // Check if old shared save slot exists and has player data
+  if (!UGameplayStatics::DoesSaveGameExist(OldSaveSlotName, SaveUserIndex))
+  {
+    return false;
+  }
+
+  UEFSettingsSaveGame* OldSave = Cast<UEFSettingsSaveGame>(
+    UGameplayStatics::LoadGameFromSlot(OldSaveSlotName, SaveUserIndex));
+
+  if (!OldSave || OldSave->PlayerSettings.Num() == 0)
+  {
+    return false;
+  }
+
+  UE_LOG(LogTemp, Log, TEXT("[UEFPlayerSettingsComponent] Migrating %d settings from old save format (%s -> %s)"),
+    OldSave->PlayerSettings.Num(), *OldSaveSlotName, *NewSaveSlotName);
+
+  // Copy player settings into pending values map
+  PendingLoadedValues = OldSave->PlayerSettings;
+
+  return true;
 }
 
 void UEFPlayerSettingsComponent::LoadPlayerSettings() 
@@ -600,82 +715,91 @@ void UEFPlayerSettingsComponent::LoadPlayerSettings()
     return;
   }
 
-  if (!UGameplayStatics::DoesSaveGameExist(GetPlayerSettingsSaveSlotName(),PlayerSettingsUserIndex)) 
-  {
-    UE_LOG(LogTemp, Log,TEXT("[UEFPlayerSettingsComponent] No saved player settings found. ""Using defaults."));
-    return;
-  }
+  LoadState = EPlayerSettingsLoadState::LoadingFromDisk;
 
-  UEFSettingsSaveGame*LoadedGame = Cast<UEFSettingsSaveGame>(UGameplayStatics::LoadGameFromSlot(GetPlayerSettingsSaveSlotName(), PlayerSettingsUserIndex));
-
-  if (!LoadedGame) 
+  // Try new save slot first
+  if (UGameplayStatics::DoesSaveGameExist(GetPlayerSettingsSaveSlotName(), SaveUserIndex))
   {
-    UE_LOG(LogTemp, Warning,TEXT("[UEFPlayerSettingsComponent] Failed to load player settings."));
-    return;
-  }
+    UEFSettingsSaveGame* LoadedGame = Cast<UEFSettingsSaveGame>(
+      UGameplayStatics::LoadGameFromSlot(GetPlayerSettingsSaveSlotName(), SaveUserIndex));
 
-  int32 LoadedCount = 0;
-  for (const auto &StoredPair : LoadedGame->PlayerSettings) 
-  {
-    if (UEFModularSettingsBase*Setting = GetSettingByTag(StoredPair.Key)) 
+    if (LoadedGame)
     {
-      // Load the value locally first
-      Setting->SetValueFromString(StoredPair.Value);
-      Setting->SaveCurrentValue(); // Mark as saved state
-      Setting->ClearDirty();
-
-      // Request server to apply this value (for multiplayer sync)
-      RequestUpdateSetting(StoredPair.Key, StoredPair.Value);
-      LoadedCount++;
+      PendingLoadedValues = LoadedGame->PlayerSettings;
+      UE_LOG(LogTemp, Log, TEXT("[UEFPlayerSettingsComponent] Loaded %d pending values from slot: %s"),
+        PendingLoadedValues.Num(), *GetPlayerSettingsSaveSlotName());
+    }
+    else
+    {
+      UE_LOG(LogTemp, Warning, TEXT("[UEFPlayerSettingsComponent] Failed to load player settings from slot: %s"),
+        *GetPlayerSettingsSaveSlotName());
     }
   }
+  else if (!TryMigrateFromOldSaveFormat())
+  {
+    UE_LOG(LogTemp, Log, TEXT("[UEFPlayerSettingsComponent] No saved player settings found. Using defaults."));
+  }
 
+  // Try to apply whatever we can right now
+  LoadState = EPlayerSettingsLoadState::SyncingWithServer;
+  TryApplyPendingValues();
 
-  UE_LOG(LogTemp, Log,TEXT("[UEFPlayerSettingsComponent] Loaded %d player settings from ""slot: %s"),LoadedCount, *GetPlayerSettingsSaveSlotName());
+  // If all pending values were applied, we're done
+  if (PendingLoadedValues.Num() == 0)
+  {
+    LoadState = EPlayerSettingsLoadState::Ready;
+  }
+  // Otherwise, remaining values will be applied as settings arrive via OnRep
 }
 
-void UEFPlayerSettingsComponent::ApplySavedSettingsToExisting() {
-  // This method is called on clients when settings are created via replication
-  // It loads saved settings from disk and applies them to existing settings,
-  // then syncs with the server so the server has the correct values
-
-  if (!IsLocalPlayerComponent()) 
+void UEFPlayerSettingsComponent::TryApplyPendingValues()
+{
+  if (PendingLoadedValues.Num() == 0)
   {
     return;
   }
 
-  if (!UGameplayStatics::DoesSaveGameExist(GetPlayerSettingsSaveSlotName(),PlayerSettingsUserIndex)) 
+  if (!IsLocalPlayerComponent())
   {
-    UE_LOG(LogTemp, Log,TEXT("[UEFPlayerSettingsComponent::ApplySavedSettingsToExisting] No ""saved player settings found."));
     return;
   }
 
-  UEFSettingsSaveGame*LoadedGame = Cast<UEFSettingsSaveGame>(UGameplayStatics::LoadGameFromSlot(GetPlayerSettingsSaveSlotName(), PlayerSettingsUserIndex));
+  TArray<FGameplayTag> AppliedTags;
 
-  if (!LoadedGame) 
+  for (const auto& Pair : PendingLoadedValues)
   {
-    UE_LOG(LogTemp, Warning,TEXT("[UEFPlayerSettingsComponent::ApplySavedSettingsToExisting] Failed to load saved settings."));
-    return;
-  }
-
-  int32 AppliedCount = 0;
-  for (const auto &StoredPair : LoadedGame->PlayerSettings) 
-  {
-    if (UEFModularSettingsBase *Setting = GetSettingByTag(StoredPair.Key)) 
+    if (UEFModularSettingsBase* Setting = GetSettingByTag(Pair.Key))
     {
       // Apply the saved value locally
-      Setting->SetValueFromString(StoredPair.Value);
+      Setting->SetValueFromString(Pair.Value);
       Setting->SaveCurrentValue();
       Setting->ClearDirty();
 
-      // Send RPC to server to update the setting with saved value
-      // This ensures the server has the correct value for this client
-      RequestUpdateSetting(StoredPair.Key, StoredPair.Value);
-      AppliedCount++;
+      // Send RPC to server with bFromLoad=true to prevent circular save
+      RequestUpdateSetting(Pair.Key, Pair.Value, /*bFromLoad=*/true);
+
+      AppliedTags.Add(Pair.Key);
     }
   }
 
+  // Remove successfully applied entries from the pending map
+  for (const FGameplayTag& Tag : AppliedTags)
+  {
+    PendingLoadedValues.Remove(Tag);
+  }
 
-  UE_LOG(LogTemp, Log,TEXT("[UEFPlayerSettingsComponent::ApplySavedSettingsToExisting] ""Applied %d saved settings after replication."),AppliedCount);
+  if (AppliedTags.Num() > 0)
+  {
+    UE_LOG(LogTemp, Log, TEXT("[UEFPlayerSettingsComponent] Applied %d pending values. %d remaining."),
+      AppliedTags.Num(), PendingLoadedValues.Num());
+  }
+
+  // Transition to Ready once all pending values are applied
+  if (PendingLoadedValues.Num() == 0 && LoadState == EPlayerSettingsLoadState::SyncingWithServer)
+  {
+    LoadState = EPlayerSettingsLoadState::Ready;
+    
+    // Save to the new slot (ensures migration is persisted)
+    RequestSave();
+  }
 }
-

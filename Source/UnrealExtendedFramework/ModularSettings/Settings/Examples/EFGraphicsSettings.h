@@ -811,8 +811,13 @@ public:
 				UserSettings->SaveSettings();
 				UE_LOG(LogTemp, Log, TEXT("Applied & saved Overall Scalability Level via GameUserSettings: %s (Level %d)"), *Values[SelectedIndex], SelectedIndex);
 			}
+
+			// Sync modular sub-setting objects to match the engine state.
+			// Without this, the UI keeps showing stale values and saving
+			// those stale values later overwrites the engine state.
+			RefreshSubSettingsFromEngine();
 		}
-}
+	}
 	
 	virtual void SetSelectedIndex_Implementation(int32 Index) override
 	{
@@ -828,49 +833,12 @@ public:
 			return;
 		}
 		
-		// Define all graphics settings that should be updated
-		TArray<FGameplayTag> GraphicsSettingTags = {
-			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.AntiAliasingQuality")),
-			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.TextureQuality")),
-			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.TextureFilteringQuality")),
-			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.FoliageQuality")),
-			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.ShadowQuality")),
-			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.ShadingQuality")),
-			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.VFXQuality")),
-			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.PostProcessQuality")),
-			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.ViewDistance")),
-			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.ScreenSpaceReflection")),
-			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.Bloom"))
-		};
-
 		// Update individual settings based on quality level
 		bIsUpdating = true;
-		for (const FGameplayTag& Tag : GraphicsSettingTags)
+		for (const FGameplayTag& Tag : GetGraphicsSettingTags())
 		{
-			if (UEFModularSettingsMultiSelect* Setting = Cast<UEFModularSettingsMultiSelect>(UEFModularSettingsLibrary::GetModularSetting(this, Tag, EEFSettingsSource::Local)))
-			{
-				int32 TargetIndex = Index;
-				
-				if (Tag == FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.ScreenSpaceReflection")) ||
-					Tag == FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.Bloom")))
-				{
-					TargetIndex = Index + 1; // Map Low(0) to Low(1), etc. Off(0) is skipped.
-				}
-				else if (Tag == FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.TextureFilteringQuality")))
-				{
-					// Trilinear(0), 1x(1), 2x(2), 4x(3), 8x(4), 16x(5)
-					// Low(0) -> 1x(1)
-					// Medium(1) -> 4x(3)
-					// High(2) -> 8x(4)
-					// Ultra(3) -> 16x(5)
-					if (Index == 0) TargetIndex = 1;
-					else if (Index == 1) TargetIndex = 3;
-					else if (Index == 2) TargetIndex = 4;
-					else if (Index == 3) TargetIndex = 5;
-				}
-				
-				UEFModularSettingsLibrary::SetModularSelectedIndex(this, Tag, TargetIndex, EEFSettingsSource::Local);
-			}
+			const int32 TargetIndex = GetExpectedSubSettingIndex(Tag, Index);
+			UEFModularSettingsLibrary::SetModularSelectedIndex(this, Tag, TargetIndex, EEFSettingsSource::Local);
 		}
 		bIsUpdating = false;
 	}
@@ -881,6 +849,10 @@ public:
 		{
 			ModularSettingsSubsystem->OnSettingsChanged.AddDynamic(this, &UEFOverallQualitySetting::OnSettingChanged);
 		}
+
+		// Lock "Custom" so the stepper UI can't navigate to it.
+		// The system sets it directly via field assignment when needed.
+		SetOptionLocked(TEXT("Custom"), true);
 	}
 
 	UFUNCTION()
@@ -888,22 +860,7 @@ public:
 	{
 		if (bIsUpdating || !ChangedSetting) return;
 
-		// If the changed setting is one of our managed graphics settings
-		static const TArray<FGameplayTag> GraphicsSettingTags = {
-			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.AntiAliasingQuality")),
-			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.TextureQuality")),
-			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.TextureFilteringQuality")),
-			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.FoliageQuality")),
-			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.ShadowQuality")),
-			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.ShadingQuality")),
-			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.VFXQuality")),
-			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.PostProcessQuality")),
-			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.ViewDistance")),
-			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.ScreenSpaceReflection")),
-			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.Bloom"))
-		};
-
-		if (GraphicsSettingTags.Contains(ChangedSetting->SettingTag))
+		if (GetGraphicsSettingTags().Contains(ChangedSetting->SettingTag))
 		{
 			// Check if we match any preset
 			int32 MatchedPreset = -1;
@@ -925,7 +882,6 @@ public:
 				{
 					SetSelectedIndex(MatchedPreset);
 					
-					// Manually broadcast change for the overall setting
 					if (ModularSettingsSubsystem)
 					{
 						ModularSettingsSubsystem->OnSettingsChanged.Broadcast(this);
@@ -934,10 +890,11 @@ public:
 			}
 			else
 			{
-				// Custom
+				// Custom — assign directly to bypass the lock check
 				if (SelectedIndex != 4)
 				{
-					SetSelectedIndex(4);
+					SelectedIndex = 4;
+					MarkDirty();
 					if (ModularSettingsSubsystem)
 					{
 						ModularSettingsSubsystem->OnSettingsChanged.Broadcast(this);
@@ -951,20 +908,130 @@ public:
 private:
 	bool bIsUpdating = false;
 
+	// Centralised list of all sub-settings managed by the overall preset.
+	static const TArray<FGameplayTag>& GetGraphicsSettingTags()
+	{
+		static const TArray<FGameplayTag> Tags = {
+			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.AntiAliasingQuality")),
+			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.TextureQuality")),
+			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.TextureFilteringQuality")),
+			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.FoliageQuality")),
+			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.ShadowQuality")),
+			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.ShadingQuality")),
+			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.VFXQuality")),
+			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.PostProcessQuality")),
+			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.ViewDistance")),
+			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.ScreenSpaceReflection")),
+			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.Bloom"))
+		};
+		return Tags;
+	}
+
+	// Maps a preset level (0=Low..3=Ultra) to the expected sub-setting index,
+	// accounting for settings with non-standard option layouts.
+	static int32 GetExpectedSubSettingIndex(const FGameplayTag& Tag, int32 PresetIndex)
+	{
+		// SSR and Bloom have an extra "Off" at index 0, so Low=1, Med=2, High=3, Ultra=4
+		if (Tag == FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.ScreenSpaceReflection")) ||
+			Tag == FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.Bloom")))
+		{
+			return PresetIndex + 1;
+		}
+
+		// Texture Filtering: Trilinear(0), 1x(1), 2x(2), 4x(3), 8x(4), 16x(5)
+		if (Tag == FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.TextureFilteringQuality")))
+		{
+			switch (PresetIndex)
+			{
+				case 0: return 1;  // Low  -> 1x
+				case 1: return 3;  // Med  -> 4x
+				case 2: return 4;  // High -> 8x
+				case 3: return 5;  // Ultra-> 16x
+				default: return 4;
+			}
+		}
+
+		// Standard 4-option settings (Low=0, Med=1, High=2, Ultra=3)
+		return PresetIndex;
+	}
+
+	// After the engine's scalability level is set, read back the engine state
+	// and update every modular sub-setting object so the UI stays in sync.
+	void RefreshSubSettingsFromEngine()
+	{
+		if (!GEngine) return;
+		UGameUserSettings* UserSettings = GEngine->GetGameUserSettings();
+		if (!UserSettings) return;
+
+		// Map engine scalability getters to our setting tags.
+		// The engine returns 0-3 for each category after SetOverallScalabilityLevel.
+		struct FEngineSettingMapping
+		{
+			FGameplayTag Tag;
+			int32 EngineLevel;
+		};
+
+		TArray<FEngineSettingMapping> Mappings = {
+			{ FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.AntiAliasingQuality")), UserSettings->GetAntiAliasingQuality() },
+			{ FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.TextureQuality")), UserSettings->GetTextureQuality() },
+			{ FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.FoliageQuality")), UserSettings->GetFoliageQuality() },
+			{ FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.ShadowQuality")), UserSettings->GetShadowQuality() },
+			{ FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.ShadingQuality")), UserSettings->GetShadingQuality() },
+			{ FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.VFXQuality")), UserSettings->GetVisualEffectQuality() },
+			{ FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.PostProcessQuality")), UserSettings->GetPostProcessingQuality() },
+			{ FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.ViewDistance")), UserSettings->GetViewDistanceQuality() },
+		};
+
+		bIsUpdating = true;
+
+		for (const FEngineSettingMapping& Mapping : Mappings)
+		{
+			// Engine level maps 1:1 to our index for standard 4-option settings
+			UEFModularSettingsLibrary::SetModularSelectedIndex(this, Mapping.Tag, Mapping.EngineLevel, EEFSettingsSource::Local);
+		}
+
+		// Handle non-standard settings based on the preset index (SelectedIndex)
+		const int32 PresetIdx = SelectedIndex;
+
+		// SSR and Bloom: add 1 for the "Off" option at index 0
+		UEFModularSettingsLibrary::SetModularSelectedIndex(this,
+			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.ScreenSpaceReflection")),
+			GetExpectedSubSettingIndex(FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.ScreenSpaceReflection")), PresetIdx),
+			EEFSettingsSource::Local);
+
+		UEFModularSettingsLibrary::SetModularSelectedIndex(this,
+			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.Bloom")),
+			GetExpectedSubSettingIndex(FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.Bloom")), PresetIdx),
+			EEFSettingsSource::Local);
+
+		// Texture Filtering
+		UEFModularSettingsLibrary::SetModularSelectedIndex(this,
+			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.TextureFilteringQuality")),
+			GetExpectedSubSettingIndex(FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.TextureFilteringQuality")), PresetIdx),
+			EEFSettingsSource::Local);
+
+		bIsUpdating = false;
+	}
+
+	// Check if all current sub-setting indices match the expected values for a preset.
 	bool MatchesPreset(int32 PresetIndex)
 	{
-		// Helper to check if current settings match a preset
-		// This requires checking every tracked setting
-		
-		// Example check for one setting:
-		// if (GetSettingIndex("Settings.Graphics.TextureQuality") != PresetIndex) return false;
-		
-		// For brevity, we'll assume they match if we are here, but in a real implementation
-		// we would query the subsystem for each value.
-		
-		// Implementation of checking each setting against the expected index for the preset
-		// ...
-		
-		return false; // Placeholder
+		for (const FGameplayTag& Tag : GetGraphicsSettingTags())
+		{
+			UEFModularSettingsMultiSelect* Setting = Cast<UEFModularSettingsMultiSelect>(
+				UEFModularSettingsLibrary::GetModularSetting(this, Tag, EEFSettingsSource::Local));
+
+			if (!Setting)
+			{
+				continue; // Setting not registered yet; don't block preset detection
+			}
+
+			const int32 ExpectedIndex = GetExpectedSubSettingIndex(Tag, PresetIndex);
+			if (Setting->SelectedIndex != ExpectedIndex)
+			{
+				return false;
+			}
+		}
+		return true;
 	}
 };

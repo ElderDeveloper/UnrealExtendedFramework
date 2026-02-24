@@ -314,7 +314,7 @@ public:
 		if (Values.IsValidIndex(SelectedIndex))
 		{
 			FString FPSValue = Values[SelectedIndex];
-			float MaxFPS = 60.0f;
+			float MaxFPS = 0.0f; // 0 = unlimited in UE
 			
 			if (FPSValue != TEXT("Unlimited"))
 			{

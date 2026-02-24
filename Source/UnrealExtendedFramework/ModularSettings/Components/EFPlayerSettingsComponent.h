@@ -80,6 +80,18 @@ struct FEFRuntimeSettingDefinition {
   int32 MultiSelectIndex = 0;
 };
 
+// Load lifecycle state machine for the player settings component.
+// Prevents race conditions between BeginPlay, replication, and disk I/O.
+UENUM()
+enum class EPlayerSettingsLoadState : uint8
+{
+  WaitingForOwner,      // BeginPlay ran but can't identify local player yet
+  WaitingForSettings,   // Local player identified, waiting for settings to exist
+  LoadingFromDisk,      // Load from disk in progress
+  SyncingWithServer,    // Sending loaded values to server via RPCs
+  Ready                 // All settings loaded and synced
+};
+
 UCLASS(ClassGroup = (Custom), meta = (BlueprintSpawnableComponent))
 class UNREALEXTENDEDFRAMEWORK_API UEFPlayerSettingsComponent
     : public UActorComponent {
@@ -157,21 +169,23 @@ protected:
   CreateSettingFromRuntimeDefinition(const FEFRuntimeSettingDefinition &Def);
 
 public:
-  // Client-to-Server request
+  // Client-to-Server request. bFromLoad suppresses the client-side save to
+  // prevent circular save-during-load.
   UFUNCTION(BlueprintCallable, Category = "Modular Settings")
-  void RequestUpdateSetting(FGameplayTag Tag, const FString &NewValue);
+  void RequestUpdateSetting(FGameplayTag Tag, const FString &NewValue, bool bFromLoad = false);
 
-  // Save all settings to disk (local player only)
+  // Save all settings to disk (local player only). Uses coalescing timer to
+  // batch rapid changes into a single write.
   UFUNCTION(BlueprintCallable, Category = "Modular Settings|Persistence")
   void SavePlayerSettings();
 
-  // Load settings from disk (local player only)
+  // Load settings from disk into PendingLoadedValues (local player only).
   UFUNCTION(BlueprintCallable, Category = "Modular Settings|Persistence")
   void LoadPlayerSettings();
 
-  // Apply previously saved settings to existing settings and sync with server
-  // Called when settings are created via replication on client side
-  void ApplySavedSettingsToExisting();
+  // Try to apply pending loaded values to settings that now exist.
+  // Called after settings are created via replication or template instantiation.
+  void TryApplyPendingValues();
 
 protected:
   UFUNCTION(Server, Reliable, WithValidation)
@@ -193,6 +207,30 @@ private:
   UFUNCTION()
   void OnRep_SettingDefinitions();
 
-  // Flag to prevent calling ApplySavedSettingsToExisting multiple times
-  bool bHasAppliedSavedSettings = false;
+  // ---- Load state machine ----
+  EPlayerSettingsLoadState LoadState = EPlayerSettingsLoadState::WaitingForOwner;
+
+  // Values loaded from disk, waiting to be applied once their settings exist.
+  // Entries are removed as they are successfully applied.
+  TMap<FGameplayTag, FString> PendingLoadedValues;
+
+  // Timer for retrying IsLocalPlayerComponent() when PlayerState isn't ready yet.
+  FTimerHandle OwnerRetryTimer;
+  int32 OwnerRetryCount = 0;
+  static constexpr int32 MaxOwnerRetries = 50; // 50 * 0.1s = 5 seconds max
+  void RetryIdentifyOwner();
+
+  // ---- Save coalescing ----
+  FTimerHandle SaveCoalesceTimer;
+  bool bSavePending = false;
+  void RequestSave();       // Starts/restarts a 0.5s coalescing timer
+  void ExecutePendingSave(); // Actually writes to disk
+
+  // ---- Migration ----
+  // Attempts to migrate from old shared save slot if new slot doesn't exist
+  bool TryMigrateFromOldSaveFormat();
+
+  static const FString OldSaveSlotName;     // "PlayerSettingsSave"
+  static const FString NewSaveSlotName;     // "EFPlayerSettings"
+  static const int32 SaveUserIndex;
 };

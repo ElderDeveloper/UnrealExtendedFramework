@@ -16,6 +16,10 @@ class UNREALEXTENDEDFRAMEWORK_API UEFSettingsSaveGame : public USaveGame {
   GENERATED_BODY()
 
 public:
+  // Save format version for future migration support
+  UPROPERTY(VisibleAnywhere, Category = "Settings")
+  int32 SaveVersion = 1;
+
   // Map of Setting Tag -> Value as String (for local subsystem settings)
   UPROPERTY(VisibleAnywhere, Category = "Settings")
   TMap<FGameplayTag, FString> StoredSettings;
