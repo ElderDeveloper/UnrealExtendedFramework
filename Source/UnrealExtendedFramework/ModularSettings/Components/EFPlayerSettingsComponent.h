@@ -26,6 +26,13 @@ struct FEFPlayerSettingDefinition {
   // clients resolve it and DuplicateObject to build the same subobject graph.
   UPROPERTY(EditAnywhere, BlueprintReadWrite)
   TSoftObjectPtr<UEFModularSettingsBase> Template;
+
+  // Current value as string. The server keeps this in sync whenever a setting
+  // changes. Late-joining clients apply this after creating settings from the
+  // template, ensuring they always see the server's current state regardless
+  // of subobject property replication timing.
+  UPROPERTY()
+  FString CurrentValue;
 };
 
 // For runtime-created settings (created via AddBoolSetting, etc.)
@@ -229,6 +236,9 @@ private:
   // ---- Migration ----
   // Attempts to migrate from old shared save slot if new slot doesn't exist
   bool TryMigrateFromOldSaveFormat();
+
+  // Keeps SettingDefinitions[].CurrentValue in sync on the server.
+  void UpdateDefinitionCurrentValue(FGameplayTag Tag, const FString& NewValue);
 
   static const FString OldSaveSlotName;     // "PlayerSettingsSave"
   static const FString NewSaveSlotName;     // "EFPlayerSettings"

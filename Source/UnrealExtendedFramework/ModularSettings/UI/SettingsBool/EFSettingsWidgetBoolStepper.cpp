@@ -50,7 +50,7 @@ void UEFSettingsWidgetBoolStepper::OnButtonClicked()
 {
 	// Toggle value
 	bool bCurrentValue = UEFModularSettingsLibrary::GetModularBool(this, SettingsTag, SettingsSource);
-	UEFModularSettingsLibrary::SetModularBool(this, SettingsTag, !bCurrentValue, SettingsSource);
+	UEFModularSettingsLibrary::SetModularBool(this, SettingsTag, !bCurrentValue, SettingsSource, nullptr, ConfirmationType == EEFSettingConfirmationType::Instant);
 }
 
 void UEFSettingsWidgetBoolStepper::UpdateText(bool bValue)

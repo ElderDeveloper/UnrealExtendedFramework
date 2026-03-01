@@ -59,6 +59,18 @@ void UEFModularSettingsSubsystem::Initialize(FSubsystemCollectionBase& Subsystem
 void UEFModularSettingsSubsystem::ApplyAllChanges()
 {
 	bool bAnyChanged = false;
+
+	// Populate snapshot BEFORE applying changes so we can revert to the state just before this apply
+	PreviousSettingsSnapshot.Empty();
+	for (const auto& SettingPair : Settings)
+	{
+		UEFModularSettingsBase* Setting = SettingPair.Value;
+		if (Setting)
+		{
+			PreviousSettingsSnapshot.Add(Setting->SettingTag, Setting->GetSavedValueAsString());
+		}
+	}
+
 	for (const auto& SettingPair : Settings)
 	{
 		UEFModularSettingsBase* Setting = SettingPair.Value;
@@ -68,18 +80,19 @@ void UEFModularSettingsSubsystem::ApplyAllChanges()
 			Setting->Apply();
 			Setting->ClearDirty();
 			bAnyChanged = true;
+			OnSettingsChanged.Broadcast(Setting);
 		}
 	}
     
 	if (bAnyChanged)
 	{
 		SaveToDisk();
-		UE_LOG(LogTemp, Log, TEXT("Applied and saved changed settings."));
+		UE_LOG(LogTemp, Log, TEXT("Applied and saved changed settings. Snapshot created."));
 	}
 }
 
 
-void UEFModularSettingsSubsystem::RevertAllChanges()
+void UEFModularSettingsSubsystem::RevertPendingChanges()
 {
 	for (const auto& SettingPair : Settings)
 	{
@@ -88,7 +101,33 @@ void UEFModularSettingsSubsystem::RevertAllChanges()
 		OnSettingsChanged.Broadcast(Setting);
 	}
     
-	UE_LOG(LogTemp, Log, TEXT("All settings reverted to saved values."));
+	UE_LOG(LogTemp, Log, TEXT("All unapplied pending settings reverted to saved values."));
+}
+
+
+void UEFModularSettingsSubsystem::RevertToPreviousSettings()
+{
+	if (PreviousSettingsSnapshot.IsEmpty())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("No previous settings snapshot exists to revert to."));
+		return;
+	}
+
+	for (const auto& SnapshotPair : PreviousSettingsSnapshot)
+	{
+		if (UEFModularSettingsBase* Setting = Settings.FindRef(SnapshotPair.Key))
+		{
+			Setting->SetValueFromString(SnapshotPair.Value);
+			Setting->SaveCurrentValue();
+			Setting->Apply();
+			
+			// Broadcast change so UI updates
+			OnSettingsChanged.Broadcast(Setting);
+		}
+	}
+	
+	SaveToDisk();
+	UE_LOG(LogTemp, Log, TEXT("Reverted to previous settings snapshot and saved."));
 }
 
 
@@ -317,88 +356,3 @@ void UEFModularSettingsSubsystem::HandleSetCommand(const TArray<FString>& Args)
 }
 
 
-void UEFModularSettingsSubsystem::RequestSafeChange(FGameplayTag Tag, FString NewValue, float RevertTime)
-{
-	if (UEFModularSettingsBase* Setting = GetSettingByTag(Tag))
-	{
-		// Cancel any existing revert
-		if (IsRevertPending())
-		{
-			ConfirmChange();
-		}
-
-		// Store current value for revert
-		PendingRevertTag = Tag;
-		PendingRevertValue = Setting->GetValueAsString();
-
-		// Apply new value
-		Setting->SetValueFromString(NewValue);
-		Setting->Apply();
-		
-		// Start timer
-		if (UWorld* World = GetWorld())
-		{
-			World->GetTimerManager().SetTimer(RevertTimerHandle, this, &UEFModularSettingsSubsystem::RevertPendingChange, RevertTime, false);
-		}
-
-		OnSafeChangeRequested.Broadcast(RevertTime);
-		UE_LOG(LogTemp, Log, TEXT("Requested safe change for %s. Reverting in %f seconds."), *Tag.ToString(), RevertTime);
-	}
-}
-
-
-void UEFModularSettingsSubsystem::ConfirmChange()
-{
-	if (IsRevertPending())
-	{
-		if (UWorld* World = GetWorld())
-		{
-			World->GetTimerManager().ClearTimer(RevertTimerHandle);
-		}
-		
-		// Save the new value (make it permanent)
-		if (UEFModularSettingsBase* Setting = GetSettingByTag(PendingRevertTag))
-		{
-			Setting->SaveCurrentValue();
-			SaveToDisk(); // Persist immediately
-		}
-
-		PendingRevertTag = FGameplayTag();
-		PendingRevertValue.Empty();
-		
-		UE_LOG(LogTemp, Log, TEXT("Confirmed safe change."));
-	}
-}
-
-
-void UEFModularSettingsSubsystem::RevertPendingChange()
-{
-	if (IsRevertPending())
-	{
-		if (UEFModularSettingsBase* Setting = GetSettingByTag(PendingRevertTag))
-		{
-			Setting->SetValueFromString(PendingRevertValue);
-			Setting->Apply();
-			Setting->SaveCurrentValue(); // Restore saved state
-			
-			OnSettingsChanged.Broadcast(Setting);
-		}
-
-		PendingRevertTag = FGameplayTag();
-		PendingRevertValue.Empty();
-		
-		if (UWorld* World = GetWorld())
-		{
-			World->GetTimerManager().ClearTimer(RevertTimerHandle);
-		}
-
-		OnSafeChangeReverted.Broadcast();
-		UE_LOG(LogTemp, Log, TEXT("Reverted safe change."));
-	}
-}
-
-
-bool UEFModularSettingsSubsystem::IsRevertPending() const
-{
-	return PendingRevertTag.IsValid();
-}

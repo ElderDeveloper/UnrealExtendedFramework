@@ -793,6 +793,9 @@ public:
 		int32 DefaultIndex = Values.Find(DefaultValue);
 		SelectedIndex = DefaultIndex != INDEX_NONE ? DefaultIndex : 1;
 	}
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Settings")
+	bool bUpdateSettingsImmediately = false;
 	
 	virtual void Apply_Implementation() override
 	{
@@ -838,7 +841,7 @@ public:
 		for (const FGameplayTag& Tag : GetGraphicsSettingTags())
 		{
 			const int32 TargetIndex = GetExpectedSubSettingIndex(Tag, Index);
-			UEFModularSettingsLibrary::SetModularSelectedIndex(this, Tag, TargetIndex, EEFSettingsSource::Local);
+			UEFModularSettingsLibrary::SetModularSelectedIndex(this, Tag, TargetIndex, EEFSettingsSource::Local, nullptr, bUpdateSettingsImmediately);
 		}
 		bIsUpdating = false;
 	}
@@ -987,7 +990,7 @@ private:
 		for (const FEngineSettingMapping& Mapping : Mappings)
 		{
 			// Engine level maps 1:1 to our index for standard 4-option settings
-			UEFModularSettingsLibrary::SetModularSelectedIndex(this, Mapping.Tag, Mapping.EngineLevel, EEFSettingsSource::Local);
+			UEFModularSettingsLibrary::SetModularSelectedIndex(this, Mapping.Tag, Mapping.EngineLevel, EEFSettingsSource::Local, nullptr, false);
 		}
 
 		// Handle non-standard settings based on the preset index (SelectedIndex)
@@ -997,18 +1000,18 @@ private:
 		UEFModularSettingsLibrary::SetModularSelectedIndex(this,
 			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.ScreenSpaceReflection")),
 			GetExpectedSubSettingIndex(FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.ScreenSpaceReflection")), PresetIdx),
-			EEFSettingsSource::Local);
+			EEFSettingsSource::Local, nullptr, false);
 
 		UEFModularSettingsLibrary::SetModularSelectedIndex(this,
 			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.Bloom")),
 			GetExpectedSubSettingIndex(FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.Bloom")), PresetIdx),
-			EEFSettingsSource::Local);
+			EEFSettingsSource::Local, nullptr, false);
 
 		// Texture Filtering
 		UEFModularSettingsLibrary::SetModularSelectedIndex(this,
 			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.TextureFilteringQuality")),
 			GetExpectedSubSettingIndex(FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.TextureFilteringQuality")), PresetIdx),
-			EEFSettingsSource::Local);
+			EEFSettingsSource::Local, nullptr, false);
 
 		bIsUpdating = false;
 	}

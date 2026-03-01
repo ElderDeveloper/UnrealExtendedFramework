@@ -48,12 +48,12 @@ void UEFSettingsWidgetMultiSelectStepper::SettingsPreConstruct_Implementation()
 
 void UEFSettingsWidgetMultiSelectStepper::OnPreviousClicked()
 {
-	UEFModularSettingsLibrary::AdjustModularIndex(this, SettingsTag, -1, true, SettingsSource);
+	UEFModularSettingsLibrary::AdjustModularIndex(this, SettingsTag, -1, true, SettingsSource, nullptr, ConfirmationType == EEFSettingConfirmationType::Instant);
 }
 
 void UEFSettingsWidgetMultiSelectStepper::OnNextClicked()
 {
-	UEFModularSettingsLibrary::AdjustModularIndex(this, SettingsTag, 1, true, SettingsSource);
+	UEFModularSettingsLibrary::AdjustModularIndex(this, SettingsTag, 1, true, SettingsSource, nullptr, ConfirmationType == EEFSettingConfirmationType::Instant);
 }
 
 void UEFSettingsWidgetMultiSelectStepper::UpdateText(const UEFModularSettingsBase* Setting)

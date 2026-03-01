@@ -57,10 +57,14 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Modular Settings")
 	void ApplyAllChanges();
 
-	// New method to revert all pending changes
+	// New method to revert pending (unapplied) changes
 	UFUNCTION(BlueprintCallable, Category = "Modular Settings")
-	void RevertAllChanges();
+	void RevertPendingChanges();
 
+	// New method to restore from the last applied snapshot
+	UFUNCTION(BlueprintCallable, Category = "Modular Settings")
+	void RevertToPreviousSettings();
+	
 	UFUNCTION(BlueprintCallable, Category = "Modular Settings")
 	void RefreshAllSettings();
 
@@ -97,41 +101,17 @@ public:
 
 	UPROPERTY(BlueprintAssignable, Category = "Modular Settings")
 	FOnSettingsSaved OnSettingsSaved;
-
+	
 	UPROPERTY(BlueprintAssignable, Category = "Modular Settings")
 	FOnSettingsLoaded OnSettingsLoaded;
-
-	// Safety Features
-	UFUNCTION(BlueprintCallable, Category = "Modular Settings|Safety")
-	void RequestSafeChange(FGameplayTag Tag, FString NewValue, float RevertTime = 15.0f);
-
-	UFUNCTION(BlueprintCallable, Category = "Modular Settings|Safety")
-	void ConfirmChange();
-
-	UFUNCTION(BlueprintCallable, Category = "Modular Settings|Safety")
-	void RevertPendingChange();
-
-	UFUNCTION(BlueprintCallable, Category = "Modular Settings|Safety")
-	bool IsRevertPending() const;
-
-	DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnSafeChangeRequested, float, RevertTime);
-	UPROPERTY(BlueprintAssignable, Category = "Modular Settings|Safety")
-	FOnSafeChangeRequested OnSafeChangeRequested;
-
-	DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnSafeChangeReverted);
-	UPROPERTY(BlueprintAssignable, Category = "Modular Settings|Safety")
-	FOnSafeChangeReverted OnSafeChangeReverted;
 	
-private:
 	/* Storage */
 	UPROPERTY()
 	TMap<FGameplayTag, TObjectPtr<UEFModularSettingsBase>> Settings;
-
-	// Safety Storage
-	FTimerHandle RevertTimerHandle;
-	FGameplayTag PendingRevertTag;
-	FString PendingRevertValue;
-
+	
+	// Snapshot Storage for reverting after apply
+	UPROPERTY()
+	TMap<FGameplayTag, FString> PreviousSettingsSnapshot;
 
 	// Console Command
 	void HandleSetCommand(const TArray<FString>& Args);

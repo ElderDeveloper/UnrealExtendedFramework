@@ -31,5 +31,5 @@ void UEFSettingsWidgetBool::OnTrackedSettingsChanged_Implementation(UEFModularSe
 
 void UEFSettingsWidgetBool::OnCheckStateChanged(bool bIsChecked)
 {
-	UEFModularSettingsLibrary::SetModularBool(this, SettingsTag, bIsChecked, SettingsSource);
+	UEFModularSettingsLibrary::SetModularBool(this, SettingsTag, bIsChecked, SettingsSource, nullptr, ConfirmationType == EEFSettingConfirmationType::Instant);
 }

@@ -93,6 +93,7 @@ void UEFPlayerSettingsComponent::BeginPlay()
         FEFPlayerSettingDefinition NewDef;
         NewDef.Tag = Template->SettingTag;
         NewDef.Template = Template;
+        NewDef.CurrentValue = Template->GetValueAsString();
         SettingDefinitions.Add(NewDef);
       }
     }
@@ -100,24 +101,32 @@ void UEFPlayerSettingsComponent::BeginPlay()
     AddSettingFromTemplate_Local(Template);
   };
 
-  // Project containers
-  if (const UEFModularProjectSettings* ProjectSettings = GetDefault<UEFModularProjectSettings>()) 
+  // Only create settings from templates on the server (authority).
+  // On clients, OTHER players' settings arrive via replication (OnRep_SettingDefinitions,
+  // OnRep_RuntimeSettingDefinitions, and OnRep_Settings). Creating local copies here
+  // would produce default-value objects that interfere with the replicated subobjects,
+  // causing late-joiners to see stale defaults instead of the server's current values.
+  if (GetOwnerRole() == ROLE_Authority)
   {
-    for (const TSoftObjectPtr<UEFModularSettingsContainer>& ContainerPtr : ProjectSettings->PlayerSettingsContainers) 
+    // Project containers
+    if (const UEFModularProjectSettings* ProjectSettings = GetDefault<UEFModularProjectSettings>()) 
     {
-      if (UEFModularSettingsContainer* Container = ContainerPtr.LoadSynchronous()) 
+      for (const TSoftObjectPtr<UEFModularSettingsContainer>& ContainerPtr : ProjectSettings->PlayerSettingsContainers) 
       {
-        for (UEFModularSettingsBase* Template : Container->Settings) 
+        if (UEFModularSettingsContainer* Container = ContainerPtr.LoadSynchronous()) 
         {
-          ConsumeTemplate(Template);
+          for (UEFModularSettingsBase* Template : Container->Settings) 
+          {
+            ConsumeTemplate(Template);
+          }
         }
       }
     }
-  }
 
-  for (UEFModularSettingsBase* Template : DefaultSettings) 
-  {
-    ConsumeTemplate(Template);
+    for (UEFModularSettingsBase* Template : DefaultSettings) 
+    {
+      ConsumeTemplate(Template);
+    }
   }
 
   // --- Deferred load: check if we can identify the local player now ---
@@ -232,6 +241,9 @@ void UEFPlayerSettingsComponent::RequestUpdateSetting(FGameplayTag Tag, const FS
         Setting->Apply();
         OnSettingChanged.Broadcast(Setting);
 
+        // Keep the definition's CurrentValue in sync so late-joiners get it.
+        UpdateDefinitionCurrentValue(Tag, Setting->GetValueAsString());
+
         // Only save on explicit user changes, NOT during load
         if (!bFromLoad)
         {
@@ -280,6 +292,9 @@ void UEFPlayerSettingsComponent::ServerUpdateSetting_Implementation(FGameplayTag
       Setting->SetValueFromString(NewValue);
       Setting->Apply();
       OnSettingChanged.Broadcast(Setting);
+
+      // Keep the definition's CurrentValue in sync so late-joiners get it.
+      UpdateDefinitionCurrentValue(Tag, Setting->GetValueAsString());
 
       // For server/listen-server player: OnRep doesn't fire, so save here.
       // Uses coalescing to batch multiple updates.
@@ -338,6 +353,27 @@ void UEFPlayerSettingsComponent::OnRep_SettingDefinitions()
     }
 
     AddSettingFromTemplate_Local(Template);
+  }
+
+  // Apply the server's current values from the replicated definitions.
+  // This ensures late-joiners see the correct state even if subobject
+  // property replication hasn't delivered the values yet.
+  for (const FEFPlayerSettingDefinition &Def : SettingDefinitions) 
+  {
+    if (!Def.Tag.IsValid() || Def.CurrentValue.IsEmpty()) 
+    {
+      continue;
+    }
+
+    if (UEFModularSettingsBase* Setting = GetSettingByTag(Def.Tag)) 
+    {
+      if (Setting->GetValueAsString() != Def.CurrentValue)
+      {
+        Setting->SetValueFromString(Def.CurrentValue);
+        Setting->Apply();
+        OnSettingChanged.Broadcast(Setting);
+      }
+    }
   }
 
   // Try to apply pending values to any newly created settings
@@ -801,5 +837,17 @@ void UEFPlayerSettingsComponent::TryApplyPendingValues()
     
     // Save to the new slot (ensures migration is persisted)
     RequestSave();
+  }
+}
+
+void UEFPlayerSettingsComponent::UpdateDefinitionCurrentValue(FGameplayTag Tag, const FString& NewValue)
+{
+  for (FEFPlayerSettingDefinition& Def : SettingDefinitions)
+  {
+    if (Def.Tag == Tag)
+    {
+      Def.CurrentValue = NewValue;
+      return;
+    }
   }
 }

@@ -38,5 +38,5 @@ void UEFSettingsWidgetFloat::OnTrackedSettingsChanged_Implementation(UEFModularS
 
 void UEFSettingsWidgetFloat::OnValueChanged(float NewValue)
 {
-	UEFModularSettingsLibrary::SetModularFloat(this, SettingsTag, NewValue, SettingsSource);
+	UEFModularSettingsLibrary::SetModularFloat(this, SettingsTag, NewValue, SettingsSource, nullptr, ConfirmationType == EEFSettingConfirmationType::Instant);
 }

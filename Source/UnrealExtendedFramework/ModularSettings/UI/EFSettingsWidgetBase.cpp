@@ -20,9 +20,7 @@ void UEFSettingsWidgetBase::SettingsPreConstruct_Implementation()
 		FSlateFontInfo SettingsLabelFontInfo = SettingsLabel->GetFont();
 		SettingsLabelFontInfo.Size = SettingsLabelFontSize;
 		SettingsLabel->SetFont(FSlateFontInfo(SettingsLabelFontInfo));
-		
 		SettingsLabel->SetText(SettingsDisplayName);
-		
 	}
 }
 

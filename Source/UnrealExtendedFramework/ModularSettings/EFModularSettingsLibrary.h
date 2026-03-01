@@ -32,25 +32,25 @@ public:
 	static bool GetModularBool(const UObject* WorldContextObject, FGameplayTag Tag, EEFSettingsSource Source = EEFSettingsSource::Auto, APlayerState* SpecificPlayer = nullptr);
 
 	UFUNCTION(BlueprintCallable, Category = "Modular Settings", meta = (WorldContext = "WorldContextObject"))
-	static void SetModularBool(const UObject* WorldContextObject, FGameplayTag Tag, bool bValue, EEFSettingsSource Source = EEFSettingsSource::Auto, APlayerState* SpecificPlayer = nullptr);
+	static void SetModularBool(const UObject* WorldContextObject, FGameplayTag Tag, bool bValue, EEFSettingsSource Source = EEFSettingsSource::Auto, APlayerState* SpecificPlayer = nullptr, bool bApplyImmediately = true);
 
 	UFUNCTION(BlueprintPure, Category = "Modular Settings", meta = (WorldContext = "WorldContextObject"))
 	static float GetModularFloat(const UObject* WorldContextObject, FGameplayTag Tag, EEFSettingsSource Source = EEFSettingsSource::Auto, APlayerState* SpecificPlayer = nullptr);
 
 	UFUNCTION(BlueprintCallable, Category = "Modular Settings", meta = (WorldContext = "WorldContextObject"))
-	static void SetModularFloat(const UObject* WorldContextObject, FGameplayTag Tag, float Value, EEFSettingsSource Source = EEFSettingsSource::Auto, APlayerState* SpecificPlayer = nullptr);
+	static void SetModularFloat(const UObject* WorldContextObject, FGameplayTag Tag, float Value, EEFSettingsSource Source = EEFSettingsSource::Auto, APlayerState* SpecificPlayer = nullptr, bool bApplyImmediately = true);
 
 	UFUNCTION(BlueprintPure, Category = "Modular Settings", meta = (WorldContext = "WorldContextObject"))
 	static int32 GetModularSelectedIndex(const UObject* WorldContextObject, FGameplayTag Tag, EEFSettingsSource Source = EEFSettingsSource::Auto, APlayerState* SpecificPlayer = nullptr);
 
 	UFUNCTION(BlueprintCallable, Category = "Modular Settings", meta = (WorldContext = "WorldContextObject"))
-	static bool SetModularSelectedIndex(const UObject* WorldContextObject, FGameplayTag Tag, int32 Index, EEFSettingsSource Source = EEFSettingsSource::Auto, APlayerState* SpecificPlayer = nullptr);
+	static bool SetModularSelectedIndex(const UObject* WorldContextObject, FGameplayTag Tag, int32 Index, EEFSettingsSource Source = EEFSettingsSource::Auto, APlayerState* SpecificPlayer = nullptr, bool bApplyImmediately = true);
 
 	UFUNCTION(BlueprintPure, Category = "Modular Settings", meta = (WorldContext = "WorldContextObject"))
 	static FString GetModularSelectedOption(const UObject* WorldContextObject, FGameplayTag Tag, EEFSettingsSource Source = EEFSettingsSource::Auto, APlayerState* SpecificPlayer = nullptr);
 	
 	UFUNCTION(BlueprintCallable, Category = "Modular Settings", meta = (WorldContext = "WorldContextObject"))
-	static void AdjustModularIndex(const UObject* WorldContextObject, FGameplayTag Tag, int32 Amount, bool bWrap = true, EEFSettingsSource Source = EEFSettingsSource::Auto, APlayerState* SpecificPlayer = nullptr);
+	static void AdjustModularIndex(const UObject* WorldContextObject, FGameplayTag Tag, int32 Amount, bool bWrap = true, EEFSettingsSource Source = EEFSettingsSource::Auto, APlayerState* SpecificPlayer = nullptr, bool bApplyImmediately = true);
 
 	UFUNCTION(BlueprintPure, Category = "Modular Settings", meta = (WorldContext = "WorldContextObject"))
 	static TArray<FText> GetModularOptions(const UObject* WorldContextObject, FGameplayTag Tag, EEFSettingsSource Source = EEFSettingsSource::Auto, APlayerState* SpecificPlayer = nullptr);

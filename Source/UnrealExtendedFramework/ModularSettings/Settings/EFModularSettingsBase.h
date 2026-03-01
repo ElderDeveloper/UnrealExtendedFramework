@@ -176,6 +176,12 @@ public:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category="Settings Value")
 	float Max = 1.f;
+	
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category="Settings Value")
+	float DisplayMin = 0.f;
+	
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category="Settings Value")
+	float DisplayMax = 1.f;
 
 	UFUNCTION(BlueprintCallable,BlueprintNativeEvent, Category = "Settings")
 	void SetValue(float NewValue);
@@ -187,6 +193,12 @@ public:
 			Value = ClampedValue;
 			MarkDirty();
 		}
+	}
+	
+	UFUNCTION(BlueprintPure, Category = "Settings")
+	float GetDisplayValue() const
+	{
+		return FMath::GetMappedRangeValueClamped(FVector2D(Min, Max), FVector2D(DisplayMin, DisplayMax), Value);
 	}
 	
 	virtual void Apply_Implementation() override {}
@@ -232,7 +244,7 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Settings Value")
 	FString DefaultValue = TEXT("");
-
+	
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Replicated, Category="Settings Value")
 	TArray<FString> Values;
 	
@@ -243,18 +255,19 @@ public:
 	void SetSelectedIndex(int32 Index);
 	virtual void SetSelectedIndex_Implementation(int32 Index) 
 	{ 
+		// Reject invalid indices for safety (important for dynamic option lists)
+		if (!Values.IsValidIndex(Index))
+		{
+			return;
+		}
+
 		if (SelectedIndex != Index)
 		{
-			// Optional: Check if the NEW index is valid and not locked?
-			if (Values.IsValidIndex(Index))
+			FString NewValue = Values[Index];
+			if (IsOptionLocked(NewValue))
 			{
-				FString NewValue = Values[Index];
-				if (IsOptionLocked(NewValue))
-				{
-					// Rejected because it's locked
-					UE_LOG(LogTemp, Warning, TEXT("[UEFModularSettingsMultiSelect] Attempted to select locked option: %s"), *NewValue);
-					return;
-				}
+				UE_LOG(LogTemp, Warning, TEXT("[UEFModularSettingsMultiSelect] Attempted to select locked option: %s"), *NewValue);
+				return;
 			}
 
 			SelectedIndex = Index;
@@ -263,8 +276,32 @@ public:
 	}
 
 	virtual void Apply_Implementation() override { }
-	virtual void SaveCurrentValue() override { SavedValue = SelectedIndex; Super::SaveCurrentValue(); }
-	virtual void RevertToSavedValue() override { SelectedIndex = SavedValue; Apply_Implementation(); Super::RevertToSavedValue(); }
+
+	virtual void SaveCurrentValue() override
+	{
+		// Save both representations:
+		// - index for stable/static lists
+		// - string for dynamic lists (audio devices etc.)
+		SavedValue = SelectedIndex;
+		SavedValueString = GetValueAsString();
+		Super::SaveCurrentValue();
+	}
+
+	virtual void RevertToSavedValue() override
+	{
+		// Prefer string-based restore so dynamic lists remap correctly after RefreshValues()
+		if (!SavedValueString.IsEmpty())
+		{
+			SetValueFromString(SavedValueString);
+		}
+		else if (Values.IsValidIndex(SavedValue))
+		{
+			SetSelectedIndex(SavedValue);
+		}
+
+		Apply_Implementation();
+		Super::RevertToSavedValue();
+	}
 	
 	virtual FString GetValueAsString() const override
 	{
@@ -282,7 +319,8 @@ public:
 
 	virtual FString GetSavedValueAsString() const override
 	{
-		return Values.IsValidIndex(SavedValue) ? Values[SavedValue] : TEXT("");
+		// Return the exact saved string (not value-at-saved-index) to remain stable across refreshes.
+		return SavedValueString;
 	}
 	
 	virtual void ResetToDefault() override
@@ -345,4 +383,5 @@ protected:
 	void OnRep_LockedOptions() { OnOptionLockChanged(); }
 
 	int32 SavedValue = 0;
+	FString SavedValueString;
 };

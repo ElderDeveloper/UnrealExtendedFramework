@@ -51,5 +51,5 @@ void UEFSettingsWidgetMultiSelect::OnTrackedSettingsChanged_Implementation(UEFMo
 
 void UEFSettingsWidgetMultiSelect::OnSelectionChanged(FString SelectedItem, ESelectInfo::Type SelectionType)
 {
-	UEFModularSettingsLibrary::SetModularSelectedIndex(this, SettingsTag, ComboBox->FindOptionIndex(SelectedItem), SettingsSource);
+	UEFModularSettingsLibrary::SetModularSelectedIndex(this, SettingsTag, ComboBox->FindOptionIndex(SelectedItem), SettingsSource, nullptr, ConfirmationType == EEFSettingConfirmationType::Instant);
 }

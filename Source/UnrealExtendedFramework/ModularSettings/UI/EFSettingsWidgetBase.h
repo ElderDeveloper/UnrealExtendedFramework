@@ -8,6 +8,13 @@
 #include "../Settings/EFModularSettingsBase.h"
 #include "EFSettingsWidgetBase.generated.h"
 
+UENUM(BlueprintType)
+enum class EEFSettingConfirmationType : uint8
+{
+	Instant     UMETA(DisplayName="Apply Instantly"),
+	OnConfirm   UMETA(DisplayName="Apply On Confirm")
+};
+
 class UTextBlock;
 /**
  * Base class for all setting widgets.
@@ -41,6 +48,9 @@ protected:
 	
 	UPROPERTY(BlueprintReadOnly, EditAnywhere, Category = "Settings")
 	EEFSettingsSource SettingsSource = EEFSettingsSource::Auto;
+	
+	UPROPERTY(BlueprintReadOnly, EditAnywhere, Category = "Settings")
+	EEFSettingConfirmationType ConfirmationType = EEFSettingConfirmationType::Instant;
 
 	UPROPERTY(BlueprintReadOnly, EditAnywhere, Category = "Settings")
 	float SettingsLabelFontSize = 13.5f;
