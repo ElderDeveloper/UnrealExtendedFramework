@@ -49,3 +49,11 @@ Settings.Accessibility.SubtitlesEnabled,Settings.Accessibility.SubtitlesEnabled,
 Settings.Accessibility.SubtitleTextSize,Settings.Accessibility.SubtitleTextSize,Settings.Accessibility.SubtitleTextSize
 Settings.Accessibility.SubtitleBgOpacity,Settings.Accessibility.SubtitleBgOpacity,Settings.Accessibility.SubtitleBgOpacity
 Settings.Accessibility.SubtitleSpeakerLabels,Settings.Accessibility.SubtitleSpeakerLabels,Settings.Accessibility.SubtitleSpeakerLabels
+Settings.Graphics.Upscaler,Settings.Graphics.Upscaler,Active upscaler technology (None/DLSS/FSR/XeSS)
+Settings.Graphics.Upscaler.DLSS.Mode,Settings.Graphics.Upscaler.DLSS.Mode,DLSS quality mode (Auto/DLAA/UltraQuality/.../UltraPerformance)
+Settings.Graphics.Upscaler.DLSS.RayReconstruction,Settings.Graphics.Upscaler.DLSS.RayReconstruction,DLSS Ray Reconstruction on/off
+Settings.Graphics.Upscaler.FSR.Mode,Settings.Graphics.Upscaler.FSR.Mode,FSR quality mode (NativeAA/Quality/Balanced/Performance/UltraPerformance)
+Settings.Graphics.Upscaler.FSR.Sharpness,Settings.Graphics.Upscaler.FSR.Sharpness,FSR sharpening strength (0.0 - 1.0)
+Settings.Graphics.Upscaler.XeSS.QualityMode,Settings.Graphics.Upscaler.XeSS.QualityMode,XeSS quality mode (UltraPerf/.../AntiAliasing)
+Settings.Graphics.Upscaler.FrameGeneration,Settings.Graphics.Upscaler.FrameGeneration,Frame Generation on/off (FSR FFI / XeSS XeFG)
+Settings.Graphics.Upscaler.ResolutionScale,Settings.Graphics.Upscaler.ResolutionScale,Manual resolution scale percentage (r.ScreenPercentage)

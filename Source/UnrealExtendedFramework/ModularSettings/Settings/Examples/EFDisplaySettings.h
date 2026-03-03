@@ -347,13 +347,14 @@ public:
 		ConfigCategory = TEXT("Display");
 		DefaultValue = TEXT("TSR");
 		
-		// 0: None, 1: FXAA, 2: TAA, 3: MSAA, 4: TSR
+		// 0: None, 1: FXAA, 2: TAA, 3: MSAA, 4: TSR, 5: SMAA
 		Values = { 
 			TEXT("None"), 
 			TEXT("FXAA"), 
 			TEXT("TAA"),
 			TEXT("MSAA"),
-			TEXT("TSR")
+			TEXT("TSR"),
+			TEXT("SMAA")
 		};
 		
 		DisplayNames = {
@@ -361,7 +362,8 @@ public:
 			NSLOCTEXT("Settings", "AAFXAA", "FXAA"),
 			NSLOCTEXT("Settings", "AATAA", "TAA"),
 			NSLOCTEXT("Settings", "AAMSAA", "MSAA"),
-			NSLOCTEXT("Settings", "AATSR", "TSR")
+			NSLOCTEXT("Settings", "AATSR", "TSR"),
+			NSLOCTEXT("Settings", "AASMAA", "SMAA")
 		};
 		
 		int32 DefaultIndex = Values.Find(DefaultValue);
@@ -380,6 +382,7 @@ public:
 			else if (AAType == TEXT("TAA")) AAValue = 2;
 			else if (AAType == TEXT("MSAA")) AAValue = 3;
 			else if (AAType == TEXT("TSR")) AAValue = 4;
+			else if (AAType == TEXT("SMAA")) AAValue = 5;
 			
 			if (GetWorld())
 			{
