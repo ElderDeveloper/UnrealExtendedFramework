@@ -47,6 +47,79 @@ namespace EFUpscalerInternal
 		}
 		return TEXT("None");
 	}
+
+	static bool GetDLSSRayReconstructionValueFromSubsystem(const UObject* WorldContext)
+	{
+		if (!WorldContext)
+		{
+			return false;
+		}
+
+		if (UEFModularSettingsBool* RRSetting = Cast<UEFModularSettingsBool>(UEFModularSettingsLibrary::GetModularSetting(
+			WorldContext,
+			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.Upscaler.DLSS.RayReconstruction")),
+			EEFSettingsSource::Local)))
+		{
+			return RRSetting->Value;
+		}
+
+		return false;
+	}
+
+	static void SetFSREnabled(bool bEnabled)
+	{
+#if WITH_FSR
+		IConsoleVariable* CVarEnableFSR = nullptr;
+#if WITH_FSR_GENERIC
+		CVarEnableFSR = IConsoleManager::Get().FindConsoleVariable(TEXT("r.FidelityFX.FSR.Enabled"));
+#elif WITH_FSR4
+		CVarEnableFSR = IConsoleManager::Get().FindConsoleVariable(TEXT("r.FidelityFX.FSR4.Enabled"));
+#elif WITH_FSR3
+		CVarEnableFSR = IConsoleManager::Get().FindConsoleVariable(TEXT("r.FidelityFX.FSR3.Enabled"));
+#endif
+		if (CVarEnableFSR)
+		{
+			CVarEnableFSR->Set(bEnabled ? 1 : 0);
+		}
+#endif
+	}
+
+	static void SetXeSSEnabled(bool bEnabled)
+	{
+#if WITH_XESS
+		if (!UXeSSBlueprintLibrary::IsXeSSSupported())
+		{
+			return;
+		}
+
+		if (IConsoleVariable* CVar = IConsoleManager::Get().FindConsoleVariable(TEXT("r.XeSS.Enabled")))
+		{
+			CVar->Set(bEnabled ? 1 : 0);
+		}
+#endif
+	}
+
+	static void SetFSRFrameGenerationEnabled(bool bEnabled)
+	{
+#if WITH_FSR
+#if WITH_FSR4 || WITH_FSR3
+		if (IConsoleVariable* CVar = IConsoleManager::Get().FindConsoleVariable(TEXT("r.FidelityFX.FI.Enabled")))
+		{
+			CVar->Set(bEnabled ? 1 : 0);
+		}
+#endif
+#endif
+	}
+
+	static void SetXeSSFrameGenerationEnabled(bool bEnabled)
+	{
+#if WITH_XESS
+		if (UXeFGBlueprintLibrary::IsXeFGSupported())
+		{
+			UXeFGBlueprintLibrary::SetXeFGMode(bEnabled ? EXeFGMode::On : EXeFGMode::Off);
+		}
+#endif
+	}
 }
 
 
@@ -84,6 +157,26 @@ bool UEFUpscalerSelectSetting::IsUpscalerAvailable(const FString& UpscalerName)
 	return false;
 }
 
+void UEFUpscalerSelectSetting::SetValueFromString(const FString& Value)
+{
+	if (Value.Equals(TEXT("None"), ESearchCase::IgnoreCase))
+	{
+		const int32 MigrationIndex = Values.IndexOfByPredicate([](const FString& Candidate)
+		{
+			return !Candidate.Equals(TEXT("None"), ESearchCase::IgnoreCase);
+		});
+
+		if (Values.IsValidIndex(MigrationIndex))
+		{
+			SetSelectedIndex(MigrationIndex);
+			UE_LOG(LogTemp, Log, TEXT("Migrated legacy upscaler value 'None' -> '%s'"), *Values[MigrationIndex]);
+			return;
+		}
+	}
+
+	Super::SetValueFromString(Value);
+}
+
 void UEFUpscalerSelectSetting::Apply_Implementation()
 {
 	if (!Values.IsValidIndex(SelectedIndex))
@@ -91,47 +184,45 @@ void UEFUpscalerSelectSetting::Apply_Implementation()
 		return;
 	}
 
-	const FString SelectedUpscaler = Values[SelectedIndex];
+	const FString RequestedUpscaler = Values[SelectedIndex];
+	FString SelectedUpscaler = RequestedUpscaler;
+	if (!IsUpscalerAvailable(SelectedUpscaler))
+	{
+		const int32 FallbackIndex = Values.IndexOfByPredicate([this](const FString& Candidate)
+		{
+			return IsUpscalerAvailable(Candidate);
+		});
+
+		if (Values.IsValidIndex(FallbackIndex))
+		{
+			SelectedIndex = FallbackIndex;
+			SelectedUpscaler = Values[SelectedIndex];
+			UE_LOG(LogTemp, Warning, TEXT("Upscaler '%s' is unavailable. Falling back to '%s'."),
+				*RequestedUpscaler, *SelectedUpscaler);
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("No available upscaler option found. Disabling all upscalers."));
+			SelectedUpscaler = TEXT("None");
+		}
+	}
+
 	UE_LOG(LogTemp, Log, TEXT("Applying Upscaler: %s"), *SelectedUpscaler);
 
 	// Step 1: Reset screen percentage to 100% (upscalers will set their own)
 	EFUpscalerInternal::SetScreenPercentage(100.0f);
 
-	// Step 2: Enable/disable each upscaler
+	// Step 2: Disable unselected upscalers. DLSS enable/disable is driven by DLSS.RayReconstruction.
 #if WITH_DLSS
-	if (UDLSSLibrary::IsDLSSSupported())
+	if (UDLSSLibrary::IsDLSSSupported() && SelectedUpscaler != TEXT("DLSS"))
 	{
-		UDLSSLibrary::EnableDLSS(SelectedUpscaler == TEXT("DLSS"));
+		UDLSSLibrary::EnableDLSS(false);
+		UDLSSLibrary::EnableDLSSRR(false);
 	}
 #endif
 
-#if WITH_FSR
-	{
-		// Enable/disable FSR via CVar
-		IConsoleVariable* CVarEnableFSR = nullptr;
-#if WITH_FSR_GENERIC
-		CVarEnableFSR = IConsoleManager::Get().FindConsoleVariable(TEXT("r.FidelityFX.FSR.Enabled"));
-#elif WITH_FSR4
-		CVarEnableFSR = IConsoleManager::Get().FindConsoleVariable(TEXT("r.FidelityFX.FSR4.Enabled"));
-#elif WITH_FSR3
-		CVarEnableFSR = IConsoleManager::Get().FindConsoleVariable(TEXT("r.FidelityFX.FSR3.Enabled"));
-#endif
-		if (CVarEnableFSR)
-		{
-			CVarEnableFSR->Set(SelectedUpscaler == TEXT("FSR") ? 1 : 0);
-		}
-	}
-#endif
-
-#if WITH_XESS
-	if (UXeSSBlueprintLibrary::IsXeSSSupported())
-	{
-		if (IConsoleVariable* CVar = IConsoleManager::Get().FindConsoleVariable(TEXT("r.XeSS.Enabled")))
-		{
-			CVar->Set(SelectedUpscaler == TEXT("XeSS") ? 1 : 0);
-		}
-	}
-#endif
+	EFUpscalerInternal::SetFSREnabled(SelectedUpscaler == TEXT("FSR"));
+	EFUpscalerInternal::SetXeSSEnabled(SelectedUpscaler == TEXT("XeSS"));
 
 	// Step 3: Deferred apply of the active upscaler's sub-settings (next frame).
 	// This ensures the upscaler is fully initialized before we configure it.
@@ -140,6 +231,14 @@ void UEFUpscalerSelectSetting::Apply_Implementation()
 		// Trigger sub-setting apply by looking them up from the subsystem
 		if (SelectedUpscaler == TEXT("DLSS"))
 		{
+			// DLSS.RayReconstruction is the driver for DLSS enable/disable.
+			if (auto* Setting = UEFModularSettingsLibrary::GetModularSetting(this,
+				FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.Upscaler.DLSS.RayReconstruction")),
+				EEFSettingsSource::Local))
+			{
+				Setting->Apply();
+			}
+
 			if (auto* Setting = UEFModularSettingsLibrary::GetModularSetting(this,
 				FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.Upscaler.DLSS.Mode")),
 				EEFSettingsSource::Local))
@@ -171,9 +270,9 @@ void UEFUpscalerSelectSetting::Apply_Implementation()
 				Setting->Apply();
 			}
 		}
-		else // "None"
+		else // Fallback: no recognized upscaler is active
 		{
-			// Apply manual resolution scale when no upscaler is active
+			// Apply manual resolution scale when no upscaler is active.
 			if (auto* Setting = UEFModularSettingsLibrary::GetModularSetting(this,
 				FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.Upscaler.ResolutionScale")),
 				EEFSettingsSource::Local))
@@ -204,6 +303,14 @@ void UEFUpscalerDLSSModeSetting::Apply_Implementation()
 	const FString ActiveUpscaler = EFUpscalerInternal::GetActiveUpscalerFromSubsystem(this);
 	if (ActiveUpscaler != TEXT("DLSS") || !UDLSSLibrary::IsDLSSSupported())
 	{
+		return;
+	}
+
+	// DLSS.RayReconstruction is the DLSS on/off driver.
+	if (!EFUpscalerInternal::GetDLSSRayReconstructionValueFromSubsystem(this))
+	{
+		EFUpscalerInternal::SetScreenPercentage(100.0f);
+		UE_LOG(LogTemp, Verbose, TEXT("DLSS Mode skipped because DLSS.RayReconstruction is disabled."));
 		return;
 	}
 
@@ -253,21 +360,39 @@ void UEFUpscalerDLSSModeSetting::Apply_Implementation()
 void UEFUpscalerDLSSRRSetting::Apply_Implementation()
 {
 #if WITH_DLSS
-	const FString ActiveUpscaler = EFUpscalerInternal::GetActiveUpscalerFromSubsystem(this);
-	if (ActiveUpscaler != TEXT("DLSS"))
+	if (!UDLSSLibrary::IsDLSSSupported())
 	{
 		return;
 	}
 
-	if (Value && UDLSSLibrary::IsDLSSRRSupported())
+	const FString ActiveUpscaler = EFUpscalerInternal::GetActiveUpscalerFromSubsystem(this);
+	const bool bDLSSSelected = ActiveUpscaler == TEXT("DLSS");
+	const bool bEnableDLSS = bDLSSSelected && Value;
+	const bool bEnableRR = bEnableDLSS && UDLSSLibrary::IsDLSSRRSupported();
+
+	UDLSSLibrary::EnableDLSS(bEnableDLSS);
+	UDLSSLibrary::EnableDLSSRR(bEnableRR);
+
+	if (!bDLSSSelected)
 	{
-		UDLSSLibrary::EnableDLSSRR(true);
-		UE_LOG(LogTemp, Log, TEXT("Enabled DLSS Ray Reconstruction"));
+		UE_LOG(LogTemp, Verbose, TEXT("DLSS disabled because active upscaler is '%s'."), *ActiveUpscaler);
+		return;
+	}
+
+	if (bEnableDLSS)
+	{
+		if (bEnableRR)
+		{
+			UE_LOG(LogTemp, Log, TEXT("Enabled DLSS and DLSS Ray Reconstruction"));
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("Enabled DLSS but DLSS Ray Reconstruction is not supported on this hardware"));
+		}
 	}
 	else
 	{
-		UDLSSLibrary::EnableDLSSRR(false);
-		UE_LOG(LogTemp, Log, TEXT("Disabled DLSS Ray Reconstruction"));
+		UE_LOG(LogTemp, Log, TEXT("Disabled DLSS (DLSS.RayReconstruction is off)"));
 	}
 #endif
 }
@@ -379,34 +504,28 @@ void UEFUpscalerFrameGenSetting::Apply_Implementation()
 
 	// FSR Frame Interpolation
 #if WITH_FSR
+	const bool bEnableFSRFrameGen = ActiveUpscaler == TEXT("FSR") && Value;
+	EFUpscalerInternal::SetFSRFrameGenerationEnabled(bEnableFSRFrameGen);
 	if (ActiveUpscaler == TEXT("FSR"))
 	{
-#if WITH_FSR4 || WITH_FSR3
-		if (IConsoleVariable* CVar = IConsoleManager::Get().FindConsoleVariable(TEXT("r.FidelityFX.FI.Enabled")))
-		{
-			CVar->Set(Value ? 1 : 0);
-			UE_LOG(LogTemp, Log, TEXT("FSR Frame Interpolation: %s"), Value ? TEXT("Enabled") : TEXT("Disabled"));
-		}
-#endif
+		UE_LOG(LogTemp, Log, TEXT("FSR Frame Interpolation: %s"), bEnableFSRFrameGen ? TEXT("Enabled") : TEXT("Disabled"));
 	}
 #endif
 
 	// XeSS Frame Generation
 #if WITH_XESS
+	const bool bEnableXeSSFrameGen = ActiveUpscaler == TEXT("XeSS") && Value;
+	EFUpscalerInternal::SetXeSSFrameGenerationEnabled(bEnableXeSSFrameGen);
 	if (ActiveUpscaler == TEXT("XeSS"))
 	{
-		if (UXeFGBlueprintLibrary::IsXeFGSupported())
-		{
-			UXeFGBlueprintLibrary::SetXeFGMode(Value ? EXeFGMode::On : EXeFGMode::Off);
-			UE_LOG(LogTemp, Log, TEXT("XeSS Frame Generation: %s"), Value ? TEXT("Enabled") : TEXT("Disabled"));
-		}
+		UE_LOG(LogTemp, Log, TEXT("XeSS Frame Generation: %s"), bEnableXeSSFrameGen ? TEXT("Enabled") : TEXT("Disabled"));
 	}
 #endif
 
-	// DLSS: Frame Generation is automatic and tied to the DLSS version — no manual toggle available
+	// DLSS Frame Generation is automatic and tied to DLSS version.
 	if (ActiveUpscaler == TEXT("DLSS"))
 	{
-		UE_LOG(LogTemp, Verbose, TEXT("DLSS Frame Generation is automatic — no manual toggle"));
+		UE_LOG(LogTemp, Verbose, TEXT("DLSS Frame Generation is automatic - no manual toggle"));
 	}
 }
 
@@ -439,12 +558,15 @@ bool UEFUpscalerFrameGenSetting::IsFrameGenAvailable() const
 void UEFUpscalerResolutionScaleSetting::Apply_Implementation()
 {
 	const FString ActiveUpscaler = EFUpscalerInternal::GetActiveUpscalerFromSubsystem(this);
+	const bool bDLSSActive = ActiveUpscaler == TEXT("DLSS") &&
+		EFUpscalerInternal::GetDLSSRayReconstructionValueFromSubsystem(this);
+	const bool bAnyUpscalerActive = bDLSSActive || ActiveUpscaler == TEXT("FSR") || ActiveUpscaler == TEXT("XeSS");
 
 	// Only apply manual resolution scale when no upscaler is active.
 	// Upscalers manage r.ScreenPercentage themselves.
-	if (ActiveUpscaler != TEXT("None"))
+	if (bAnyUpscalerActive)
 	{
-		UE_LOG(LogTemp, Verbose, TEXT("Resolution Scale ignored — upscaler '%s' manages r.ScreenPercentage"), *ActiveUpscaler);
+		UE_LOG(LogTemp, Verbose, TEXT("Resolution Scale ignored - upscaler '%s' manages r.ScreenPercentage"), *ActiveUpscaler);
 		return;
 	}
 

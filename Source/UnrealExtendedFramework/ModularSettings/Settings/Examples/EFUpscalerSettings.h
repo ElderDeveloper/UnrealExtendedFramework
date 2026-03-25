@@ -54,7 +54,7 @@
 
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  Upscaler Selection (None / DLSS / FSR / XeSS)
+//  Upscaler Selection (DLSS / FSR / XeSS)
 // ─────────────────────────────────────────────────────────────────────────────
 UCLASS(Blueprintable, EditInlineNew, DisplayName = "Extended Upscaler Selection")
 class UNREALEXTENDEDFRAMEWORK_API UEFUpscalerSelectSetting : public UEFModularSettingsMultiSelect
@@ -67,33 +67,51 @@ public:
 		SettingTag = FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.Upscaler"));
 		DisplayName = NSLOCTEXT("Settings", "Upscaler", "Upscaler");
 		ConfigCategory = TEXT("Graphics");
-		DefaultValue = TEXT("None");
-
-		// Always include None
-		Values.Add(TEXT("None"));
-		DisplayNames.Add(NSLOCTEXT("Settings", "UpscalerNone", "None"));
+		DefaultValue = TEXT("");
 
 #if WITH_DLSS
 		Values.Add(TEXT("DLSS"));
 		DisplayNames.Add(NSLOCTEXT("Settings", "UpscalerDLSS", "NVIDIA DLSS"));
+		if (DefaultValue.IsEmpty())
+		{
+			DefaultValue = TEXT("DLSS");
+		}
 #endif
 
 #if WITH_FSR
 		Values.Add(TEXT("FSR"));
 		DisplayNames.Add(NSLOCTEXT("Settings", "UpscalerFSR", "AMD FSR"));
+		if (DefaultValue.IsEmpty())
+		{
+			DefaultValue = TEXT("FSR");
+		}
 #endif
 
 #if WITH_XESS
 		Values.Add(TEXT("XeSS"));
 		DisplayNames.Add(NSLOCTEXT("Settings", "UpscalerXeSS", "Intel XeSS"));
+		if (DefaultValue.IsEmpty())
+		{
+			DefaultValue = TEXT("XeSS");
+		}
 #endif
 
-		SelectedIndex = 0;
+		// Safety fallback for builds with no upscaler plugins compiled in.
+		if (Values.Num() == 0)
+		{
+			Values.Add(TEXT("None"));
+			DisplayNames.Add(NSLOCTEXT("Settings", "UpscalerNoneFallback", "None"));
+			DefaultValue = TEXT("None");
+		}
+
+		const int32 DefaultIndex = Values.Find(DefaultValue);
+		SelectedIndex = DefaultIndex != INDEX_NONE ? DefaultIndex : 0;
 	}
 
 	virtual void Apply_Implementation() override;
+	virtual void SetValueFromString(const FString& Value) override;
 
-	/** Returns the currently selected upscaler as a string key (None/DLSS/FSR/XeSS). */
+	/** Returns the currently selected upscaler key (DLSS/FSR/XeSS). Returns "None" on invalid index. */
 	UFUNCTION(BlueprintPure, Category = "Upscaler")
 	FString GetActiveUpscaler() const
 	{
@@ -318,7 +336,7 @@ public:
 
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  Resolution Scale (r.ScreenPercentage — active only when upscaler is None)
+//  Resolution Scale (r.ScreenPercentage — active only when no valid upscaler is selected)
 // ─────────────────────────────────────────────────────────────────────────────
 UCLASS(Blueprintable, EditInlineNew, DisplayName = "Extended Resolution Scale")
 class UNREALEXTENDEDFRAMEWORK_API UEFUpscalerResolutionScaleSetting : public UEFModularSettingsFloat
