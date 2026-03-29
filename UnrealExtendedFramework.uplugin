@@ -35,8 +35,17 @@
 			"Name": "UnrealExtendedBackend",
 			"Type": "Runtime",
 			"LoadingPhase": "Default"
+		},
+		{
+			"Name": "UnrealExtendedEOS",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		},
+		{
+			"Name": "UnrealExtendedPlayFab",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
 		}
-		
 	],
 
 
@@ -59,6 +68,18 @@
 		},
 		{
 			"Name": "OnlineSubsystemNull",
+			"Enabled": true
+		},
+		{
+			"Name": "OnlineSubsystemEOS",
+			"Enabled": true
+		},
+		{
+			"Name": "EOSShared",
+			"Enabled": true
+		},
+		{
+			"Name": "EOSVoiceChat",
 			"Enabled": true
 		},
 		{

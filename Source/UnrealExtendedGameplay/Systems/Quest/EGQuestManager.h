@@ -1,4 +1,4 @@
-﻿// Fill out your copyright notice in the Description page of Project Settings.
+// Fill out your copyright notice in the Description page of Project Settings.
 
 #pragma once
 
@@ -52,7 +52,7 @@ struct FQuestManagerSaveData
 };
 
 
-UCLASS(Config=Game, DefaultConfig, meta=(DisplayName="UEF Quest System Settings"))
+UCLASS(Config=Game, DefaultConfig, meta=(DisplayName="Extended Quest Settings"))
 class UEGQuestSettings : public UDeveloperSettings
 {
 	GENERATED_BODY()
@@ -76,7 +76,8 @@ public:
 	{
 		return GetDefault<UEGQuestSettings>();
 	}
-	
+
+	virtual FName GetCategoryName() const override { return FName(TEXT("Extended Framework")); }
 };
 
 USTRUCT(blueprintType)
