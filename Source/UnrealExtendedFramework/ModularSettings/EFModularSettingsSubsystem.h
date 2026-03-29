@@ -37,6 +37,8 @@ public:
 
 	UPROPERTY(EditDefaultsOnly, Config, Category = "Modular Settings", meta = (AllowedClasses = "/Script/UnrealExtendedFramework.EFModularSettingsContainer"))
 	TArray<TSoftObjectPtr<UEFModularSettingsContainer>> PlayerSettingsContainers;
+
+	virtual FName GetCategoryName() const override { return FName(TEXT("Extended Framework")); }
 };
 
 

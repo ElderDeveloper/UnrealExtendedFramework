@@ -199,6 +199,7 @@ void UEFModularSettingsSubsystem::LoadFromDisk()
 					Setting->SetValueFromString(StoredPair.Value);
 				}
 			}
+
 			UE_LOG(LogTemp, Log, TEXT("Modular settings loaded from slot: %s"), *SettingsSaveSlotName);
 		}
 	}

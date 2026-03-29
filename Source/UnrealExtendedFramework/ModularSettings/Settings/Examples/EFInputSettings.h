@@ -60,6 +60,14 @@ public:
 	void SetKey(FKey NewKey);
 	virtual void SetKey_Implementation(FKey NewKey) 
 	{ 
+		if (!NewKey.IsValid())
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[UEFModularSettingsInput] Loaded key is invalid for %s. Resetting to default."), 
+				*SettingTag.ToString());
+			ResetToDefault();
+			return;
+		}
+
 		if (CurrentKey != NewKey)
 		{
 			CurrentKey = NewKey;

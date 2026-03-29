@@ -187,6 +187,14 @@ public:
 	void SetValue(float NewValue);
 	virtual void SetValue_Implementation(float NewValue) 
 	{ 
+		if (NewValue < Min || NewValue > Max)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[UEFModularSettingsFloat] Loaded value %.2f for %s is out of range [%.2f, %.2f]. Resetting to default: %.2f"), 
+				NewValue, *SettingTag.ToString(), Min, Max, DefaultValue);
+			ResetToDefault();
+			return;
+		}
+
 		float ClampedValue = FMath::Clamp(NewValue, Min, Max);
 		if (!FMath::IsNearlyEqual(Value, ClampedValue))
 		{
@@ -258,6 +266,9 @@ public:
 		// Reject invalid indices for safety (important for dynamic option lists)
 		if (!Values.IsValidIndex(Index))
 		{
+			UE_LOG(LogTemp, Warning, TEXT("[UEFModularSettingsMultiSelect] Loaded index %d for %s is invalid. Resetting to default."), 
+				Index, *SettingTag.ToString());
+			ResetToDefault();
 			return;
 		}
 
@@ -314,6 +325,12 @@ public:
 		if (Index != INDEX_NONE)
 		{
 			SetSelectedIndex(Index);
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[UEFModularSettingsMultiSelect] Loaded value '%s' for %s is not a valid option. Resetting to default."), 
+				*Value, *SettingTag.ToString());
+			ResetToDefault();
 		}
 	}
 

@@ -13,7 +13,7 @@ class UEFSubtitleDataAsset;
  * Project-wide subtitle settings, editable in Project Settings > Extended Framework > Subtitle.
  * Replaces the old UEFSubtitleSettings.
  */
-UCLASS(Config=Game, defaultconfig, meta=(DisplayName="EF Subtitle Settings"))
+UCLASS(Config=Game, defaultconfig, meta=(DisplayName="Extended Subtitle Settings"))
 class UNREALEXTENDEDFRAMEWORK_API UEFSubtitleProjectSettings : public UDeveloperSettings
 {
 	GENERATED_BODY()
