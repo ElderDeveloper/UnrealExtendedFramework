@@ -135,7 +135,10 @@ public:
 
 
 	// <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< Gameplay Tag >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-
+	
+	UFUNCTION(BlueprintPure, meta=(CompactNodeTitle="GetGameplayTagLastPart"), Category = "VariableLibrary|GameplayTag")
+	static FString GetGameplayTagLastPart(const FGameplayTag& Tag);
+	
 	/** Converts an FName to a FGameplayTag. Logs a warning if the tag is invalid. */
 	UFUNCTION(BlueprintPure, meta=(CompactNodeTitle="ToGameplayTag"), Category = "VariableLibrary|GameplayTag")
 	static FGameplayTag GetGameplayTagFromName(const FName& Name);

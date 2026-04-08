@@ -1,14 +1,75 @@
 // Fill out your copyright notice in the Description page of Project Settings.
 
 #include "EFModularSettingsSubsystem.h"
+#include "HAL/IConsoleManager.h"
+#include "Misc/DefaultValueHelper.h"
 #include "Engine/Engine.h"
 #include "Kismet/GameplayStatics.h"
 #include "SaveGame/EFSettingsSaveGame.h"
+#include "Settings/EFModularSettingsBase.h"
 #include "Async/Async.h"
 #include "GameFramework/GameUserSettings.h"
 
 static const FString SettingsSaveSlotName = TEXT("ModularSettingsSave");
 static const int32 SettingsUserIndex = 0;
+
+namespace EFModularSettingsConsole
+{
+	static FString JoinArgs(const TArray<FString>& Args, const int32 StartIndex = 0)
+	{
+		FString JoinedValue;
+		for (int32 Index = StartIndex; Index < Args.Num(); ++Index)
+		{
+			if (!JoinedValue.IsEmpty())
+			{
+				JoinedValue += TEXT(" ");
+			}
+
+			JoinedValue += Args[Index];
+		}
+
+		return JoinedValue;
+	}
+
+	static bool TryParseBool(const FString& ValueString, bool& bOutValue)
+	{
+		if (ValueString.Equals(TEXT("true"), ESearchCase::IgnoreCase)
+			|| ValueString.Equals(TEXT("1"), ESearchCase::IgnoreCase)
+			|| ValueString.Equals(TEXT("on"), ESearchCase::IgnoreCase)
+			|| ValueString.Equals(TEXT("yes"), ESearchCase::IgnoreCase)
+			|| ValueString.Equals(TEXT("enable"), ESearchCase::IgnoreCase)
+			|| ValueString.Equals(TEXT("enabled"), ESearchCase::IgnoreCase))
+		{
+			bOutValue = true;
+			return true;
+		}
+
+		if (ValueString.Equals(TEXT("false"), ESearchCase::IgnoreCase)
+			|| ValueString.Equals(TEXT("0"), ESearchCase::IgnoreCase)
+			|| ValueString.Equals(TEXT("off"), ESearchCase::IgnoreCase)
+			|| ValueString.Equals(TEXT("no"), ESearchCase::IgnoreCase)
+			|| ValueString.Equals(TEXT("disable"), ESearchCase::IgnoreCase)
+			|| ValueString.Equals(TEXT("disabled"), ESearchCase::IgnoreCase))
+		{
+			bOutValue = false;
+			return true;
+		}
+
+		return false;
+	}
+
+	static FString DescribeOptions(const UEFModularSettingsMultiSelect* Setting)
+	{
+		return Setting && Setting->Values.Num() > 0
+			? FString::Join(Setting->Values, TEXT(", "))
+			: TEXT("<none>");
+	}
+
+	static FGameplayTag MakeTag(const TCHAR* TagName)
+	{
+		return FGameplayTag::RequestGameplayTag(FName(TagName), false);
+	}
+}
 
 void UEFModularSettingsSubsystem::Initialize(FSubsystemCollectionBase& SubsystemCollectionBase)
 {
@@ -45,13 +106,227 @@ void UEFModularSettingsSubsystem::Initialize(FSubsystemCollectionBase& Subsystem
 		}
 	}
 
-	// Register Console Command
-	SetCommand = IConsoleManager::Get().RegisterConsoleCommand(
+	RegisterConsoleCommands();
+}
+
+
+void UEFModularSettingsSubsystem::Deinitialize()
+{
+	UnregisterConsoleCommands();
+	Super::Deinitialize();
+}
+
+
+void UEFModularSettingsSubsystem::RegisterConsoleCommands()
+{
+	RegisterConsoleCommand(
 		TEXT("Settings.Set"),
 		TEXT("Set a modular setting value. Usage: Settings.Set <Tag> <Value>"),
-		FConsoleCommandWithArgsDelegate::CreateUObject(this, &UEFModularSettingsSubsystem::HandleSetCommand),
-		ECVF_Default
-	);
+		FConsoleCommandWithArgsDelegate::CreateUObject(this, &UEFModularSettingsSubsystem::HandleSetCommand));
+
+	RegisterConsoleCommand(
+		TEXT("Settings.Upscaler.Set"),
+		TEXT("Set the active upscaler. Usage: Settings.Upscaler.Set <None|DLSS|FSR|XeSS>"),
+		FConsoleCommandWithArgsDelegate::CreateUObject(this, &UEFModularSettingsSubsystem::HandleUpscalerSetCommand));
+
+	RegisterConsoleCommand(
+		TEXT("Settings.Upscaler.DLSS.Mode"),
+		TEXT("Set the DLSS quality mode. Usage: Settings.Upscaler.DLSS.Mode <Auto|DLAA|UltraQuality|Quality|Balanced|Performance|UltraPerformance>"),
+		FConsoleCommandWithArgsDelegate::CreateUObject(this, &UEFModularSettingsSubsystem::HandleUpscalerDLSSModeCommand));
+
+	RegisterConsoleCommand(
+		TEXT("Settings.Upscaler.DLSS.RayReconstruction"),
+		TEXT("Enable or disable DLSS ray reconstruction. Usage: Settings.Upscaler.DLSS.RayReconstruction <true|false>"),
+		FConsoleCommandWithArgsDelegate::CreateUObject(this, &UEFModularSettingsSubsystem::HandleUpscalerDLSSRayReconstructionCommand));
+
+	RegisterConsoleCommand(
+		TEXT("Settings.Upscaler.FSR.Mode"),
+		TEXT("Set the FSR quality mode. Usage: Settings.Upscaler.FSR.Mode <NativeAA|Quality|Balanced|Performance|UltraPerformance>"),
+		FConsoleCommandWithArgsDelegate::CreateUObject(this, &UEFModularSettingsSubsystem::HandleUpscalerFSRModeCommand));
+
+	RegisterConsoleCommand(
+		TEXT("Settings.Upscaler.FSR.Sharpness"),
+		TEXT("Set the FSR sharpness. Usage: Settings.Upscaler.FSR.Sharpness <0.0-1.0>"),
+		FConsoleCommandWithArgsDelegate::CreateUObject(this, &UEFModularSettingsSubsystem::HandleUpscalerFSRSharpnessCommand));
+
+	RegisterConsoleCommand(
+		TEXT("Settings.Upscaler.XeSS.QualityMode"),
+		TEXT("Set the XeSS quality mode. Usage: Settings.Upscaler.XeSS.QualityMode <UltraPerformance|Performance|Balanced|Quality|UltraQuality|UltraQualityPlus|AntiAliasing>"),
+		FConsoleCommandWithArgsDelegate::CreateUObject(this, &UEFModularSettingsSubsystem::HandleUpscalerXeSSQualityModeCommand));
+
+	RegisterConsoleCommand(
+		TEXT("Settings.Upscaler.FrameGeneration"),
+		TEXT("Enable or disable frame generation. Usage: Settings.Upscaler.FrameGeneration <true|false>"),
+		FConsoleCommandWithArgsDelegate::CreateUObject(this, &UEFModularSettingsSubsystem::HandleUpscalerFrameGenerationCommand));
+
+	RegisterConsoleCommand(
+		TEXT("Settings.Upscaler.ResolutionScale"),
+		TEXT("Set the manual resolution scale. Usage: Settings.Upscaler.ResolutionScale <25-200>"),
+		FConsoleCommandWithArgsDelegate::CreateUObject(this, &UEFModularSettingsSubsystem::HandleUpscalerResolutionScaleCommand));
+
+	RegisterConsoleCommand(
+		TEXT("Settings.Upscaler.Status"),
+		TEXT("Log the current upscaler-related modular settings."),
+		FConsoleCommandWithArgsDelegate::CreateUObject(this, &UEFModularSettingsSubsystem::HandleUpscalerStatusCommand));
+}
+
+
+void UEFModularSettingsSubsystem::UnregisterConsoleCommands()
+{
+	IConsoleManager& ConsoleManager = IConsoleManager::Get();
+	for (const FString& CommandName : RegisteredConsoleCommands)
+	{
+		if (ConsoleManager.FindConsoleObject(*CommandName) != nullptr)
+		{
+			ConsoleManager.UnregisterConsoleObject(*CommandName, false);
+		}
+	}
+
+	RegisteredConsoleCommands.Reset();
+}
+
+
+void UEFModularSettingsSubsystem::RegisterConsoleCommand(const TCHAR* Name, const TCHAR* Help, const FConsoleCommandWithArgsDelegate& Delegate)
+{
+	IConsoleManager& ConsoleManager = IConsoleManager::Get();
+	if (ConsoleManager.FindConsoleObject(Name) != nullptr)
+	{
+		ConsoleManager.UnregisterConsoleObject(Name, false);
+	}
+
+	ConsoleManager.RegisterConsoleCommand(Name, Help, Delegate, ECVF_Default);
+	RegisteredConsoleCommands.AddUnique(Name);
+}
+
+
+bool UEFModularSettingsSubsystem::ApplyConsoleSettingValue(FGameplayTag Tag, const FString& ValueString, const TCHAR* CommandLabel)
+{
+	UEFModularSettingsBase* Setting = GetSettingByTag(Tag);
+	if (!Setting)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("%s could not find setting '%s'"), CommandLabel, *Tag.ToString());
+		return false;
+	}
+
+	const FString TrimmedValue = ValueString.TrimStartAndEnd();
+	if (TrimmedValue.IsEmpty())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("%s requires a non-empty value for '%s'"), CommandLabel, *Tag.ToString());
+		return false;
+	}
+
+	if (UEFModularSettingsMultiSelect* MultiSelectSetting = Cast<UEFModularSettingsMultiSelect>(Setting))
+	{
+		const int32 ValueIndex = MultiSelectSetting->Values.IndexOfByPredicate([&TrimmedValue](const FString& Candidate)
+		{
+			return Candidate.Equals(TrimmedValue, ESearchCase::IgnoreCase);
+		});
+
+		if (!MultiSelectSetting->Values.IsValidIndex(ValueIndex))
+		{
+			UE_LOG(LogTemp, Warning, TEXT("%s invalid value '%s' for '%s'. Valid options: %s"),
+				CommandLabel,
+				*TrimmedValue,
+				*Tag.ToString(),
+				*EFModularSettingsConsole::DescribeOptions(MultiSelectSetting));
+			return false;
+		}
+
+		if (MultiSelectSetting->IsIndexLocked(ValueIndex))
+		{
+			UE_LOG(LogTemp, Warning, TEXT("%s option '%s' is currently locked for '%s'"), CommandLabel, *MultiSelectSetting->Values[ValueIndex], *Tag.ToString());
+			return false;
+		}
+
+		MultiSelectSetting->SetSelectedIndex(ValueIndex);
+	}
+	else if (UEFModularSettingsBool* BoolSetting = Cast<UEFModularSettingsBool>(Setting))
+	{
+		bool bParsedValue = false;
+		if (!EFModularSettingsConsole::TryParseBool(TrimmedValue, bParsedValue))
+		{
+			UE_LOG(LogTemp, Warning, TEXT("%s invalid bool value '%s' for '%s'. Expected one of: true, false, 1, 0, on, off"),
+				CommandLabel,
+				*TrimmedValue,
+				*Tag.ToString());
+			return false;
+		}
+
+		BoolSetting->SetValue(bParsedValue);
+	}
+	else if (UEFModularSettingsFloat* FloatSetting = Cast<UEFModularSettingsFloat>(Setting))
+	{
+		float ParsedValue = 0.0f;
+		if (!FDefaultValueHelper::ParseFloat(TrimmedValue, ParsedValue))
+		{
+			UE_LOG(LogTemp, Warning, TEXT("%s invalid float value '%s' for '%s'"), CommandLabel, *TrimmedValue, *Tag.ToString());
+			return false;
+		}
+
+		if (ParsedValue < FloatSetting->Min || ParsedValue > FloatSetting->Max)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("%s value %.3f is out of range for '%s'. Expected %.3f to %.3f"),
+				CommandLabel,
+				ParsedValue,
+				*Tag.ToString(),
+				FloatSetting->Min,
+				FloatSetting->Max);
+			return false;
+		}
+
+		FloatSetting->SetValue(ParsedValue);
+	}
+	else
+	{
+		if (!Setting->Validate(TrimmedValue))
+		{
+			UE_LOG(LogTemp, Warning, TEXT("%s rejected value '%s' for '%s'"), CommandLabel, *TrimmedValue, *Tag.ToString());
+			return false;
+		}
+
+		Setting->SetValueFromString(TrimmedValue);
+	}
+
+	Setting->Apply();
+	Setting->SaveCurrentValue();
+	Setting->ClearDirty();
+	OnSettingsChanged.Broadcast(Setting);
+	SaveToDisk();
+
+	UE_LOG(LogTemp, Log, TEXT("%s set %s to %s"), CommandLabel, *Tag.ToString(), *Setting->GetValueAsString());
+	return true;
+}
+
+
+void UEFModularSettingsSubsystem::LogSettingValue(FGameplayTag Tag, const TCHAR* Label) const
+{
+	const UEFModularSettingsBase* Setting = GetSettingByTag(Tag);
+	if (!Setting)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("%s: setting '%s' is not registered"), Label, *Tag.ToString());
+		return;
+	}
+
+	if (const UEFModularSettingsMultiSelect* MultiSelectSetting = Cast<UEFModularSettingsMultiSelect>(Setting))
+	{
+		UE_LOG(LogTemp, Log, TEXT("%s: %s [Options: %s]"), Label, *MultiSelectSetting->GetValueAsString(), *EFModularSettingsConsole::DescribeOptions(MultiSelectSetting));
+		return;
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("%s: %s"), Label, *Setting->GetValueAsString());
+}
+
+
+void UEFModularSettingsSubsystem::LogUpscalerStatus() const
+{
+	LogSettingValue(EFModularSettingsConsole::MakeTag(TEXT("Settings.Graphics.Upscaler")), TEXT("Upscaler"));
+	LogSettingValue(EFModularSettingsConsole::MakeTag(TEXT("Settings.Graphics.Upscaler.DLSS.Mode")), TEXT("DLSS Mode"));
+	LogSettingValue(EFModularSettingsConsole::MakeTag(TEXT("Settings.Graphics.Upscaler.DLSS.RayReconstruction")), TEXT("DLSS Ray Reconstruction"));
+	LogSettingValue(EFModularSettingsConsole::MakeTag(TEXT("Settings.Graphics.Upscaler.FSR.Mode")), TEXT("FSR Mode"));
+	LogSettingValue(EFModularSettingsConsole::MakeTag(TEXT("Settings.Graphics.Upscaler.FSR.Sharpness")), TEXT("FSR Sharpness"));
+	LogSettingValue(EFModularSettingsConsole::MakeTag(TEXT("Settings.Graphics.Upscaler.XeSS.QualityMode")), TEXT("XeSS Quality Mode"));
+	LogSettingValue(EFModularSettingsConsole::MakeTag(TEXT("Settings.Graphics.Upscaler.FrameGeneration")), TEXT("Frame Generation"));
+	LogSettingValue(EFModularSettingsConsole::MakeTag(TEXT("Settings.Graphics.Upscaler.ResolutionScale")), TEXT("Resolution Scale"));
 }
 
 
@@ -321,39 +596,139 @@ void UEFModularSettingsSubsystem::HandleSetCommand(const TArray<FString>& Args)
 		return;
 	}
 
-	FString TagString = Args[0];
-	FString ValueString = Args[1];
-	
-	// Handle values with spaces (reconstruct the string)
-	if (Args.Num() > 2)
-	{
-		for (int32 i = 2; i < Args.Num(); ++i)
-		{
-			ValueString += TEXT(" ") + Args[i];
-		}
-	}
+	const FString TagString = Args[0];
+	const FString ValueString = EFModularSettingsConsole::JoinArgs(Args, 1);
 
-	FGameplayTag Tag = FGameplayTag::RequestGameplayTag(FName(*TagString));
+	const FGameplayTag Tag = FGameplayTag::RequestGameplayTag(FName(*TagString), false);
 	if (!Tag.IsValid())
 	{
 		UE_LOG(LogTemp, Warning, TEXT("Invalid Tag: %s"), *TagString);
 		return;
 	}
 
-	if (UEFModularSettingsBase* Setting = GetSettingByTag(Tag))
+	ApplyConsoleSettingValue(Tag, ValueString, TEXT("Settings.Set"));
+}
+
+
+void UEFModularSettingsSubsystem::HandleUpscalerSetCommand(const TArray<FString>& Args)
+{
+	if (Args.Num() < 1)
 	{
-		Setting->SetValueFromString(ValueString);
-		Setting->SaveCurrentValue();
-		Setting->Apply();
-		Setting->ClearDirty();
-		SaveToDisk(); // Optional: Auto-save on console command
-		
-		UE_LOG(LogTemp, Log, TEXT("Set %s to %s"), *TagString, *ValueString);
+		UE_LOG(LogTemp, Warning, TEXT("Usage: Settings.Upscaler.Set <None|DLSS|FSR|XeSS>"));
+		LogSettingValue(EFModularSettingsConsole::MakeTag(TEXT("Settings.Graphics.Upscaler")), TEXT("Upscaler"));
+		return;
 	}
-	else
+
+	ApplyConsoleSettingValue(EFModularSettingsConsole::MakeTag(TEXT("Settings.Graphics.Upscaler")), EFModularSettingsConsole::JoinArgs(Args), TEXT("Settings.Upscaler.Set"));
+}
+
+
+void UEFModularSettingsSubsystem::HandleUpscalerDLSSModeCommand(const TArray<FString>& Args)
+{
+	if (Args.Num() < 1)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("Setting not found: %s"), *TagString);
+		UE_LOG(LogTemp, Warning, TEXT("Usage: Settings.Upscaler.DLSS.Mode <Auto|DLAA|UltraQuality|Quality|Balanced|Performance|UltraPerformance>"));
+		LogSettingValue(EFModularSettingsConsole::MakeTag(TEXT("Settings.Graphics.Upscaler.DLSS.Mode")), TEXT("DLSS Mode"));
+		return;
 	}
+
+	ApplyConsoleSettingValue(EFModularSettingsConsole::MakeTag(TEXT("Settings.Graphics.Upscaler.DLSS.Mode")), EFModularSettingsConsole::JoinArgs(Args), TEXT("Settings.Upscaler.DLSS.Mode"));
+}
+
+
+void UEFModularSettingsSubsystem::HandleUpscalerDLSSRayReconstructionCommand(const TArray<FString>& Args)
+{
+	if (Args.Num() < 1)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Usage: Settings.Upscaler.DLSS.RayReconstruction <true|false>"));
+		LogSettingValue(EFModularSettingsConsole::MakeTag(TEXT("Settings.Graphics.Upscaler.DLSS.RayReconstruction")), TEXT("DLSS Ray Reconstruction"));
+		return;
+	}
+
+	ApplyConsoleSettingValue(EFModularSettingsConsole::MakeTag(TEXT("Settings.Graphics.Upscaler.DLSS.RayReconstruction")), EFModularSettingsConsole::JoinArgs(Args), TEXT("Settings.Upscaler.DLSS.RayReconstruction"));
+}
+
+
+void UEFModularSettingsSubsystem::HandleUpscalerFSRModeCommand(const TArray<FString>& Args)
+{
+	if (Args.Num() < 1)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Usage: Settings.Upscaler.FSR.Mode <NativeAA|Quality|Balanced|Performance|UltraPerformance>"));
+		LogSettingValue(EFModularSettingsConsole::MakeTag(TEXT("Settings.Graphics.Upscaler.FSR.Mode")), TEXT("FSR Mode"));
+		return;
+	}
+
+	ApplyConsoleSettingValue(EFModularSettingsConsole::MakeTag(TEXT("Settings.Graphics.Upscaler.FSR.Mode")), EFModularSettingsConsole::JoinArgs(Args), TEXT("Settings.Upscaler.FSR.Mode"));
+}
+
+
+void UEFModularSettingsSubsystem::HandleUpscalerFSRSharpnessCommand(const TArray<FString>& Args)
+{
+	if (Args.Num() < 1)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Usage: Settings.Upscaler.FSR.Sharpness <0.0-1.0>"));
+		LogSettingValue(EFModularSettingsConsole::MakeTag(TEXT("Settings.Graphics.Upscaler.FSR.Sharpness")), TEXT("FSR Sharpness"));
+		return;
+	}
+
+	ApplyConsoleSettingValue(EFModularSettingsConsole::MakeTag(TEXT("Settings.Graphics.Upscaler.FSR.Sharpness")), EFModularSettingsConsole::JoinArgs(Args), TEXT("Settings.Upscaler.FSR.Sharpness"));
+}
+
+
+void UEFModularSettingsSubsystem::HandleUpscalerXeSSQualityModeCommand(const TArray<FString>& Args)
+{
+	if (Args.Num() < 1)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Usage: Settings.Upscaler.XeSS.QualityMode <UltraPerformance|Performance|Balanced|Quality|UltraQuality|UltraQualityPlus|AntiAliasing>"));
+		LogSettingValue(EFModularSettingsConsole::MakeTag(TEXT("Settings.Graphics.Upscaler.XeSS.QualityMode")), TEXT("XeSS Quality Mode"));
+		return;
+	}
+
+	ApplyConsoleSettingValue(EFModularSettingsConsole::MakeTag(TEXT("Settings.Graphics.Upscaler.XeSS.QualityMode")), EFModularSettingsConsole::JoinArgs(Args), TEXT("Settings.Upscaler.XeSS.QualityMode"));
+}
+
+
+void UEFModularSettingsSubsystem::HandleUpscalerFrameGenerationCommand(const TArray<FString>& Args)
+{
+	if (Args.Num() < 1)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Usage: Settings.Upscaler.FrameGeneration <true|false>"));
+		LogSettingValue(EFModularSettingsConsole::MakeTag(TEXT("Settings.Graphics.Upscaler.FrameGeneration")), TEXT("Frame Generation"));
+		return;
+	}
+
+	ApplyConsoleSettingValue(EFModularSettingsConsole::MakeTag(TEXT("Settings.Graphics.Upscaler.FrameGeneration")), EFModularSettingsConsole::JoinArgs(Args), TEXT("Settings.Upscaler.FrameGeneration"));
+}
+
+
+void UEFModularSettingsSubsystem::HandleUpscalerResolutionScaleCommand(const TArray<FString>& Args)
+{
+	if (Args.Num() < 1)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Usage: Settings.Upscaler.ResolutionScale <25-200>"));
+		LogSettingValue(EFModularSettingsConsole::MakeTag(TEXT("Settings.Graphics.Upscaler.ResolutionScale")), TEXT("Resolution Scale"));
+		return;
+	}
+
+	ApplyConsoleSettingValue(EFModularSettingsConsole::MakeTag(TEXT("Settings.Graphics.Upscaler.ResolutionScale")), EFModularSettingsConsole::JoinArgs(Args), TEXT("Settings.Upscaler.ResolutionScale"));
+}
+
+
+void UEFModularSettingsSubsystem::HandleUpscalerStatusCommand(const TArray<FString>& Args)
+{
+	if (Args.Num() > 0 && Args[0].Equals(TEXT("help"), ESearchCase::IgnoreCase))
+	{
+		UE_LOG(LogTemp, Log, TEXT("Settings.Upscaler.Set <None|DLSS|FSR|XeSS>"));
+		UE_LOG(LogTemp, Log, TEXT("Settings.Upscaler.DLSS.Mode <Auto|DLAA|UltraQuality|Quality|Balanced|Performance|UltraPerformance>"));
+		UE_LOG(LogTemp, Log, TEXT("Settings.Upscaler.DLSS.RayReconstruction <true|false>"));
+		UE_LOG(LogTemp, Log, TEXT("Settings.Upscaler.FSR.Mode <NativeAA|Quality|Balanced|Performance|UltraPerformance>"));
+		UE_LOG(LogTemp, Log, TEXT("Settings.Upscaler.FSR.Sharpness <0.0-1.0>"));
+		UE_LOG(LogTemp, Log, TEXT("Settings.Upscaler.XeSS.QualityMode <UltraPerformance|Performance|Balanced|Quality|UltraQuality|UltraQualityPlus|AntiAliasing>"));
+		UE_LOG(LogTemp, Log, TEXT("Settings.Upscaler.FrameGeneration <true|false>"));
+		UE_LOG(LogTemp, Log, TEXT("Settings.Upscaler.ResolutionScale <25-200>"));
+	}
+
+	LogUpscalerStatus();
 }
 
 

@@ -3,6 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "HAL/IConsoleManager.h"
 #include "GameplayTagContainer.h"
 #include "Settings/EFModularSettingsBase.h"
 #include "EFModularSettingsSubsystem.generated.h"
@@ -53,6 +54,7 @@ public:
 	FOnSettingsChanged OnSettingsChanged;
 	
 	virtual void Initialize(FSubsystemCollectionBase&) override;
+	virtual void Deinitialize() override;
 
 	// Basic getters/setters
 	// New method to apply all pending changes
@@ -114,10 +116,6 @@ public:
 	// Snapshot Storage for reverting after apply
 	UPROPERTY()
 	TMap<FGameplayTag, FString> PreviousSettingsSnapshot;
-
-	// Console Command
-	void HandleSetCommand(const TArray<FString>& Args);
-	struct IConsoleCommand* SetCommand = nullptr;
 	
 public:
 	// Template method moved to header
@@ -136,4 +134,25 @@ public:
 	{
 		return Settings.FindRef(Tag);
 	}
+
+private:
+	void RegisterConsoleCommands();
+	void UnregisterConsoleCommands();
+	void RegisterConsoleCommand(const TCHAR* Name, const TCHAR* Help, const FConsoleCommandWithArgsDelegate& Delegate);
+	bool ApplyConsoleSettingValue(FGameplayTag Tag, const FString& ValueString, const TCHAR* CommandLabel);
+	void LogSettingValue(FGameplayTag Tag, const TCHAR* Label) const;
+	void LogUpscalerStatus() const;
+
+	void HandleSetCommand(const TArray<FString>& Args);
+	void HandleUpscalerSetCommand(const TArray<FString>& Args);
+	void HandleUpscalerDLSSModeCommand(const TArray<FString>& Args);
+	void HandleUpscalerDLSSRayReconstructionCommand(const TArray<FString>& Args);
+	void HandleUpscalerFSRModeCommand(const TArray<FString>& Args);
+	void HandleUpscalerFSRSharpnessCommand(const TArray<FString>& Args);
+	void HandleUpscalerXeSSQualityModeCommand(const TArray<FString>& Args);
+	void HandleUpscalerFrameGenerationCommand(const TArray<FString>& Args);
+	void HandleUpscalerResolutionScaleCommand(const TArray<FString>& Args);
+	void HandleUpscalerStatusCommand(const TArray<FString>& Args);
+
+	TArray<FString> RegisteredConsoleCommands;
 };

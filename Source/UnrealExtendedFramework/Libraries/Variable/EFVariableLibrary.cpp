@@ -135,6 +135,11 @@ FString UEFVariableLibrary::GetScreenResolutionAsString(UGameUserSettings*& User
 	return "";
 }
 
+FString UEFVariableLibrary::GetGameplayTagLastPart(const FGameplayTag& Tag)
+{
+	return Tag.GetTagName().ToString().RightChop(Tag.GetTagName().ToString().Find(TEXT("."), ESearchCase::IgnoreCase, ESearchDir::FromEnd) + 1);
+}
+
 
 FGameplayTag UEFVariableLibrary::GetGameplayTagFromName(const FName& Name)
 {

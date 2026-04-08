@@ -154,6 +154,11 @@ public:
 	/** Returns just the Yaw component of a look-at rotation between two points. */
 	UFUNCTION(BlueprintPure, Category="ExtendedFramework|Math|Direction")
 	static float FindLookAtRotationYaw(const FVector& Start, const FVector& Target);
+	
+	
+	// This function is used to get a custom FindLookAtRotation with interpolation speed, it should be used in a tick function
+	UFUNCTION( BlueprintPure,meta=(WorldContext=WorldContextObject), Category = "PawnStarz|Gameplay")
+	static FRotator GetCustomFindLookAtRotation(const UObject* WorldContextObject, const AActor* From, const AActor* To, const float InterpSpeed = 1.0f);
 
 	/**
 	 * Checks if two direction vectors are similar within a tolerance.

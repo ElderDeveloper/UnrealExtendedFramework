@@ -159,19 +159,11 @@ bool UEFUpscalerSelectSetting::IsUpscalerAvailable(const FString& UpscalerName)
 
 void UEFUpscalerSelectSetting::SetValueFromString(const FString& Value)
 {
-	if (Value.Equals(TEXT("None"), ESearchCase::IgnoreCase))
+	if (Value.Equals(TEXT("Off"), ESearchCase::IgnoreCase)
+		|| Value.Equals(TEXT("Disabled"), ESearchCase::IgnoreCase))
 	{
-		const int32 MigrationIndex = Values.IndexOfByPredicate([](const FString& Candidate)
-		{
-			return !Candidate.Equals(TEXT("None"), ESearchCase::IgnoreCase);
-		});
-
-		if (Values.IsValidIndex(MigrationIndex))
-		{
-			SetSelectedIndex(MigrationIndex);
-			UE_LOG(LogTemp, Log, TEXT("Migrated legacy upscaler value 'None' -> '%s'"), *Values[MigrationIndex]);
-			return;
-		}
+		Super::SetValueFromString(TEXT("None"));
+		return;
 	}
 
 	Super::SetValueFromString(Value);

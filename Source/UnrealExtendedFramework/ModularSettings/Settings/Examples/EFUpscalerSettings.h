@@ -69,6 +69,9 @@ public:
 		ConfigCategory = TEXT("Graphics");
 		DefaultValue = TEXT("");
 
+		Values.Add(TEXT("None"));
+		DisplayNames.Add(NSLOCTEXT("Settings", "UpscalerNone", "None"));
+
 #if WITH_DLSS
 		Values.Add(TEXT("DLSS"));
 		DisplayNames.Add(NSLOCTEXT("Settings", "UpscalerDLSS", "NVIDIA DLSS"));
@@ -96,11 +99,8 @@ public:
 		}
 #endif
 
-		// Safety fallback for builds with no upscaler plugins compiled in.
-		if (Values.Num() == 0)
+		if (DefaultValue.IsEmpty())
 		{
-			Values.Add(TEXT("None"));
-			DisplayNames.Add(NSLOCTEXT("Settings", "UpscalerNoneFallback", "None"));
 			DefaultValue = TEXT("None");
 		}
 

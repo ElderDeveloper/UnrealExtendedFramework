@@ -266,6 +266,42 @@ float UEFMathLibrary::FindLookAtRotationYaw(const FVector& Start, const FVector&
 	return FRotationMatrix::MakeFromX(Target - Start).Rotator().Yaw;
 }
 
+FRotator UEFMathLibrary::GetCustomFindLookAtRotation(const UObject* WorldContextObject, const AActor* From,const AActor* To, const float InterpSpeed)
+{
+	
+	FRotator CurrentRotation = From->GetActorRotation();
+	const FRotator LookAtRotation = UKismetMathLibrary::FindLookAtRotation(From->GetActorLocation(), To->GetActorLocation());
+    
+	// Calculate delta time clamped by interp speed
+	float DeltaTime = WorldContextObject->GetWorld()->GetDeltaSeconds();
+	float ClampedDeltaTime = FMath::Clamp(DeltaTime * InterpSpeed, 0.0f, 1.0f);
+
+	int32 Difference = 0;
+	float ShortestAngle = 0.0f;
+	
+	// Interpolate Pitch
+	Difference = LookAtRotation.Pitch - CurrentRotation.Pitch;
+	ShortestAngle = (((Difference % 360) + 540) % 360) - 180;
+	float PitchDeltaMove = ShortestAngle * ClampedDeltaTime;
+    
+	// Interpolate Yaw
+	Difference = LookAtRotation.Yaw - CurrentRotation.Yaw;
+	ShortestAngle = (((Difference % 360) + 540) % 360) - 180;
+	float YawDeltaMove = ShortestAngle * ClampedDeltaTime;
+    
+	// Interpolate Roll
+	Difference = LookAtRotation.Roll - CurrentRotation.Roll;
+	ShortestAngle = (((Difference % 360) + 540) % 360) - 180;
+	float RollDeltaMove = ShortestAngle * ClampedDeltaTime;
+	
+	return FRotator(
+		CurrentRotation.Pitch + PitchDeltaMove,
+		CurrentRotation.Yaw + YawDeltaMove,
+		CurrentRotation.Roll + RollDeltaMove
+	);
+}
+
+
 bool UEFMathLibrary::CalculateIsTheSameDirection(const FVector firstForwardDirection, const FVector secondForwardDirection, const float tolerance)
 {
 	// BUG FIX: Previously used GetUnsafeNormal() which crashes on zero-length vectors.
