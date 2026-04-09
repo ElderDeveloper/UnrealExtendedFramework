@@ -10,6 +10,21 @@
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnWorldSettingChanged, UEFModularSettingsBase*, Setting);
 
+USTRUCT(BlueprintType)
+struct FEFWorldSettingDefinition
+{
+	GENERATED_BODY()
+
+	UPROPERTY()
+	FGameplayTag Tag;
+
+	UPROPERTY()
+	TSoftObjectPtr<UEFModularSettingsBase> Template;
+
+	UPROPERTY()
+	FString CurrentValue;
+};
+
 UCLASS(ClassGroup=(Custom), meta=(BlueprintSpawnableComponent))
 class UNREALEXTENDEDFRAMEWORK_API UEFWorldSettingsComponent : public UActorComponent
 {
@@ -32,12 +47,16 @@ public:
 
 protected:
 	virtual void BeginPlay() override;
+	UEFModularSettingsBase* AddSettingFromTemplate_Local(UEFModularSettingsBase* Template);
 
 	UPROPERTY(EditDefaultsOnly, Instanced, Category = "Modular Settings")
 	TArray<TObjectPtr<UEFModularSettingsBase>> DefaultSettings;
 
 	UPROPERTY(ReplicatedUsing = OnRep_Settings)
 	TArray<TObjectPtr<UEFModularSettingsBase>> Settings;
+
+	UPROPERTY(ReplicatedUsing = OnRep_SettingDefinitions)
+	TArray<FEFWorldSettingDefinition> SettingDefinitions;
 
 	// Helper to find setting index by tag
 	int32 FindSettingIndex(FGameplayTag Tag) const;
@@ -50,4 +69,9 @@ public:
 private:
 	UFUNCTION()
 	void OnRep_Settings();
+
+	UFUNCTION()
+	void OnRep_SettingDefinitions();
+
+	void UpdateDefinitionCurrentValue(FGameplayTag Tag, const FString& NewValue);
 };

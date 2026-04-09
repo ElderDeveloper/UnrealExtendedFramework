@@ -723,7 +723,7 @@ FOnSubtitleSequenceStep   // Next subtitle in a sequence started (Index, Total)
 ## 12. File & Folder Structure
 
 ```
-Settings/Subtitle/
+Systems/Subtitle/
 ├── Data/
 │   ├── EFSubtitleData.h              // FEFSubtitleEntry, enums, visual settings structs
 │   ├── EFSubtitleDataAsset.h/.cpp    // UEFSubtitleDataAsset (DataAsset alternative)

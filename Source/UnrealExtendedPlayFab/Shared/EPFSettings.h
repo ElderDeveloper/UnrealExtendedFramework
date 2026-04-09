@@ -83,7 +83,37 @@ public:
 	FEPFProfileConstraints ProfileConstraints;
 
 
+	// ── Auto Analytics ────────────────────────────────────────────────────────
+
+	/**
+	 * If true, the Analytics subsystem automatically hooks into PlayFab login/logout,
+	 * level transitions, and app lifecycle events and sends them as PlayStream events.
+	 * Events captured while offline are persisted to disk and flushed on next login.
+	 */
+	UPROPERTY(config, EditAnywhere, BlueprintReadOnly, Category = "Auto Analytics",
+		meta = (DisplayName = "Enable Auto Analytics"))
+	bool bAutoAnalyticsEnabled = false;
+
+	/**
+	 * Controls which lifecycle events are automatically tracked.
+	 * Only relevant when Enable Auto Analytics is true.
+	 */
+	UPROPERTY(config, EditAnywhere, Category = "Auto Analytics",
+		meta = (DisplayName = "Auto Analytics Config", EditCondition = "bAutoAnalyticsEnabled", ShowOnlyInnerProperties))
+	FEPFAutoAnalyticsConfig AutoAnalyticsConfig;
+
+	/**
+	 * Maximum number of events to keep in the offline queue.
+	 * When the limit is reached, the oldest events are dropped to make room for new ones.
+	 * Range: 10–500.
+	 */
+	UPROPERTY(config, EditAnywhere, BlueprintReadOnly, Category = "Auto Analytics",
+		meta = (DisplayName = "Offline Queue Limit", EditCondition = "bAutoAnalyticsEnabled", ClampMin = "10", ClampMax = "500"))
+	int32 OfflineQueueLimit = 100;
+
+
 	// ── Helpers ──────────────────────────────────────────────────────────────
+
 
 	/** Get the singleton settings instance */
 	static const UEPFSettings* Get()

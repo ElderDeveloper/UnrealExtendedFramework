@@ -1,8 +1,8 @@
 // EFSubtitleLocalSubsystem.cpp
 
 #include "EFSubtitleLocalSubsystem.h"
-#include "UnrealExtendedFramework/Settings/Subtitle/Data/EFSubtitleProjectSettings.h"
-#include "UnrealExtendedFramework/Settings/Subtitle/Widget/EFSubtitleDisplayWidget.h"
+#include "UnrealExtendedFramework/Systems/Subtitle/Data/EFSubtitleProjectSettings.h"
+#include "UnrealExtendedFramework/Systems/Subtitle/Widget/EFSubtitleDisplayWidget.h"
 #include "Blueprint/UserWidget.h"
 #include "Kismet/GameplayStatics.h"
 #include "Components/AudioComponent.h"

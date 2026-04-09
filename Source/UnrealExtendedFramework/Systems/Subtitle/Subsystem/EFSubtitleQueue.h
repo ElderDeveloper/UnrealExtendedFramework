@@ -2,7 +2,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "UnrealExtendedFramework/Settings/Subtitle/Data/EFSubtitleData.h"
+#include "UnrealExtendedFramework/Systems/Subtitle/Data/EFSubtitleData.h"
 #include "EFSubtitleQueue.generated.h"
 
 DECLARE_DELEGATE_OneParam(FOnActiveSubtitleChanged, const FEFActiveSubtitle& /*Active*/);

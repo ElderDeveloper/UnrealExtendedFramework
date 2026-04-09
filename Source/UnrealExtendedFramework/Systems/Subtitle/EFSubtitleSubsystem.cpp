@@ -1,10 +1,10 @@
 ﻿// EFSubtitleSubsystem.cpp
 
 #include "EFSubtitleSubsystem.h"
-#include "UnrealExtendedFramework/Settings/Subtitle/Data/EFSubtitleProjectSettings.h"
-#include "UnrealExtendedFramework/Settings/Subtitle/Data/EFSubtitleDataAsset.h"
-#include "UnrealExtendedFramework/Settings/Subtitle/Subsystem/EFSubtitleReceiverComponent.h"
-#include "UnrealExtendedFramework/Settings/Subtitle/Subsystem/EFSubtitleLocalSubsystem.h"
+#include "UnrealExtendedFramework/Systems/Subtitle/Data/EFSubtitleProjectSettings.h"
+#include "UnrealExtendedFramework/Systems/Subtitle/Data/EFSubtitleDataAsset.h"
+#include "UnrealExtendedFramework/Systems/Subtitle/Subsystem/EFSubtitleReceiverComponent.h"
+#include "UnrealExtendedFramework/Systems/Subtitle/Subsystem/EFSubtitleLocalSubsystem.h"
 #include "Engine/DataTable.h"
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/PlayerState.h"

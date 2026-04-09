@@ -1,7 +1,7 @@
 // EFSubtitleQueue.cpp
 
 #include "EFSubtitleQueue.h"
-#include "UnrealExtendedFramework/Settings/Subtitle/Data/EFSubtitleProjectSettings.h"
+#include "UnrealExtendedFramework/Systems/Subtitle/Data/EFSubtitleProjectSettings.h"
 
 FEFActiveSubtitle FEFSubtitleQueue::InvalidSubtitle = FEFActiveSubtitle();
 

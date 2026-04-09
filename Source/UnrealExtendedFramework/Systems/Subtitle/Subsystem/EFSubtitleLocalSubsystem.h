@@ -3,8 +3,8 @@
 
 #include "CoreMinimal.h"
 #include "Subsystems/LocalPlayerSubsystem.h"
-#include "UnrealExtendedFramework/Settings/Subtitle/Data/EFSubtitleData.h"
-#include "UnrealExtendedFramework/Settings/Subtitle/Subsystem/EFSubtitleQueue.h"
+#include "UnrealExtendedFramework/Systems/Subtitle/Data/EFSubtitleData.h"
+#include "UnrealExtendedFramework/Systems/Subtitle/Subsystem/EFSubtitleQueue.h"
 #include "EFSubtitleLocalSubsystem.generated.h"
 
 class UEFSubtitleDisplayWidget;

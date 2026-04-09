@@ -1,7 +1,7 @@
 // EFSubtitleProjectSettings.cpp
 
 #include "EFSubtitleProjectSettings.h"
-#include "UnrealExtendedFramework/Settings/Subtitle/Widget/EFSubtitleDisplayWidget.h"
+#include "UnrealExtendedFramework/Systems/Subtitle/Widget/EFSubtitleDisplayWidget.h"
 
 UEFSubtitleProjectSettings::UEFSubtitleProjectSettings()
 {

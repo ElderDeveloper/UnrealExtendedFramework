@@ -14,51 +14,100 @@ UEFWorldSettingsComponent::UEFWorldSettingsComponent()
 	SetIsReplicatedByDefault(true);
 }
 
+UEFModularSettingsBase* UEFWorldSettingsComponent::AddSettingFromTemplate_Local(UEFModularSettingsBase* Template)
+{
+	if (!Template)
+	{
+		return nullptr;
+	}
+
+	if (!Template->SettingTag.IsValid())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("[UEFWorldSettingsComponent] Template has invalid SettingTag. Outer=%s"), *GetNameSafe(Template->GetOuter()));
+		return nullptr;
+	}
+
+	if (UEFModularSettingsBase* ExistingSetting = GetSettingByTag(Template->SettingTag))
+	{
+		return ExistingSetting;
+	}
+
+	UEFModularSettingsBase* NewSetting = DuplicateObject<UEFModularSettingsBase>(Template, this);
+	if (!NewSetting)
+	{
+		return nullptr;
+	}
+
+	Settings.Add(NewSetting);
+
+	if (GetOwnerRole() == ROLE_Authority)
+	{
+		if (AActor* Owner = GetOwner())
+		{
+			Owner->AddReplicatedSubObject(NewSetting);
+		}
+	}
+
+	return NewSetting;
+}
+
 void UEFWorldSettingsComponent::BeginPlay()
 {
 	Super::BeginPlay();
 
-	// Create settings on BOTH server and client
-	// The object structures are the same (from templates), only VALUES replicate
-	auto AddSettingLambda = [this](const UEFModularSettingsBase* Setting)
+	auto ConsumeTemplate = [this](UEFModularSettingsBase* Template)
 	{
-		if (Setting && Setting->SettingTag.IsValid())
+		if (!Template || !Template->SettingTag.IsValid())
 		{
-			if (!GetSettingByTag(Setting->SettingTag))
+			return;
+		}
+
+		bool bExists = false;
+		for (const FEFWorldSettingDefinition& Def : SettingDefinitions)
+		{
+			if (Def.Tag == Template->SettingTag)
 			{
-				UEFModularSettingsBase* NewSetting = DuplicateObject<UEFModularSettingsBase>(Setting, this);
-				Settings.Add(NewSetting);
-				
-				// Only register as replicated subobject on server
-				if (GetOwnerRole() == ROLE_Authority)
+				bExists = true;
+				break;
+			}
+		}
+
+		if (!bExists)
+		{
+			FEFWorldSettingDefinition NewDef;
+			NewDef.Tag = Template->SettingTag;
+			NewDef.Template = Template;
+			NewDef.CurrentValue = Template->GetValueAsString();
+			SettingDefinitions.Add(NewDef);
+		}
+
+		AddSettingFromTemplate_Local(Template);
+	};
+
+	// Only create settings from templates on the server.
+	// Clients receive the current world setting set through replicated definitions
+	// and replicated subobjects; creating local defaults here causes late joiners
+	// to read stale default values before the replicated state arrives.
+	if (GetOwnerRole() == ROLE_Authority)
+	{
+		if (const UEFModularProjectSettings* ProjectSettings = GetDefault<UEFModularProjectSettings>())
+			{
+				for (const TSoftObjectPtr<UEFModularSettingsContainer>& ContainerPtr : ProjectSettings->WorldSettingsContainers)
 				{
-					if (AActor* Owner = GetOwner())
+					if (UEFModularSettingsContainer* Container = ContainerPtr.LoadSynchronous())
 					{
-						Owner->AddReplicatedSubObject(NewSetting);
+						for (UEFModularSettingsBase* Template : Container->Settings)
+						{
+							ConsumeTemplate(Template);
+						}
 					}
 				}
 			}
-		}
-	};
 
-	if (const UEFModularProjectSettings* ProjectSettings = GetDefault<UEFModularProjectSettings>())
-	{
-		for (const TSoftObjectPtr<UEFModularSettingsContainer>& ContainerPtr : ProjectSettings->WorldSettingsContainers)
+		for (UEFModularSettingsBase* DefaultSetting : DefaultSettings)
 		{
-			if (UEFModularSettingsContainer* Container = ContainerPtr.LoadSynchronous())
-			{
-				for (UEFModularSettingsBase* Setting : Container->Settings)
-				{
-					AddSettingLambda(Setting);
-				}
-			}
+			ConsumeTemplate(DefaultSetting);
 		}
-	}
-
-	// Also initialize from local defaults (if any)
-	for (auto DefaultSetting : DefaultSettings)
-	{
-		AddSettingLambda(DefaultSetting);
 	}
 }
 
@@ -67,6 +116,7 @@ void UEFWorldSettingsComponent::GetLifetimeReplicatedProps(TArray<FLifetimePrope
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 	DOREPLIFETIME(UEFWorldSettingsComponent, Settings);
+	DOREPLIFETIME(UEFWorldSettingsComponent, SettingDefinitions);
 }
 
 
@@ -134,6 +184,7 @@ void UEFWorldSettingsComponent::UpdateSettingValue(FGameplayTag Tag, const FStri
 	{
 		Setting->SetValueFromString(NewValue);
 		Setting->Apply();
+		UpdateDefinitionCurrentValue(Tag, Setting->GetValueAsString());
 		OnSettingChanged.Broadcast(Setting);
 	}
 }
@@ -141,12 +192,67 @@ void UEFWorldSettingsComponent::UpdateSettingValue(FGameplayTag Tag, const FStri
 
 void UEFWorldSettingsComponent::OnRep_Settings()
 {
-	// Optional: Broadcast changes for UI updates
 	for (auto Setting : Settings)
 	{
 		if (Setting)
 		{
 			OnSettingChanged.Broadcast(Setting);
+		}
+	}
+}
+
+void UEFWorldSettingsComponent::OnRep_SettingDefinitions()
+{
+	for (const FEFWorldSettingDefinition& Def : SettingDefinitions)
+	{
+		if (!Def.Tag.IsValid() || GetSettingByTag(Def.Tag))
+		{
+			continue;
+		}
+
+		UEFModularSettingsBase* Template = Def.Template.LoadSynchronous();
+		if (!Template)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[UEFWorldSettingsComponent] Failed to load template for tag %s"), *Def.Tag.ToString());
+			continue;
+		}
+
+		if (Template->SettingTag != Def.Tag)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("[UEFWorldSettingsComponent] Template tag mismatch. Def=%s Template=%s"), *Def.Tag.ToString(), *Template->SettingTag.ToString());
+		}
+
+		AddSettingFromTemplate_Local(Template);
+	}
+
+	for (const FEFWorldSettingDefinition& Def : SettingDefinitions)
+	{
+		if (!Def.Tag.IsValid())
+		{
+			continue;
+		}
+
+		if (UEFModularSettingsBase* Setting = GetSettingByTag(Def.Tag))
+		{
+			if (!Def.CurrentValue.IsEmpty() && Setting->GetValueAsString() != Def.CurrentValue)
+			{
+				Setting->SetValueFromString(Def.CurrentValue);
+				Setting->Apply();
+			}
+
+			OnSettingChanged.Broadcast(Setting);
+		}
+	}
+}
+
+void UEFWorldSettingsComponent::UpdateDefinitionCurrentValue(FGameplayTag Tag, const FString& NewValue)
+{
+	for (FEFWorldSettingDefinition& Def : SettingDefinitions)
+	{
+		if (Def.Tag == Tag)
+		{
+			Def.CurrentValue = NewValue;
+			return;
 		}
 	}
 }

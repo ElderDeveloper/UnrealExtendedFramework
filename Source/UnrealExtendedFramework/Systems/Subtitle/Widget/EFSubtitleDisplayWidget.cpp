@@ -1,7 +1,7 @@
 // EFSubtitleDisplayWidget.cpp
 
 #include "EFSubtitleDisplayWidget.h"
-#include "UnrealExtendedFramework/Settings/Subtitle/Data/EFSubtitleProjectSettings.h"
+#include "UnrealExtendedFramework/Systems/Subtitle/Data/EFSubtitleProjectSettings.h"
 #include "Components/TextBlock.h"
 #include "Components/RichTextBlock.h"
 #include "Components/Border.h"

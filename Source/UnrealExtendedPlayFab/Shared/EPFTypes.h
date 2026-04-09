@@ -268,6 +268,125 @@ struct UNREALEXTENDEDPLAYFAB_API FEPFAnalyticsEvent
 };
 
 
+// ── Auto Analytics Config ────────────────────────────────────────────────────
+
+/**
+ * Fine-grained toggles for which lifecycle events are automatically tracked.
+ * Only active when UEPFSettings::bAutoAnalyticsEnabled is true.
+ */
+USTRUCT(BlueprintType)
+struct UNREALEXTENDEDPLAYFAB_API FEPFAutoAnalyticsConfig
+{
+	GENERATED_BODY()
+
+	/** Fire "session_start" when the Analytics subsystem initialises */
+	UPROPERTY(config, EditAnywhere, BlueprintReadWrite, Category = "Auto Analytics")
+	bool bTrackSessionStart = true;
+
+	/** Fire "session_end" when the Analytics subsystem shuts down */
+	UPROPERTY(config, EditAnywhere, BlueprintReadWrite, Category = "Auto Analytics")
+	bool bTrackSessionEnd = true;
+
+	/** Fire "player_login" after a successful PlayFab login */
+	UPROPERTY(config, EditAnywhere, BlueprintReadWrite, Category = "Auto Analytics")
+	bool bTrackLogin = true;
+
+	/** Fire "player_logout" when the player logs out */
+	UPROPERTY(config, EditAnywhere, BlueprintReadWrite, Category = "Auto Analytics")
+	bool bTrackLogout = true;
+
+	/** Fire "level_change_started" / "level_loaded" on map transitions */
+	UPROPERTY(config, EditAnywhere, BlueprintReadWrite, Category = "Auto Analytics")
+	bool bTrackLevelChange = true;
+
+	/** Call ReportDeviceInfo() automatically after login */
+	UPROPERTY(config, EditAnywhere, BlueprintReadWrite, Category = "Auto Analytics")
+	bool bTrackDeviceInfo = true;
+
+	/** Fire "app_backgrounded" when the application loses focus */
+	UPROPERTY(config, EditAnywhere, BlueprintReadWrite, Category = "Auto Analytics")
+	bool bTrackAppBackground = true;
+
+	/** Fire "app_foregrounded" when the application regains focus */
+	UPROPERTY(config, EditAnywhere, BlueprintReadWrite, Category = "Auto Analytics")
+	bool bTrackAppForeground = true;
+
+
+	// ── Network & Stability ──────────────────────────────────────────────────
+
+	/** Fire "network_failure" when the engine reports any network driver error (connection lost, timeout, etc.) */
+	UPROPERTY(config, EditAnywhere, BlueprintReadWrite, Category = "Auto Analytics")
+	bool bTrackNetworkFailure = true;
+
+	/**
+	 * Fire "crash_detected" on an engine-level error.
+	 * The event is written straight to the offline queue on disk — no network call is attempted.
+	 * It will be sent to PlayFab on the player's next successful login.
+	 */
+	UPROPERTY(config, EditAnywhere, BlueprintReadWrite, Category = "Auto Analytics")
+	bool bTrackCrash = true;
+
+	/** Fire "low_memory_warning" when the OS requests resource unloading (primarily iOS / Android) */
+	UPROPERTY(config, EditAnywhere, BlueprintReadWrite, Category = "Auto Analytics")
+	bool bTrackLowMemory = true;
+
+
+	// ── Multiplayer ───────────────────────────────────────────────────────────
+
+	/**
+	 * Fire "player_joined" / "player_left" when players connect or disconnect through the GameMode.
+	 * Only fires on the server / listen-server host — silent on pure clients.
+	 */
+	UPROPERTY(config, EditAnywhere, BlueprintReadWrite, Category = "Auto Analytics")
+	bool bTrackPlayerConnections = true;
+
+
+	// ── Performance ───────────────────────────────────────────────────────────
+
+	/** Periodically sample and log the average FPS as "fps_sample". Off by default to avoid event spam. */
+	UPROPERTY(config, EditAnywhere, BlueprintReadWrite, Category = "Auto Analytics")
+	bool bTrackFrameRate = false;
+
+	/**
+	 * How often (in seconds) to capture an FPS sample.
+	 * Minimum 30s recommended. Has no effect when bTrackFrameRate is false.
+	 */
+	UPROPERTY(config, EditAnywhere, BlueprintReadWrite, Category = "Auto Analytics",
+		meta = (EditCondition = "bTrackFrameRate", ClampMin = "30.0", ClampMax = "600.0"))
+	float FrameRateSampleIntervalSeconds = 120.0f;
+
+
+	// ── Input ─────────────────────────────────────────────────────────────────
+
+	/** Fire "input_device_changed" when a gamepad is connected or disconnected */
+	UPROPERTY(config, EditAnywhere, BlueprintReadWrite, Category = "Auto Analytics")
+	bool bTrackInputDeviceChanged = true;
+};
+
+
+// ── Offline Queue Entry ──────────────────────────────────────────────────────
+
+/**
+ * A single analytics event that was captured while the player was offline.
+ * Persisted to disk and flushed to PlayFab once authenticated.
+ */
+USTRUCT(BlueprintType)
+struct UNREALEXTENDEDPLAYFAB_API FEPFQueuedEvent
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadOnly, Category = "PlayFab|Analytics")
+	FString EventName;
+
+	UPROPERTY(BlueprintReadOnly, Category = "PlayFab|Analytics")
+	TMap<FString, FString> Body;
+
+	/** UTC timestamp when the event was captured, ISO-8601 string for JSON serialisation */
+	UPROPERTY(BlueprintReadOnly, Category = "PlayFab|Analytics")
+	FString Timestamp;
+};
+
+
 // ── Common Delegates ─────────────────────────────────────────────────────────
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnEPFOperationComplete, const FEPFResult&, Result);

@@ -81,7 +81,12 @@ void UEFSettingsWidgetBase::TryBindToSettingsSources()
 	// Initial Refresh: Try to find the setting and notify subclasses
 	if (const auto Setting = UEFModularSettingsLibrary::GetModularSetting(this, SettingsTag, SettingsSource))
 	{
+		World->GetTimerManager().ClearTimer(BindingRetryTimer);
 		OnTrackedSettingsChanged(Setting);
+	}
+	else if (bNeedWorld || bNeedPlayer)
+	{
+		World->GetTimerManager().SetTimer(BindingRetryTimer, this, &UEFSettingsWidgetBase::TryBindToSettingsSources, 0.5f, false);
 	}
 }
 

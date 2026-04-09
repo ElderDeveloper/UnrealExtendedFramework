@@ -32,6 +32,7 @@ public class UnrealExtendedPlayFab : ModuleRules
 			new string[]
 			{
 				"CoreUObject",
+				"ApplicationCore",   // IPlatformInputDeviceMapper (input device connection tracking)
 				"UnrealExtendedFramework"
 			}
 			);

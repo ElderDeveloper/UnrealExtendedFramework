@@ -3,7 +3,7 @@
 
 #include "CoreMinimal.h"
 #include "Blueprint/UserWidget.h"
-#include "UnrealExtendedFramework/Settings/Subtitle/Data/EFSubtitleData.h"
+#include "UnrealExtendedFramework/Systems/Subtitle/Data/EFSubtitleData.h"
 #include "EFSubtitleDisplayWidget.generated.h"
 
 class URichTextBlock;
