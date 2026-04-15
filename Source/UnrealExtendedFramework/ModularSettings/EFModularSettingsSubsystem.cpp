@@ -4,6 +4,7 @@
 #include "HAL/IConsoleManager.h"
 #include "Misc/DefaultValueHelper.h"
 #include "Engine/Engine.h"
+#include "Engine/World.h"
 #include "Kismet/GameplayStatics.h"
 #include "SaveGame/EFSettingsSaveGame.h"
 #include "Settings/EFModularSettingsBase.h"
@@ -68,6 +69,22 @@ namespace EFModularSettingsConsole
 	static FGameplayTag MakeTag(const TCHAR* TagName)
 	{
 		return FGameplayTag::RequestGameplayTag(FName(TagName), false);
+	}
+}
+
+namespace
+{
+	static bool ShouldSkipHardwareBenchmarkInPIE(const UObject* WorldContextObject)
+	{
+#if WITH_EDITOR
+		if (GIsEditor)
+		{
+			const UWorld* World = WorldContextObject ? WorldContextObject->GetWorld() : nullptr;
+			return World && World->WorldType == EWorldType::PIE;
+		}
+#endif
+
+		return false;
 	}
 }
 
@@ -480,6 +497,12 @@ void UEFModularSettingsSubsystem::LoadFromDisk()
 	}
 	else
 	{
+		if (ShouldSkipHardwareBenchmarkInPIE(this))
+		{
+			UE_LOG(LogTemp, Log, TEXT("No existing settings save found. Skipping hardware benchmark during PIE and using current/default settings."));
+			return;
+		}
+
 		UE_LOG(LogTemp, Log, TEXT("No existing settings save found. Running hardware benchmark to detect optimal settings."));
 		
 		// Use Unreal Engine's built-in hardware benchmark to auto-detect appropriate settings
@@ -520,6 +543,8 @@ void UEFModularSettingsSubsystem::LoadFromDisk()
 						OverallSetting->SetValueFromString(DetectedValue);
 					}
 				}
+
+				SaveToDisk();
 			}
 		}
 	}
