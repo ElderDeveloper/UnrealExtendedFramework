@@ -2,9 +2,12 @@
 
 #include "CoreMinimal.h"
 #include "UnrealExtendedFramework/ModularSettings/Settings/EFModularSettingsBase.h"
+#include "UnrealExtendedFramework/ModularSettings/EFModularSettingsLibrary.h"
+#include "UnrealExtendedFramework/Libraries/Monitor/EFMonitorLibrary.h"
 #include "Engine/Engine.h"
 #include "Engine/GameViewportClient.h"
 #include "GameFramework/GameUserSettings.h"
+#include "UnrealExtendedFramework/ModularSettings/EFModularSettingsSubsystem.h"
 #include "EFDisplaySettings.generated.h"
 
 // Display Mode Setting (formerly Fullscreen)
@@ -82,6 +85,7 @@ public:
 
 				// false = don't check "command line overrides" as authoritative
 				UserSettings->ApplySettings(false);
+				SyncResolutionSettingToAppliedMode(WindowMode, UserSettings);
 
 				// Writes to GameUserSettings.ini
 				UserSettings->SaveSettings();
@@ -128,6 +132,73 @@ public:
 		}
 
 		return TEXT("Windowed");
+	}
+
+private:
+	FString GetAppliedResolutionString(EWindowMode::Type WindowMode, UGameUserSettings* UserSettings) const
+	{
+		if (WindowMode == EWindowMode::WindowedFullscreen)
+		{
+			int32 MonitorWidth = 0;
+			int32 MonitorHeight = 0;
+			UEFMonitorLibrary::GetCurrentMonitorResolution(MonitorWidth, MonitorHeight);
+			if (MonitorWidth > 0 && MonitorHeight > 0)
+			{
+				return FString::Printf(TEXT("%dx%d"), MonitorWidth, MonitorHeight);
+			}
+		}
+
+		if (GEngine && GEngine->GameViewport)
+		{
+			FVector2D ViewportSize;
+			GEngine->GameViewport->GetViewportSize(ViewportSize);
+			if (ViewportSize.X > 0.0f && ViewportSize.Y > 0.0f)
+			{
+				return FString::Printf(TEXT("%.0fx%.0f"), ViewportSize.X, ViewportSize.Y);
+			}
+		}
+
+		if (UserSettings)
+		{
+			const FIntPoint Resolution = UserSettings->GetScreenResolution();
+			if (Resolution.X > 0 && Resolution.Y > 0)
+			{
+				return FString::Printf(TEXT("%dx%d"), Resolution.X, Resolution.Y);
+			}
+		}
+
+		return TEXT("");
+	}
+
+	void SyncResolutionSettingToAppliedMode(EWindowMode::Type WindowMode, UGameUserSettings* UserSettings)
+	{
+		UEFModularSettingsMultiSelect* ResolutionSetting = Cast<UEFModularSettingsMultiSelect>(
+			UEFModularSettingsLibrary::GetModularSetting(
+				this,
+				FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.Resolution")),
+				EEFSettingsSource::Local));
+
+		if (!ResolutionSetting)
+		{
+			return;
+		}
+
+		ResolutionSetting->RefreshValues();
+
+		const FString AppliedResolution = GetAppliedResolutionString(WindowMode, UserSettings);
+		if (AppliedResolution.IsEmpty())
+		{
+			return;
+		}
+
+		ResolutionSetting->SetValueFromString(AppliedResolution);
+		ResolutionSetting->SaveCurrentValue();
+		ResolutionSetting->ClearDirty();
+
+		if (ModularSettingsSubsystem)
+		{
+			ModularSettingsSubsystem->OnSettingsChanged.Broadcast(ResolutionSetting);
+		}
 	}
 };
 

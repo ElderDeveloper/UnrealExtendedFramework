@@ -227,6 +227,11 @@ bool UEFModularSettingsLibrary::SetModularSelectedIndex(const UObject* WorldCont
 	{
 		if (Setting->Values.IsValidIndex(Index))
 		{
+			if (Setting->SelectedIndex == Index)
+			{
+				return true;
+			}
+
 			FString OptionValue = Setting->Values[Index];
 			if (Setting->GetOuter()->IsA<UEFPlayerSettingsComponent>())
 			{

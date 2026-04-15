@@ -21,6 +21,8 @@ void UEFSettingsWidgetMultiSelect::RefreshOptions()
 {
 	if (!ComboBox) return;
 
+	bIsRefreshingOptions = true;
+
 	ComboBox->ClearOptions();
 	TArray<FText> Options = UEFModularSettingsLibrary::GetModularOptions(this, SettingsTag, SettingsSource);
 	
@@ -35,6 +37,7 @@ void UEFSettingsWidgetMultiSelect::RefreshOptions()
 	}
 	
 	ComboBox->SetSelectedIndex(UEFModularSettingsLibrary::GetModularSelectedIndex(this, SettingsTag, SettingsSource));
+	bIsRefreshingOptions = false;
 }
 
 void UEFSettingsWidgetMultiSelect::OnTrackedSettingsChanged_Implementation(UEFModularSettingsBase* ChangedSetting)
@@ -51,5 +54,10 @@ void UEFSettingsWidgetMultiSelect::OnTrackedSettingsChanged_Implementation(UEFMo
 
 void UEFSettingsWidgetMultiSelect::OnSelectionChanged(FString SelectedItem, ESelectInfo::Type SelectionType)
 {
+	if (bIsRefreshingOptions || !ComboBox)
+	{
+		return;
+	}
+
 	UEFModularSettingsLibrary::SetModularSelectedIndex(this, SettingsTag, ComboBox->FindOptionIndex(SelectedItem), SettingsSource, nullptr, ConfirmationType == EEFSettingConfirmationType::Instant);
 }

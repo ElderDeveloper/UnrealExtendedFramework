@@ -25,6 +25,8 @@ public:
 protected:
 	void RefreshOptions();
 
+	bool bIsRefreshingOptions = false;
+
 	UFUNCTION()
 	void OnSelectionChanged(FString SelectedItem, ESelectInfo::Type SelectionType);
 };

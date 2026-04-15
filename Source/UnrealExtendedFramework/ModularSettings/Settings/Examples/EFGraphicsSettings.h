@@ -4,9 +4,87 @@
 #include "UnrealExtendedFramework/ModularSettings/Settings/EFModularSettingsBase.h"
 #include "UnrealExtendedFramework/ModularSettings/EFModularSettingsSubsystem.h"
 #include "UnrealExtendedFramework/ModularSettings/EFModularSettingsLibrary.h"
+#include "UnrealExtendedFramework/Libraries/Monitor/EFMonitorLibrary.h"
 #include "Engine/Engine.h"
 #include "GameFramework/GameUserSettings.h"
+#include "HAL/IConsoleManager.h"
 #include "EFGraphicsSettings.generated.h"
+
+namespace EFGraphicsSettingsInternal
+{
+	inline int32 GetConsoleIntValue(const TCHAR* Name, int32 DefaultValue)
+	{
+		if (const IConsoleVariable* CVar = IConsoleManager::Get().FindConsoleVariable(Name))
+		{
+			return CVar->GetInt();
+		}
+
+		return DefaultValue;
+	}
+
+	inline float GetConsoleFloatValue(const TCHAR* Name, float DefaultValue)
+	{
+		if (const IConsoleVariable* CVar = IConsoleManager::Get().FindConsoleVariable(Name))
+		{
+			return CVar->GetFloat();
+		}
+
+		return DefaultValue;
+	}
+
+	inline int32 MapMaxAnisotropyToIndex(int32 MaxAnisotropy)
+	{
+		if (MaxAnisotropy <= 0)
+		{
+			return 0;
+		}
+		if (MaxAnisotropy <= 1)
+		{
+			return 1;
+		}
+		if (MaxAnisotropy <= 2)
+		{
+			return 2;
+		}
+		if (MaxAnisotropy <= 4)
+		{
+			return 3;
+		}
+		if (MaxAnisotropy <= 8)
+		{
+			return 4;
+		}
+
+		return 5;
+	}
+
+	inline int32 MapSSRQualityToIndex(int32 SSRQuality)
+	{
+		return FMath::Clamp(SSRQuality, 0, 4);
+	}
+
+	inline int32 MapBloomQualityToIndex(int32 BloomQuality)
+	{
+		if (BloomQuality <= 0)
+		{
+			return 0;
+		}
+		if (BloomQuality <= 2)
+		{
+			return 1;
+		}
+		if (BloomQuality == 3)
+		{
+			return 2;
+		}
+		if (BloomQuality == 4)
+		{
+			return 3;
+		}
+
+		return 4;
+	}
+}
 
 // Screen Resolution Setting
 UCLASS(Blueprintable,EditInlineNew, DisplayName = "Extended Screen Resolution")
@@ -22,6 +100,16 @@ public:
 		ConfigCategory = TEXT("Graphics");
 		DefaultValue = TEXT("1920x1080");
 
+		PopulateResolutionOptions();
+	}
+
+	virtual void OnRegistered() override
+	{
+		PopulateResolutionOptions();
+	}
+
+	virtual void RefreshValues_Implementation() override
+	{
 		PopulateResolutionOptions();
 	}
 
@@ -64,17 +152,20 @@ public:
 	{
 		if (GEngine)
 		{
-			if (UGameUserSettings* UserSettings = GEngine->GetGameUserSettings())
-			{
-				const FIntPoint Res = UserSettings->GetScreenResolution();
-				return FString::Printf(TEXT("%dx%d"), Res.X, Res.Y);
-			}
-
 			if (GEngine->GameViewport)
 			{
 				FVector2D ViewportSize;
 				GEngine->GameViewport->GetViewportSize(ViewportSize);
-				return FString::Printf(TEXT("%.0fx%.0f"), ViewportSize.X, ViewportSize.Y);
+				if (ViewportSize.X > 0.0f && ViewportSize.Y > 0.0f)
+				{
+					return FString::Printf(TEXT("%.0fx%.0f"), ViewportSize.X, ViewportSize.Y);
+				}
+			}
+
+			if (UGameUserSettings* UserSettings = GEngine->GetGameUserSettings())
+			{
+				const FIntPoint Res = UserSettings->GetScreenResolution();
+				return FString::Printf(TEXT("%dx%d"), Res.X, Res.Y);
 			}
 		}
 		
@@ -84,28 +175,98 @@ public:
 private:
 	void PopulateResolutionOptions()
 	{
+		const FString PreviousResolution = Values.IsValidIndex(SelectedIndex)
+			? Values[SelectedIndex]
+			: GetCurrentResolution();
+
 		Values.Empty();
 		DisplayNames.Empty();
 
-		// Common resolutions
-		TArray<FString> CommonResolutions = {
-			TEXT("1280x720"),
-			TEXT("1366x768"),
-			TEXT("1600x900"),
-			TEXT("1920x1080"),
-			TEXT("2560x1440"),
-			TEXT("3840x2160")
+		TArray<FIntPoint> SupportedResolutions = UEFMonitorLibrary::GetCurrentMonitorSupportedResolutions();
+		SupportedResolutions.Sort([](const FIntPoint& Left, const FIntPoint& Right)
+		{
+			const int64 LeftPixels = static_cast<int64>(Left.X) * static_cast<int64>(Left.Y);
+			const int64 RightPixels = static_cast<int64>(Right.X) * static_cast<int64>(Right.Y);
+			if (LeftPixels == RightPixels)
+			{
+				return Left.X < Right.X;
+			}
+
+			return LeftPixels < RightPixels;
+		});
+
+		auto AddResolutionOption = [this](const FIntPoint& Resolution)
+		{
+			if (Resolution.X <= 0 || Resolution.Y <= 0)
+			{
+				return;
+			}
+
+			const FString ResolutionString = FString::Printf(TEXT("%dx%d"), Resolution.X, Resolution.Y);
+			if (!Values.Contains(ResolutionString))
+			{
+				Values.Add(ResolutionString);
+				DisplayNames.Add(FText::FromString(ResolutionString));
+			}
 		};
 
-		for (const FString& Resolution : CommonResolutions)
+		for (const FIntPoint& Resolution : SupportedResolutions)
 		{
-			Values.Add(Resolution);
-			DisplayNames.Add(FText::FromString(Resolution));
+			AddResolutionOption(Resolution);
 		}
 
-		// Set default index
-		int32 DefaultIndex = Values.Find(DefaultValue);
-		SelectedIndex = DefaultIndex != INDEX_NONE ? DefaultIndex : 3; // Default to 1920x1080
+		if (Values.Num() == 0)
+		{
+			int32 MonitorWidth = 0;
+			int32 MonitorHeight = 0;
+			UEFMonitorLibrary::GetCurrentMonitorResolution(MonitorWidth, MonitorHeight);
+
+			const TArray<FIntPoint> CommonResolutions = {
+				FIntPoint(1280, 720),
+				FIntPoint(1366, 768),
+				FIntPoint(1600, 900),
+				FIntPoint(1920, 1080),
+				FIntPoint(2560, 1440),
+				FIntPoint(3840, 2160)
+			};
+
+			for (const FIntPoint& Resolution : CommonResolutions)
+			{
+				if ((MonitorWidth <= 0 || Resolution.X <= MonitorWidth) &&
+					(MonitorHeight <= 0 || Resolution.Y <= MonitorHeight))
+				{
+					AddResolutionOption(Resolution);
+				}
+			}
+
+			if (Values.Num() == 0 && MonitorWidth > 0 && MonitorHeight > 0)
+			{
+				AddResolutionOption(FIntPoint(MonitorWidth, MonitorHeight));
+			}
+		}
+
+		FString PreferredDefaultValue = DefaultValue;
+		if (!Values.Contains(PreferredDefaultValue))
+		{
+			const FString CurrentResolution = GetCurrentResolution();
+			if (Values.Contains(CurrentResolution))
+			{
+				PreferredDefaultValue = CurrentResolution;
+			}
+			else if (Values.Num() > 0)
+			{
+				PreferredDefaultValue = Values.Last();
+			}
+		}
+		DefaultValue = PreferredDefaultValue;
+
+		int32 PreferredIndex = Values.Find(PreviousResolution);
+		if (PreferredIndex == INDEX_NONE)
+		{
+			PreferredIndex = Values.Find(DefaultValue);
+		}
+
+		SelectedIndex = PreferredIndex != INDEX_NONE ? PreferredIndex : 0;
 	}
 
 	bool ParseResolution(const FString& Resolution, int32& Width, int32& Height)
@@ -812,6 +973,7 @@ public:
 				UserSettings->SetOverallScalabilityLevel(SelectedIndex);
 				UserSettings->ApplySettings(false);
 				UserSettings->SaveSettings();
+				CaptureResolvedPresetSnapshotFromEngine(SelectedIndex);
 				UE_LOG(LogTemp, Log, TEXT("Applied & saved Overall Scalability Level via GameUserSettings: %s (Level %d)"), *Values[SelectedIndex], SelectedIndex);
 			}
 
@@ -843,6 +1005,7 @@ public:
 			const int32 TargetIndex = GetExpectedSubSettingIndex(Tag, Index);
 			UEFModularSettingsLibrary::SetModularSelectedIndex(this, Tag, TargetIndex, EEFSettingsSource::Local, nullptr, bUpdateSettingsImmediately);
 		}
+		SyncResolutionScaleForPresetPreview(Index);
 		bIsUpdating = false;
 	}
 	
@@ -909,7 +1072,15 @@ public:
 	}
 	
 private:
+	struct FResolvedPresetSnapshot
+	{
+		TMap<FGameplayTag, int32> ResolvedIndices;
+		bool bHasResolutionScale = false;
+		float ResolutionScale = 100.0f;
+	};
+
 	bool bIsUpdating = false;
+	TMap<int32, FResolvedPresetSnapshot> ResolvedPresetSnapshots;
 
 	// Centralised list of all sub-settings managed by the overall preset.
 	static const TArray<FGameplayTag>& GetGraphicsSettingTags()
@@ -930,19 +1101,138 @@ private:
 		return Tags;
 	}
 
+	static FGameplayTag GetTextureFilteringTag()
+	{
+		return FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.TextureFilteringQuality"));
+	}
+
+	static FGameplayTag GetScreenSpaceReflectionTag()
+	{
+		return FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.ScreenSpaceReflection"));
+	}
+
+	static FGameplayTag GetBloomTag()
+	{
+		return FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.Bloom"));
+	}
+
+	static FGameplayTag GetResolutionScaleTag()
+	{
+		return FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.Upscaler.ResolutionScale"));
+	}
+
+	static FGameplayTag GetUpscalerTag()
+	{
+		return FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.Upscaler"));
+	}
+
+	static FGameplayTag GetDLSSRayReconstructionTag()
+	{
+		return FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.Upscaler.DLSS.RayReconstruction"));
+	}
+
+	bool ShouldSyncResolutionScaleFromEngine() const
+	{
+		const UEFModularSettingsMultiSelect* UpscalerSetting = Cast<UEFModularSettingsMultiSelect>(
+			UEFModularSettingsLibrary::GetModularSetting(this, GetUpscalerTag(), EEFSettingsSource::Local));
+
+		if (!UpscalerSetting)
+		{
+			return true;
+		}
+
+		const FString ActiveUpscaler = UpscalerSetting->GetValueAsString();
+		if (ActiveUpscaler == TEXT("FSR") || ActiveUpscaler == TEXT("XeSS"))
+		{
+			return false;
+		}
+
+		if (ActiveUpscaler == TEXT("DLSS"))
+		{
+			const UEFModularSettingsBool* DLSSRayReconstructionSetting = Cast<UEFModularSettingsBool>(
+				UEFModularSettingsLibrary::GetModularSetting(this, GetDLSSRayReconstructionTag(), EEFSettingsSource::Local));
+			return !DLSSRayReconstructionSetting || !DLSSRayReconstructionSetting->Value;
+		}
+
+		return true;
+	}
+
+	int32 ResolveCurrentEngineIndexForTag(const FGameplayTag& Tag) const
+	{
+		if (Tag == GetTextureFilteringTag())
+		{
+			return EFGraphicsSettingsInternal::MapMaxAnisotropyToIndex(
+				EFGraphicsSettingsInternal::GetConsoleIntValue(TEXT("r.MaxAnisotropy"), 0));
+		}
+
+		if (Tag == GetScreenSpaceReflectionTag())
+		{
+			return EFGraphicsSettingsInternal::MapSSRQualityToIndex(
+				EFGraphicsSettingsInternal::GetConsoleIntValue(TEXT("r.SSR.Quality"), 0));
+		}
+
+		if (Tag == GetBloomTag())
+		{
+			return EFGraphicsSettingsInternal::MapBloomQualityToIndex(
+				EFGraphicsSettingsInternal::GetConsoleIntValue(TEXT("r.BloomQuality"), 0));
+		}
+
+		return INDEX_NONE;
+	}
+
+	void CaptureResolvedPresetSnapshotFromEngine(int32 PresetIndex)
+	{
+		if (PresetIndex < 0 || PresetIndex > 3)
+		{
+			return;
+		}
+
+		FResolvedPresetSnapshot& Snapshot = ResolvedPresetSnapshots.FindOrAdd(PresetIndex);
+		Snapshot.ResolvedIndices.Reset();
+		Snapshot.ResolvedIndices.Add(GetTextureFilteringTag(), ResolveCurrentEngineIndexForTag(GetTextureFilteringTag()));
+		Snapshot.ResolvedIndices.Add(GetScreenSpaceReflectionTag(), ResolveCurrentEngineIndexForTag(GetScreenSpaceReflectionTag()));
+		Snapshot.ResolvedIndices.Add(GetBloomTag(), ResolveCurrentEngineIndexForTag(GetBloomTag()));
+
+		Snapshot.bHasResolutionScale = false;
+		if (ShouldSyncResolutionScaleFromEngine())
+		{
+			if (const UEFModularSettingsFloat* ResolutionScaleSetting = Cast<UEFModularSettingsFloat>(
+				UEFModularSettingsLibrary::GetModularSetting(this, GetResolutionScaleTag(), EEFSettingsSource::Local)))
+			{
+				Snapshot.ResolutionScale = FMath::Clamp(
+					EFGraphicsSettingsInternal::GetConsoleFloatValue(TEXT("r.ScreenPercentage"), ResolutionScaleSetting->Value),
+					ResolutionScaleSetting->Min,
+					ResolutionScaleSetting->Max);
+				Snapshot.bHasResolutionScale = true;
+			}
+		}
+	}
+
+	const FResolvedPresetSnapshot* GetResolvedPresetSnapshot(int32 PresetIndex) const
+	{
+		return ResolvedPresetSnapshots.Find(PresetIndex);
+	}
+
 	// Maps a preset level (0=Low..3=Ultra) to the expected sub-setting index,
 	// accounting for settings with non-standard option layouts.
-	static int32 GetExpectedSubSettingIndex(const FGameplayTag& Tag, int32 PresetIndex)
+	int32 GetExpectedSubSettingIndex(const FGameplayTag& Tag, int32 PresetIndex) const
 	{
+		if (const FResolvedPresetSnapshot* Snapshot = GetResolvedPresetSnapshot(PresetIndex))
+		{
+			if (const int32* ResolvedIndex = Snapshot->ResolvedIndices.Find(Tag))
+			{
+				return *ResolvedIndex;
+			}
+		}
+
 		// SSR and Bloom have an extra "Off" at index 0, so Low=1, Med=2, High=3, Ultra=4
-		if (Tag == FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.ScreenSpaceReflection")) ||
-			Tag == FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.Bloom")))
+		if (Tag == GetScreenSpaceReflectionTag() || Tag == GetBloomTag())
 		{
 			return PresetIndex + 1;
 		}
 
 		// Texture Filtering: Trilinear(0), 1x(1), 2x(2), 4x(3), 8x(4), 16x(5)
-		if (Tag == FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.TextureFilteringQuality")))
+		if (Tag == GetTextureFilteringTag())
 		{
 			switch (PresetIndex)
 			{
@@ -956,6 +1246,50 @@ private:
 
 		// Standard 4-option settings (Low=0, Med=1, High=2, Ultra=3)
 		return PresetIndex;
+	}
+
+	void SyncResolutionScaleFromEngine()
+	{
+		if (!ShouldSyncResolutionScaleFromEngine())
+		{
+			return;
+		}
+
+		if (UEFModularSettingsFloat* ResolutionScaleSetting = Cast<UEFModularSettingsFloat>(
+			UEFModularSettingsLibrary::GetModularSetting(this, GetResolutionScaleTag(), EEFSettingsSource::Local)))
+		{
+			const float ScreenPercentage = FMath::Clamp(
+				EFGraphicsSettingsInternal::GetConsoleFloatValue(TEXT("r.ScreenPercentage"), ResolutionScaleSetting->Value),
+				ResolutionScaleSetting->Min,
+				ResolutionScaleSetting->Max);
+			UEFModularSettingsLibrary::SetModularFloat(this,
+				GetResolutionScaleTag(),
+				ScreenPercentage,
+				EEFSettingsSource::Local,
+				nullptr,
+				false);
+		}
+	}
+
+	void SyncResolutionScaleForPresetPreview(int32 PresetIndex)
+	{
+		if (!ShouldSyncResolutionScaleFromEngine())
+		{
+			return;
+		}
+
+		if (const FResolvedPresetSnapshot* Snapshot = GetResolvedPresetSnapshot(PresetIndex))
+		{
+			if (Snapshot->bHasResolutionScale)
+			{
+				UEFModularSettingsLibrary::SetModularFloat(this,
+					GetResolutionScaleTag(),
+					Snapshot->ResolutionScale,
+					EEFSettingsSource::Local,
+					nullptr,
+					bUpdateSettingsImmediately);
+			}
+		}
 	}
 
 	// After the engine's scalability level is set, read back the engine state
@@ -993,27 +1327,43 @@ private:
 			UEFModularSettingsLibrary::SetModularSelectedIndex(this, Mapping.Tag, Mapping.EngineLevel, EEFSettingsSource::Local, nullptr, false);
 		}
 
-		// Handle non-standard settings based on the preset index (SelectedIndex)
-		const int32 PresetIdx = SelectedIndex;
+		for (const FGameplayTag& Tag : { GetScreenSpaceReflectionTag(), GetBloomTag(), GetTextureFilteringTag() })
+		{
+			const int32 ResolvedIndex = ResolveCurrentEngineIndexForTag(Tag);
+			if (ResolvedIndex != INDEX_NONE)
+			{
+				UEFModularSettingsLibrary::SetModularSelectedIndex(this, Tag, ResolvedIndex, EEFSettingsSource::Local, nullptr, false);
+			}
+		}
 
-		// SSR and Bloom: add 1 for the "Off" option at index 0
-		UEFModularSettingsLibrary::SetModularSelectedIndex(this,
-			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.ScreenSpaceReflection")),
-			GetExpectedSubSettingIndex(FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.ScreenSpaceReflection")), PresetIdx),
-			EEFSettingsSource::Local, nullptr, false);
-
-		UEFModularSettingsLibrary::SetModularSelectedIndex(this,
-			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.Bloom")),
-			GetExpectedSubSettingIndex(FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.Bloom")), PresetIdx),
-			EEFSettingsSource::Local, nullptr, false);
-
-		// Texture Filtering
-		UEFModularSettingsLibrary::SetModularSelectedIndex(this,
-			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.TextureFilteringQuality")),
-			GetExpectedSubSettingIndex(FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.TextureFilteringQuality")), PresetIdx),
-			EEFSettingsSource::Local, nullptr, false);
+		SyncResolutionScaleFromEngine();
 
 		bIsUpdating = false;
+	}
+
+	bool DoesResolutionScaleMatchPreset(int32 PresetIndex) const
+	{
+		if (!ShouldSyncResolutionScaleFromEngine())
+		{
+			return true;
+		}
+
+		const UEFModularSettingsFloat* ResolutionScaleSetting = Cast<UEFModularSettingsFloat>(
+			UEFModularSettingsLibrary::GetModularSetting(this, GetResolutionScaleTag(), EEFSettingsSource::Local));
+		if (!ResolutionScaleSetting)
+		{
+			return true;
+		}
+
+		if (const FResolvedPresetSnapshot* Snapshot = GetResolvedPresetSnapshot(PresetIndex))
+		{
+			if (Snapshot->bHasResolutionScale)
+			{
+				return FMath::IsNearlyEqual(ResolutionScaleSetting->Value, Snapshot->ResolutionScale, 0.5f);
+			}
+		}
+
+		return true;
 	}
 
 	// Check if all current sub-setting indices match the expected values for a preset.
@@ -1035,6 +1385,7 @@ private:
 				return false;
 			}
 		}
-		return true;
+
+		return DoesResolutionScaleMatchPreset(PresetIndex);
 	}
 };
