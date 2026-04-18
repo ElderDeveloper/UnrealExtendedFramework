@@ -45,6 +45,16 @@
 			"Name": "UnrealExtendedPlayFab",
 			"Type": "Runtime",
 			"LoadingPhase": "Default"
+		},
+		{
+			"Name": "UnrealExtendedSQL",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		},
+		{
+			"Name": "UnrealExtendedSQLEditor",
+			"Type": "Editor",
+			"LoadingPhase": "Default"
 		}
 	],
 
