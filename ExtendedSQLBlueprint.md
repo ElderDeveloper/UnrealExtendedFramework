@@ -1,163 +1,169 @@
-# ExtendedSQL Blueprint API
+# ExtendedSQL Blueprint Guide
 
-This document lists every Blueprint-visible function and custom node currently exposed by the `UnrealExtendedSQL` plugin.
+This guide explains the supported Blueprint workflow for UnrealExtendedSQL.
 
-Functions marked `BlueprintInternalUseOnly` are intentionally omitted because they do not appear in normal Blueprint menus. That hidden layer still exists under the hood for legacy graphs and internal K2 expansion paths, but it is not part of the public Blueprint authoring surface.
+The intended Blueprint story is simple:
 
-## At a Glance
+1. get `UESQLSubsystem`
+2. pass a `UESQLTableAsset`
+3. work with typed rows, `FESQLId`, and `FESQLQuerySpec`
 
-- Use `UESQLSubsystem` for database lifecycle, transactions, snapshots, and low-level table helpers.
-- Use `UESQLTableAsset` and the custom `SQL` or `SQL|Player` nodes for typed row workflows.
-- Structured query builder nodes, paging/query bridge nodes, and raw SQL execution helpers are hidden from normal Blueprint menus and retained only for legacy graphs.
-- Public `FESQLId` pins are the picker-friendly row-id surface. The legacy public `SQL|Id` helper category is gone, and public row lookup/delete nodes no longer expose raw string `RowId` inputs.
+If a workflow requires you to understand hidden helper classes, it is not the intended public path.
 
-## Recommended Typed SQL Nodes
+---
 
-These nodes are registered by the editor module and are the intended Blueprint surface for typed row reads, writes, paging, and async operations.
+## 1. Getting The Subsystem
 
-### Palette: SQL
+In Blueprint, start by getting the game instance subsystem for `UESQLSubsystem`.
 
-| Node | Key Inputs | Outputs | Notes |
-| --- | --- | --- | --- |
-| `Get SQL Row` | `World Context`, `Table Asset`, `SQL Id` | `Row`, `Result` | Standard typed single-row load. `SQL Id` uses the picker-driven `FESQLId` surface. |
-| `Resolve SQL Id Row` | `World Context`, `Table Asset`, `SQL Id` | `Row`, `Result` | Generic typed fallback when you already have an `FESQLId` value flowing through UI or data graphs. |
-| `Save SQL Row` | `World Context`, `Table Asset`, typed `Row`, optional `Row Id Override` | `Resolved Row Id`, `Result` | Saves one typed row and returns the final row id used by the table. |
-| `Get SQL Rows` | `World Context`, `Table Asset`, optional `Max Rows` | `Rows`, `Result` | Loads all typed rows, or up to `Max Rows` if provided. |
-| `Async Load SQL Row` | `World Context`, `Table Asset`, `SQL Id` | `OnSuccess`, `OnFailure`, `Result`, `Row` | Async typed single-row load. `Row` is hydrated before `OnSuccess` fires. |
-| `Async Load SQL Rows` | `World Context`, `Table Asset`, optional `Max Rows` | `OnSuccess`, `OnFailure`, `Result`, `Rows` | Async typed bulk load. |
-| `Async Save SQL Row` | `World Context`, `Table Asset`, typed `Row Data`, optional `Row Id Override` | `OnSuccess(Result, Resolved Row Id)`, `OnFailure(Result)` | Async typed save. The typed row payload is captured before activation. |
+That subsystem owns:
 
-### Palette: SQL|Player
+- database lifecycle
+- typed row queries
+- raw SQL
+- async work
+- transactions
+- snapshots
 
-| Node | Key Inputs | Outputs | Notes |
-| --- | --- | --- | --- |
-| `Get Player SQL Row` | `Player DB`, `Table Asset`, `SQL Id` | `Row`, `Result` | Typed single-row load against a player-scoped database. |
-| `Save Player SQL Row` | `Player DB`, `Table Asset`, typed `Row`, optional `Row Id Override` | `Resolved Row Id`, `Result` | Typed save against a player-scoped table. |
-| `Get Player SQL Rows` | `Player DB`, `Table Asset`, optional `Max Rows` | `Rows`, `Result` | Loads typed rows from a player-scoped table. |
-| `Delete Player SQL Row` | `Player DB`, `Table Asset`, `SQL Id` | `Result` | Deletes a player-scoped row through the `FESQLId` picker surface. |
+Do not build your main gameplay workflow around calling methods on the table asset directly.
 
-### Typed Node Behavior
+---
 
-- If `Table Asset` is a literal asset, the node can infer the struct type from `RowStruct` and automatically type the `Row` or `Rows` pins.
-- If `Table Asset` is dynamic, connect a typed struct or typed struct array so the node can infer the row type from the connected pin.
-- The public `SQL Id` pins on these nodes use `FESQLId` and the custom picker instead of manual string entry.
-- `Row Id Override` on save nodes intentionally stays a string because it is a manual override path, not a row-selection input.
-- Structured query, field-filter, paging, and row-count helper nodes are hidden from normal Blueprint menus and remain available only for legacy graphs that already reference them.
+## 2. Using A Table Asset
 
-## `UESQLSubsystem` Blueprint API
+`UESQLTableAsset` is the typed schema input for Blueprint nodes.
 
-Access this subsystem from Blueprint through `Get Game Instance Subsystem` and selecting `ESQLSubsystem`.
+It provides:
 
-### Category: SQL|Database
+- the row struct type
+- the logical database name
+- the SQL table name
+- the primary key column
+- the default label column for pickers
+- scope and persistence hints
 
-| Blueprint Function | Returns | Notes |
-| --- | --- | --- |
-| `Open Database` (`OpenDatabase`) | `FESQLQueryResult` | Opens or creates a logical database handle. Inputs: `DatabaseName`, `Scope`, `Persistence`, optional `FileName`. |
-| `Open Player Database` (`OpenPlayerDatabase`) | `FESQLQueryResult` | Opens a per-player database keyed from the player's `UniqueNetId`. Server-only. |
-| `Close Database` (`CloseDatabase`) | `void` | Closes one logical database. |
-| `Close Player Database` (`ClosePlayerDatabase`) | `void` | Closes one player-scoped database and can optionally delete the file. |
-| `Close All Databases` (`CloseAllDatabases`) | `void` | Closes all open non-player databases. |
-| `Close All Player Databases` (`CloseAllPlayerDatabases`) | `void` | Closes all player-scoped databases and can optionally delete their files. |
-| `Is Database Open` (`IsDatabaseOpen`) | `bool` | Returns whether a named database handle is currently open. |
-| `Is Player Database Open` (`IsPlayerDatabaseOpen`) | `bool` | Returns whether a player's database is currently open for the given controller. |
-| `Get Open Database Names` (`GetOpenDatabaseNames`) | `TArray<FString>` | Returns all currently open logical database names. |
-| `Delete Database` (`DeleteDatabase`) | `FESQLQueryResult` | Deletes a closed database and its sidecar files (`.db`, `-wal`, `-shm`). |
-| `Get Database File Path` (`GetDatabaseFilePath`) | `FString` | Returns the resolved absolute path for a database, or an empty string for session-only in-memory databases. |
+In practice, the table asset is what lets the editor give you typed row pins and better picker UX.
 
-### Category: SQL|Network
+---
 
-| Blueprint Function | Returns | Notes |
-| --- | --- | --- |
-| `Is Dedicated Server` (`IsDedicatedServer`) | `bool` | Net mode helper. |
-| `Is Listen Server` (`IsListenServer`) | `bool` | Net mode helper. |
-| `Has Server Authority` (`HasServerAuthority`) | `bool` | Convenience authority check for SQL operations that require server ownership. |
+## 3. Common Typed Nodes
 
-### Category: SQL|Table
+The visible typed Blueprint workflow centers on row and query nodes such as:
 
-| Blueprint Function | Returns | Notes |
-| --- | --- | --- |
-| `Create Table` (`CreateTable`) | `FESQLQueryResult` | Creates a table from a `Columns` name-to-type map with optional `PrimaryKeyColumn` and `If Not Exists`. |
-| `Drop Table` (`DropTable`) | `FESQLQueryResult` | Drops a table by name. |
-| `Does Table Exist` (`DoesTableExist`) | `bool` | Returns whether a table exists in the target database. |
-| `Get Table Names` (`GetTableNames`) | `TArray<FString>` | Returns all user table names in the database. |
-| `Get Table Columns` (`GetTableColumns`) | `TArray<FESQLColumn>` | Returns the column definitions for a table. |
-| `Alter Table Add Column` (`AlterTableAddColumn`) | `FESQLQueryResult` | Adds one column to an existing table, with optional type and default value. |
+- `Get SQL Row`
+- `Get SQL Rows`
+- `Save SQL Row`
+- `Find SQL Rows`
+- `Find First SQL Row By Field`
+- `Count SQL Rows`
+- `Load SQL Page`
+- `Async Load SQL Row`
+- `Async Load SQL Rows`
+- `Async Find SQL Rows`
+- `Async Save SQL Row`
 
-### Category: SQL|Row
+Common node inputs:
 
-| Blueprint Function | Returns | Notes |
-| --- | --- | --- |
-| `Insert Row` (`InsertRow`) | `FESQLQueryResult` | Inserts one row from a `ColumnValues` map. |
-| `Insert Rows` (`InsertRows`) | `FESQLQueryResult` | Inserts multiple rows inside one transaction. |
-| `Upsert Row` (`UpsertRow`) | `FESQLQueryResult` | Inserts or updates based on `ConflictColumn`. |
-| `Update Rows` (`UpdateRows`) | `FESQLQueryResult` | Updates rows matching a `WhereClause` and `Bindings`. |
-| `Delete Rows` (`DeleteRows`) | `FESQLQueryResult` | Deletes rows matching a `WhereClause` and `Bindings`. |
+- `World Context` when needed by the node
+- `Table Asset`
+- `SQL Id` for single-row lookups
+- typed `Row` or `Rows`
 
-### Category: SQL|Transaction
+All of these nodes are table-centric. The asset describes the table; the subsystem owns runtime behavior.
 
-| Blueprint Function | Returns | Notes |
-| --- | --- | --- |
-| `Begin Transaction` (`BeginTransaction`) | `bool` | Begins an explicit transaction on a named database. |
-| `Commit Transaction` (`CommitTransaction`) | `bool` | Commits an explicit transaction. |
-| `Rollback Transaction` (`RollbackTransaction`) | `bool` | Rolls back an explicit transaction. |
+---
 
-### Category: SQL|Snapshot
+## 4. `FESQLId`
 
-| Blueprint Function | Returns | Notes |
-| --- | --- | --- |
-| `Save Snapshot` (`SaveSnapshot`) | `FESQLQueryResult` | Saves a snapshot of a session database into a named slot. |
-| `Load Snapshot` (`LoadSnapshot`) | `FESQLQueryResult` | Loads a previously saved snapshot slot into a session database. |
-| `Delete Snapshot` (`DeleteSnapshot`) | `FESQLQueryResult` | Deletes one saved snapshot slot. |
-| `Get All Snapshots` (`GetAllSnapshots`) | `TArray<FESQLSnapshotInfo>` | Returns all snapshot metadata for a session database. |
-| `Does Snapshot Exist` (`DoesSnapshotExist`) | `bool` | Returns whether a named snapshot slot exists. |
-| `Is Session Database` (`IsSessionDatabase`) | `bool` | Returns whether a database is a session/in-memory database. |
+`FESQLId` is the normal Blueprint identity type for selecting one row.
 
-## `UESQLTableAsset` Blueprint API
+Use it when you want:
 
-`UESQLTableAsset` owns schema metadata, primary key behavior, and picker label behavior. The custom SQL nodes above are built on top of this asset type.
+- dropdown-based row selection in details panels
+- UI widgets that carry a row reference
+- gameplay data that refers to one row in a typed table
 
-### Category: SQL Table
+Use raw string row ids only for explicit override or low-level cases.
 
-| Blueprint Function | Returns | Notes |
-| --- | --- | --- |
-| `Initialize` | `FESQLQueryResult` | Opens the backing database, ensures the table exists, and synchronizes schema from the configured row struct. |
-| `Insert Row From Struct` (`InsertRowFromStruct`) | `FESQLQueryResult` | Inserts one row from an arbitrary struct input pin through the custom thunk path. |
-| `Get All Rows` (`GetAllRows`) | `FESQLQueryResult` | Returns all rows as a raw query result. `MaxRows = 0` means unlimited. |
-| `Get Row By Id` (`GetRowById`) | `FESQLQueryResult` | Loads one row by a picker-friendly `SQL Id` (`FESQLId`) as a raw query result. |
-| `Get Row Count` (`GetRowCount`) | `int32` | Returns the current row count. |
-| `Is Initialized` (`IsInitialized`) | `bool` | Returns whether the asset's database connection is live. |
+---
 
-## `UESQLPlayerDBComponent` Blueprint API
+## 5. Building Structured Queries
 
-Attach this component to a `PlayerState` to represent a player-owned database context. It is the explicit `Player DB` input for the player-scoped typed SQL nodes.
+Use `FESQLQuerySpec` for reusable typed queries.
 
-### Category: SQL|Player
+The query builder flow is:
 
-| Blueprint Function | Returns | Notes |
-| --- | --- | --- |
-| `Get Player Id` (`GetPlayerId`) | `FString` | Returns the cached `UniqueNetId` string resolved from the owning `PlayerState`. |
-| `Is Player Database Open` (`IsPlayerDatabaseOpen`) | `bool` | Returns whether this component's player database is open. |
-| `Get Owning Player State` (`GetOwningPlayerState`) | `APlayerState*` | Convenience access to the owner as a player state. |
+1. create `FESQLBindingValue`
+2. create one or more field filters
+3. create optional sort rules
+4. create a query spec
+5. pass that query spec into typed query nodes
 
-## `UESQLBlueprintBridge` Public Blueprint API
+This is the normal way to express filter, sort, limit, and offset behavior in Blueprint without dropping to handwritten SQL.
 
-This function library exposes the small non-query runtime bridge surface that still needs direct Blueprint access. Structured-query builders and query bridge helpers are hidden from normal Blueprint menus and retained only for legacy graphs or editor-node expansion. Typed row loading and saving helpers are hidden and surfaced instead through the custom K2 nodes documented earlier. The legacy string `RowId` overloads for existence/delete are now hidden from normal Blueprint menus.
+Use raw SQL nodes only when you need advanced SQL text that the typed query model does not cover.
 
-### Category: SQL|Bridge
+---
 
-| Blueprint Function | Returns | Notes |
-| --- | --- | --- |
-| `Is SQL Query Result Successful` (`IsSQLQueryResultSuccessful`) | `bool` | Returns the success state of an `FESQLQueryResult`. |
-| `Does SQL Row Exist` (`DoesSQLRowExistById`) | `bool` | Visible existence-check node. Inputs: `World Context`, `Table Asset`, picker-friendly `SQL Id`, advanced `OutError`. |
-| `Delete SQL Row` (`DeleteSQLRowById`) | `FESQLQueryResult` | Visible delete node. Inputs: `World Context`, `Table Asset`, picker-friendly `SQL Id`. |
+## 6. Async Blueprint Usage
 
-## Public Surface Summary
+Async nodes are part of the same public SQL model.
 
-- The recommended typed authoring surface is the custom `SQL` and `SQL|Player` node set for direct row load/save/delete workflows.
-- Structured query builders, filter helpers, paging/count wrappers, player query helpers, and raw SQL execution nodes are hidden from normal Blueprint menus and retained only for legacy graphs.
-- `UESQLSubsystem` remains the public lifecycle, transaction, snapshot, and semantic table API.
-- `UESQLTableAsset` remains the public schema-owning asset API.
-- `UESQLBlueprintBridge` remains public only for the small non-query bridge helpers that still need direct Blueprint access.
-- Public row lookup/delete entry points now use `FESQLId`; the remaining public string row-id input is the explicit `Row Id Override` save path.
-- Hidden raw bridge thunks, structured query builders, paging/count wrappers, raw SQL execution helpers, and the async factory functions are intentionally not part of the public Blueprint inventory.
+Use them when you need non-blocking SQL work. The public mental model does not change:
 
+- the subsystem still owns runtime behavior
+- the table asset still provides typed schema metadata
+- the success and failure pins still return typed rows or query results
+
+From the user's perspective, async is just another way to call the same SQL system.
+
+---
+
+## 7. Editor Authoring Flow
+
+The authoring workflow is metadata-first and `.usqlite/`-first.
+
+Typical flow:
+
+1. define a row struct
+2. create a `UESQLTableAsset`
+3. set database name, table name, primary key, and label column
+4. save authoring data into the `.usqlite/` project
+5. use the editor's test database and test query actions for preview
+
+The table editor is intended for schema and preview, not as a full live runtime CRUD panel.
+
+---
+
+## 8. Validation
+
+If a table asset is misconfigured, validation should fail in the editor before runtime.
+
+Examples of validation problems:
+
+- missing row struct
+- missing database or table name
+- invalid primary key settings
+- struct fields that cannot be represented cleanly
+- mismatches between the asset and the sibling `.usqlite/` project
+
+Treat validation failures as authoring problems to fix before gameplay code or Blueprint logic depends on the asset.
+
+---
+
+## 9. Blueprint Best Practices
+
+1. Treat `UESQLSubsystem` as the runtime owner.
+2. Treat `UESQLTableAsset` as typed metadata.
+3. Prefer `FESQLId` over raw string row ids.
+4. Prefer `FESQLQuerySpec` over hand-built SQL strings for normal content queries.
+5. Commit `.usqlite/` and use derived `.db` files for test or cooked output.
+6. Use async nodes for non-blocking work, not as a separate product surface.
+
+---
+
+## 10. Blueprint Summary
+
+Blueprint usage should fit in one sentence:
+
+Get `UESQLSubsystem`, pass a `UESQLTableAsset`, use typed nodes, and let `.usqlite/` remain the authored source of truth.
