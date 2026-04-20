@@ -2,58 +2,15 @@
 
 #include "ESQLTableAsset.h"
 #include "ESQLStructValidator.h"
-#include "PlayerData/ESQLPlayerDBComponent.h"
+#include "Private/USqlite/ESQLUsqliteSerializer.h"
 #include "Shared/ESQLPropertySerializer.h"
 #include "Shared/ESQLSettings.h"
-#include "Subsystem/ESQLSubsystem.h"
+#include "Private/ThirdParty/ESQLVendorSqlite.h"
 #include "UnrealExtendedSQL.h"
-#include "Engine/GameInstance.h"
-#include "GameFramework/PlayerState.h"
-#include "Internationalization/Text.h"
 #include "Misc/FileHelper.h"
+#include "Misc/Paths.h"
 #include "UObject/StructOnScope.h"
 #include "UObject/UnrealType.h"
-
-THIRD_PARTY_INCLUDES_START
-#include "sqlite3.h"
-THIRD_PARTY_INCLUDES_END
-
-namespace
-{
-const FProperty* FindSQLTablePropertyByColumnName(const UScriptStruct* StructType, const FString& ColumnName)
-{
-	if (!StructType || ColumnName.IsEmpty())
-	{
-		return nullptr;
-	}
-
-	for (TFieldIterator<FProperty> It(StructType); It; ++It)
-	{
-		const FProperty* Property = *It;
-		if (Property && Property->GetName() == ColumnName)
-		{
-			return Property;
-		}
-	}
-
-	return nullptr;
-}
-
-FText MakeSQLDisplayTextFromColumnValue(const FProperty* Property, const FString& ColumnValue, const FString& FallbackValue)
-{
-	if (ColumnValue.IsEmpty())
-	{
-		return FText::FromString(FallbackValue);
-	}
-
-	if (CastField<const FTextProperty>(Property))
-	{
-		return FTextStringHelper::CreateFromBuffer(*ColumnValue);
-	}
-
-	return FText::FromString(ColumnValue);
-}
-}
 
 // ── Database Name Options (for dropdown in Details panel) ────────────────────
 
@@ -110,115 +67,35 @@ TArray<FString> UESQLTableAsset::GetLabelColumnOptions() const
 
 	return Options;
 }
-
-
-// ── Runtime API ──────────────────────────────────────────────────────────────
-
-
-FESQLQueryResult UESQLTableAsset::Initialize(UObject* WorldContextObject)
+FESQLTableSchema UESQLTableAsset::GetSchemaDescriptor() const
 {
-	if (bInitialized && CachedDatabase && CachedDatabase->IsOpen())
-	{
-		return FESQLQueryResult::Success();
-	}
+	FESQLTableSchema Schema;
+	Schema.DatabaseName = DatabaseName;
+	Schema.TableName = TableName.IsEmpty() && RowStruct ? RowStruct->GetName() : TableName;
+	Schema.PrimaryKeyColumn = PrimaryKeyColumn;
+	Schema.LabelColumn = GetEffectiveLabelColumn(TEXT(""));
+	Schema.Scope = Scope;
+	Schema.Persistence = Persistence;
+	Schema.RowStruct = RowStruct;
 
-	if (!RowStruct)
-	{
-		return FESQLQueryResult::Failure(TEXT("RowStruct is not set on this SQL Table Asset"));
-	}
+	Schema.Columns.Add({ PrimaryKeyColumn, TEXT("TEXT"), true, false, FString() });
 
-	// Validate struct
-	TArray<FESQLStructValidator::FFieldResult> ValidationResults;
-	if (!FESQLStructValidator::Validate(RowStruct, ValidationResults))
+	if (RowStruct)
 	{
-		return FESQLQueryResult::Failure(TEXT("RowStruct has unsupported field types. Check validation results."));
-	}
-
-	// Get subsystem
-	UWorld* World = WorldContextObject ? WorldContextObject->GetWorld() : nullptr;
-	UGameInstance* GI = World ? World->GetGameInstance() : nullptr;
-	UESQLSubsystem* Subsystem = GI ? GI->GetSubsystem<UESQLSubsystem>() : nullptr;
-
-	if (!Subsystem)
-	{
-		return FESQLQueryResult::Failure(TEXT("Failed to get UESQLSubsystem"));
-	}
-
-	// Open database via subsystem
-	if (!Subsystem->IsDatabaseOpen(DatabaseName))
-	{
-		FESQLQueryResult OpenResult = Subsystem->OpenDatabase(DatabaseName, Scope, Persistence);
-		if (!OpenResult.bSuccess)
+		for (TFieldIterator<FProperty> It(RowStruct); It; ++It)
 		{
-			return OpenResult;
+			FProperty* Property = *It;
+			const FString SQLiteType = FESQLStructValidator::MapPropertyToSQLiteType(Property);
+			if (SQLiteType.IsEmpty())
+			{
+				continue;
+			}
+
+			Schema.Columns.Add({ Property->GetName(), SQLiteType, false, true, FString() });
 		}
 	}
 
-	// Resolve the table name
-	if (TableName.IsEmpty())
-	{
-		TableName = RowStruct->GetName();
-	}
-
-	// Get internal database handle for schema operations
-	// We access it through Execute — the subsystem manages the connection
-	// Build CREATE TABLE with PrimaryKey + struct columns
-	TMap<FString, FString> ColumnMap = FESQLStructValidator::BuildColumnMap(RowStruct);
-
-	// Add PrimaryKeyColumn
-	TMap<FString, FString> FullColumns;
-	FullColumns.Add(PrimaryKeyColumn, TEXT("TEXT PRIMARY KEY"));
-	for (const auto& Pair : ColumnMap)
-	{
-		FullColumns.Add(Pair.Key, Pair.Value);
-	}
-
-	// Create table if not exists
-	FESQLQueryResult CreateResult = Subsystem->CreateTable(
-		DatabaseName,
-		TableName,
-		FullColumns,
-		TEXT(""),  // PK already included in column definition
-		true       // IF NOT EXISTS
-	);
-
-	if (!CreateResult.bSuccess)
-	{
-		return CreateResult;
-	}
-
-	// Cache the database handle for direct operations
-	// We need to reach into the subsystem's internals for SyncSchema
-	// For now, open a direct connection to the same file
-	const FString FilePath = UESQLSettings::ResolveDatabaseFilePath(DatabaseName);
-
-	FString Error;
-	CachedDatabase = FESQLDatabase::Open(FilePath, Error);
-	if (!CachedDatabase)
-	{
-		UE_LOG(LogExtendedSQL, Warning, TEXT("SQL Table Asset: Could not open direct connection for SyncSchema: %s"), *Error);
-		// Table was still created via subsystem, so we're partially initialized
-	}
-	else
-	{
-		// Run schema migration
-		FESQLQueryResult SyncResult = SyncSchema(CachedDatabase);
-		if (!SyncResult.bSuccess)
-		{
-			UE_LOG(LogExtendedSQL, Warning, TEXT("SQL Table Asset: Schema sync warning: %s"), *SyncResult.ErrorMessage);
-		}
-	}
-
-	bInitialized = true;
-	UE_LOG(LogExtendedSQL, Log, TEXT("SQL Table Asset '%s' initialized (DB: %s, Table: %s)"),
-		*GetName(), *DatabaseName, *TableName);
-
-	return FESQLQueryResult::Success();
-}
-
-bool UESQLTableAsset::IsInitialized() const
-{
-	return bInitialized;
+	return Schema;
 }
 
 FESQLQueryResult UESQLTableAsset::ValidateTypedStructAccess(const UScriptStruct* StructType) const
@@ -276,23 +153,6 @@ FESQLQueryResult UESQLTableAsset::BuildStructColumnBindings(
 
 	return FESQLQueryResult::Success();
 }
-
-FESQLQueryResult UESQLTableAsset::BuildGetAllRowsSQL(int32 MaxRows, FString& OutSQL) const
-{
-	if (TableName.IsEmpty())
-	{
-		return FESQLQueryResult::Failure(TEXT("TableName is not configured"));
-	}
-
-	OutSQL = FString::Printf(TEXT("SELECT * FROM \"%s\""), *TableName);
-	if (MaxRows > 0)
-	{
-		OutSQL += FString::Printf(TEXT(" LIMIT %d"), MaxRows);
-	}
-
-	return FESQLQueryResult::Success();
-}
-
 FESQLQueryResult UESQLTableAsset::BuildGetRowByIdSQL(const FString& RowId, FString& OutSQL, TArray<FString>& OutBindings) const
 {
 	OutBindings.Reset();
@@ -429,106 +289,6 @@ FESQLQueryResult UESQLTableAsset::BuildSaveRowSQL(
 
 	return FESQLQueryResult::Success();
 }
-
-FESQLQueryResult UESQLTableAsset::ResolvePlayerDatabaseConnection(UESQLPlayerDBComponent* PlayerDBComponent, TSharedPtr<FESQLDatabase>& OutDatabase)
-{
-	OutDatabase.Reset();
-
-	if (!PlayerDBComponent)
-	{
-		return FESQLQueryResult::Failure(TEXT("PlayerDBComponent is null"));
-	}
-
-	UWorld* World = PlayerDBComponent->GetWorld();
-	UGameInstance* GI = World ? World->GetGameInstance() : nullptr;
-	UESQLSubsystem* Subsystem = GI ? GI->GetSubsystem<UESQLSubsystem>() : nullptr;
-	if (!Subsystem)
-	{
-		return FESQLQueryResult::Failure(TEXT("Failed to get UESQLSubsystem"));
-	}
-
-	APlayerState* PlayerState = PlayerDBComponent->GetOwningPlayerState();
-	APlayerController* PlayerController = PlayerState ? PlayerState->GetPlayerController() : nullptr;
-	if (!PlayerController)
-	{
-		return FESQLQueryResult::Failure(TEXT("Failed to resolve player controller from PlayerDBComponent"));
-	}
-
-	const FString PlayerId = PlayerDBComponent->GetPlayerId();
-	if (PlayerId.IsEmpty())
-	{
-		return FESQLQueryResult::Failure(TEXT("Failed to resolve player identity from PlayerDBComponent"));
-	}
-
-	const FString ResolvedDatabaseName = !DatabaseName.IsEmpty() ? DatabaseName : PlayerDBComponent->PlayerDatabaseName;
-	if (ResolvedDatabaseName.IsEmpty())
-	{
-		return FESQLQueryResult::Failure(TEXT("DatabaseName is not configured for player-scoped access"));
-	}
-
-	if (!Subsystem->IsPlayerDatabaseOpen(ResolvedDatabaseName, PlayerController))
-	{
-		const FESQLQueryResult OpenResult = Subsystem->OpenPlayerDatabase(ResolvedDatabaseName, PlayerController);
-		if (!OpenResult.bSuccess)
-		{
-			return OpenResult;
-		}
-	}
-
-	return ResolvePlayerDatabaseConnection(PlayerDBComponent, PlayerId, OutDatabase);
-}
-
-FESQLQueryResult UESQLTableAsset::ResolvePlayerDatabaseConnection(UObject* WorldContextObject, const FString& PlayerId, TSharedPtr<FESQLDatabase>& OutDatabase)
-{
-	OutDatabase.Reset();
-
-	if (!WorldContextObject)
-	{
-		return FESQLQueryResult::Failure(TEXT("WorldContextObject is null"));
-	}
-
-	const FString TrimmedPlayerId = PlayerId.TrimStartAndEnd();
-	if (TrimmedPlayerId.IsEmpty())
-	{
-		return FESQLQueryResult::Failure(TEXT("PlayerId cannot be empty"));
-	}
-
-	UWorld* World = WorldContextObject->GetWorld();
-	UGameInstance* GI = World ? World->GetGameInstance() : nullptr;
-	UESQLSubsystem* Subsystem = GI ? GI->GetSubsystem<UESQLSubsystem>() : nullptr;
-	if (!Subsystem)
-	{
-		return FESQLQueryResult::Failure(TEXT("Failed to get UESQLSubsystem"));
-	}
-
-	if (!Subsystem->HasServerAuthority())
-	{
-		return FESQLQueryResult::Failure(TEXT("Player-scoped table access is server-only"));
-	}
-
-	FString ResolvedDatabaseName = DatabaseName;
-	ResolvedDatabaseName.TrimStartAndEndInline();
-	if (ResolvedDatabaseName.IsEmpty())
-	{
-		return FESQLQueryResult::Failure(TEXT("DatabaseName is not configured for player-scoped access"));
-	}
-
-	FString Error;
-	OutDatabase = FESQLDatabase::Open(UESQLSettings::ResolvePlayerDatabaseFilePath(ResolvedDatabaseName, TrimmedPlayerId), Error);
-	if (!OutDatabase)
-	{
-		return FESQLQueryResult::Failure(Error);
-	}
-
-	FString EnsureError;
-	if (!EnsureTableExists(OutDatabase, EnsureError))
-	{
-		return FESQLQueryResult::Failure(EnsureError);
-	}
-
-	return FESQLQueryResult::Success();
-}
-
 FESQLQueryResult UESQLTableAsset::PopulateStructFromRow(
 	const FESQLRow& Row,
 	void* OutStructData,
@@ -609,368 +369,6 @@ FESQLQueryResult UESQLTableAsset::PopulateStructArrayFromRows(
 	}
 
 	return FESQLQueryResult::Success();
-}
-
-FESQLQueryResult UESQLTableAsset::LoadRowIntoStruct(
-	UObject* WorldContextObject,
-	const FString& RowId,
-	void* OutStructData,
-	const UScriptStruct* StructType)
-{
-	const FESQLQueryResult ValidationResult = ValidateTypedStructAccess(StructType);
-	if (!ValidationResult.bSuccess)
-	{
-		return ValidationResult;
-	}
-
-	if (!OutStructData)
-	{
-		return FESQLQueryResult::Failure(TEXT("OutStructData is null"));
-	}
-
-	const FESQLQueryResult QueryResult = GetRowById(WorldContextObject, RowId);
-	if (!QueryResult.bSuccess)
-	{
-		return QueryResult;
-	}
-
-	if (QueryResult.Rows.Num() == 0)
-	{
-		return FESQLQueryResult::Failure(FString::Printf(
-			TEXT("No row found in table '%s' for id '%s'"),
-			*TableName,
-			*RowId));
-	}
-
-	return PopulateStructFromRow(QueryResult.Rows[0], OutStructData, StructType);
-}
-
-FESQLQueryResult UESQLTableAsset::LoadRowsIntoStructArray(
-	UObject* WorldContextObject,
-	void* OutArrayData,
-	const FArrayProperty* ArrayProperty,
-	int32 MaxRows)
-{
-	FESQLQuerySpec QuerySpec;
-	QuerySpec.Limit = MaxRows > 0 ? MaxRows : 0;
-	return QueryRowsIntoStructArray(WorldContextObject, QuerySpec, OutArrayData, ArrayProperty);
-}
-
-FESQLQueryResult UESQLTableAsset::LoadPageIntoStructArray(
-	UObject* WorldContextObject,
-	const FESQLQuerySpec& BaseQuerySpec,
-	int32 PageIndex,
-	int32 PageSize,
-	void* OutArrayData,
-	const FArrayProperty* ArrayProperty)
-{
-	if (PageIndex < 0)
-	{
-		return FESQLQueryResult::Failure(TEXT("PageIndex cannot be negative"));
-	}
-
-	if (PageSize <= 0)
-	{
-		return FESQLQueryResult::Failure(TEXT("PageSize must be greater than zero"));
-	}
-
-	const int64 RequestedOffset = static_cast<int64>(PageIndex) * static_cast<int64>(PageSize);
-	if (RequestedOffset > MAX_int32)
-	{
-		return FESQLQueryResult::Failure(TEXT("Requested page offset exceeds supported range"));
-	}
-
-	FESQLQuerySpec PagedQuerySpec = BaseQuerySpec;
-	PagedQuerySpec.Limit = PageSize;
-	PagedQuerySpec.Offset = static_cast<int32>(RequestedOffset);
-	return QueryRowsIntoStructArray(WorldContextObject, PagedQuerySpec, OutArrayData, ArrayProperty);
-}
-
-FESQLQueryResult UESQLTableAsset::LoadRowIntoStruct(
-	UObject* WorldContextObject,
-	const FESQLId& SqlId,
-	void* OutStructData,
-	const UScriptStruct* StructType)
-{
-	return LoadRowIntoStruct(WorldContextObject, SqlId.Value, OutStructData, StructType);
-}
-
-FESQLQueryResult UESQLTableAsset::LoadPlayerRowIntoStruct(
-	UESQLPlayerDBComponent* PlayerDBComponent,
-	const FString& RowId,
-	void* OutStructData,
-	const UScriptStruct* StructType)
-{
-	const FESQLQueryResult ValidationResult = ValidateTypedStructAccess(StructType);
-	if (!ValidationResult.bSuccess)
-	{
-		return ValidationResult;
-	}
-
-	if (!OutStructData)
-	{
-		return FESQLQueryResult::Failure(TEXT("OutStructData is null"));
-	}
-
-	TSharedPtr<FESQLDatabase> PlayerDatabase;
-	const FESQLQueryResult ResolveResult = ResolvePlayerDatabaseConnection(PlayerDBComponent, PlayerDatabase);
-	if (!ResolveResult.bSuccess)
-	{
-		return ResolveResult;
-	}
-
-	FString SQL;
-	TArray<FString> Bindings;
-	const FESQLQueryResult BuildResult = BuildGetRowByIdSQL(RowId, SQL, Bindings);
-	if (!BuildResult.bSuccess)
-	{
-		return BuildResult;
-	}
-
-	const FESQLQueryResult QueryResult = PlayerDatabase->Execute(SQL, Bindings);
-	if (!QueryResult.bSuccess)
-	{
-		return QueryResult;
-	}
-
-	if (QueryResult.Rows.Num() == 0)
-	{
-		return FESQLQueryResult::Failure(FString::Printf(
-			TEXT("No row found in table '%s' for id '%s'"),
-			*TableName,
-			*RowId));
-	}
-
-	return PopulateStructFromRow(QueryResult.Rows[0], OutStructData, StructType);
-}
-
-FESQLQueryResult UESQLTableAsset::LoadPlayerRowIntoStruct(
-	UObject* WorldContextObject,
-	const FString& PlayerId,
-	const FString& RowId,
-	void* OutStructData,
-	const UScriptStruct* StructType)
-{
-	const FESQLQueryResult ValidationResult = ValidateTypedStructAccess(StructType);
-	if (!ValidationResult.bSuccess)
-	{
-		return ValidationResult;
-	}
-
-	if (!OutStructData)
-	{
-		return FESQLQueryResult::Failure(TEXT("OutStructData is null"));
-	}
-
-	TSharedPtr<FESQLDatabase> PlayerDatabase;
-	const FESQLQueryResult ResolveResult = ResolvePlayerDatabaseConnection(WorldContextObject, PlayerId, PlayerDatabase);
-	if (!ResolveResult.bSuccess)
-	{
-		return ResolveResult;
-	}
-
-	FString SQL;
-	TArray<FString> Bindings;
-	const FESQLQueryResult BuildResult = BuildGetRowByIdSQL(RowId, SQL, Bindings);
-	if (!BuildResult.bSuccess)
-	{
-		return BuildResult;
-	}
-
-	const FESQLQueryResult QueryResult = PlayerDatabase->Execute(SQL, Bindings);
-	if (!QueryResult.bSuccess)
-	{
-		return QueryResult;
-	}
-
-	if (QueryResult.Rows.Num() == 0)
-	{
-		return FESQLQueryResult::Failure(FString::Printf(
-			TEXT("No row found in table '%s' for id '%s'"),
-			*TableName,
-			*RowId));
-	}
-
-	return PopulateStructFromRow(QueryResult.Rows[0], OutStructData, StructType);
-}
-
-FESQLQueryResult UESQLTableAsset::LoadPlayerRowIntoStruct(
-	UESQLPlayerDBComponent* PlayerDBComponent,
-	const FESQLId& SqlId,
-	void* OutStructData,
-	const UScriptStruct* StructType)
-{
-	return LoadPlayerRowIntoStruct(PlayerDBComponent, SqlId.Value, OutStructData, StructType);
-}
-
-FESQLQueryResult UESQLTableAsset::LoadPlayerRowIntoStruct(
-	UObject* WorldContextObject,
-	const FString& PlayerId,
-	const FESQLId& SqlId,
-	void* OutStructData,
-	const UScriptStruct* StructType)
-{
-	return LoadPlayerRowIntoStruct(WorldContextObject, PlayerId, SqlId.Value, OutStructData, StructType);
-}
-
-FESQLQueryResult UESQLTableAsset::LoadPlayerRowsIntoStructArray(
-	UESQLPlayerDBComponent* PlayerDBComponent,
-	void* OutArrayData,
-	const FArrayProperty* ArrayProperty,
-	int32 MaxRows)
-{
-	FESQLQuerySpec QuerySpec;
-	QuerySpec.Limit = MaxRows > 0 ? MaxRows : 0;
-	return QueryPlayerRowsIntoStructArray(PlayerDBComponent, QuerySpec, OutArrayData, ArrayProperty);
-}
-
-FESQLQueryResult UESQLTableAsset::LoadPlayerPageIntoStructArray(
-	UESQLPlayerDBComponent* PlayerDBComponent,
-	const FESQLQuerySpec& BaseQuerySpec,
-	int32 PageIndex,
-	int32 PageSize,
-	void* OutArrayData,
-	const FArrayProperty* ArrayProperty)
-{
-	if (PageIndex < 0)
-	{
-		return FESQLQueryResult::Failure(TEXT("PageIndex cannot be negative"));
-	}
-
-	if (PageSize <= 0)
-	{
-		return FESQLQueryResult::Failure(TEXT("PageSize must be greater than zero"));
-	}
-
-	const int64 RequestedOffset = static_cast<int64>(PageIndex) * static_cast<int64>(PageSize);
-	if (RequestedOffset > MAX_int32)
-	{
-		return FESQLQueryResult::Failure(TEXT("Requested page offset exceeds supported range"));
-	}
-
-	FESQLQuerySpec PagedQuerySpec = BaseQuerySpec;
-	PagedQuerySpec.Limit = PageSize;
-	PagedQuerySpec.Offset = static_cast<int32>(RequestedOffset);
-	return QueryPlayerRowsIntoStructArray(PlayerDBComponent, PagedQuerySpec, OutArrayData, ArrayProperty);
-}
-
-FESQLQueryResult UESQLTableAsset::LoadPlayerPageIntoStructArray(
-	UObject* WorldContextObject,
-	const FString& PlayerId,
-	const FESQLQuerySpec& BaseQuerySpec,
-	int32 PageIndex,
-	int32 PageSize,
-	void* OutArrayData,
-	const FArrayProperty* ArrayProperty)
-{
-	if (PageIndex < 0)
-	{
-		return FESQLQueryResult::Failure(TEXT("PageIndex cannot be negative"));
-	}
-
-	if (PageSize <= 0)
-	{
-		return FESQLQueryResult::Failure(TEXT("PageSize must be greater than zero"));
-	}
-
-	const int64 RequestedOffset = static_cast<int64>(PageIndex) * static_cast<int64>(PageSize);
-	if (RequestedOffset > MAX_int32)
-	{
-		return FESQLQueryResult::Failure(TEXT("Requested page offset exceeds supported range"));
-	}
-
-	FESQLQuerySpec PagedQuerySpec = BaseQuerySpec;
-	PagedQuerySpec.Limit = PageSize;
-	PagedQuerySpec.Offset = static_cast<int32>(RequestedOffset);
-	return QueryPlayerRowsIntoStructArray(WorldContextObject, PlayerId, PagedQuerySpec, OutArrayData, ArrayProperty);
-}
-
-FText UESQLTableAsset::ResolveRowDisplayText(
-	UObject* WorldContextObject,
-	const FString& RowId,
-	const FString& LabelColumnOverride,
-	FString* OutError)
-{
-	if (RowId.IsEmpty())
-	{
-		if (OutError)
-		{
-			*OutError = TEXT("RowId cannot be empty");
-		}
-
-		return FText::GetEmpty();
-	}
-
-	const FESQLQueryResult QueryResult = GetRowById(WorldContextObject, RowId);
-	if (!QueryResult.bSuccess)
-	{
-		if (OutError)
-		{
-			*OutError = QueryResult.ErrorMessage;
-		}
-
-		return FText::FromString(RowId);
-	}
-
-	if (QueryResult.Rows.Num() == 0)
-	{
-		if (OutError)
-		{
-			*OutError = FString::Printf(
-				TEXT("No row found in table '%s' for id '%s'"),
-				*TableName,
-				*RowId);
-		}
-
-		return FText::FromString(RowId);
-	}
-
-	const FString LabelColumn = GetEffectiveLabelColumn(LabelColumnOverride);
-	if (LabelColumn.IsEmpty() || LabelColumn == PrimaryKeyColumn)
-	{
-		if (OutError)
-		{
-			OutError->Reset();
-		}
-
-		return FText::FromString(RowId);
-	}
-
-	const FESQLRow& Row = QueryResult.Rows[0];
-	if (Row.IsNull(LabelColumn))
-	{
-		if (OutError)
-		{
-			OutError->Reset();
-		}
-
-		return FText::FromString(RowId);
-	}
-
-	const FString* LabelValue = Row.FindValue(LabelColumn);
-	if (!LabelValue)
-	{
-		if (OutError)
-		{
-			*OutError = FString::Printf(
-				TEXT("Label column '%s' was not found in row '%s' for table '%s'"),
-				*LabelColumn,
-				*RowId,
-				*TableName);
-		}
-
-		return FText::FromString(RowId);
-	}
-
-	if (OutError)
-	{
-		OutError->Reset();
-	}
-
-	return MakeSQLDisplayTextFromColumnValue(
-		FindSQLTablePropertyByColumnName(RowStruct, LabelColumn),
-		*LabelValue,
-		RowId);
 }
 
 bool UESQLTableAsset::TryResolveQueryColumn(const FString& FieldName, FString& OutColumnName, FString* OutError) const
@@ -1219,246 +617,6 @@ FESQLQueryResult UESQLTableAsset::BuildQueryRowsSQL(const FESQLQuerySpec& QueryS
 	return BuildQuerySQL(TEXT("SELECT *"), QuerySpec, true, true, OutSQL, OutBindings);
 }
 
-FESQLQueryResult UESQLTableAsset::QueryRows(UObject* WorldContextObject, const FESQLQuerySpec& QuerySpec)
-{
-	const FESQLQueryResult InitResult = Initialize(WorldContextObject);
-	if (!InitResult.bSuccess)
-	{
-		return InitResult;
-	}
-
-	if (!CachedDatabase || !CachedDatabase->IsOpen())
-	{
-		return FESQLQueryResult::Failure(TEXT("Database connection is not available"));
-	}
-
-	FString SQL;
-	TArray<FESQLBindingValue> Bindings;
-	const FESQLQueryResult BuildResult = BuildQueryRowsSQL(QuerySpec, SQL, Bindings);
-	if (!BuildResult.bSuccess)
-	{
-		return BuildResult;
-	}
-
-	return Bindings.Num() > 0
-		? CachedDatabase->Execute(SQL, Bindings)
-		: CachedDatabase->Execute(SQL);
-}
-
-FESQLQueryResult UESQLTableAsset::QueryRowsIntoStructArray(
-	UObject* WorldContextObject,
-	const FESQLQuerySpec& QuerySpec,
-	void* OutArrayData,
-	const FArrayProperty* ArrayProperty)
-{
-	const FESQLQueryResult QueryResult = QueryRows(WorldContextObject, QuerySpec);
-	if (!QueryResult.bSuccess)
-	{
-		return QueryResult;
-	}
-
-	const FESQLQueryResult PopulateResult = PopulateStructArrayFromRows(QueryResult.Rows, OutArrayData, ArrayProperty);
-	if (!PopulateResult.bSuccess)
-	{
-		return PopulateResult;
-	}
-
-	return QueryResult;
-}
-
-void UESQLTableAsset::AsyncLoadRowResult(
-	UObject* WorldContextObject,
-	const FString& RowId,
-	TFunction<void(const FESQLQueryResult&)> OnComplete)
-{
-	if (!OnComplete)
-	{
-		return;
-	}
-
-	if (RowId.IsEmpty())
-	{
-		OnComplete(FESQLQueryResult::Failure(TEXT("RowId cannot be empty")));
-		return;
-	}
-
-	const FESQLQueryResult InitResult = Initialize(WorldContextObject);
-	if (!InitResult.bSuccess)
-	{
-		OnComplete(InitResult);
-		return;
-	}
-
-	if (!CachedDatabase || !CachedDatabase->IsOpen())
-	{
-		OnComplete(FESQLQueryResult::Failure(TEXT("Database connection is not available")));
-		return;
-	}
-
-	FString SQL;
-	TArray<FString> Bindings;
-	const FESQLQueryResult BuildResult = BuildGetRowByIdSQL(RowId, SQL, Bindings);
-	if (!BuildResult.bSuccess)
-	{
-		OnComplete(BuildResult);
-		return;
-	}
-
-	TSharedPtr<FESQLDatabase> Database = CachedDatabase;
-	AsyncTask(ENamedThreads::AnyBackgroundThreadNormalTask, [Database, SQL = MoveTemp(SQL), Bindings = MoveTemp(Bindings), OnComplete = MoveTemp(OnComplete)]() mutable
-	{
-		const FESQLQueryResult QueryResult = Database->Execute(SQL, Bindings);
-
-		AsyncTask(ENamedThreads::GameThread, [QueryResult, OnComplete = MoveTemp(OnComplete)]() mutable
-		{
-			OnComplete(QueryResult);
-		});
-	});
-}
-
-void UESQLTableAsset::AsyncLoadRowsResult(
-	UObject* WorldContextObject,
-	TFunction<void(const FESQLQueryResult&)> OnComplete,
-	int32 MaxRows)
-{
-	if (!OnComplete)
-	{
-		return;
-	}
-
-	const FESQLQueryResult InitResult = Initialize(WorldContextObject);
-	if (!InitResult.bSuccess)
-	{
-		OnComplete(InitResult);
-		return;
-	}
-
-	if (!CachedDatabase || !CachedDatabase->IsOpen())
-	{
-		OnComplete(FESQLQueryResult::Failure(TEXT("Database connection is not available")));
-		return;
-	}
-
-	FString SQL;
-	const FESQLQueryResult BuildResult = BuildGetAllRowsSQL(MaxRows, SQL);
-	if (!BuildResult.bSuccess)
-	{
-		OnComplete(BuildResult);
-		return;
-	}
-
-	TSharedPtr<FESQLDatabase> Database = CachedDatabase;
-	AsyncTask(ENamedThreads::AnyBackgroundThreadNormalTask, [Database, SQL = MoveTemp(SQL), OnComplete = MoveTemp(OnComplete)]() mutable
-	{
-		const FESQLQueryResult QueryResult = Database->Execute(SQL);
-
-		AsyncTask(ENamedThreads::GameThread, [QueryResult, OnComplete = MoveTemp(OnComplete)]() mutable
-		{
-			OnComplete(QueryResult);
-		});
-	});
-}
-
-void UESQLTableAsset::AsyncQueryRowsResult(
-	UObject* WorldContextObject,
-	const FESQLQuerySpec& QuerySpec,
-	TFunction<void(const FESQLQueryResult&)> OnComplete)
-{
-	if (!OnComplete)
-	{
-		return;
-	}
-
-	const FESQLQueryResult InitResult = Initialize(WorldContextObject);
-	if (!InitResult.bSuccess)
-	{
-		OnComplete(InitResult);
-		return;
-	}
-
-	if (!CachedDatabase || !CachedDatabase->IsOpen())
-	{
-		OnComplete(FESQLQueryResult::Failure(TEXT("Database connection is not available")));
-		return;
-	}
-
-	FString SQL;
-	TArray<FESQLBindingValue> Bindings;
-	const FESQLQueryResult BuildResult = BuildQueryRowsSQL(QuerySpec, SQL, Bindings);
-	if (!BuildResult.bSuccess)
-	{
-		OnComplete(BuildResult);
-		return;
-	}
-
-	TSharedPtr<FESQLDatabase> Database = CachedDatabase;
-	AsyncTask(ENamedThreads::AnyBackgroundThreadNormalTask, [Database, SQL = MoveTemp(SQL), Bindings = MoveTemp(Bindings), OnComplete = MoveTemp(OnComplete)]() mutable
-	{
-		const FESQLQueryResult QueryResult = Bindings.Num() > 0
-			? Database->Execute(SQL, Bindings)
-			: Database->Execute(SQL);
-
-		AsyncTask(ENamedThreads::GameThread, [QueryResult, OnComplete = MoveTemp(OnComplete)]() mutable
-		{
-			OnComplete(QueryResult);
-		});
-	});
-}
-
-void UESQLTableAsset::AsyncSaveRowFromStruct(
-	UObject* WorldContextObject,
-	const void* StructData,
-	const UScriptStruct* StructType,
-	TFunction<void(const FESQLQueryResult&, const FString&)> OnComplete,
-	const FString& RowIdOverride)
-{
-	if (!OnComplete)
-	{
-		return;
-	}
-
-	const FESQLQueryResult ValidationResult = ValidateTypedStructAccess(StructType);
-	if (!ValidationResult.bSuccess)
-	{
-		OnComplete(ValidationResult, FString());
-		return;
-	}
-
-	const FESQLQueryResult InitResult = Initialize(WorldContextObject);
-	if (!InitResult.bSuccess)
-	{
-		OnComplete(InitResult, FString());
-		return;
-	}
-
-	if (!CachedDatabase || !CachedDatabase->IsOpen())
-	{
-		OnComplete(FESQLQueryResult::Failure(TEXT("Database connection is not available")), FString());
-		return;
-	}
-
-	FString SQL;
-	TArray<FESQLBindingValue> Bindings;
-	FString ResolvedRowId;
-	const FESQLQueryResult BuildResult = BuildSaveRowSQL(StructData, StructType, SQL, Bindings, ResolvedRowId, RowIdOverride);
-	if (!BuildResult.bSuccess)
-	{
-		OnComplete(BuildResult, FString());
-		return;
-	}
-
-	TSharedPtr<FESQLDatabase> Database = CachedDatabase;
-	AsyncTask(ENamedThreads::AnyBackgroundThreadNormalTask, [Database, SQL = MoveTemp(SQL), Bindings = MoveTemp(Bindings), ResolvedRowId = MoveTemp(ResolvedRowId), OnComplete = MoveTemp(OnComplete)]() mutable
-	{
-		const FESQLQueryResult SaveResult = Database->Execute(SQL, Bindings);
-
-		AsyncTask(ENamedThreads::GameThread, [SaveResult, ResolvedRowId = MoveTemp(ResolvedRowId), OnComplete = MoveTemp(OnComplete)]() mutable
-		{
-			OnComplete(SaveResult, SaveResult.bSuccess ? ResolvedRowId : FString());
-		});
-	});
-}
-
 FESQLQueryResult UESQLTableAsset::PopulateQueryResultIntoStruct(
 	const FESQLQueryResult& QueryResult,
 	void* OutStructData,
@@ -1495,657 +653,6 @@ FESQLQueryResult UESQLTableAsset::PopulateQueryResultIntoStructArray(
 	}
 
 	return PopulateStructArrayFromRows(QueryResult.Rows, OutArrayData, ArrayProperty);
-}
-
-FESQLQueryResult UESQLTableAsset::QueryPlayerRows(UESQLPlayerDBComponent* PlayerDBComponent, const FESQLQuerySpec& QuerySpec)
-{
-	TSharedPtr<FESQLDatabase> PlayerDatabase;
-	const FESQLQueryResult ResolveResult = ResolvePlayerDatabaseConnection(PlayerDBComponent, PlayerDatabase);
-	if (!ResolveResult.bSuccess)
-	{
-		return ResolveResult;
-	}
-
-	FString SQL;
-	TArray<FESQLBindingValue> Bindings;
-	const FESQLQueryResult BuildResult = BuildQueryRowsSQL(QuerySpec, SQL, Bindings);
-	if (!BuildResult.bSuccess)
-	{
-		return BuildResult;
-	}
-
-	return Bindings.Num() > 0
-		? PlayerDatabase->Execute(SQL, Bindings)
-		: PlayerDatabase->Execute(SQL);
-}
-
-FESQLQueryResult UESQLTableAsset::QueryPlayerRowsIntoStructArray(
-	UESQLPlayerDBComponent* PlayerDBComponent,
-	const FESQLQuerySpec& QuerySpec,
-	void* OutArrayData,
-	const FArrayProperty* ArrayProperty)
-{
-	const FESQLQueryResult QueryResult = QueryPlayerRows(PlayerDBComponent, QuerySpec);
-	if (!QueryResult.bSuccess)
-	{
-		return QueryResult;
-	}
-
-	const FESQLQueryResult PopulateResult = PopulateStructArrayFromRows(QueryResult.Rows, OutArrayData, ArrayProperty);
-	if (!PopulateResult.bSuccess)
-	{
-		return PopulateResult;
-	}
-
-	return QueryResult;
-}
-
-FESQLQueryResult UESQLTableAsset::QueryPlayerRowsIntoStructArray(
-	UObject* WorldContextObject,
-	const FString& PlayerId,
-	const FESQLQuerySpec& QuerySpec,
-	void* OutArrayData,
-	const FArrayProperty* ArrayProperty)
-{
-	const FESQLQueryResult QueryResult = QueryPlayerRows(WorldContextObject, PlayerId, QuerySpec);
-	if (!QueryResult.bSuccess)
-	{
-		return QueryResult;
-	}
-
-	const FESQLQueryResult PopulateResult = PopulateStructArrayFromRows(QueryResult.Rows, OutArrayData, ArrayProperty);
-	if (!PopulateResult.bSuccess)
-	{
-		return PopulateResult;
-	}
-
-	return QueryResult;
-}
-
-FESQLQueryResult UESQLTableAsset::QueryPlayerRows(UObject* WorldContextObject, const FString& PlayerId, const FESQLQuerySpec& QuerySpec)
-{
-	TSharedPtr<FESQLDatabase> PlayerDatabase;
-	const FESQLQueryResult ResolveResult = ResolvePlayerDatabaseConnection(WorldContextObject, PlayerId, PlayerDatabase);
-	if (!ResolveResult.bSuccess)
-	{
-		return ResolveResult;
-	}
-
-	FString SQL;
-	TArray<FESQLBindingValue> Bindings;
-	const FESQLQueryResult BuildResult = BuildQueryRowsSQL(QuerySpec, SQL, Bindings);
-	if (!BuildResult.bSuccess)
-	{
-		return BuildResult;
-	}
-
-	return Bindings.Num() > 0
-		? PlayerDatabase->Execute(SQL, Bindings)
-		: PlayerDatabase->Execute(SQL);
-}
-
-FESQLQueryResult UESQLTableAsset::CountPlayerRows(UESQLPlayerDBComponent* PlayerDBComponent, const FESQLQuerySpec& QuerySpec, int64& OutCount)
-{
-	OutCount = 0;
-
-	TSharedPtr<FESQLDatabase> PlayerDatabase;
-	const FESQLQueryResult ResolveResult = ResolvePlayerDatabaseConnection(PlayerDBComponent, PlayerDatabase);
-	if (!ResolveResult.bSuccess)
-	{
-		return ResolveResult;
-	}
-
-	FString SQL;
-	TArray<FESQLBindingValue> Bindings;
-	const FESQLQueryResult BuildResult = BuildQuerySQL(TEXT("SELECT COUNT(*) AS RowCount"), QuerySpec, false, false, SQL, Bindings);
-	if (!BuildResult.bSuccess)
-	{
-		return BuildResult;
-	}
-
-	const FESQLQueryResult QueryResult = Bindings.Num() > 0
-		? PlayerDatabase->Execute(SQL, Bindings)
-		: PlayerDatabase->Execute(SQL);
-	if (!QueryResult.bSuccess)
-	{
-		return QueryResult;
-	}
-
-	const FESQLRow* Row = QueryResult.GetFirstRow();
-	if (!Row)
-	{
-		return FESQLQueryResult::Failure(TEXT("Count query returned no rows"));
-	}
-
-	if (!Row->TryGetInt64(TEXT("RowCount"), OutCount))
-	{
-		return FESQLQueryResult::Failure(TEXT("Count query did not return a valid RowCount value"));
-	}
-
-	return QueryResult;
-}
-
-FESQLQueryResult UESQLTableAsset::CountPlayerRows(UObject* WorldContextObject, const FString& PlayerId, const FESQLQuerySpec& QuerySpec, int64& OutCount)
-{
-	OutCount = 0;
-
-	TSharedPtr<FESQLDatabase> PlayerDatabase;
-	const FESQLQueryResult ResolveResult = ResolvePlayerDatabaseConnection(WorldContextObject, PlayerId, PlayerDatabase);
-	if (!ResolveResult.bSuccess)
-	{
-		return ResolveResult;
-	}
-
-	FString SQL;
-	TArray<FESQLBindingValue> Bindings;
-	const FESQLQueryResult BuildResult = BuildQuerySQL(TEXT("SELECT COUNT(*) AS RowCount"), QuerySpec, false, false, SQL, Bindings);
-	if (!BuildResult.bSuccess)
-	{
-		return BuildResult;
-	}
-
-	const FESQLQueryResult QueryResult = Bindings.Num() > 0
-		? PlayerDatabase->Execute(SQL, Bindings)
-		: PlayerDatabase->Execute(SQL);
-	if (!QueryResult.bSuccess)
-	{
-		return QueryResult;
-	}
-
-	const FESQLRow* Row = QueryResult.GetFirstRow();
-	if (!Row)
-	{
-		return FESQLQueryResult::Failure(TEXT("Count query returned no rows"));
-	}
-
-	if (!Row->TryGetInt64(TEXT("RowCount"), OutCount))
-	{
-		return FESQLQueryResult::Failure(TEXT("Count query did not return a valid RowCount value"));
-	}
-
-	return QueryResult;
-}
-
-FESQLQueryResult UESQLTableAsset::CountRows(UObject* WorldContextObject, const FESQLQuerySpec& QuerySpec, int64& OutCount)
-{
-	OutCount = 0;
-
-	const FESQLQueryResult InitResult = Initialize(WorldContextObject);
-	if (!InitResult.bSuccess)
-	{
-		return InitResult;
-	}
-
-	if (!CachedDatabase || !CachedDatabase->IsOpen())
-	{
-		return FESQLQueryResult::Failure(TEXT("Database connection is not available"));
-	}
-
-	FString SQL;
-	TArray<FESQLBindingValue> Bindings;
-	const FESQLQueryResult BuildResult = BuildQuerySQL(TEXT("SELECT COUNT(*) AS RowCount"), QuerySpec, false, false, SQL, Bindings);
-	if (!BuildResult.bSuccess)
-	{
-		return BuildResult;
-	}
-
-	const FESQLQueryResult QueryResult = Bindings.Num() > 0
-		? CachedDatabase->Execute(SQL, Bindings)
-		: CachedDatabase->Execute(SQL);
-	if (!QueryResult.bSuccess)
-	{
-		return QueryResult;
-	}
-
-	const FESQLRow* Row = QueryResult.GetFirstRow();
-	if (!Row)
-	{
-		return FESQLQueryResult::Failure(TEXT("Count query returned no rows"));
-	}
-
-	if (!Row->TryGetInt64(TEXT("RowCount"), OutCount))
-	{
-		return FESQLQueryResult::Failure(TEXT("Count query did not return a valid RowCount value"));
-	}
-
-	return QueryResult;
-}
-
-bool UESQLTableAsset::TryCountPlayerRows(UESQLPlayerDBComponent* PlayerDBComponent, const FESQLQuerySpec& QuerySpec, int64& OutCount, FString* OutError)
-{
-	const FESQLQueryResult Result = CountPlayerRows(PlayerDBComponent, QuerySpec, OutCount);
-	if (!Result.bSuccess)
-	{
-		OutCount = 0;
-		if (OutError)
-		{
-			*OutError = Result.ErrorMessage;
-		}
-
-		return false;
-	}
-
-	if (OutError)
-	{
-		OutError->Reset();
-	}
-
-	return true;
-}
-
-bool UESQLTableAsset::TryCountPlayerRows(UObject* WorldContextObject, const FString& PlayerId, const FESQLQuerySpec& QuerySpec, int64& OutCount, FString* OutError)
-{
-	const FESQLQueryResult Result = CountPlayerRows(WorldContextObject, PlayerId, QuerySpec, OutCount);
-	if (!Result.bSuccess)
-	{
-		OutCount = 0;
-		if (OutError)
-		{
-			*OutError = Result.ErrorMessage;
-		}
-
-		return false;
-	}
-
-	if (OutError)
-	{
-		OutError->Reset();
-	}
-
-	return true;
-}
-
-bool UESQLTableAsset::TryCountRows(UObject* WorldContextObject, const FESQLQuerySpec& QuerySpec, int64& OutCount, FString* OutError)
-{
-	const FESQLQueryResult Result = CountRows(WorldContextObject, QuerySpec, OutCount);
-	if (!Result.bSuccess)
-	{
-		OutCount = 0;
-		if (OutError)
-		{
-			*OutError = Result.ErrorMessage;
-		}
-
-		return false;
-	}
-
-	if (OutError)
-	{
-		OutError->Reset();
-	}
-
-	return true;
-}
-
-FText UESQLTableAsset::ResolveRowDisplayText(
-	UObject* WorldContextObject,
-	const FESQLId& SqlId,
-	FString* OutError)
-{
-	return ResolveRowDisplayText(WorldContextObject, SqlId.Value, SqlId.LabelColumn, OutError);
-}
-
-bool UESQLTableAsset::DoesRowExist(UObject* WorldContextObject, const FString& RowId, FString* OutError)
-{
-	const FESQLQueryResult QueryResult = GetRowById(WorldContextObject, RowId);
-	if (!QueryResult.bSuccess)
-	{
-		if (OutError)
-		{
-			*OutError = QueryResult.ErrorMessage;
-		}
-
-		return false;
-	}
-
-	if (OutError)
-	{
-		OutError->Reset();
-	}
-
-	return QueryResult.Rows.Num() > 0;
-}
-
-bool UESQLTableAsset::DoesRowExist(UObject* WorldContextObject, const FESQLId& SqlId, FString* OutError)
-{
-	return DoesRowExist(WorldContextObject, SqlId.Value, OutError);
-}
-
-FESQLQueryResult UESQLTableAsset::DeleteRowById(UObject* WorldContextObject, const FString& RowId)
-{
-	if (RowId.IsEmpty())
-	{
-		return FESQLQueryResult::Failure(TEXT("RowId cannot be empty"));
-	}
-
-	const FESQLQueryResult InitResult = Initialize(WorldContextObject);
-	if (!InitResult.bSuccess)
-	{
-		return InitResult;
-	}
-
-	if (!CachedDatabase || !CachedDatabase->IsOpen())
-	{
-		return FESQLQueryResult::Failure(TEXT("Database connection is not available"));
-	}
-
-	if (PrimaryKeyColumn.IsEmpty())
-	{
-		return FESQLQueryResult::Failure(TEXT("PrimaryKeyColumn is not configured"));
-	}
-
-	const FString SQL = FString::Printf(
-		TEXT("DELETE FROM \"%s\" WHERE \"%s\"=?1"),
-		*TableName,
-		*PrimaryKeyColumn);
-
-	TArray<FString> Bindings;
-	Bindings.Add(RowId);
-	return CachedDatabase->Execute(SQL, Bindings);
-}
-
-FESQLQueryResult UESQLTableAsset::DeleteRowById(UObject* WorldContextObject, const FESQLId& SqlId)
-{
-	return DeleteRowById(WorldContextObject, SqlId.Value);
-}
-
-FESQLQueryResult UESQLTableAsset::DeletePlayerRowById(UESQLPlayerDBComponent* PlayerDBComponent, const FString& RowId)
-{
-	if (RowId.IsEmpty())
-	{
-		return FESQLQueryResult::Failure(TEXT("RowId cannot be empty"));
-	}
-
-	TSharedPtr<FESQLDatabase> PlayerDatabase;
-	const FESQLQueryResult ResolveResult = ResolvePlayerDatabaseConnection(PlayerDBComponent, PlayerDatabase);
-	if (!ResolveResult.bSuccess)
-	{
-		return ResolveResult;
-	}
-
-	if (PrimaryKeyColumn.IsEmpty())
-	{
-		return FESQLQueryResult::Failure(TEXT("PrimaryKeyColumn is not configured"));
-	}
-
-	const FString SQL = FString::Printf(
-		TEXT("DELETE FROM \"%s\" WHERE \"%s\"=?1"),
-		*TableName,
-		*PrimaryKeyColumn);
-
-	TArray<FString> Bindings;
-	Bindings.Add(RowId);
-	return PlayerDatabase->Execute(SQL, Bindings);
-}
-
-FESQLQueryResult UESQLTableAsset::DeletePlayerRowById(UObject* WorldContextObject, const FString& PlayerId, const FString& RowId)
-{
-	if (RowId.IsEmpty())
-	{
-		return FESQLQueryResult::Failure(TEXT("RowId cannot be empty"));
-	}
-
-	TSharedPtr<FESQLDatabase> PlayerDatabase;
-	const FESQLQueryResult ResolveResult = ResolvePlayerDatabaseConnection(WorldContextObject, PlayerId, PlayerDatabase);
-	if (!ResolveResult.bSuccess)
-	{
-		return ResolveResult;
-	}
-
-	if (PrimaryKeyColumn.IsEmpty())
-	{
-		return FESQLQueryResult::Failure(TEXT("PrimaryKeyColumn is not configured"));
-	}
-
-	const FString SQL = FString::Printf(
-		TEXT("DELETE FROM \"%s\" WHERE \"%s\"=?1"),
-		*TableName,
-		*PrimaryKeyColumn);
-
-	TArray<FString> Bindings;
-	Bindings.Add(RowId);
-	return PlayerDatabase->Execute(SQL, Bindings);
-}
-
-FESQLQueryResult UESQLTableAsset::DeletePlayerRowById(UESQLPlayerDBComponent* PlayerDBComponent, const FESQLId& SqlId)
-{
-	return DeletePlayerRowById(PlayerDBComponent, SqlId.Value);
-}
-
-FESQLQueryResult UESQLTableAsset::DeletePlayerRowById(UObject* WorldContextObject, const FString& PlayerId, const FESQLId& SqlId)
-{
-	return DeletePlayerRowById(WorldContextObject, PlayerId, SqlId.Value);
-}
-
-FESQLQueryResult UESQLTableAsset::SaveRowFromStruct(
-	UObject* WorldContextObject,
-	const void* StructData,
-	const UScriptStruct* StructType,
-	FString* OutResolvedRowId,
-	const FString& RowIdOverride)
-{
-	const FESQLQueryResult InitResult = Initialize(WorldContextObject);
-	if (!InitResult.bSuccess)
-	{
-		return InitResult;
-	}
-
-	if (!CachedDatabase || !CachedDatabase->IsOpen())
-	{
-		return FESQLQueryResult::Failure(TEXT("Database connection is not available"));
-	}
-
-	FString SQL;
-	TArray<FESQLBindingValue> Bindings;
-	FString ResolvedRowId;
-	const FESQLQueryResult BuildResult = BuildSaveRowSQL(StructData, StructType, SQL, Bindings, ResolvedRowId, RowIdOverride);
-	if (!BuildResult.bSuccess)
-	{
-		return BuildResult;
-	}
-
-	FESQLQueryResult SaveResult = CachedDatabase->Execute(SQL, Bindings);
-	if (SaveResult.bSuccess && OutResolvedRowId)
-	{
-		*OutResolvedRowId = ResolvedRowId;
-	}
-
-	return SaveResult;
-}
-
-FESQLQueryResult UESQLTableAsset::SavePlayerRowFromStruct(
-	UESQLPlayerDBComponent* PlayerDBComponent,
-	const void* StructData,
-	const UScriptStruct* StructType,
-	FString* OutResolvedRowId,
-	const FString& RowIdOverride)
-{
-	TSharedPtr<FESQLDatabase> PlayerDatabase;
-	const FESQLQueryResult ResolveResult = ResolvePlayerDatabaseConnection(PlayerDBComponent, PlayerDatabase);
-	if (!ResolveResult.bSuccess)
-	{
-		return ResolveResult;
-	}
-
-	FString SQL;
-	TArray<FESQLBindingValue> Bindings;
-	FString ResolvedRowId;
-	const FESQLQueryResult BuildResult = BuildSaveRowSQL(StructData, StructType, SQL, Bindings, ResolvedRowId, RowIdOverride);
-	if (!BuildResult.bSuccess)
-	{
-		return BuildResult;
-	}
-
-	FESQLQueryResult SaveResult = PlayerDatabase->Execute(SQL, Bindings);
-	if (SaveResult.bSuccess && OutResolvedRowId)
-	{
-		*OutResolvedRowId = ResolvedRowId;
-	}
-
-	return SaveResult;
-}
-
-FESQLQueryResult UESQLTableAsset::SavePlayerRowFromStruct(
-	UObject* WorldContextObject,
-	const FString& PlayerId,
-	const void* StructData,
-	const UScriptStruct* StructType,
-	FString* OutResolvedRowId,
-	const FString& RowIdOverride)
-{
-	TSharedPtr<FESQLDatabase> PlayerDatabase;
-	const FESQLQueryResult ResolveResult = ResolvePlayerDatabaseConnection(WorldContextObject, PlayerId, PlayerDatabase);
-	if (!ResolveResult.bSuccess)
-	{
-		return ResolveResult;
-	}
-
-	FString SQL;
-	TArray<FESQLBindingValue> Bindings;
-	FString ResolvedRowId;
-	const FESQLQueryResult BuildResult = BuildSaveRowSQL(StructData, StructType, SQL, Bindings, ResolvedRowId, RowIdOverride);
-	if (!BuildResult.bSuccess)
-	{
-		return BuildResult;
-	}
-
-	FESQLQueryResult SaveResult = PlayerDatabase->Execute(SQL, Bindings);
-	if (SaveResult.bSuccess && OutResolvedRowId)
-	{
-		*OutResolvedRowId = ResolvedRowId;
-	}
-
-	return SaveResult;
-}
-
-
-// ── InsertRowFromStruct (CustomThunk) ────────────────────────────────────────
-
-DEFINE_FUNCTION(UESQLTableAsset::execInsertRowFromStruct)
-{
-	// Step the struct parameter from the Blueprint VM stack
-	Stack.StepCompiledIn<FStructProperty>(nullptr);
-	void* StructData = Stack.MostRecentPropertyAddress;
-	FStructProperty* StructProp = CastField<FStructProperty>(Stack.MostRecentProperty);
-
-	P_FINISH;
-
-	FESQLQueryResult Result;
-
-	if (!StructData || !StructProp || !StructProp->Struct)
-	{
-		Result = FESQLQueryResult::Failure(TEXT("Invalid struct data passed to InsertRowFromStruct"));
-	}
-	else
-	{
-		UESQLTableAsset* Self = (UESQLTableAsset*)Context;
-
-		if (!Self->bInitialized)
-		{
-			Result = FESQLQueryResult::Failure(TEXT("SQL Table Asset not initialized. Call Initialize() first."));
-		}
-		else
-		{
-			// Extract struct fields to column values
-			TMap<FString, FESQLBindingValue> ColumnValues;
-			const UScriptStruct* StructType = StructProp->Struct;
-			Result = Self->BuildStructColumnBindings(StructData, StructType, ColumnValues);
-			if (!Result.bSuccess)
-			{
-				*(FESQLQueryResult*)RESULT_PARAM = Result;
-				return;
-			}
-
-			// Generate a RowName if PrimaryKeyColumn is "RowName" and not in struct
-			if (Self->PrimaryKeyColumn == TEXT("RowName") && !ColumnValues.Contains(TEXT("RowName")))
-			{
-				ColumnValues.Add(TEXT("RowName"), FESQLBindingValue::FromText(FGuid::NewGuid().ToString()));
-			}
-
-			// Insert via cached database
-			if (Self->CachedDatabase && Self->CachedDatabase->IsOpen())
-			{
-				// Build INSERT SQL
-				FString ColList, PlaceholderList;
-				TArray<FESQLBindingValue> Bindings;
-				int32 Idx = 1;
-
-				for (const auto& Pair : ColumnValues)
-				{
-					if (Idx > 1) { ColList += TEXT(", "); PlaceholderList += TEXT(", "); }
-					ColList += FString::Printf(TEXT("\"%s\""), *Pair.Key);
-					PlaceholderList += FString::Printf(TEXT("?%d"), Idx);
-					Bindings.Add(Pair.Value);
-					++Idx;
-				}
-
-				FString SQL = FString::Printf(TEXT("INSERT INTO \"%s\" (%s) VALUES (%s)"),
-					*Self->TableName, *ColList, *PlaceholderList);
-
-				Result = Self->CachedDatabase->Execute(SQL, Bindings);
-			}
-			else
-			{
-				Result = FESQLQueryResult::Failure(TEXT("Database connection is not available"));
-			}
-		}
-	}
-
-	*(FESQLQueryResult*)RESULT_PARAM = Result;
-}
-
-
-// ── GetAllRows ───────────────────────────────────────────────────────────────
-
-FESQLQueryResult UESQLTableAsset::GetAllRows(int32 MaxRows)
-{
-	if (!bInitialized || !CachedDatabase || !CachedDatabase->IsOpen())
-	{
-		return FESQLQueryResult::Failure(TEXT("SQL Table Asset not initialized"));
-	}
-
-	FString SQL;
-	const FESQLQueryResult BuildResult = BuildGetAllRowsSQL(MaxRows, SQL);
-	if (!BuildResult.bSuccess)
-	{
-		return BuildResult;
-	}
-
-	return CachedDatabase->Execute(SQL);
-}
-
-FESQLQueryResult UESQLTableAsset::GetRowById(UObject* WorldContextObject, FESQLId SqlId)
-{
-	return GetRowById(WorldContextObject, SqlId.Value);
-}
-
-FESQLQueryResult UESQLTableAsset::GetRowById(UObject* WorldContextObject, const FString& RowId)
-{
-	if (RowId.IsEmpty())
-	{
-		return FESQLQueryResult::Failure(TEXT("RowId cannot be empty"));
-	}
-
-	const FESQLQueryResult InitResult = Initialize(WorldContextObject);
-	if (!InitResult.bSuccess)
-	{
-		return InitResult;
-	}
-
-	if (!CachedDatabase || !CachedDatabase->IsOpen())
-	{
-		return FESQLQueryResult::Failure(TEXT("Database connection is not available"));
-	}
-
-	FString SQL;
-	TArray<FString> Bindings;
-	const FESQLQueryResult BuildResult = BuildGetRowByIdSQL(RowId, SQL, Bindings);
-	if (!BuildResult.bSuccess)
-	{
-		return BuildResult;
-	}
-
-	return CachedDatabase->Execute(SQL, Bindings);
 }
 
 FString UESQLTableAsset::ResolveColumnName(const FString& ColumnName) const
@@ -2189,28 +696,6 @@ FString UESQLTableAsset::GetEffectiveLabelColumn(const FString& LabelColumnOverr
 	}
 
 	return ResolveColumnName(DesiredLabelColumn);
-}
-
-int32 UESQLTableAsset::GetRowCount()
-{
-	if (!bInitialized || !CachedDatabase || !CachedDatabase->IsOpen())
-	{
-		return 0;
-	}
-
-	FESQLQueryResult Result = CachedDatabase->Execute(
-		FString::Printf(TEXT("SELECT COUNT(*) AS RowCount FROM \"%s\""), *TableName));
-
-	if (const FESQLRow* Row = Result.GetFirstRow())
-	{
-		int64 Count = 0;
-		if (Row->TryGetInt64(TEXT("RowCount"), Count))
-		{
-			return static_cast<int32>(Count);
-		}
-	}
-
-	return 0;
 }
 
 
@@ -2348,7 +833,11 @@ FESQLQueryResult UESQLTableAsset::SyncSchema(TSharedPtr<FESQLDatabase> Database)
 
 			const FString TempTable = TableName + TEXT("_migration_tmp");
 
-			Database->BeginTransaction();
+			const FESQLErrorResult BeginResult = Database->BeginTransaction();
+			if (!BeginResult.bSuccess)
+			{
+				return FESQLQueryResult::Failure(BeginResult.Error);
+			}
 
 			// CREATE new temp table
 			Database->Execute(FString::Printf(TEXT("CREATE TABLE \"%s\" (%s)"), *TempTable, *ColumnDefs));
@@ -2376,7 +865,11 @@ FESQLQueryResult UESQLTableAsset::SyncSchema(TSharedPtr<FESQLDatabase> Database)
 			Database->Execute(FString::Printf(TEXT("DROP TABLE \"%s\""), *TableName));
 			Database->Execute(FString::Printf(TEXT("ALTER TABLE \"%s\" RENAME TO \"%s\""), *TempTable, *TableName));
 
-			Database->CommitTransaction();
+			const FESQLErrorResult CommitResult = Database->CommitTransaction();
+			if (!CommitResult.bSuccess)
+			{
+				return FESQLQueryResult::Failure(CommitResult.Error);
+			}
 
 			UE_LOG(LogExtendedSQL, Log, TEXT("SyncSchema: Recreated table '%s' (dropped %d columns via migration)"),
 				*TableName, ColumnsToDrop.Num());
@@ -2384,6 +877,43 @@ FESQLQueryResult UESQLTableAsset::SyncSchema(TSharedPtr<FESQLDatabase> Database)
 	}
 
 	return FESQLQueryResult::Success();
+}
+
+bool UESQLTableAsset::ResolveAuthoringDatabase(
+	TSharedPtr<FESQLDatabase> InDatabase,
+	TSharedPtr<FESQLDatabase>& OutDatabase,
+	TSharedPtr<FESQLDatabase>& OutOwnedDatabase,
+	FString& OutError) const
+{
+	OutDatabase.Reset();
+	OutOwnedDatabase.Reset();
+	OutError.Reset();
+
+	if (InDatabase && InDatabase->IsOpen())
+	{
+		OutDatabase = InDatabase;
+		return true;
+	}
+
+	FString ResolvedDatabaseName = DatabaseName;
+	ResolvedDatabaseName.TrimStartAndEndInline();
+	if (ResolvedDatabaseName.IsEmpty())
+	{
+		OutError = TEXT("DatabaseName is not configured");
+		return false;
+	}
+
+	const FString DatabasePath = UESQLSettings::ResolveDatabaseFilePath(ResolvedDatabaseName);
+	const FESQLDatabaseOpenResult OpenResult = FESQLDatabase::Open(DatabasePath);
+	if (!OpenResult)
+	{
+		OutError = OpenResult.GetErrorMessage();
+		return false;
+	}
+
+	OutOwnedDatabase = OpenResult.GetValue();
+	OutDatabase = OutOwnedDatabase;
+	return true;
 }
 
 
@@ -2429,10 +959,10 @@ bool UESQLTableAsset::ValidateStruct(TArray<FESQLStructValidator::FFieldResult>&
 
 bool UESQLTableAsset::ExportToCSV(const FString& OutputFilePath, FString& OutError, TSharedPtr<FESQLDatabase> InDatabase) const
 {
-	TSharedPtr<FESQLDatabase> Db = InDatabase ? InDatabase : CachedDatabase;
-	if (!Db || !Db->IsOpen())
+	TSharedPtr<FESQLDatabase> Db;
+	TSharedPtr<FESQLDatabase> OwnedDatabase;
+	if (!ResolveAuthoringDatabase(InDatabase, Db, OwnedDatabase, OutError))
 	{
-		OutError = TEXT("Database not open");
 		return false;
 	}
 
@@ -2490,10 +1020,17 @@ bool UESQLTableAsset::ExportToCSV(const FString& OutputFilePath, FString& OutErr
 
 bool UESQLTableAsset::ImportFromCSV(const FString& InputFilePath, FString& OutError, TSharedPtr<FESQLDatabase> InDatabase)
 {
-	TSharedPtr<FESQLDatabase> Db = InDatabase ? InDatabase : CachedDatabase;
-	if (!Db || !Db->IsOpen())
+	TSharedPtr<FESQLDatabase> Db;
+	TSharedPtr<FESQLDatabase> OwnedDatabase;
+	if (!ResolveAuthoringDatabase(InDatabase, Db, OwnedDatabase, OutError))
 	{
-		OutError = TEXT("Database not open");
+		return false;
+	}
+
+	FString EnsureError;
+	if (!EnsureTableExists(Db, EnsureError))
+	{
+		OutError = EnsureError;
 		return false;
 	}
 
@@ -2525,7 +1062,12 @@ bool UESQLTableAsset::ImportFromCSV(const FString& InputFilePath, FString& OutEr
 	}
 
 	// Import data rows using UPSERT
-	Db->BeginTransaction();
+	const FESQLErrorResult BeginResult = Db->BeginTransaction();
+	if (!BeginResult.bSuccess)
+	{
+		OutError = BeginResult.GetErrorMessage();
+		return false;
+	}
 
 	for (int32 i = 1; i < Lines.Num(); ++i)
 	{
@@ -2581,60 +1123,47 @@ bool UESQLTableAsset::ImportFromCSV(const FString& InputFilePath, FString& OutEr
 		FESQLQueryResult InsertResult = Db->Execute(SQL, Bindings);
 		if (!InsertResult.bSuccess)
 		{
-			Db->RollbackTransaction();
-			OutError = FString::Printf(TEXT("CSV import failed at row %d: %s"), i, *InsertResult.ErrorMessage);
+			const FESQLErrorResult RollbackResult = Db->RollbackTransaction();
+			OutError = !RollbackResult.bSuccess
+				? FString::Printf(TEXT("CSV import failed at row %d: %s (rollback error: %s)"), i, *InsertResult.ErrorMessage, *RollbackResult.GetErrorMessage())
+				: FString::Printf(TEXT("CSV import failed at row %d: %s"), i, *InsertResult.ErrorMessage);
 			return false;
 		}
 	}
 
-	Db->CommitTransaction();
+	const FESQLErrorResult CommitResult = Db->CommitTransaction();
+	if (!CommitResult.bSuccess)
+	{
+		OutError = CommitResult.GetErrorMessage();
+		return false;
+	}
 	return true;
 }
 
-
-// ── VCS Pipeline (.sqldump) ──────────────────────────────────────────────────
-
-#include "VCSPipeline/ESQLDumpPipeline.h"
-
-bool UESQLTableAsset::ExportToSQLDump(const FString& DumpFilePath, FString& OutError, TSharedPtr<FESQLDatabase> InDatabase) const
+bool UESQLTableAsset::ExportToUSqlite(const FString& ProjectRoot, FString& OutError, TSharedPtr<FESQLDatabase> InDatabase) const
 {
-	TSharedPtr<FESQLDatabase> Db = InDatabase ? InDatabase : CachedDatabase;
-	if (!Db || !Db->IsOpen())
+	TSharedPtr<FESQLDatabase> Db;
+	TSharedPtr<FESQLDatabase> OwnedDatabase;
+	if (!ResolveAuthoringDatabase(InDatabase, Db, OwnedDatabase, OutError))
 	{
-		OutError = TEXT("Database not open");
 		return false;
 	}
 
-	return FESQLDumpPipeline::ExportDatabaseToDump(Db, DumpFilePath, OutError);
+	const FString TargetProjectRoot = ProjectRoot.IsEmpty() ? GetUSqliteProjectPath() : ProjectRoot;
+	return FESQLUsqliteSerializer::ExportDatabaseToProject(Db, TargetProjectRoot, OutError, this);
 }
 
-bool UESQLTableAsset::ImportFromSQLDump(const FString& DumpFilePath, FString& OutError, TSharedPtr<FESQLDatabase> InDatabase)
-{
-	TSharedPtr<FESQLDatabase> Db = InDatabase ? InDatabase : CachedDatabase;
-	if (!Db || !Db->IsOpen())
-	{
-		OutError = TEXT("Database not open");
-		return false;
-	}
-
-	return FESQLDumpPipeline::ImportDumpToDatabase(Db, DumpFilePath, OutError);
-}
-
-bool UESQLTableAsset::SyncDatabaseAndDump(FString& OutError)
+bool UESQLTableAsset::SyncDatabaseAndProject(FString& OutError)
 {
 	const FString DbPath = UESQLSettings::ResolveDatabaseFilePath(DatabaseName);
-	const FString DumpPath = FESQLDumpPipeline::GetDumpPathForDatabase(DbPath);
-
-	return FESQLDumpPipeline::SyncDatabaseAndDump(DbPath, DumpPath, OutError);
+	return FESQLUsqliteSerializer::SyncDatabaseAndProject(DbPath, GetUSqliteProjectPath(), OutError, this);
 }
 
-FString UESQLTableAsset::GetSQLDumpPath() const
+FString UESQLTableAsset::GetUSqliteProjectPath() const
 {
 	const FString DbPath = UESQLSettings::ResolveDatabaseFilePath(DatabaseName);
-	return FESQLDumpPipeline::GetDumpPathForDatabase(DbPath);
+	return FESQLUsqliteSerializer::GetProjectRootForDatabasePath(DbPath);
 }
-
-
 // ── Editor ───────────────────────────────────────────────────────────────────
 
 bool UESQLTableAsset::EnsureTableExists(TSharedPtr<FESQLDatabase> InDatabase, FString& OutError)
@@ -2691,6 +1220,120 @@ bool UESQLTableAsset::EnsureTableExists(TSharedPtr<FESQLDatabase> InDatabase, FS
 }
 
 #if WITH_EDITOR
+void UESQLTableAsset::GetValidationErrors(TArray<FText>& OutErrors) const
+{
+	OutErrors.Reset();
+
+	const FString EffectiveTableName = TableName.IsEmpty() && RowStruct ? RowStruct->GetName() : TableName;
+
+	if (!RowStruct)
+	{
+		OutErrors.Add(FText::FromString(TEXT("RowStruct must be set.")));
+	}
+
+	if (DatabaseName.TrimStartAndEnd().IsEmpty())
+	{
+		OutErrors.Add(FText::FromString(TEXT("DatabaseName must not be empty.")));
+	}
+
+	if (EffectiveTableName.TrimStartAndEnd().IsEmpty())
+	{
+		OutErrors.Add(FText::FromString(TEXT("TableName must not be empty.")));
+	}
+
+	if (PrimaryKeyColumn.TrimStartAndEnd().IsEmpty())
+	{
+		OutErrors.Add(FText::FromString(TEXT("PrimaryKeyColumn must not be empty.")));
+	}
+
+	if (RowStruct)
+	{
+		TArray<FESQLStructValidator::FFieldResult> Results;
+		if (!FESQLStructValidator::Validate(RowStruct, Results))
+		{
+			for (const FESQLStructValidator::FFieldResult& Field : Results)
+			{
+				if (!Field.bIsValid)
+				{
+					OutErrors.Add(FText::FromString(FString::Printf(
+						TEXT("RowStruct field '%s' (%s) is not supported: %s"),
+						*Field.FieldName,
+						*Field.UETypeName,
+						*Field.ErrorReason)));
+				}
+			}
+		}
+	}
+
+	const FString ProjectRoot = GetUSqliteProjectPath();
+	const FString ProjectManifestPath = FPaths::Combine(ProjectRoot, TEXT("project.json"));
+	if (IFileManager::Get().FileExists(*ProjectManifestPath))
+	{
+		FESQLUsqliteProject Project;
+		FString ProjectError;
+		if (!FESQLUsqliteSerializer::LoadProject(ProjectRoot, Project, ProjectError))
+		{
+			OutErrors.Add(FText::FromString(FString::Printf(TEXT(".usqlite project is invalid: %s"), *ProjectError)));
+		}
+		else if (!EffectiveTableName.TrimStartAndEnd().IsEmpty())
+		{
+			const FESQLUsqliteTableSchema* ProjectTable = Project.FindTable(EffectiveTableName);
+			if (!ProjectTable)
+			{
+				OutErrors.Add(FText::FromString(FString::Printf(
+					TEXT(".usqlite project '%s' does not contain schema for table '%s'."),
+					*Project.ProjectName,
+					*EffectiveTableName)));
+			}
+			else
+			{
+				if (!PrimaryKeyColumn.IsEmpty() && !ProjectTable->PrimaryKeyColumn.IsEmpty() && ProjectTable->PrimaryKeyColumn != PrimaryKeyColumn)
+				{
+					OutErrors.Add(FText::FromString(FString::Printf(
+						TEXT("Asset primary key '%s' does not match .usqlite primary key '%s'."),
+						*PrimaryKeyColumn,
+						*ProjectTable->PrimaryKeyColumn)));
+				}
+
+				if (RowStruct && !ProjectTable->RowStructPath.IsEmpty() && ProjectTable->RowStructPath != RowStruct->GetPathName())
+				{
+					OutErrors.Add(FText::FromString(FString::Printf(
+						TEXT("Asset RowStruct '%s' does not match .usqlite rowStructPath '%s'."),
+						*RowStruct->GetPathName(),
+						*ProjectTable->RowStructPath)));
+				}
+
+				if (!DefaultLabelColumn.IsEmpty() && !ProjectTable->LabelColumn.IsEmpty() && ProjectTable->LabelColumn != DefaultLabelColumn)
+				{
+					OutErrors.Add(FText::FromString(FString::Printf(
+						TEXT("Asset default label column '%s' does not match .usqlite label column '%s'."),
+						*DefaultLabelColumn,
+						*ProjectTable->LabelColumn)));
+				}
+			}
+		}
+	}
+}
+
+EDataValidationResult UESQLTableAsset::IsDataValid(FDataValidationContext& Context) const
+{
+	EDataValidationResult Result = Super::IsDataValid(Context);
+	if (Result == EDataValidationResult::NotValidated)
+	{
+		Result = EDataValidationResult::Valid;
+	}
+
+	TArray<FText> ValidationErrors;
+	GetValidationErrors(ValidationErrors);
+	for (const FText& ValidationError : ValidationErrors)
+	{
+		Context.AddError(ValidationError);
+		Result = EDataValidationResult::Invalid;
+	}
+
+	return Result;
+}
+
 void UESQLTableAsset::PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent)
 {
 	Super::PostEditChangeProperty(PropertyChangedEvent);

@@ -3,6 +3,7 @@
 #include "K2Node/SGraphPinESQLId.h"
 
 #include "Core/ESQLDatabase.h"
+#include "TableAssetEditor/ESQLTableEditorDatabaseRegistry.h"
 #include "EdGraph/EdGraphNode.h"
 #include "EdGraph/EdGraphPin.h"
 #include "EdGraphSchema_K2.h"
@@ -227,18 +228,18 @@ bool SGraphPinESQLId::QueryEntries(const FPickerConfig& Config, TArray<FESQLIdGr
 
 	if (CachedTableAsset.IsValid())
 	{
-		Database = CachedTableAsset->GetCachedDatabase();
+		Database = FESQLTableEditorDatabaseRegistry::Find(CachedTableAsset.Get());
 	}
 
 	if (!Database || !Database->IsOpen())
 	{
-		FString OpenError;
-		Database = FESQLDatabase::OpenReadOnly(DbPath, OpenError);
-		if (!Database)
+		const FESQLDatabaseOpenResult OpenResult = FESQLDatabase::OpenReadOnly(DbPath);
+		if (!OpenResult)
 		{
-			OutError = FString::Printf(TEXT("Failed to open database: %s"), *OpenError);
+			OutError = FString::Printf(TEXT("Failed to open database: %s"), *OpenResult.GetErrorMessage());
 			return false;
 		}
+		Database = OpenResult.GetValue();
 		bOwnsConnection = true;
 	}
 
@@ -327,20 +328,7 @@ bool SGraphPinESQLId::QueryEntries(const FPickerConfig& Config, TArray<FESQLIdGr
 
 FString SGraphPinESQLId::ResolveDatabasePath(const FString& DatabaseName) const
 {
-	const FString FullPath = UESQLSettings::ResolveDatabaseFilePath(DatabaseName);
-	IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
-	if (PlatformFile.FileExists(*FullPath))
-	{
-		return FullPath;
-	}
-
-	const FString ContentPath = FPaths::Combine(FPaths::ProjectContentDir(), TEXT("Database"), DatabaseName + TEXT(".db"));
-	if (PlatformFile.FileExists(*ContentPath))
-	{
-		return ContentPath;
-	}
-
-	return FString();
+	return UESQLSettings::ResolveExistingDatabaseFilePath(DatabaseName, true);
 }
 
 bool SGraphPinESQLId::IsSafeIdentifier(const FString& Identifier)

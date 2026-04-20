@@ -2,10 +2,10 @@
 
 #include "K2Node/ESQLK2FieldFilterUtils.h"
 
-#include "Blueprint/ESQLBlueprintBridge.h"
 #include "EdGraph/EdGraphNode.h"
 #include "EdGraph/EdGraphPin.h"
 #include "EdGraphSchema_K2.h"
+#include "K2Node/ESQLRuntimeReflectionUtils.h"
 #include "K2Node_CallFunction.h"
 #include "KismetCompiler.h"
 #include "Shared/ESQLTypes.h"
@@ -229,7 +229,12 @@ void ESQLK2FieldFilterUtils::MoveValuePinToBindingPin(FKismetCompilerContext& Co
 	}
 
 	UK2Node_CallFunction* ConversionNode = CompilerContext.SpawnIntermediateNode<UK2Node_CallFunction>(SourceNode, SourceGraph);
-	ConversionNode->FunctionReference.SetExternalMember(GET_FUNCTION_NAME_CHECKED(UESQLBlueprintBridge, MakeSQLBindingValue), UESQLBlueprintBridge::StaticClass());
+	static const FName MakeSQLBindingValueFunctionName(TEXT("MakeSQLBindingValue"));
+	if (!ESQLRuntimeReflectionUtils::BindSQLBlueprintLibraryFunction(*ConversionNode, MakeSQLBindingValueFunctionName))
+	{
+		CompilerContext.MessageLog.Error(TEXT("@@ could not resolve the runtime SQL blueprint helper class."), SourceNode);
+		return;
+	}
 	ConversionNode->AllocateDefaultPins();
 
 	UEdGraphPin* ConversionValuePin = FindPinByName(ConversionNode, TEXT("Value"));

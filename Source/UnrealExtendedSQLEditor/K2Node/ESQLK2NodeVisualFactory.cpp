@@ -4,7 +4,6 @@
 
 #include "EdGraph/EdGraphNode.h"
 #include "K2Node/ESQLAsyncTypedK2Nodes.h"
-#include "K2Node/ESQLPlayerTypedK2Nodes.h"
 #include "K2Node/ESQLQueryBuilderK2Nodes.h"
 #include "K2Node/ESQLRowQueryK2Nodes.h"
 #include "K2Node/SESQLQueryBuilderGraphNode.h"
@@ -18,7 +17,6 @@ namespace
 				|| Node->IsA<UK2Node_ESQLQueryRows>()
 				|| Node->IsA<UK2Node_ESQLCountRowsQuery>()
 				|| Node->IsA<UK2Node_ESQLFindRows>()
-				|| Node->IsA<UK2Node_ESQLFindPlayerRows>()
 				|| Node->IsA<UK2Node_ESQLAsyncFindRows>());
 	}
 }

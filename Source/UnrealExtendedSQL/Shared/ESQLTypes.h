@@ -46,36 +46,33 @@ enum class EESQLDatabaseScope : uint8
 	 * Local to whatever process opens it.
 	 * Standalone: Saved/Databases/<Name>.db
 	 * Client:     Saved/Databases/<Name>.db     (client-local, NOT replicated)
-	 * DediServer:  Saved/Databases/<Name>.db     (server machine only)
-	 * ListenServer: Saved/Databases/<Name>.db    (host machine only)
+	 * DediServer: Saved/Databases/<Name>.db     (server machine only)
+	 * ListenServer: Saved/Databases/<Name>.db   (host machine only)
 	 *
 	 * Use for: save-game data in singleplayer, local caches, mod content.
 	 */
-	Local,
+	Local = 0,
 
 	/**
-	 * Server-authoritative shared database.
+	 * Authoritative shared database.
 	 * Only the server (dedicated or listen-server host) may open it.
-	 * Calls from a pure client return an error.
+	 * Calls from a pure client return an authority error.
 	 *
 	 * Path: Saved/Databases/Server/<Name>.db
 	 *
 	 * Use for: world state, match logs, economy tables, NPC data
 	 * that must be consistent across all connected players.
 	 */
-	Server,
+	Shared = 1,
 
 	/**
-	 * Per-player database managed by the server.
-	 * Server creates one .db per connected player, keyed by UniqueNetId.
-	 * Opened when the player joins, closed when they leave.
+	 * Shipped read-only content database.
+	 * Opened read-only on any peer. Writes are always rejected.
 	 *
-	 * Path: Saved/Databases/Players/<UniqueNetId>/<Name>.db
-	 *
-	 * Use for: per-player inventory, quest progress, stats
-	 * in a server-authoritative multiplayer session.
+	 * Path: resolved from cooked/project content, extracted to a writable cache
+	 * when the payload is not already available as a normal OS file.
 	 */
-	PlayerScoped
+	Readonly = 3
 };
 
 
@@ -159,7 +156,7 @@ struct UNREALEXTENDEDSQL_API FESQLColumn
 	EESQLColumnType Type = EESQLColumnType::Null;
 };
 
-USTRUCT(BlueprintType, meta = (DisableSplitPin, HasNativeMake = "/Script/UnrealExtendedSQL.ESQLBlueprintBridge.MakeSQLBindingValue"))
+USTRUCT(BlueprintType, meta = (DisableSplitPin, HasNativeMake = "/Script/UnrealExtendedSQL.ESQLBlueprintLibrary.MakeSQLBindingValue"))
 struct UNREALEXTENDEDSQL_API FESQLBindingValue
 {
 	GENERATED_BODY()
@@ -445,7 +442,7 @@ enum class EESQLFilterOperation : uint8
 	In
 };
 
-USTRUCT(BlueprintType, meta = (HasNativeMake = "/Script/UnrealExtendedSQL.ESQLBlueprintBridge.MakeSQLFieldFilter"))
+USTRUCT(BlueprintType, meta = (HasNativeMake = "/Script/UnrealExtendedSQL.ESQLBlueprintLibrary.MakeSQLFieldFilter"))
 struct UNREALEXTENDEDSQL_API FESQLFieldFilter
 {
 	GENERATED_BODY()
@@ -476,7 +473,7 @@ struct UNREALEXTENDEDSQL_API FESQLFieldFilter
 	}
 };
 
-USTRUCT(BlueprintType, meta = (HasNativeMake = "/Script/UnrealExtendedSQL.ESQLBlueprintBridge.MakeSQLSortRule"))
+USTRUCT(BlueprintType, meta = (HasNativeMake = "/Script/UnrealExtendedSQL.ESQLBlueprintLibrary.MakeSQLSortRule"))
 struct UNREALEXTENDEDSQL_API FESQLSortRule
 {
 	GENERATED_BODY()
@@ -496,7 +493,7 @@ struct UNREALEXTENDEDSQL_API FESQLSortRule
 	}
 };
 
-USTRUCT(BlueprintType, meta = (HasNativeMake = "/Script/UnrealExtendedSQL.ESQLBlueprintBridge.MakeSQLQuerySpec"))
+USTRUCT(BlueprintType, meta = (HasNativeMake = "/Script/UnrealExtendedSQL.ESQLBlueprintLibrary.MakeSQLQuerySpec"))
 struct UNREALEXTENDEDSQL_API FESQLQuerySpec
 {
 	GENERATED_BODY()
@@ -534,6 +531,294 @@ struct UNREALEXTENDEDSQL_API FESQLQuerySpec
 	}
 };
 
+struct UNREALEXTENDEDSQL_API FESQLTableSchemaColumn
+{
+	FString Name;
+	FString SQLiteType;
+	bool bPrimaryKey = false;
+	bool bNullable = true;
+	FString DefaultValue;
+};
+
+struct UNREALEXTENDEDSQL_API FESQLTableSchema
+{
+	FString DatabaseName;
+	FString TableName;
+	FString PrimaryKeyColumn;
+	FString LabelColumn;
+	EESQLDatabaseScope Scope = EESQLDatabaseScope::Local;
+	EESQLDatabasePersistence Persistence = EESQLDatabasePersistence::Persistent;
+	const UScriptStruct* RowStruct = nullptr;
+	TArray<FESQLTableSchemaColumn> Columns;
+
+	bool IsValid() const
+	{
+		return RowStruct != nullptr
+			&& !DatabaseName.TrimStartAndEnd().IsEmpty()
+			&& !TableName.TrimStartAndEnd().IsEmpty()
+			&& !PrimaryKeyColumn.TrimStartAndEnd().IsEmpty();
+	}
+
+	const FESQLTableSchemaColumn* FindColumn(const FString& ColumnName) const
+	{
+		return Columns.FindByPredicate([&ColumnName](const FESQLTableSchemaColumn& Column)
+		{
+			return Column.Name == ColumnName;
+		});
+	}
+
+	FString GetEffectiveLabelColumn() const
+	{
+		return LabelColumn.TrimStartAndEnd().IsEmpty() ? PrimaryKeyColumn : LabelColumn;
+	}
+
+	bool HasColumn(const FString& ColumnName) const
+	{
+		return FindColumn(ColumnName) != nullptr;
+	}
+	};
+
+
+// ── Structured Errors ───────────────────────────────────────────────────────
+
+UENUM(BlueprintType)
+enum class EESQLErrorCode : uint8
+{
+	None,
+	Unknown,
+	InvalidArgument,
+	InvalidState,
+	NotFound,
+	OpenFailed,
+	PrepareFailed,
+	BindFailed,
+	StepFailed,
+	PragmaFailed,
+	TransactionFailed,
+	MigrationFailed,
+	BackupFailed,
+	RestoreFailed,
+	ExportFailed,
+	ImportFailed,
+	IoFailure,
+	AuthorityViolation,
+	ReadonlyViolation,
+	WrongThread,
+	Cancelled
+};
+
+USTRUCT(BlueprintType)
+struct UNREALEXTENDEDSQL_API FESQLError
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadOnly, Category = "SQL|Error")
+	EESQLErrorCode Code = EESQLErrorCode::None;
+
+	UPROPERTY(BlueprintReadOnly, Category = "SQL|Error")
+	FString Message;
+
+	UPROPERTY(BlueprintReadOnly, Category = "SQL|Error")
+	FString SqlFragment;
+
+	bool HasError() const
+	{
+		return Code != EESQLErrorCode::None || !Message.IsEmpty() || !SqlFragment.IsEmpty();
+	}
+
+	static FESQLError Make(EESQLErrorCode InCode, FString InMessage, FString InSqlFragment = FString())
+	{
+		FESQLError Error;
+		Error.Code = InCode;
+		Error.Message = MoveTemp(InMessage);
+		Error.SqlFragment = MoveTemp(InSqlFragment);
+		return Error;
+	}
+};
+
+struct FESQLTransactionLifetime;
+
+USTRUCT(BlueprintType)
+struct UNREALEXTENDEDSQL_API FESQLTicket
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadOnly, Category = "SQL|Async")
+	FGuid Id;
+
+	UPROPERTY(BlueprintReadOnly, Category = "SQL|Async")
+	FName DatabaseName;
+
+	bool IsValid() const
+	{
+		return Id.IsValid() && !DatabaseName.IsNone();
+	}
+
+	void Reset()
+	{
+		Id.Invalidate();
+		DatabaseName = NAME_None;
+	}
+};
+
+USTRUCT(BlueprintType)
+struct UNREALEXTENDEDSQL_API FESQLMigrationStep
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SQL|Migration")
+	int32 Sequence = 0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SQL|Migration")
+	FString Name;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SQL|Migration")
+	FString Sql;
+};
+
+USTRUCT(BlueprintType)
+struct UNREALEXTENDEDSQL_API FESQLMigrationSet
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "SQL|Migration")
+	TArray<FESQLMigrationStep> Steps;
+
+	bool IsEmpty() const
+	{
+		return Steps.Num() == 0;
+	}
+};
+
+USTRUCT(BlueprintType)
+struct UNREALEXTENDEDSQL_API FESQLTransactionHandle
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadOnly, Category = "SQL|Transaction")
+	FName DatabaseName;
+
+	UPROPERTY(BlueprintReadOnly, Category = "SQL|Transaction")
+	int64 Id = 0;
+
+	UPROPERTY(BlueprintReadOnly, Category = "SQL|Transaction")
+	int32 OwningThreadId = 0;
+
+	bool IsValid() const
+	{
+		return !DatabaseName.IsNone() && Id != 0 && Lifetime.IsValid();
+	}
+
+	void Reset()
+	{
+		DatabaseName = NAME_None;
+		Id = 0;
+		OwningThreadId = 0;
+		Lifetime.Reset();
+	}
+
+private:
+	TSharedPtr<FESQLTransactionLifetime, ESPMode::ThreadSafe> Lifetime;
+
+	friend class UESQLSubsystem;
+};
+
+struct UNREALEXTENDEDSQL_API FESQLErrorResult
+{
+	bool bSuccess = true;
+	FESQLError Error;
+
+	static FESQLErrorResult Success()
+	{
+		return FESQLErrorResult();
+	}
+
+	static FESQLErrorResult Failure(FESQLError InError)
+	{
+		FESQLErrorResult Result;
+		Result.bSuccess = false;
+		Result.Error = MoveTemp(InError);
+		return Result;
+	}
+
+	bool HasError() const
+	{
+		return !bSuccess && Error.HasError();
+	}
+
+	const FString& GetErrorMessage() const
+	{
+		return Error.Message;
+	}
+};
+
+template <typename TValue>
+class TESQLValueOrError
+{
+public:
+	static TESQLValueOrError MakeValue(TValue InValue)
+	{
+		TESQLValueOrError Result;
+		Result.Value.Emplace(MoveTemp(InValue));
+		return Result;
+	}
+
+	static TESQLValueOrError MakeError(FESQLError InError)
+	{
+		TESQLValueOrError Result;
+		Result.Error.Emplace(MoveTemp(InError));
+		return Result;
+	}
+
+	bool IsValue() const
+	{
+		return Value.IsSet();
+	}
+
+	bool IsError() const
+	{
+		return Error.IsSet();
+	}
+
+	explicit operator bool() const
+	{
+		return IsValue();
+	}
+
+	const TValue& GetValue() const
+	{
+		check(Value.IsSet());
+		return Value.GetValue();
+	}
+
+	TValue& GetValue()
+	{
+		check(Value.IsSet());
+		return Value.GetValue();
+	}
+
+	TValue ConsumeValue()
+	{
+		check(Value.IsSet());
+		return MoveTemp(Value.GetValue());
+	}
+
+	const FESQLError& GetError() const
+	{
+		check(Error.IsSet());
+		return Error.GetValue();
+	}
+
+	const FString& GetErrorMessage() const
+	{
+		return GetError().Message;
+	}
+
+private:
+	TOptional<TValue> Value;
+	TOptional<FESQLError> Error;
+};
+
 
 // ── Query Result ─────────────────────────────────────────────────────────────
 
@@ -547,6 +832,9 @@ struct UNREALEXTENDEDSQL_API FESQLQueryResult
 
 	UPROPERTY(BlueprintReadOnly, Category = "SQL")
 	FString ErrorMessage;
+
+	UPROPERTY(BlueprintReadOnly, Category = "SQL")
+	FESQLError Error;
 
 	UPROPERTY(BlueprintReadOnly, Category = "SQL")
 	TArray<FESQLColumn> ColumnDefinitions;
@@ -567,6 +855,8 @@ struct UNREALEXTENDEDSQL_API FESQLQueryResult
 	{
 		FESQLQueryResult Result;
 		Result.bSuccess = true;
+		Result.Error = FESQLError();
+		Result.ErrorMessage.Reset();
 		return Result;
 	}
 
@@ -579,16 +869,24 @@ struct UNREALEXTENDEDSQL_API FESQLQueryResult
 		Result.ColumnDefinitions = InColumns;
 		Result.RowsAffected = InRowsAffected;
 		Result.LastInsertRowId = InLastInsertRowId;
+		Result.Error = FESQLError();
+		Result.ErrorMessage.Reset();
+		return Result;
+	}
+
+	static FESQLQueryResult Failure(FESQLError InError)
+	{
+		FESQLQueryResult Result;
+		Result.bSuccess = false;
+		Result.ErrorMessage = InError.Message;
+		Result.Error = MoveTemp(InError);
 		return Result;
 	}
 
 	/** Creates a failure result with an error message. */
 	static FESQLQueryResult Failure(const FString& InErrorMessage)
 	{
-		FESQLQueryResult Result;
-		Result.bSuccess = false;
-		Result.ErrorMessage = InErrorMessage;
-		return Result;
+		return Failure(FESQLError::Make(EESQLErrorCode::Unknown, InErrorMessage));
 	}
 
 	/** Explicit TCHAR* overload to disambiguate TEXT("…"). */
@@ -632,6 +930,3 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnESQLQueryComplete, const FESQLQue
 
 /** Single-cast callback for async queries. */
 DECLARE_DYNAMIC_DELEGATE_OneParam(FOnESQLQueryCompleteCallback, const FESQLQueryResult&, Result);
-
-/** Fired when a player database is opened or closed. */
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnESQLPlayerDBEvent, APlayerController*, PlayerController, const FString&, PlayerId);

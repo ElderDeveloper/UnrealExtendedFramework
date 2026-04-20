@@ -15,7 +15,7 @@ class UESQLTableAsset;
 struct FLinearColor;
 
 UCLASS(Abstract)
-class UNREALEXTENDEDSQLEDITOR_API UK2Node_ESQLTypedRowBridgeBase : public UK2Node
+class UNREALEXTENDEDSQLEDITOR_API UK2Node_ESQLTypedRowSubsystemBase : public UK2Node
 {
 	GENERATED_BODY()
 
@@ -38,15 +38,15 @@ public:
 	virtual bool IsNodeSafeToIgnore() const override { return true; }
 
 protected:
-	virtual FName GetBridgeFunctionName() const PURE_VIRTUAL(UK2Node_ESQLTypedRowBridgeBase::GetBridgeFunctionName, return NAME_None;);
-	virtual FText GetMenuTitleText() const PURE_VIRTUAL(UK2Node_ESQLTypedRowBridgeBase::GetMenuTitleText, return FText::GetEmpty(););
-	virtual FText GetNodeTooltipText() const PURE_VIRTUAL(UK2Node_ESQLTypedRowBridgeBase::GetNodeTooltipText, return FText::GetEmpty(););
-	virtual FName GetTypedRowPinName() const PURE_VIRTUAL(UK2Node_ESQLTypedRowBridgeBase::GetTypedRowPinName, return NAME_None;);
-	virtual FText GetTypedRowPinFriendlyName() const PURE_VIRTUAL(UK2Node_ESQLTypedRowBridgeBase::GetTypedRowPinFriendlyName, return FText::GetEmpty(););
-	virtual FText GetTypedRowPinDescription() const PURE_VIRTUAL(UK2Node_ESQLTypedRowBridgeBase::GetTypedRowPinDescription, return FText::GetEmpty(););
-	virtual EEdGraphPinDirection GetTypedRowPinDirection() const PURE_VIRTUAL(UK2Node_ESQLTypedRowBridgeBase::GetTypedRowPinDirection, return EGPD_Input;);
-	virtual void AllocateOperationPins() PURE_VIRTUAL(UK2Node_ESQLTypedRowBridgeBase::AllocateOperationPins, );
-	virtual void ExpandOperationPins(FKismetCompilerContext& CompilerContext, UEdGraph* SourceGraph, UK2Node_CallFunction* FunctionNode) PURE_VIRTUAL(UK2Node_ESQLTypedRowBridgeBase::ExpandOperationPins, );
+	virtual FName GetSubsystemFunctionName() const PURE_VIRTUAL(UK2Node_ESQLTypedRowSubsystemBase::GetSubsystemFunctionName, return NAME_None;);
+	virtual FText GetMenuTitleText() const PURE_VIRTUAL(UK2Node_ESQLTypedRowSubsystemBase::GetMenuTitleText, return FText::GetEmpty(););
+	virtual FText GetNodeTooltipText() const PURE_VIRTUAL(UK2Node_ESQLTypedRowSubsystemBase::GetNodeTooltipText, return FText::GetEmpty(););
+	virtual FName GetTypedRowPinName() const PURE_VIRTUAL(UK2Node_ESQLTypedRowSubsystemBase::GetTypedRowPinName, return NAME_None;);
+	virtual FText GetTypedRowPinFriendlyName() const PURE_VIRTUAL(UK2Node_ESQLTypedRowSubsystemBase::GetTypedRowPinFriendlyName, return FText::GetEmpty(););
+	virtual FText GetTypedRowPinDescription() const PURE_VIRTUAL(UK2Node_ESQLTypedRowSubsystemBase::GetTypedRowPinDescription, return FText::GetEmpty(););
+	virtual EEdGraphPinDirection GetTypedRowPinDirection() const PURE_VIRTUAL(UK2Node_ESQLTypedRowSubsystemBase::GetTypedRowPinDirection, return EGPD_Input;);
+	virtual void AllocateOperationPins() PURE_VIRTUAL(UK2Node_ESQLTypedRowSubsystemBase::AllocateOperationPins, );
+	virtual void ExpandOperationPins(FKismetCompilerContext& CompilerContext, UEdGraph* SourceGraph, UK2Node_CallFunction* FunctionNode) PURE_VIRTUAL(UK2Node_ESQLTypedRowSubsystemBase::ExpandOperationPins, );
 	virtual void ValidateOperationPins(class FCompilerResultsLog& MessageLog) const {}
 	virtual void RefreshCustomPinTypes() {}
 
@@ -65,12 +65,12 @@ private:
 };
 
 UCLASS()
-class UNREALEXTENDEDSQLEDITOR_API UK2Node_ESQLGetRow : public UK2Node_ESQLTypedRowBridgeBase
+class UNREALEXTENDEDSQLEDITOR_API UK2Node_ESQLGetRow : public UK2Node_ESQLTypedRowSubsystemBase
 {
 	GENERATED_BODY()
 
 protected:
-	virtual FName GetBridgeFunctionName() const override;
+	virtual FName GetSubsystemFunctionName() const override;
 	virtual FText GetMenuTitleText() const override;
 	virtual FText GetNodeTooltipText() const override;
 	virtual FName GetTypedRowPinName() const override;
@@ -83,12 +83,12 @@ protected:
 };
 
 UCLASS()
-class UNREALEXTENDEDSQLEDITOR_API UK2Node_ESQLResolveSQLIdRow : public UK2Node_ESQLTypedRowBridgeBase
+class UNREALEXTENDEDSQLEDITOR_API UK2Node_ESQLResolveSQLIdRow : public UK2Node_ESQLTypedRowSubsystemBase
 {
 	GENERATED_BODY()
 
 protected:
-	virtual FName GetBridgeFunctionName() const override;
+	virtual FName GetSubsystemFunctionName() const override;
 	virtual FText GetMenuTitleText() const override;
 	virtual FText GetNodeTooltipText() const override;
 	virtual FName GetTypedRowPinName() const override;
@@ -100,12 +100,12 @@ protected:
 };
 
 UCLASS()
-class UNREALEXTENDEDSQLEDITOR_API UK2Node_ESQLSaveRow : public UK2Node_ESQLTypedRowBridgeBase
+class UNREALEXTENDEDSQLEDITOR_API UK2Node_ESQLSaveRow : public UK2Node_ESQLTypedRowSubsystemBase
 {
 	GENERATED_BODY()
 
 protected:
-	virtual FName GetBridgeFunctionName() const override;
+	virtual FName GetSubsystemFunctionName() const override;
 	virtual FText GetMenuTitleText() const override;
 	virtual FText GetNodeTooltipText() const override;
 	virtual FName GetTypedRowPinName() const override;
@@ -120,12 +120,12 @@ private:
 };
 
 UCLASS(meta = (ESQLHideFromBlueprintPalette = "true"))
-class UNREALEXTENDEDSQLEDITOR_API UK2Node_ESQLFindFirstRowByField : public UK2Node_ESQLTypedRowBridgeBase
+class UNREALEXTENDEDSQLEDITOR_API UK2Node_ESQLFindFirstRowByField : public UK2Node_ESQLTypedRowSubsystemBase
 {
 	GENERATED_BODY()
 
 protected:
-	virtual FName GetBridgeFunctionName() const override;
+	virtual FName GetSubsystemFunctionName() const override;
 	virtual FText GetMenuTitleText() const override;
 	virtual FText GetNodeTooltipText() const override;
 	virtual FName GetTypedRowPinName() const override;

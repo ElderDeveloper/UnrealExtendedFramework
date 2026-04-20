@@ -1,6 +1,6 @@
 // Copyright Kemal Erdem YILMAZ. All Rights Reserved.
-// Adapted from Epic Games SRowEditor — struct-aware property editor preserved,
-// all data reads/writes go through FESQLDatabase.
+// Adapted from Epic Games SRowEditor — struct-aware property preview preserved,
+// all data reads go through FESQLDatabase.
 
 #include "SESQLRowEditor.h"
 #include "TableAsset/ESQLTableAsset.h"
@@ -45,11 +45,6 @@ void SESQLRowEditor::Construct(const FArguments& InArgs, UESQLTableAsset* InTabl
 
 	StructureDetailView = PropertyModule.CreateStructureDetailView(DetailsViewArgs, StructureViewArgs, StructInstance);
 
-	if (StructureDetailView.IsValid())
-	{
-		StructureDetailView->GetOnFinishedChangingPropertiesDelegate().AddSP(this, &SESQLRowEditor::OnPropertyValueChanged);
-	}
-
 	ChildSlot
 	[
 		SNew(SVerticalBox)
@@ -66,9 +61,13 @@ void SESQLRowEditor::Construct(const FArguments& InArgs, UESQLTableAsset* InTabl
 		+ SVerticalBox::Slot()
 		.FillHeight(1.0f)
 		[
-			StructureDetailView.IsValid()
-				? StructureDetailView->GetWidget().ToSharedRef()
-				: SNullWidget::NullWidget
+			SNew(SBox)
+			.IsEnabled(false)
+			[
+				StructureDetailView.IsValid()
+					? StructureDetailView->GetWidget().ToSharedRef()
+					: SNullWidget::NullWidget
+			]
 		]
 	];
 
@@ -232,63 +231,6 @@ bool SESQLRowEditor::LoadRowDataIntoStruct()
 	return true;
 }
 
-
-void SESQLRowEditor::OnPropertyValueChanged(const FPropertyChangedEvent& PropertyChangedEvent)
-{
-	if (bIsWritingToDatabase) return;
-	WriteStructToDatabase();
-}
-
-bool SESQLRowEditor::WriteStructToDatabase()
-{
-	if (!Database || !Database->IsOpen() || !TableAsset || !TableAsset->RowStruct) return false;
-	if (SelectedRowName == NAME_None) return false;
-	if (!StructInstance.IsValid()) return false;
-
-	bIsWritingToDatabase = true;
-
-	const UScriptStruct* StructType = TableAsset->RowStruct;
-	const void* StructData = StructInstance->GetStructMemory();
-
-	// Build UPDATE SET clause
-	FString SetClause;
-	TArray<FESQLBindingValue> Bindings;
-	int32 BindIdx = 1;
-
-	for (TFieldIterator<FProperty> It(StructType); It; ++It)
-	{
-		FProperty* Property = *It;
-		FESQLBindingValue BindingValue;
-
-		if (!FESQLPropertySerializer::SerializePropertyToBindingValue(Property, StructData, BindingValue))
-		{
-			continue;
-		}
-
-		if (!SetClause.IsEmpty()) SetClause += TEXT(", ");
-		SetClause += FString::Printf(TEXT("\"%s\" = ?%d"), *Property->GetName(), BindIdx);
-		Bindings.Add(BindingValue);
-		++BindIdx;
-	}
-
-	// WHERE PK = ?N
-	Bindings.Add(FESQLBindingValue::FromText(SelectedRowName.ToString()));
-	FString SQL = FString::Printf(TEXT("UPDATE \"%s\" SET %s WHERE \"%s\" = ?%d"),
-		*TableAsset->TableName, *SetClause, *TableAsset->PrimaryKeyColumn, BindIdx);
-
-	FESQLQueryResult Result = Database->Execute(SQL, Bindings);
-	if (!Result.bSuccess)
-	{
-		UE_LOG(LogExtendedSQLEditor, Warning, TEXT("Failed to write row to database: %s"), *Result.ErrorMessage);
-	}
-	else if (TSharedPtr<FESQLTableEditorToolkit> Editor = SQLTableEditor.Pin())
-	{
-		Editor->HandlePostChange();
-	}
-
-	bIsWritingToDatabase = false;
-	return Result.bSuccess;
-}
 
 void SESQLRowEditor::HandleTableDataChanged()
 {

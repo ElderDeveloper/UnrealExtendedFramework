@@ -1,4 +1,4 @@
-// Copyright Kemal Erdem YILMAZ. All Rights Reserved.
+﻿// Copyright Kemal Erdem YILMAZ. All Rights Reserved.
 
 #pragma once
 
@@ -14,7 +14,7 @@ class UScriptStruct;
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnESQLAsyncSaveComplete, const FESQLQueryResult&, Result, const FString&, ResolvedRowId);
 
 UCLASS(Abstract)
-class UNREALEXTENDEDSQL_API UESQLAsyncTableQueryActionBase : public UBlueprintAsyncActionBase
+class UESQLAsyncTableQueryActionBase : public UBlueprintAsyncActionBase
 {
 	GENERATED_BODY()
 
@@ -35,12 +35,13 @@ protected:
 };
 
 UCLASS(meta = (DisplayName = "Async Load SQL Row", HasDedicatedAsyncNode))
-class UNREALEXTENDEDSQL_API UESQLAsyncLoadSQLRow : public UESQLAsyncTableQueryActionBase
+class UESQLAsyncLoadSQLRow : public UESQLAsyncTableQueryActionBase
 {
 	GENERATED_BODY()
 
 public:
-	UFUNCTION(BlueprintCallable, meta = (BlueprintInternalUseOnly = "true", WorldContext = "WorldContextObject", DisplayName = "Async Load SQL Row"), Category = "SQL|Async")
+	UFUNCTION(
+	BlueprintCallable, meta = (BlueprintInternalUseOnly = "true", WorldContext = "WorldContextObject", DisplayName = "Async Load SQL Row"), Category = "SQL|Async")
 	static UESQLAsyncLoadSQLRow* AsyncLoadSQLRow(UObject* WorldContextObject, UESQLTableAsset* TableAsset, UPARAM(DisplayName = "SQL Id") FESQLId RowId);
 
 	virtual void Activate() override;
@@ -50,12 +51,13 @@ private:
 };
 
 UCLASS(meta = (DisplayName = "Async Load SQL Rows", HasDedicatedAsyncNode))
-class UNREALEXTENDEDSQL_API UESQLAsyncLoadSQLRows : public UESQLAsyncTableQueryActionBase
+class UESQLAsyncLoadSQLRows : public UESQLAsyncTableQueryActionBase
 {
 	GENERATED_BODY()
 
 public:
-	UFUNCTION(BlueprintCallable, meta = (BlueprintInternalUseOnly = "true", WorldContext = "WorldContextObject", DisplayName = "Async Load SQL Rows", AdvancedDisplay = "MaxRows"), Category = "SQL|Async")
+	UFUNCTION(
+	BlueprintCallable, meta = (BlueprintInternalUseOnly = "true", WorldContext = "WorldContextObject", DisplayName = "Async Load SQL Rows", AdvancedDisplay = "MaxRows"), Category = "SQL|Async")
 	static UESQLAsyncLoadSQLRows* AsyncLoadSQLRows(UObject* WorldContextObject, UESQLTableAsset* TableAsset, int32 MaxRows = 0);
 
 	virtual void Activate() override;
@@ -65,12 +67,13 @@ private:
 };
 
 UCLASS(meta = (DisplayName = "Async Find SQL Rows", HasDedicatedAsyncNode))
-class UNREALEXTENDEDSQL_API UESQLAsyncFindSQLRows : public UESQLAsyncTableQueryActionBase
+class UESQLAsyncFindSQLRows : public UESQLAsyncTableQueryActionBase
 {
 	GENERATED_BODY()
 
 public:
-	UFUNCTION(BlueprintCallable, meta = (BlueprintInternalUseOnly = "true", WorldContext = "WorldContextObject", DisplayName = "Async Find SQL Rows"), Category = "SQL|Async")
+	UFUNCTION(
+	BlueprintCallable, meta = (BlueprintInternalUseOnly = "true", WorldContext = "WorldContextObject", DisplayName = "Async Find SQL Rows"), Category = "SQL|Async")
 	static UESQLAsyncFindSQLRows* AsyncFindSQLRows(UObject* WorldContextObject, UESQLTableAsset* TableAsset, const FESQLQuerySpec& QuerySpec);
 
 	virtual void Activate() override;
@@ -80,12 +83,13 @@ private:
 };
 
 UCLASS(meta = (DisplayName = "Async Save SQL Row", HasDedicatedAsyncNode))
-class UNREALEXTENDEDSQL_API UESQLAsyncSaveSQLRow : public UBlueprintAsyncActionBase
+class UESQLAsyncSaveSQLRow : public UBlueprintAsyncActionBase
 {
 	GENERATED_BODY()
 
 public:
-	UFUNCTION(BlueprintCallable, CustomThunk, meta = (BlueprintInternalUseOnly = "true", WorldContext = "WorldContextObject", CustomStructureParam = "RowData", DisplayName = "Async Save SQL Row", AdvancedDisplay = "RowIdOverride"), Category = "SQL|Async")
+	UFUNCTION(
+	BlueprintCallable, CustomThunk, meta = (BlueprintInternalUseOnly = "true", WorldContext = "WorldContextObject", CustomStructureParam = "RowData", DisplayName = "Async Save SQL Row", AdvancedDisplay = "RowIdOverride"), Category = "SQL|Async")
 	static UESQLAsyncSaveSQLRow* AsyncSaveSQLRow(UObject* WorldContextObject, UESQLTableAsset* TableAsset, const FString& RowIdOverride, const int32& RowData);
 	DECLARE_FUNCTION(execAsyncSaveSQLRow);
 

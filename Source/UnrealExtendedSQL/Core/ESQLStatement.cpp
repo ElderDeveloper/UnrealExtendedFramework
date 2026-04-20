@@ -1,11 +1,8 @@
 // Copyright Kemal Erdem YILMAZ. All Rights Reserved.
 
 #include "ESQLStatement.h"
+#include "Private/ThirdParty/ESQLVendorSqlite.h"
 #include "UnrealExtendedSQL.h"
-
-THIRD_PARTY_INCLUDES_START
-#include "sqlite3.h"
-THIRD_PARTY_INCLUDES_END
 
 
 // ── Construction / Destruction ───────────────────────────────────────────────
@@ -26,9 +23,11 @@ FESQLStatement::~FESQLStatement()
 FESQLStatement::FESQLStatement(FESQLStatement&& Other) noexcept
 	: StmtHandle(Other.StmtHandle)
 	, bDone(Other.bDone)
+	, LastStepResult(Other.LastStepResult)
 {
 	Other.StmtHandle = nullptr;
 	Other.bDone = false;
+	Other.LastStepResult = 0;
 }
 
 FESQLStatement& FESQLStatement::operator=(FESQLStatement&& Other) noexcept
@@ -42,15 +41,22 @@ FESQLStatement& FESQLStatement::operator=(FESQLStatement&& Other) noexcept
 
 		StmtHandle = Other.StmtHandle;
 		bDone = Other.bDone;
+		LastStepResult = Other.LastStepResult;
 
 		Other.StmtHandle = nullptr;
 		Other.bDone = false;
+		Other.LastStepResult = 0;
 	}
 	return *this;
 }
 
 
 // ── Binding ──────────────────────────────────────────────────────────────────
+
+bool FESQLStatement::BindBool(int32 Index, bool Value)
+{
+	return BindInt(Index, Value ? 1 : 0);
+}
 
 bool FESQLStatement::BindInt(int32 Index, int64 Value)
 {
@@ -83,6 +89,46 @@ bool FESQLStatement::BindNull(int32 Index)
 	return sqlite3_bind_null(StmtHandle, Index) == SQLITE_OK;
 }
 
+bool FESQLStatement::BindValue(int32 Index, const FESQLBindingValue& Value)
+{
+	if (Value.IsNull())
+	{
+		return BindNull(Index);
+	}
+
+	switch (Value.ValueType)
+	{
+	case EESQLColumnType::Null:
+		return BindNull(Index);
+
+	case EESQLColumnType::Integer:
+		return BindInt(Index, Value.IntegerValue);
+
+	case EESQLColumnType::Float:
+		return BindFloat(Index, Value.FloatValue);
+
+	case EESQLColumnType::Blob:
+		return BindBlob(Index, Value.BlobValue);
+
+	case EESQLColumnType::Text:
+	default:
+		return BindText(Index, Value.TextValue);
+	}
+}
+
+bool FESQLStatement::BindValues(const TArray<FESQLBindingValue>& Bindings)
+{
+	for (int32 Index = 0; Index < Bindings.Num(); ++Index)
+	{
+		if (!BindValue(Index + 1, Bindings[Index]))
+		{
+			return false;
+		}
+	}
+
+	return true;
+}
+
 bool FESQLStatement::BindStringArray(const TArray<FString>& Bindings)
 {
 	for (int32 i = 0; i < Bindings.Num(); ++i)
@@ -107,17 +153,21 @@ bool FESQLStatement::ClearBindings()
 
 bool FESQLStatement::Step()
 {
-	if (!StmtHandle) return false;
+	if (!StmtHandle)
+	{
+		LastStepResult = SQLITE_MISUSE;
+		return false;
+	}
 
-	const int Result = sqlite3_step(StmtHandle);
+	LastStepResult = sqlite3_step(StmtHandle);
 
-	if (Result == SQLITE_ROW)
+	if (LastStepResult == SQLITE_ROW)
 	{
 		bDone = false;
 		return true;
 	}
 
-	if (Result == SQLITE_DONE)
+	if (LastStepResult == SQLITE_DONE)
 	{
 		bDone = true;
 		return false;
@@ -127,6 +177,55 @@ bool FESQLStatement::Step()
 	// causing ExecuteStatement to report Failure instead of Success)
 	UE_LOG(LogExtendedSQL, Warning, TEXT("Statement::Step error: %hs"), sqlite3_errmsg(sqlite3_db_handle(StmtHandle)));
 	return false;
+}
+
+bool FESQLStatement::EnumerateRows(TFunctionRef<bool(const FESQLRow&)> Visitor, FESQLError* OutError)
+{
+	if (!StmtHandle)
+	{
+		if (OutError)
+		{
+			*OutError = FESQLError::Make(EESQLErrorCode::InvalidState, TEXT("Statement handle is invalid"));
+		}
+		return false;
+	}
+
+	while (Step())
+	{
+		FESQLRow Row;
+		const int32 ColumnCount = GetColumnCount();
+		for (int32 ColumnIndex = 0; ColumnIndex < ColumnCount; ++ColumnIndex)
+		{
+			const FString ColumnName = GetColumnName(ColumnIndex);
+			const bool bIsNull = GetColumnType(ColumnIndex) == EESQLColumnType::Null;
+			Row.Columns.Add(ColumnName, bIsNull ? FString() : GetColumnText(ColumnIndex));
+			if (bIsNull)
+			{
+				Row.NullColumns.Add(ColumnName);
+			}
+		}
+
+		if (!Visitor(Row))
+		{
+			return true;
+		}
+	}
+
+	if (!IsDone())
+	{
+		if (OutError)
+		{
+			*OutError = GetLastError(EESQLErrorCode::StepFailed, GetSQL());
+		}
+		return false;
+	}
+
+	if (OutError)
+	{
+		*OutError = FESQLError();
+	}
+
+	return true;
 }
 
 bool FESQLStatement::IsDone() const
@@ -140,6 +239,7 @@ void FESQLStatement::Reset()
 	{
 		sqlite3_reset(StmtHandle);
 		bDone = false;
+		LastStepResult = SQLITE_OK;
 	}
 }
 
@@ -226,4 +326,17 @@ FString FESQLStatement::GetSQL() const
 	const char* SQL = sqlite3_sql(StmtHandle);
 	if (!SQL) return FString();
 	return UTF8_TO_TCHAR(SQL);
+}
+
+FESQLError FESQLStatement::GetLastError(EESQLErrorCode Code, const FString& SqlFragment) const
+{
+	if (!StmtHandle)
+	{
+		return FESQLError::Make(Code, TEXT("Statement handle is invalid"), SqlFragment);
+	}
+
+	return FESQLError::Make(
+		Code,
+		FString::Printf(TEXT("SQL execution error: %hs"), sqlite3_errmsg(sqlite3_db_handle(StmtHandle))),
+		SqlFragment.IsEmpty() ? GetSQL() : SqlFragment);
 }

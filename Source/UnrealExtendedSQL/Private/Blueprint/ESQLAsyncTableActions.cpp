@@ -2,6 +2,7 @@
 
 #include "Blueprint/ESQLAsyncTableActions.h"
 
+#include "Subsystem/ESQLSubsystem.h"
 #include "TableAsset/ESQLTableAsset.h"
 #include "UObject/UnrealType.h"
 
@@ -10,6 +11,27 @@ namespace
 	FESQLQueryResult MakeAsyncFailureResult(const FString& ErrorMessage)
 	{
 		return FESQLQueryResult::Failure(ErrorMessage);
+	}
+
+	UESQLSubsystem* ResolveSQLSubsystem(UObject* WorldContextObject, FString& OutError)
+	{
+		if (!WorldContextObject)
+		{
+			OutError = TEXT("WorldContextObject is null");
+			return nullptr;
+		}
+
+		UWorld* World = WorldContextObject->GetWorld();
+		UGameInstance* GameInstance = World ? World->GetGameInstance() : nullptr;
+		UESQLSubsystem* Subsystem = GameInstance ? GameInstance->GetSubsystem<UESQLSubsystem>() : nullptr;
+		if (!Subsystem)
+		{
+			OutError = TEXT("Failed to get UESQLSubsystem");
+			return nullptr;
+		}
+
+		OutError.Reset();
+		return Subsystem;
 	}
 }
 
@@ -70,7 +92,17 @@ void UESQLAsyncLoadSQLRow::Activate()
 	}
 
 	UESQLTableAsset* StrongTableAsset = TableAsset.Get();
-	StrongTableAsset->AsyncLoadRowResult(WorldContextObject.Get(), RowId.Value, [WeakAction = TWeakObjectPtr<UESQLAsyncLoadSQLRow>(this)](const FESQLQueryResult& Result)
+	UESQLSubsystem* Subsystem = ResolveSQLSubsystem(WorldContextObject.Get(), Error);
+	if (!Subsystem)
+	{
+		BroadcastResultAndFinish(MakeAsyncFailureResult(Error));
+		return;
+	}
+
+	FESQLQuerySpec QuerySpec;
+	QuerySpec.Filters.Add(FESQLFieldFilter(StrongTableAsset->GetSchemaDescriptor().PrimaryKeyColumn, EESQLFilterOperation::Equal, FESQLBindingValue::FromText(RowId.Value)));
+	QuerySpec.Limit = 1;
+	Subsystem->AsyncQueryTable(StrongTableAsset, QuerySpec, [WeakAction = TWeakObjectPtr<UESQLAsyncLoadSQLRow>(this)](const FESQLQueryResult& Result)
 	{
 		if (UESQLAsyncLoadSQLRow* Action = WeakAction.Get())
 		{
@@ -97,13 +129,22 @@ void UESQLAsyncLoadSQLRows::Activate()
 	}
 
 	UESQLTableAsset* StrongTableAsset = TableAsset.Get();
-	StrongTableAsset->AsyncLoadRowsResult(WorldContextObject.Get(), [WeakAction = TWeakObjectPtr<UESQLAsyncLoadSQLRows>(this)](const FESQLQueryResult& Result)
+	UESQLSubsystem* Subsystem = ResolveSQLSubsystem(WorldContextObject.Get(), Error);
+	if (!Subsystem)
+	{
+		BroadcastResultAndFinish(MakeAsyncFailureResult(Error));
+		return;
+	}
+
+	FESQLQuerySpec QuerySpec;
+	QuerySpec.Limit = MaxRows > 0 ? MaxRows : 0;
+	Subsystem->AsyncQueryTable(StrongTableAsset, QuerySpec, [WeakAction = TWeakObjectPtr<UESQLAsyncLoadSQLRows>(this)](const FESQLQueryResult& Result)
 	{
 		if (UESQLAsyncLoadSQLRows* Action = WeakAction.Get())
 		{
 			Action->BroadcastResultAndFinish(Result);
 		}
-	}, MaxRows);
+	});
 }
 
 UESQLAsyncFindSQLRows* UESQLAsyncFindSQLRows::AsyncFindSQLRows(UObject* WorldContextObject, UESQLTableAsset* TableAsset, const FESQLQuerySpec& QuerySpec)
@@ -124,7 +165,14 @@ void UESQLAsyncFindSQLRows::Activate()
 	}
 
 	UESQLTableAsset* StrongTableAsset = TableAsset.Get();
-	StrongTableAsset->AsyncQueryRowsResult(WorldContextObject.Get(), QuerySpec, [WeakAction = TWeakObjectPtr<UESQLAsyncFindSQLRows>(this)](const FESQLQueryResult& Result)
+	UESQLSubsystem* Subsystem = ResolveSQLSubsystem(WorldContextObject.Get(), Error);
+	if (!Subsystem)
+	{
+		BroadcastResultAndFinish(MakeAsyncFailureResult(Error));
+		return;
+	}
+
+	Subsystem->AsyncQueryTable(StrongTableAsset, QuerySpec, [WeakAction = TWeakObjectPtr<UESQLAsyncFindSQLRows>(this)](const FESQLQueryResult& Result)
 	{
 		if (UESQLAsyncFindSQLRows* Action = WeakAction.Get())
 		{
@@ -210,7 +258,15 @@ void UESQLAsyncSaveSQLRow::Activate()
 		return;
 	}
 
-	StrongTableAsset->AsyncSaveRowFromStruct(WorldContextObject.Get(), CapturedRowPayload.GetData(), RowStructType, [WeakAction = TWeakObjectPtr<UESQLAsyncSaveSQLRow>(this)](const FESQLQueryResult& Result, const FString& ResolvedRowId)
+	FString Error;
+	UESQLSubsystem* Subsystem = ResolveSQLSubsystem(WorldContextObject.Get(), Error);
+	if (!Subsystem)
+	{
+		BroadcastFailureAndFinish(MakeAsyncFailureResult(Error));
+		return;
+	}
+
+	Subsystem->AsyncSaveRowFromStruct(WorldContextObject.Get(), StrongTableAsset, CapturedRowPayload.GetData(), RowStructType, [WeakAction = TWeakObjectPtr<UESQLAsyncSaveSQLRow>(this)](const FESQLQueryResult& Result, const FString& ResolvedRowId)
 	{
 		if (UESQLAsyncSaveSQLRow* Action = WeakAction.Get())
 		{

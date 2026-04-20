@@ -9,12 +9,9 @@ public class UnrealExtendedSQL : ModuleRules
 	{
 		PCHUsage = ModuleRules.PCHUsageMode.UseExplicitOrSharedPCHs;
 
-		// ── SQLite — use UE's built-in SQLiteCore module ──────────────────
-		// We previously bundled the SQLite amalgamation, but UE ships its own
-		// SQLiteCore module with SQLiteEmbedded.c. Compiling both causes
-		// duplicate symbol linker errors.
 		string SQLitePath = Path.Combine(PluginDirectory, "Thirdparty", "SQLite");
 		PrivateIncludePaths.Add(SQLitePath);
+		PrivateIncludePaths.Add(Path.Combine(ModuleDirectory, "Private"));
 
 		PublicIncludePaths.AddRange(
 			new string[]
@@ -28,8 +25,7 @@ public class UnrealExtendedSQL : ModuleRules
 			{
 				"Core",
 				"Engine",
-				"DeveloperSettings",
-				"SQLiteCore"
+				"DeveloperSettings"
 			}
 			);
 
@@ -43,11 +39,16 @@ public class UnrealExtendedSQL : ModuleRules
 			}
 			);
 
-		// SQLite compile definitions (still needed for our code that uses sqlite3.h)
-		PublicDefinitions.Add("SQLITE_THREADSAFE=1");
-		PublicDefinitions.Add("SQLITE_ENABLE_FTS5=1");
-		PublicDefinitions.Add("SQLITE_ENABLE_JSON1=1");
-		PublicDefinitions.Add("SQLITE_ENABLE_COLUMN_METADATA=1");
+		PrivateDefinitions.Add("SQLITE_THREADSAFE=2");
+		PrivateDefinitions.Add("SQLITE_ENABLE_FTS5=1");
+		PrivateDefinitions.Add("SQLITE_ENABLE_JSON1=1");
+		PrivateDefinitions.Add("SQLITE_ENABLE_RTREE=1");
+		PrivateDefinitions.Add("SQLITE_ENABLE_DBSTAT_VTAB=1");
+		PrivateDefinitions.Add("SQLITE_DEFAULT_FOREIGN_KEYS=1");
+		PrivateDefinitions.Add("SQLITE_DEFAULT_WAL_SYNCHRONOUS=1");
+		PrivateDefinitions.Add("SQLITE_OMIT_DEPRECATED=1");
+		PrivateDefinitions.Add("SQLITE_OMIT_LOAD_EXTENSION=1");
+		PrivateDefinitions.Add("SQLITE_API=");
 	}
 }
 

@@ -2,6 +2,7 @@
 
 #include "SqlId/ESQLIdCustomization.h"
 
+#include "TableAssetEditor/ESQLTableEditorDatabaseRegistry.h"
 #include "DetailWidgetRow.h"
 #include "IDetailChildrenBuilder.h"
 #include "IPropertyUtilities.h"
@@ -455,19 +456,19 @@ bool FESQLIdCustomization::QueryEntries(
 	// Strategy 1: Reuse the table asset's existing connection (zero cost)
 	if (CachedTableAsset.IsValid())
 	{
-		Db = CachedTableAsset->GetCachedDatabase();
+		Db = FESQLTableEditorDatabaseRegistry::Find(CachedTableAsset.Get());
 	}
 
 	// Strategy 2: Open our own read-only connection
 	if (!Db || !Db->IsOpen())
 	{
-		FString DbError;
-		Db = FESQLDatabase::OpenReadOnly(DbPath, DbError);
-		if (!Db)
+		const FESQLDatabaseOpenResult OpenResult = FESQLDatabase::OpenReadOnly(DbPath);
+		if (!OpenResult)
 		{
-			OutError = FString::Printf(TEXT("Failed to open database: %s"), *DbError);
+			OutError = FString::Printf(TEXT("Failed to open database: %s"), *OpenResult.GetErrorMessage());
 			return false;
 		}
+		Db = OpenResult.GetValue();
 		bOwnedConnection = true;
 	}
 
@@ -564,23 +565,7 @@ bool FESQLIdCustomization::QueryEntries(
 
 FString FESQLIdCustomization::ResolveDatabasePath() const
 {
-	const FString FullPath = UESQLSettings::ResolveDatabaseFilePath(DatabaseName);
-
-	IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
-	if (PlatformFile.FileExists(*FullPath))
-	{
-		return FullPath;
-	}
-
-	// Also check Content/Database/ for packaged databases
-	const FString ContentPath = FPaths::Combine(
-		FPaths::ProjectContentDir(), TEXT("Database"), DatabaseName + TEXT(".db"));
-	if (PlatformFile.FileExists(*ContentPath))
-	{
-		return ContentPath;
-	}
-
-	return FString();
+	return UESQLSettings::ResolveExistingDatabaseFilePath(DatabaseName, true);
 }
 
 bool FESQLIdCustomization::IsSafeIdentifier(const FString& Id)

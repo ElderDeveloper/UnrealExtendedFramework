@@ -3,32 +3,30 @@
 // all data access replaced with FESQLDatabase queries.
 
 #include "FESQLTableEditorToolkit.h"
+#include "TableAssetEditor/ESQLTableEditorDatabaseRegistry.h"
 #include "SESQLTableListViewRow.h"
 #include "SESQLRowEditor.h"
 #include "TableAsset/ESQLTableAsset.h"
 #include "Core/ESQLDatabase.h"
-#include "Shared/ESQLPropertySerializer.h"
 #include "Shared/ESQLSettings.h"
-#include "VCSPipeline/ESQLDumpPipeline.h"
 #include "UnrealExtendedSQLEditor.h"
 
 #include "Dom/JsonObject.h"
 #include "Editor.h"
-#include "StructUtils/UserDefinedStruct.h"
+#include "Engine/UserDefinedStruct.h"
 #include "Framework/Application/SlateApplication.h"
 #include "Framework/Commands/GenericCommands.h"
 #include "Framework/MultiBox/MultiBoxBuilder.h"
 #include "Framework/Notifications/NotificationManager.h"
-#include "HAL/PlatformApplicationMisc.h"
 #include "IDetailsView.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
 #include "PropertyEditorModule.h"
-#include "ScopedTransaction.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
 #include "Styling/AppStyle.h"
+#include "Subsystem/ESQLSubsystem.h"
 #include "Subsystems/AssetEditorSubsystem.h"
 #include "Widgets/Docking/SDockTab.h"
 #include "Widgets/Images/SImage.h"
@@ -68,18 +66,15 @@ FESQLTableEditorToolkit::~FESQLTableEditorToolkit()
 	// Note: FStructureEditorUtils::RemoveListener was removed in UE 5.6
 	// Struct change notifications are no longer supported via this pattern.
 
-	if (TableAsset && TableAsset->GetCachedDatabase() == Database)
-	{
-		TableAsset->SetCachedDatabase(nullptr);
-	}
+	FESQLTableEditorDatabaseRegistry::ClearIfMatches(TableAsset, Database);
 
 	GEditor->GetEditorSubsystem<UAssetEditorSubsystem>()->NotifyAssetClosed(TableAsset, this);
 
-	// Export .sqldump on close (VCS safe save order)
+	// Export `.usqlite/` on close so authored data stays text-first.
 	if (TableAsset && Database && Database->IsOpen())
 	{
 		FString Error;
-		TableAsset->ExportToSQLDump(TableAsset->GetSQLDumpPath(), Error, Database);
+		TableAsset->ExportToUSqlite(TableAsset->GetUSqliteProjectPath(), Error, Database);
 	}
 
 	SaveLayoutData();
@@ -108,13 +103,14 @@ void FESQLTableEditorToolkit::InitSQLTableEditor(
 		*TableAsset->TableName,
 		TableAsset->RowStruct ? *TableAsset->RowStruct->GetName() : TEXT("(null)"));
 
-	// Sync .db and .sqldump on editor open (Phase 7 bidirectional sync)
+	// Sync `.db` from `.usqlite/` on editor open, or create the initial `.usqlite/`
+	// project from the live `.db` when no project exists yet.
 	{
 		FString SyncError;
-		TableAsset->SyncDatabaseAndDump(SyncError);
+		TableAsset->SyncDatabaseAndProject(SyncError);
 		if (!SyncError.IsEmpty())
 		{
-			UE_LOG(LogExtendedSQLEditor, Warning, TEXT("VCS sync warning: %s"), *SyncError);
+			UE_LOG(LogExtendedSQLEditor, Warning, TEXT(".usqlite sync warning: %s"), *SyncError);
 		}
 	}
 
@@ -123,29 +119,17 @@ void FESQLTableEditorToolkit::InitSQLTableEditor(
 
 	UE_LOG(LogExtendedSQLEditor, Log, TEXT("Opening database at: %s"), *DbPath);
 
-	FString DbError;
-	Database = FESQLDatabase::Open(DbPath, DbError);
-	if (!Database)
+	const FESQLDatabaseOpenResult OpenResult = FESQLDatabase::Open(DbPath);
+	if (!OpenResult)
 	{
-		TableAsset->SetCachedDatabase(nullptr);
-		UE_LOG(LogExtendedSQLEditor, Error, TEXT("Failed to open database for editor: %s"), *DbError);
+		FESQLTableEditorDatabaseRegistry::Clear(TableAsset);
+		UE_LOG(LogExtendedSQLEditor, Error, TEXT("Failed to open database for editor: %s"), *OpenResult.GetErrorMessage());
 	}
 	else
 	{
-		TableAsset->SetCachedDatabase(Database);
+		Database = OpenResult.GetValue();
+		FESQLTableEditorDatabaseRegistry::Set(TableAsset, Database);
 		UE_LOG(LogExtendedSQLEditor, Log, TEXT("Database opened successfully"));
-
-		// Ensure the table exists (CREATE TABLE IF NOT EXISTS + SyncSchema)
-		// This is critical — without it, Add Row would fail on first open.
-		FString TableError;
-		if (!TableAsset->EnsureTableExists(Database, TableError))
-		{
-			UE_LOG(LogExtendedSQLEditor, Error, TEXT("EnsureTableExists FAILED: %s"), *TableError);
-		}
-		else
-		{
-			UE_LOG(LogExtendedSQLEditor, Log, TEXT("Table '%s' ensured/verified in database"), *TableAsset->TableName);
-		}
 	}
 
 	// Register struct change notifications
@@ -153,7 +137,7 @@ void FESQLTableEditorToolkit::InitSQLTableEditor(
 	// Struct change notifications are no longer supported via this pattern.
 
 	// Build the editor layout — DataTable-style:
-	//   Left (80%): Data grid (top 65%) + Row editor (bottom 35%)
+	//   Left (80%): Data grid (top 65%) + Row preview (bottom 35%)
 	//   Right (20%): Table settings / asset details
 	const TSharedRef<FTabManager::FLayout> StandaloneDefaultLayout =
 		FTabManager::NewLayout("Standalone_ESQLTableEditor_Layout_v2")
@@ -162,7 +146,7 @@ void FESQLTableEditorToolkit::InitSQLTableEditor(
 			FTabManager::NewPrimaryArea()->SetOrientation(Orient_Horizontal)
 			->Split
 			(
-				// Left side: grid + row editor stacked vertically
+				// Left side: grid + row preview stacked vertically
 				FTabManager::NewSplitter()->SetOrientation(Orient_Vertical)
 				->SetSizeCoefficient(0.80f)
 				->Split
@@ -248,7 +232,7 @@ void FESQLTableEditorToolkit::CreateAndRegisterTableDetailsTab(const TSharedRef<
 void FESQLTableEditorToolkit::CreateAndRegisterRowEditorTab(const TSharedRef<class FTabManager>& InTabManager)
 {
 	InTabManager->RegisterTabSpawner(RowEditorTabId, FOnSpawnTab::CreateSP(this, &FESQLTableEditorToolkit::SpawnTab_RowEditor))
-		.SetDisplayName(LOCTEXT("RowEditorTab", "Row Editor"))
+		.SetDisplayName(LOCTEXT("RowEditorTab", "Row Preview"))
 		.SetGroup(WorkspaceMenuCategory.ToSharedRef());
 }
 
@@ -300,7 +284,7 @@ TSharedRef<SDockTab> FESQLTableEditorToolkit::SpawnTab_RowEditor(const FSpawnTab
 	RowEditorTabWidget = RowEditor;
 
 	return SNew(SDockTab)
-		.Label(LOCTEXT("RowEditorTabLabel", "Row Editor"))
+		.Label(LOCTEXT("RowEditorTabLabel", "Row Preview"))
 		[
 			RowEditor
 		];
@@ -314,7 +298,6 @@ FText FESQLTableEditorToolkit::GetBaseToolkitName() const { return LOCTEXT("Tool
 FString FESQLTableEditorToolkit::GetWorldCentricTabPrefix() const { return LOCTEXT("WorldCentricTabPrefix", "SQLTable ").ToString(); }
 FLinearColor FESQLTableEditorToolkit::GetWorldCentricTabColorScale() const { return FLinearColor(0.22f, 0.70f, 0.67f, 0.5f); }
 FString FESQLTableEditorToolkit::GetDocumentationLink() const { return FString(); }
-bool FESQLTableEditorToolkit::CanEditRows() const { return true; }
 
 
 // ── Data Refresh (CORE — replaces DataTable row map reads) ──────────────────
@@ -568,8 +551,7 @@ TSharedRef<ITableRow> FESQLTableEditorToolkit::MakeRowWidget(
 {
 	return SNew(SESQLTableListViewRow, OwnerTable)
 		.SQLTableEditor(SharedThis(this))
-		.RowDataPtr(InRowDataPtr)
-		.IsEditable(CanEditRows());
+		.RowDataPtr(InRowDataPtr);
 }
 
 TSharedRef<SWidget> FESQLTableEditorToolkit::MakeCellWidget(
@@ -637,216 +619,6 @@ FSlateColor FESQLTableEditorToolkit::GetRowTextColor(FName RowName) const
 	}
 	return FSlateColor::UseForeground();
 }
-
-
-// ── Row Operations (INSERT, DELETE, UPDATE via SQL) ─────────────────────────
-
-void FESQLTableEditorToolkit::OnAddClicked()
-{
-	if (!Database)
-	{
-		FNotificationInfo Info(LOCTEXT("AddRowNoDb", "Add Row failed: No database connection"));
-		Info.ExpireDuration = 5.0f;
-		FSlateNotificationManager::Get().AddNotification(Info);
-		return;
-	}
-
-	if (!Database->IsOpen())
-	{
-		FNotificationInfo Info(LOCTEXT("AddRowDbClosed", "Add Row failed: Database is not open"));
-		Info.ExpireDuration = 5.0f;
-		FSlateNotificationManager::Get().AddNotification(Info);
-		return;
-	}
-
-	if (!TableAsset)
-	{
-		FNotificationInfo Info(LOCTEXT("AddRowNoAsset", "Add Row failed: No table asset"));
-		Info.ExpireDuration = 5.0f;
-		FSlateNotificationManager::Get().AddNotification(Info);
-		return;
-	}
-
-	// Resolve table name from struct if empty
-	FString EffectiveTableName = TableAsset->TableName;
-	if (EffectiveTableName.IsEmpty() && TableAsset->RowStruct)
-	{
-		EffectiveTableName = TableAsset->RowStruct->GetName();
-		TableAsset->TableName = EffectiveTableName;
-	}
-
-	if (EffectiveTableName.IsEmpty())
-	{
-		FNotificationInfo Info(LOCTEXT("AddRowNoTable", "Add Row failed: TableName is empty"));
-		Info.ExpireDuration = 5.0f;
-		FSlateNotificationManager::Get().AddNotification(Info);
-		return;
-	}
-
-	// Ensure the table exists first
-	FString EnsureError;
-	if (!TableAsset->EnsureTableExists(Database, EnsureError))
-	{
-		FNotificationInfo Info(FText::Format(
-			LOCTEXT("AddRowEnsureFail", "Add Row: Could not create table: {0}"),
-			FText::FromString(EnsureError)));
-		Info.ExpireDuration = 5.0f;
-		FSlateNotificationManager::Get().AddNotification(Info);
-		return;
-	}
-
-	// Generate a unique row name
-	FString NewRowName = FString::Printf(TEXT("NewRow_%d"), FMath::Rand());
-
-	FString ColumnList = FString::Printf(TEXT("\"%s\""), *TableAsset->PrimaryKeyColumn);
-	FString PlaceholderList = TEXT("?1");
-	TArray<FESQLBindingValue> Bindings = { FESQLBindingValue::FromText(NewRowName) };
-	int32 BindIndex = 2;
-
-	if (TableAsset->RowStruct)
-	{
-		FStructOnScope DefaultRowScope(TableAsset->RowStruct);
-		const void* DefaultRowData = DefaultRowScope.GetStructMemory();
-
-		for (TFieldIterator<FProperty> It(TableAsset->RowStruct); It; ++It)
-		{
-			FProperty* Property = *It;
-			FESQLBindingValue BindingValue;
-
-			if (!FESQLPropertySerializer::SerializePropertyToBindingValue(Property, DefaultRowData, BindingValue))
-			{
-				continue;
-			}
-
-			ColumnList += FString::Printf(TEXT(", \"%s\""), *Property->GetName());
-			PlaceholderList += FString::Printf(TEXT(", ?%d"), BindIndex);
-			Bindings.Add(BindingValue);
-			++BindIndex;
-		}
-	}
-
-	FString SQL = FString::Printf(TEXT("INSERT INTO \"%s\" (%s) VALUES (%s)"),
-		*EffectiveTableName, *ColumnList, *PlaceholderList);
-
-	UE_LOG(LogExtendedSQLEditor, Log, TEXT("Add Row SQL: %s  Binding: %s"), *SQL, *NewRowName);
-
-	FESQLQueryResult Result = Database->Execute(SQL, Bindings);
-	if (Result.bSuccess)
-	{
-		RefreshCachedDataTable(FName(*NewRowName));
-		UE_LOG(LogExtendedSQLEditor, Log, TEXT("Added row: %s"), *NewRowName);
-	}
-	else
-	{
-		UE_LOG(LogExtendedSQLEditor, Error, TEXT("Failed to add row: %s"), *Result.ErrorMessage);
-		FNotificationInfo Info(FText::Format(
-			LOCTEXT("AddRowSQLFail", "Add Row SQL failed: {0}"),
-			FText::FromString(Result.ErrorMessage)));
-		Info.ExpireDuration = 5.0f;
-		FSlateNotificationManager::Get().AddNotification(Info);
-	}
-}
-
-void FESQLTableEditorToolkit::OnRemoveClicked()
-{
-	DeleteSelectedRow();
-}
-
-void FESQLTableEditorToolkit::DeleteSelectedRow()
-{
-	if (!Database || !Database->IsOpen() || !TableAsset) return;
-	if (HighlightedRowName == NAME_None) return;
-
-	FString SQL = FString::Printf(TEXT("DELETE FROM \"%s\" WHERE \"%s\" = ?1"),
-		*TableAsset->TableName, *TableAsset->PrimaryKeyColumn);
-	TArray<FString> Bindings = { HighlightedRowName.ToString() };
-
-	FESQLQueryResult Result = Database->Execute(SQL, Bindings);
-	if (Result.bSuccess)
-	{
-		UE_LOG(LogExtendedSQLEditor, Log, TEXT("Deleted row: %s"), *HighlightedRowName.ToString());
-		HighlightedRowName = NAME_None;
-		RefreshCachedDataTable();
-	}
-	else
-	{
-		UE_LOG(LogExtendedSQLEditor, Warning, TEXT("Failed to delete row: %s"), *Result.ErrorMessage);
-	}
-}
-
-void FESQLTableEditorToolkit::CopySelectedRow()
-{
-	if (HighlightedRowName == NAME_None) return;
-
-	// Find the row data
-	for (const FESQLEditorRowPtr& Row : AvailableRows)
-	{
-		if (Row->RowId == HighlightedRowName)
-		{
-			// Serialize row to clipboard as TSV
-			FString ClipboardText;
-			for (const auto& Pair : Row->CellData)
-			{
-				if (!ClipboardText.IsEmpty()) ClipboardText += TEXT("\t");
-				ClipboardText += Pair.Value;
-			}
-			FPlatformApplicationMisc::ClipboardCopy(*ClipboardText);
-			break;
-		}
-	}
-}
-
-void FESQLTableEditorToolkit::DuplicateSelectedRow()
-{
-	if (!Database || !Database->IsOpen() || !TableAsset) return;
-	if (HighlightedRowName == NAME_None) return;
-
-	// Find the row and insert a copy with new PK
-	for (const FESQLEditorRowPtr& Row : AvailableRows)
-	{
-		if (Row->RowId == HighlightedRowName)
-		{
-			FString NewPK = HighlightedRowName.ToString() + TEXT("_Copy");
-
-			FString ColList, PlaceholderList;
-			TArray<FString> Bindings;
-			int32 Idx = 1;
-
-			for (const auto& Pair : Row->CellData)
-			{
-				if (Idx > 1) { ColList += TEXT(", "); PlaceholderList += TEXT(", "); }
-				ColList += FString::Printf(TEXT("\"%s\""), *Pair.Key.ToString());
-				PlaceholderList += FString::Printf(TEXT("?%d"), Idx);
-
-				// Replace PK with new name
-				if (Pair.Key.ToString() == TableAsset->PrimaryKeyColumn)
-				{
-					Bindings.Add(NewPK);
-				}
-				else
-				{
-					Bindings.Add(Pair.Value);
-				}
-				++Idx;
-			}
-
-			FString SQL = FString::Printf(TEXT("INSERT INTO \"%s\" (%s) VALUES (%s)"),
-				*TableAsset->TableName, *ColList, *PlaceholderList);
-
-			FESQLQueryResult Result = Database->Execute(SQL, Bindings);
-			if (Result.bSuccess)
-			{
-				RefreshCachedDataTable(FName(*NewPK));
-			}
-			break;
-		}
-	}
-}
-
-void FESQLTableEditorToolkit::PasteOnSelectedRow() { /* TODO: Parse clipboard TSV and UPDATE */ }
-void FESQLTableEditorToolkit::RenameSelectedRowCommand() { /* TODO: Inline rename */ }
-
-
 // ── Toolbar ─────────────────────────────────────────────────────────────────
 
 void FESQLTableEditorToolkit::ExtendToolbar(TSharedPtr<FExtender> Extender)
@@ -864,19 +636,19 @@ void FESQLTableEditorToolkit::FillToolbar(FToolBarBuilder& ToolbarBuilder)
 	ToolbarBuilder.BeginSection("SQLTableActions");
 
 	ToolbarBuilder.AddToolBarButton(
-		FUIAction(FExecuteAction::CreateSP(this, &FESQLTableEditorToolkit::OnAddClicked)),
+		FUIAction(FExecuteAction::CreateSP(this, &FESQLTableEditorToolkit::OnBuildTestDatabaseClicked)),
 		NAME_None,
-		LOCTEXT("AddRow", "+ Add Row"),
-		LOCTEXT("AddRowTooltip", "Insert a new row into the table"),
-		FSlateIcon(FAppStyle::GetAppStyleSetName(), "Icons.Plus")
+		LOCTEXT("BuildTestDb", "Build Test DB"),
+		LOCTEXT("BuildTestDbTooltip", "Build and open this table's test database through UESQLSubsystem."),
+		FSlateIcon(FAppStyle::GetAppStyleSetName(), "Icons.Refresh")
 	);
 
 	ToolbarBuilder.AddToolBarButton(
-		FUIAction(FExecuteAction::CreateSP(this, &FESQLTableEditorToolkit::OnRemoveClicked)),
+		FUIAction(FExecuteAction::CreateSP(this, &FESQLTableEditorToolkit::OnRunQueryClicked)),
 		NAME_None,
-		LOCTEXT("DeleteRow", "- Delete"),
-		LOCTEXT("DeleteRowTooltip", "Delete the selected row"),
-		FSlateIcon(FAppStyle::GetAppStyleSetName(), "Icons.Delete")
+		LOCTEXT("RunQuery", "Run Test Query"),
+		LOCTEXT("RunQueryTooltip", "Run a preview query against the subsystem-built test database and refresh the preview."),
+		FSlateIcon(FAppStyle::GetAppStyleSetName(), "Icons.Search")
 	);
 
 	ToolbarBuilder.AddSeparator();
@@ -912,6 +684,114 @@ void FESQLTableEditorToolkit::FillToolbar(FToolBarBuilder& ToolbarBuilder)
 
 
 // ── SQL-specific toolbar actions ────────────────────────────────────────────
+
+UESQLSubsystem* FESQLTableEditorToolkit::ResolvePreviewSubsystem(FString& OutError) const
+{
+	OutError.Reset();
+
+	if (!GEditor)
+	{
+		OutError = TEXT("Editor instance is unavailable.");
+		return nullptr;
+	}
+
+	UWorld* PreviewWorld = GEditor->PlayWorld;
+	if (!PreviewWorld)
+	{
+		PreviewWorld = GEditor->GetEditorWorldContext().World();
+	}
+
+	UGameInstance* GameInstance = PreviewWorld ? PreviewWorld->GetGameInstance() : nullptr;
+	if (!GameInstance)
+	{
+		OutError = TEXT("Build Test DB and Run Test Query require an active PIE or simulate world with a GameInstance.");
+		return nullptr;
+	}
+
+	UESQLSubsystem* Subsystem = GameInstance->GetSubsystem<UESQLSubsystem>();
+	if (!Subsystem)
+	{
+		OutError = TEXT("Failed to resolve UESQLSubsystem from the active GameInstance.");
+	}
+
+	return Subsystem;
+}
+
+bool FESQLTableEditorToolkit::ReopenPreviewDatabase(const FString& DatabasePath, FString& OutError)
+{
+	OutError.Reset();
+
+	const FESQLDatabaseOpenResult OpenResult = FESQLDatabase::Open(DatabasePath);
+	if (!OpenResult)
+	{
+		OutError = OpenResult.GetErrorMessage();
+		return false;
+	}
+
+	Database = OpenResult.GetValue();
+	FESQLTableEditorDatabaseRegistry::Set(TableAsset, Database);
+	return true;
+}
+
+bool FESQLTableEditorToolkit::BuildSubsystemPreviewDatabase(FString& OutResolvedPath, FString& OutError)
+{
+	OutResolvedPath.Reset();
+	OutError.Reset();
+
+	if (!TableAsset)
+	{
+		OutError = TEXT("No table asset is loaded.");
+		return false;
+	}
+
+	UESQLSubsystem* Subsystem = ResolvePreviewSubsystem(OutError);
+	if (!Subsystem)
+	{
+		return false;
+	}
+
+	const FESQLQueryResult OpenResult = Subsystem->OpenDatabase(
+		TableAsset->DatabaseName,
+		TableAsset->Scope,
+		TableAsset->Persistence);
+	if (!OpenResult.bSuccess)
+	{
+		OutError = OpenResult.ErrorMessage;
+		return false;
+	}
+
+	OutResolvedPath = Subsystem->GetDatabaseFilePath(TableAsset->DatabaseName);
+	if (OutResolvedPath.IsEmpty())
+	{
+		OutError = TEXT("UESQLSubsystem did not report a resolved test database path.");
+		return false;
+	}
+
+	return ReopenPreviewDatabase(OutResolvedPath, OutError);
+}
+
+void FESQLTableEditorToolkit::OnBuildTestDatabaseClicked()
+{
+	FString ResolvedPath;
+	FString Error;
+	if (!BuildSubsystemPreviewDatabase(ResolvedPath, Error))
+	{
+		FNotificationInfo Info(FText::Format(
+			LOCTEXT("BuildTestDbFail", "Build Test DB failed: {0}"),
+			FText::FromString(Error)));
+		Info.ExpireDuration = 5.0f;
+		FSlateNotificationManager::Get().AddNotification(Info);
+		return;
+	}
+
+	RefreshCachedDataTable(HighlightedRowName, true);
+
+	FNotificationInfo Info(FText::Format(
+		LOCTEXT("BuildTestDbSuccess", "Test DB ready: {0}"),
+		FText::FromString(ResolvedPath)));
+	Info.ExpireDuration = 4.0f;
+	FSlateNotificationManager::Get().AddNotification(Info);
+}
 
 void FESQLTableEditorToolkit::OnRefreshClicked()
 {
@@ -989,17 +869,54 @@ void FESQLTableEditorToolkit::OnExportCSVClicked()
 
 void FESQLTableEditorToolkit::OnRunQueryClicked()
 {
-	// TODO: Open a raw SQL input dialog
-}
-
-void FESQLTableEditorToolkit::OnEditDataTableStructClicked()
-{
-	if (TableAsset && TableAsset->RowStruct)
+	if (!TableAsset)
 	{
-		GEditor->GetEditorSubsystem<UAssetEditorSubsystem>()->OpenEditorForAsset(const_cast<UScriptStruct*>(TableAsset->RowStruct));
+		return;
 	}
-}
 
+	FString ResolvedPath;
+	FString Error;
+	if (!BuildSubsystemPreviewDatabase(ResolvedPath, Error))
+	{
+		FNotificationInfo Info(FText::Format(
+			LOCTEXT("RunQueryBuildFail", "Run Test Query failed: {0}"),
+			FText::FromString(Error)));
+		Info.ExpireDuration = 5.0f;
+		FSlateNotificationManager::Get().AddNotification(Info);
+		return;
+	}
+
+	UESQLSubsystem* Subsystem = ResolvePreviewSubsystem(Error);
+	if (!Subsystem)
+	{
+		FNotificationInfo Info(FText::Format(
+			LOCTEXT("RunQuerySubsystemFail", "Run Test Query failed: {0}"),
+			FText::FromString(Error)));
+		Info.ExpireDuration = 5.0f;
+		FSlateNotificationManager::Get().AddNotification(Info);
+		return;
+	}
+
+	const FESQLQueryResult QueryResult = Subsystem->QueryTable(TableAsset, FESQLQuerySpec());
+	if (!QueryResult.bSuccess)
+	{
+		FNotificationInfo Info(FText::Format(
+			LOCTEXT("RunQueryFail", "Run Test Query failed: {0}"),
+			FText::FromString(QueryResult.ErrorMessage)));
+		Info.ExpireDuration = 5.0f;
+		FSlateNotificationManager::Get().AddNotification(Info);
+		return;
+	}
+
+	RefreshCachedDataTable(HighlightedRowName, true);
+
+	FNotificationInfo Info(FText::Format(
+		LOCTEXT("RunQuerySuccess", "Queried {0} row(s) from test DB: {1}"),
+		FText::AsNumber(QueryResult.Rows.Num()),
+		FText::FromString(ResolvedPath)));
+	Info.ExpireDuration = 4.0f;
+	FSlateNotificationManager::Get().AddNotification(Info);
+}
 
 // ── Filter ──────────────────────────────────────────────────────────────────
 
@@ -1158,7 +1075,6 @@ void FESQLTableEditorToolkit::SaveLayoutData()
 void FESQLTableEditorToolkit::PostUndo(bool bSuccess) { HandleUndoRedo(); }
 void FESQLTableEditorToolkit::PostRedo(bool bSuccess) { HandleUndoRedo(); }
 void FESQLTableEditorToolkit::HandleUndoRedo() { RefreshCachedDataTable(HighlightedRowName); }
-void FESQLTableEditorToolkit::HandlePostChange() { RefreshCachedDataTable(HighlightedRowName); }
 
 void FESQLTableEditorToolkit::PreChange(const UUserDefinedStruct* Struct, FStructureEditorUtils::EStructureEditorChangeInfo Info)
 {
@@ -1207,19 +1123,5 @@ void FESQLTableEditorToolkit::PostChange(const UUserDefinedStruct* Struct, FStru
 // ── Misc ─────────────────────────────────────────────────────────────────────
 
 void FESQLTableEditorToolkit::PostRegenerateMenusAndToolbars() {}
-
-FReply FESQLTableEditorToolkit::OnFindRowInContentBrowserClicked()
-{
-	return FReply::Handled();
-}
-
-bool FESQLTableEditorToolkit::CanEditTable() const
-{
-	return TableAsset != nullptr && Database != nullptr && Database->IsOpen();
-}
-
-void FESQLTableEditorToolkit::OnCopyClicked() { CopySelectedRow(); }
-void FESQLTableEditorToolkit::OnPasteClicked() { PasteOnSelectedRow(); }
-void FESQLTableEditorToolkit::OnDuplicateClicked() { DuplicateSelectedRow(); }
 
 #undef LOCTEXT_NAMESPACE

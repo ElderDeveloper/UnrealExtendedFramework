@@ -3,19 +3,24 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Shared/ESQLId.h"
 #include "Subsystems/GameInstanceSubsystem.h"
 #include "Shared/ESQLTypes.h"
-#include "Core/ESQLDatabase.h"
 #include "ESQLSubsystem.generated.h"
 
+class FArrayProperty;
+class UESQLTableAsset;
+class UScriptStruct;
+
+struct FESQLAsyncTicketState;
+struct FESQLDatabaseContext;
 
 /**
- * GameInstanceSubsystem that manages database lifecycle and shared SQL services.
+ * GameInstanceSubsystem that owns all runtime SQL routing.
  *
- * This layer owns connection management, net-mode-aware authority checks,
- * snapshots, player database routing, and raw SQL access.
- *
- * Typed schema-backed workflows should live on UESQLTableAsset instead of here.
+ * Phase D moves authority checks, database path resolution, async routing,
+ * reader/writer concurrency, transactions, and typed table access behind this
+ * single runtime front door.
  */
 UCLASS()
 class UNREALEXTENDEDSQL_API UESQLSubsystem : public UGameInstanceSubsystem
@@ -23,83 +28,39 @@ class UNREALEXTENDEDSQL_API UESQLSubsystem : public UGameInstanceSubsystem
 	GENERATED_BODY()
 
 public:
-
 	virtual void Initialize(FSubsystemCollectionBase& Collection) override;
 	virtual void Deinitialize() override;
 
-
-	// ── Database Lifecycle ───────────────────────────────────────────────
-
-	/** Open (or create) a database.
-	    DatabaseName is a logical handle used in all subsequent calls.
-	    Scope controls path resolution and authority checks.
-	    Persistence controls whether the DB is on disk or in memory. */
 	UFUNCTION(BlueprintCallable, Category = "SQL|Database")
 	FESQLQueryResult OpenDatabase(
 		const FString& DatabaseName,
 		EESQLDatabaseScope Scope = EESQLDatabaseScope::Local,
 		EESQLDatabasePersistence Persistence = EESQLDatabasePersistence::Persistent,
-		const FString& FileName = TEXT("")
-	);
+		const FString& FileName = TEXT(""));
 
-	/** Open a per-player database. Server-only.
-	    Uses the player's UniqueNetId as the subfolder key. */
-	UFUNCTION(BlueprintCallable, Category = "SQL|Database", meta = (DisplayName = "Open Player Database"))
-	FESQLQueryResult OpenPlayerDatabase(
-		const FString& DatabaseName,
-		APlayerController* PlayerController,
-		const FString& FileName = TEXT("")
-	);
-
-	/** Close a previously opened database. */
 	UFUNCTION(BlueprintCallable, Category = "SQL|Database")
 	void CloseDatabase(const FString& DatabaseName);
 
-	/** Close a player-scoped database.
-	    If bDeleteFile is true, also removes the .db file from disk. */
-	UFUNCTION(BlueprintCallable, Category = "SQL|Database")
-	void ClosePlayerDatabase(
-		const FString& DatabaseName,
-		APlayerController* PlayerController,
-		bool bDeleteFile = false
-	);
-
-	/** Close all open databases. Called automatically on Deinitialize. */
 	UFUNCTION(BlueprintCallable, Category = "SQL|Database")
 	void CloseAllDatabases();
 
-	/** Close all player-scoped databases. */
-	UFUNCTION(BlueprintCallable, Category = "SQL|Database")
-	void CloseAllPlayerDatabases(bool bDeleteFiles = false);
-
-	/** Check if a database is currently open. */
 	UFUNCTION(BlueprintPure, Category = "SQL|Database")
 	bool IsDatabaseOpen(const FString& DatabaseName) const;
 
-	/** Check if a player-scoped database is currently open for the given controller. */
-	UFUNCTION(BlueprintPure, Category = "SQL|Database")
-	bool IsPlayerDatabaseOpen(const FString& DatabaseName, APlayerController* PlayerController) const;
-
-	/** Returns the names of all currently open databases. */
 	UFUNCTION(BlueprintPure, Category = "SQL|Database")
 	TArray<FString> GetOpenDatabaseNames() const;
 
-	/** Delete a database and its associated files (.db, -wal, -shm).
-	    The database must be closed first. Returns success if the file was deleted. */
 	UFUNCTION(BlueprintCallable, Category = "SQL|Database")
 	FESQLQueryResult DeleteDatabase(
 		const FString& DatabaseName,
 		EESQLDatabaseScope Scope = EESQLDatabaseScope::Local,
-		const FString& FileName = TEXT("")
-	);
+		const FString& FileName = TEXT(""));
 
-	/** Returns the absolute file path for a database.
-	    Returns empty string for in-memory (Session) databases. */
 	UFUNCTION(BlueprintPure, Category = "SQL|Database")
 	FString GetDatabaseFilePath(const FString& DatabaseName) const;
 
-
-	// ── Net-Mode Queries ─────────────────────────────────────────────────
+	UFUNCTION(BlueprintPure, Category = "SQL|Database")
+	bool IsSessionDatabase(const FString& DatabaseName) const;
 
 	UFUNCTION(BlueprintPure, Category = "SQL|Network")
 	bool IsDedicatedServer() const;
@@ -110,163 +71,175 @@ public:
 	UFUNCTION(BlueprintPure, Category = "SQL|Network")
 	bool HasServerAuthority() const;
 
+#if WITH_DEV_AUTOMATION_TESTS
+	void SetCachedNetModeForTesting(const ENetMode InNetMode)
+	{
+		CachedNetMode = InNetMode;
+	}
+#endif
 
-	// ── Synchronous Queries ──────────────────────────────────────────────
-
-	/** Execute raw SQL synchronously. */
-	UFUNCTION(BlueprintCallable, Category = "SQL|Query", meta = (BlueprintInternalUseOnly = "true"))
+	UFUNCTION(BlueprintCallable, Category = "SQL|Raw", meta = (BlueprintInternalUseOnly = "true"))
 	FESQLQueryResult ExecuteSQL(const FString& DatabaseName, const FString& SQL);
 
-	/** Execute SQL with text bindings (?1, ?2, …). */
-	UFUNCTION(BlueprintCallable, Category = "SQL|Query", meta = (BlueprintInternalUseOnly = "true"))
+	UFUNCTION(BlueprintCallable, Category = "SQL|Raw", meta = (BlueprintInternalUseOnly = "true"))
 	FESQLQueryResult ExecuteSQLWithBindings(
 		const FString& DatabaseName,
 		const FString& SQL,
-		const TArray<FString>& Bindings
-	);
+		const TArray<FString>& Bindings);
 
-	/** Execute raw SQL against a player's database. Server-only. */
-	UFUNCTION(BlueprintCallable, Category = "SQL|Query", meta = (BlueprintInternalUseOnly = "true"))
-	FESQLQueryResult ExecutePlayerSQL(
-		const FString& DatabaseName,
-		APlayerController* PlayerController,
-		const FString& SQL
-	);
-
-
-	// ── Async Queries ────────────────────────────────────────────────────
-
-	/** Execute SQL asynchronously; fires OnComplete on the game thread. */
-	UFUNCTION(BlueprintCallable, Category = "SQL|Async", meta = (BlueprintInternalUseOnly = "true"))
-	void AsyncExecuteSQL(
+	UFUNCTION(BlueprintCallable, Category = "SQL|Raw", meta = (BlueprintInternalUseOnly = "true", AutoCreateRefTerm = "Bindings"))
+	FESQLQueryResult ExecuteSQLWithValues(
 		const FString& DatabaseName,
 		const FString& SQL,
-		const FOnESQLQueryCompleteCallback& OnComplete
-	);
+		const TArray<FESQLBindingValue>& Bindings);
 
+	UFUNCTION(BlueprintCallable, Category = "SQL|Raw", meta = (BlueprintInternalUseOnly = "true", AutoCreateRefTerm = "Bindings"))
+	FESQLQueryResult QuerySQL(
+		const FString& DatabaseName,
+		const FString& SQL,
+		const TArray<FESQLBindingValue>& Bindings);
 
-	// ── Semantic Helpers (no raw SQL) ────────────────────────────────────
+	UFUNCTION(BlueprintCallable, Category = "SQL|Async", meta = (BlueprintInternalUseOnly = "true", AutoCreateRefTerm = "Bindings"))
+	FESQLTicket AsyncExecuteSQL(
+		const FString& DatabaseName,
+		const FString& SQL,
+		const TArray<FESQLBindingValue>& Bindings,
+		const FOnESQLQueryCompleteCallback& OnComplete);
 
-	/** Create a table. Columns = Name:Type pairs (TEXT, INTEGER, REAL, BLOB). */
+	UFUNCTION(BlueprintCallable, Category = "SQL|Async", meta = (BlueprintInternalUseOnly = "true", AutoCreateRefTerm = "Bindings"))
+	FESQLTicket AsyncQuerySQL(
+		const FString& DatabaseName,
+		const FString& SQL,
+		const TArray<FESQLBindingValue>& Bindings,
+		const FOnESQLQueryCompleteCallback& OnComplete);
+
+	UFUNCTION(BlueprintCallable, Category = "SQL|Async")
+	bool CancelTicket(const FESQLTicket& Ticket);
+
 	UFUNCTION(BlueprintCallable, Category = "SQL|Table")
-	FESQLQueryResult CreateTable(
-		const FString& DatabaseName,
-		const FString& TableName,
-		const TMap<FString, FString>& Columns,
-		const FString& PrimaryKeyColumn = TEXT(""),
-		bool bIfNotExists = true
-	);
+	FESQLQueryResult QueryTable(UESQLTableAsset* TableAsset, const FESQLQuerySpec& QuerySpec);
+	void AsyncQueryTable(UESQLTableAsset* TableAsset, const FESQLQuerySpec& QuerySpec, TFunction<void(const FESQLQueryResult&)> OnComplete);
+
+	UFUNCTION(BlueprintCallable, Category = "SQL|Table", meta = (BlueprintInternalUseOnly = "true", DisplayName = "Query SQL Rows"))
+	FESQLQueryResult QuerySQLRows(UESQLTableAsset* TableAsset, const FESQLQuerySpec& QuerySpec);
 
 	UFUNCTION(BlueprintCallable, Category = "SQL|Table")
-	FESQLQueryResult DropTable(const FString& DatabaseName, const FString& TableName);
+	FESQLQueryResult DeleteTableRow(UESQLTableAsset* TableAsset, const FString& RowId);
 
-	UFUNCTION(BlueprintPure, Category = "SQL|Table")
-	bool DoesTableExist(const FString& DatabaseName, const FString& TableName);
-
-	/** Returns the names of all user tables in the database. */
 	UFUNCTION(BlueprintCallable, Category = "SQL|Table")
-	TArray<FString> GetTableNames(const FString& DatabaseName);
+	FESQLQueryResult CountTableRows(UESQLTableAsset* TableAsset, const FESQLQuerySpec& QuerySpec, int64& OutCount);
 
-	/** Returns column definitions for a table (name + type). */
-	UFUNCTION(BlueprintCallable, Category = "SQL|Table")
-	TArray<FESQLColumn> GetTableColumns(const FString& DatabaseName, const FString& TableName);
+	UFUNCTION(BlueprintCallable, Category = "SQL|Table", meta = (BlueprintInternalUseOnly = "true", DisplayName = "Count SQL Rows"))
+	FESQLQueryResult CountSQLRows(UESQLTableAsset* TableAsset, const FESQLQuerySpec& QuerySpec, int64& OutCount);
 
-	/** Add a column to an existing table.
-	    ColumnType: TEXT, INTEGER, REAL, BLOB.
-	    DefaultValue: optional default (e.g. "0" or "'unknown'"). */
-	UFUNCTION(BlueprintCallable, Category = "SQL|Table")
-	FESQLQueryResult AlterTableAddColumn(
-		const FString& DatabaseName,
-		const FString& TableName,
-		const FString& ColumnName,
-		const FString& ColumnType = TEXT("TEXT"),
-		const FString& DefaultValue = TEXT("")
-	);
+	UFUNCTION(BlueprintCallable, Category = "SQL|Table", meta = (BlueprintInternalUseOnly = "true", DisplayName = "Count SQL Rows By Field"))
+	FESQLQueryResult CountSQLRowsByField(UESQLTableAsset* TableAsset, FName FieldName, EESQLFilterOperation Operation, const FESQLBindingValue& Value, int64& OutCount);
 
-	/** Insert a single row. */
-	UFUNCTION(BlueprintCallable, Category = "SQL|Row")
-	FESQLQueryResult InsertRow(
-		const FString& DatabaseName,
-		const FString& TableName,
-		const TMap<FString, FString>& ColumnValues
-	);
+	FESQLQueryResult LoadRowIntoStruct(
+		UObject* WorldContextObject,
+		UESQLTableAsset* TableAsset,
+		const FString& RowId,
+		void* OutStructData,
+		const UScriptStruct* StructType);
 
-	/** Insert multiple rows in a transaction. */
-	UFUNCTION(BlueprintCallable, Category = "SQL|Row")
-	FESQLQueryResult InsertRows(
-		const FString& DatabaseName,
-		const FString& TableName,
-		const TArray<FESQLRow>& Rows
-	);
+	FESQLQueryResult LoadRowsIntoStructArray(
+		UObject* WorldContextObject,
+		UESQLTableAsset* TableAsset,
+		const FESQLQuerySpec& QuerySpec,
+		void* OutArrayData,
+		const FArrayProperty* ArrayProperty);
 
-	/** Insert or update based on conflict column (UPSERT). */
-	UFUNCTION(BlueprintCallable, Category = "SQL|Row")
-	FESQLQueryResult UpsertRow(
-		const FString& DatabaseName,
-		const FString& TableName,
-		const TMap<FString, FString>& ColumnValues,
-		const FString& ConflictColumn
-	);
+	FESQLQueryResult SaveRowFromStruct(
+		UObject* WorldContextObject,
+		UESQLTableAsset* TableAsset,
+		const void* StructData,
+		const UScriptStruct* StructType,
+		FString* OutResolvedRowId = nullptr,
+		const FString& RowIdOverride = TEXT(""));
+	void AsyncSaveRowFromStruct(
+		UObject* WorldContextObject,
+		UESQLTableAsset* TableAsset,
+		const void* StructData,
+		const UScriptStruct* StructType,
+		TFunction<void(const FESQLQueryResult&, const FString&)> OnComplete,
+		const FString& RowIdOverride = TEXT(""));
 
-	/** Select rows matching optional WHERE clause. */
-	UFUNCTION(BlueprintCallable, Category = "SQL|Row", meta = (BlueprintInternalUseOnly = "true", AutoCreateRefTerm = "Bindings"))
-	FESQLQueryResult SelectRows(
-		const FString& DatabaseName,
-		const FString& TableName,
-		const FString& WhereClause,
-		const TArray<FString>& Bindings,
-		int32 Limit = -1
-	);
+	FESQLQueryResult PopulateQueryResultIntoStruct(
+		UESQLTableAsset* TableAsset,
+		const FESQLQueryResult& QueryResult,
+		void* OutStructData,
+		const UScriptStruct* StructType) const;
 
-	/** Update rows matching WHERE clause. */
-	UFUNCTION(BlueprintCallable, Category = "SQL|Row", meta = (AutoCreateRefTerm = "Bindings"))
-	FESQLQueryResult UpdateRows(
-		const FString& DatabaseName,
-		const FString& TableName,
-		const TMap<FString, FString>& SetValues,
-		const FString& WhereClause,
-		const TArray<FString>& Bindings
-	);
+	FESQLQueryResult PopulateQueryResultIntoStructArray(
+		UESQLTableAsset* TableAsset,
+		const FESQLQueryResult& QueryResult,
+		void* OutArrayData,
+		const FArrayProperty* ArrayProperty) const;
 
-	/** Delete rows matching WHERE clause. */
-	UFUNCTION(BlueprintCallable, Category = "SQL|Row", meta = (AutoCreateRefTerm = "Bindings"))
-	FESQLQueryResult DeleteRows(
-		const FString& DatabaseName,
-		const FString& TableName,
-		const FString& WhereClause,
-		const TArray<FString>& Bindings
-	);
+	UFUNCTION(BlueprintCallable, CustomThunk, Category = "SQL|Table", meta = (BlueprintInternalUseOnly = "true", CustomStructureParam = "OutRow", DisplayName = "Populate SQL Row From Result"))
+	FESQLQueryResult PopulateSQLRowFromResult(UESQLTableAsset* TableAsset, const FESQLQueryResult& QueryResult, int32& OutRow);
+	DECLARE_FUNCTION(execPopulateSQLRowFromResult);
 
-	/** Count rows (optionally filtered). */
-	UFUNCTION(BlueprintPure, Category = "SQL|Row", meta = (BlueprintInternalUseOnly = "true", AutoCreateRefTerm = "Bindings"))
-	int32 CountRows(
-		const FString& DatabaseName,
-		const FString& TableName,
-		const FString& WhereClause,
-		const TArray<FString>& Bindings
-	);
+	UFUNCTION(BlueprintCallable, CustomThunk, Category = "SQL|Table", meta = (BlueprintInternalUseOnly = "true", ArrayParm = "OutRows", DisplayName = "Populate SQL Rows From Result"))
+	FESQLQueryResult PopulateSQLRowsFromResult(UESQLTableAsset* TableAsset, const FESQLQueryResult& QueryResult, TArray<int32>& OutRows);
+	DECLARE_FUNCTION(execPopulateSQLRowsFromResult);
 
+	UFUNCTION(BlueprintCallable, CustomThunk, Category = "SQL|Table", meta = (BlueprintInternalUseOnly = "true", CustomStructureParam = "OutRow", DisplayName = "Load SQL Row By Id"))
+	FESQLQueryResult LoadSQLRowById(UESQLTableAsset* TableAsset, const FString& RowId, int32& OutRow);
+	DECLARE_FUNCTION(execLoadSQLRowById);
 
-	// ── Transactions ─────────────────────────────────────────────────────
+	UFUNCTION(BlueprintCallable, CustomThunk, Category = "SQL|Table", meta = (BlueprintInternalUseOnly = "true", CustomStructureParam = "OutRow", DisplayName = "Load SQL Row"))
+	FESQLQueryResult LoadSQLRow(UESQLTableAsset* TableAsset, const FESQLId& SqlId, int32& OutRow);
+	DECLARE_FUNCTION(execLoadSQLRow);
+
+	UFUNCTION(BlueprintCallable, CustomThunk, Category = "SQL|Table", meta = (BlueprintInternalUseOnly = "true", CustomStructureParam = "RowData", DisplayName = "Save SQL Row", AdvancedDisplay = "RowIdOverride"))
+	FESQLQueryResult SaveSQLRow(UESQLTableAsset* TableAsset, FString& OutResolvedRowId, const FString& RowIdOverride, const int32& RowData);
+	DECLARE_FUNCTION(execSaveSQLRow);
+
+	UFUNCTION(BlueprintCallable, CustomThunk, Category = "SQL|Table", meta = (BlueprintInternalUseOnly = "true", ArrayParm = "OutRows", DisplayName = "Load SQL Rows", AdvancedDisplay = "MaxRows"))
+	FESQLQueryResult LoadSQLRows(UESQLTableAsset* TableAsset, int32 MaxRows, TArray<int32>& OutRows);
+	DECLARE_FUNCTION(execLoadSQLRows);
+
+	UFUNCTION(BlueprintCallable, CustomThunk, Category = "SQL|Table", meta = (BlueprintInternalUseOnly = "true", ArrayParm = "OutRows", DisplayName = "Find SQL Rows"))
+	FESQLQueryResult FindSQLRows(UESQLTableAsset* TableAsset, const FESQLQuerySpec& QuerySpec, TArray<int32>& OutRows);
+	DECLARE_FUNCTION(execFindSQLRows);
+
+	UFUNCTION(BlueprintCallable, CustomThunk, Category = "SQL|Table", meta = (BlueprintInternalUseOnly = "true", ArrayParm = "OutRows", DisplayName = "Find SQL Rows By Field"))
+	FESQLQueryResult FindSQLRowsByField(UESQLTableAsset* TableAsset, FName FieldName, EESQLFilterOperation Operation, const FESQLBindingValue& Value, TArray<int32>& OutRows);
+	DECLARE_FUNCTION(execFindSQLRowsByField);
+
+	UFUNCTION(BlueprintCallable, CustomThunk, Category = "SQL|Table", meta = (BlueprintInternalUseOnly = "true", CustomStructureParam = "OutRow", DisplayName = "Find First SQL Row By Field"))
+	FESQLQueryResult FindFirstSQLRowByField(UESQLTableAsset* TableAsset, FName FieldName, EESQLFilterOperation Operation, const FESQLBindingValue& Value, int32& OutRow);
+	DECLARE_FUNCTION(execFindFirstSQLRowByField);
+
+	UFUNCTION(BlueprintCallable, CustomThunk, Category = "SQL|Table", meta = (BlueprintInternalUseOnly = "true", ArrayParm = "OutRows", DisplayName = "Load SQL Page"))
+	FESQLQueryResult LoadSQLPage(UESQLTableAsset* TableAsset, const FESQLQuerySpec& BaseQuerySpec, int32 PageIndex, int32 PageSize, TArray<int32>& OutRows);
+	DECLARE_FUNCTION(execLoadSQLPage);
+
+	UFUNCTION(BlueprintCallable, CustomThunk, Category = "SQL|Table", meta = (BlueprintInternalUseOnly = "true", ArrayParm = "OutRows", DisplayName = "Load SQL Page By Field"))
+	FESQLQueryResult LoadSQLPageByField(UESQLTableAsset* TableAsset, FName FieldName, EESQLFilterOperation Operation, const FESQLBindingValue& Value, int32 PageIndex, int32 PageSize, TArray<int32>& OutRows);
+	DECLARE_FUNCTION(execLoadSQLPageByField);
 
 	UFUNCTION(BlueprintCallable, Category = "SQL|Transaction")
-	bool BeginTransaction(const FString& DatabaseName);
+	FESQLQueryResult BeginTransaction(const FString& DatabaseName, FESQLTransactionHandle& OutHandle);
 
 	UFUNCTION(BlueprintCallable, Category = "SQL|Transaction")
-	bool CommitTransaction(const FString& DatabaseName);
+	FESQLQueryResult CommitTransaction(UPARAM(ref) FESQLTransactionHandle& Handle);
 
 	UFUNCTION(BlueprintCallable, Category = "SQL|Transaction")
-	bool RollbackTransaction(const FString& DatabaseName);
+	FESQLQueryResult RollbackTransaction(UPARAM(ref) FESQLTransactionHandle& Handle);
 
+	UFUNCTION(BlueprintCallable, Category = "SQL|Migration")
+	FESQLQueryResult ApplyMigrations(const FString& DatabaseName, const FESQLMigrationSet& MigrationSet);
 
-	// ── Snapshots (for Session databases) ────────────────────────────────
+	UFUNCTION(BlueprintCallable, Category = "SQL|Snapshot")
+	FESQLQueryResult BackupTo(const FString& DatabaseName, const FString& DestAbsolutePath);
 
 	UFUNCTION(BlueprintCallable, Category = "SQL|Snapshot")
 	FESQLQueryResult SaveSnapshot(
 		const FString& DatabaseName,
 		const FString& SlotName,
-		const FString& DisplayName = TEXT("")
-	);
+		const FString& DisplayName = TEXT(""));
 
 	UFUNCTION(BlueprintCallable, Category = "SQL|Snapshot")
 	FESQLQueryResult LoadSnapshot(const FString& DatabaseName, const FString& SlotName);
@@ -280,55 +253,45 @@ public:
 	UFUNCTION(BlueprintPure, Category = "SQL|Snapshot")
 	bool DoesSnapshotExist(const FString& DatabaseName, const FString& SlotName);
 
-	UFUNCTION(BlueprintPure, Category = "SQL|Snapshot")
-	bool IsSessionDatabase(const FString& DatabaseName) const;
-
-
-	// ── Delegates ────────────────────────────────────────────────────────
-
 	UPROPERTY(BlueprintAssignable, Category = "SQL")
 	FOnESQLQueryComplete OnQueryComplete;
 
 	UPROPERTY(BlueprintAssignable, Category = "SQL")
 	FOnESQLQueryComplete OnQueryError;
 
-	UPROPERTY(BlueprintAssignable, Category = "SQL|Multiplayer")
-	FOnESQLPlayerDBEvent OnPlayerDatabaseOpened;
-
-	UPROPERTY(BlueprintAssignable, Category = "SQL|Multiplayer")
-	FOnESQLPlayerDBEvent OnPlayerDatabaseClosed;
-
 private:
-
-	/** Logical name → live database handle (Local + Server scoped) */
-	TMap<FString, TSharedPtr<FESQLDatabase>> OpenDatabases;
-
-	/** PlayerId → (DatabaseName → handle) for PlayerScoped databases */
-	TMap<FString, TMap<FString, TSharedPtr<FESQLDatabase>>> PlayerDatabases;
-
-	/** Scope metadata per logical database name */
-	TMap<FString, EESQLDatabaseScope> DatabaseScopes;
-
-	/** Persistence metadata per logical database name */
-	TMap<FString, EESQLDatabasePersistence> DatabasePersistenceMap;
-
-	/** Cached net mode */
-	TEnumAsByte<ENetMode> CachedNetMode = NM_Standalone;
-
-	// ── Internal Helpers ─────────────────────────────────────────────────
-
-	FString ResolveDatabasePath(const FString& FileName, EESQLDatabaseScope Scope, const FString& PlayerId = TEXT("")) const;
+	void RefreshCachedNetMode();
+	FString NormalizeLogicalDatabaseName(const FString& DatabaseName, EESQLDatabaseScope& InOutScope) const;
+	TOptional<FESQLError> CheckScopeGate(EESQLDatabaseScope Scope, bool bWriteOperation, const FString& DatabaseName) const;
+	FESQLQueryResult ResolveDatabaseOpenPath(
+		const FString& DatabaseName,
+		EESQLDatabaseScope Scope,
+		EESQLDatabasePersistence Persistence,
+		const FString& FileName,
+		FString& OutResolvedDatabaseName,
+		FString& OutResolvedPath,
+		bool& OutReadOnly) const;
+	TSharedPtr<FESQLDatabaseContext, ESPMode::ThreadSafe> FindDatabaseContext(const FString& DatabaseName) const;
+	TSharedPtr<FESQLAsyncTicketState, ESPMode::ThreadSafe> RegisterTicketState(const FString& DatabaseName);
+	void RemoveTicketState(const FGuid& TicketId);
+	void FinalizeAsyncTicket(const FGuid& TicketId, const FOnESQLQueryCompleteCallback& Callback, const FESQLQueryResult& Result);
+	FESQLQueryResult RunRawRead(const FString& DatabaseName, const FString& SQL, const TArray<FESQLBindingValue>& Bindings);
+	FESQLQueryResult RunRawWrite(const FString& DatabaseName, const FString& SQL, const TArray<FESQLBindingValue>& Bindings);
+	FESQLQueryResult EnsureTableContext(
+		UObject* WorldContextObject,
+		UESQLTableAsset* TableAsset,
+		bool bNeedsWrite,
+		TSharedPtr<FESQLDatabaseContext, ESPMode::ThreadSafe>& OutContext);
+	FESQLQueryResult EnsureTablePrepared(UESQLTableAsset* TableAsset, const TSharedPtr<FESQLDatabaseContext, ESPMode::ThreadSafe>& Context);
 	FString ResolveSnapshotPath(const FString& DatabaseName, const FString& SlotName) const;
 	FString ResolveSnapshotMetaPath(const FString& DatabaseName, const FString& SlotName) const;
+	static bool IsLikelyReadOnlySql(const FString& SQL);
 
-	TSharedPtr<FESQLDatabase> GetDatabase(const FString& DatabaseName) const;
-	TSharedPtr<FESQLDatabase> GetPlayerDatabase(const FString& PlayerId, const FString& DatabaseName) const;
-	FString GetPlayerIdFromController(APlayerController* PC) const;
-	bool ValidateAuthority(EESQLDatabaseScope Scope, const FString& CallerName) const;
+	mutable FCriticalSection DatabaseContextsCS;
+	TMap<FString, TSharedPtr<FESQLDatabaseContext, ESPMode::ThreadSafe>> DatabaseContexts;
 
-	// ── Auto Player DB Hooks ─────────────────────────────────────────────
-	void OnPostLogin(AGameModeBase* GameMode, APlayerController* NewPlayer);
-	void OnLogout(AGameModeBase* GameMode, AController* Exiting);
-	FDelegateHandle PostLoginHandle;
-	FDelegateHandle LogoutHandle;
+	mutable FCriticalSection TicketsCS;
+	TMap<FGuid, TWeakPtr<FESQLAsyncTicketState, ESPMode::ThreadSafe>> TicketStates;
+
+	TEnumAsByte<ENetMode> CachedNetMode = NM_Standalone;
 };

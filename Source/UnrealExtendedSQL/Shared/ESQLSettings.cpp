@@ -2,6 +2,7 @@
 
 #include "ESQLSettings.h"
 
+#include "Private/Paths/ESQLPathResolver.h"
 #include "Misc/Paths.h"
 
 namespace
@@ -68,21 +69,7 @@ FString UESQLSettings::ResolveDatabaseFilePath(const FString& DatabaseName)
 	return FullPath;
 }
 
-FString UESQLSettings::ResolvePlayerDatabaseFilePath(const FString& DatabaseName, const FString& PlayerId)
+FString UESQLSettings::ResolveExistingDatabaseFilePath(const FString& DatabaseName, bool bAllowReadonlyContentFallback)
 {
-	FString FileName = DatabaseName;
-	if (!FileName.EndsWith(TEXT(".db"), ESearchCase::IgnoreCase))
-	{
-		FileName += TEXT(".db");
-	}
-
-	const UESQLSettings* Settings = Get();
-	FString FullPath = FPaths::Combine(
-		ResolveDatabaseDirectoryPath(),
-		Settings ? Settings->PlayerSubdirectory : TEXT("Players"),
-		PlayerId,
-		FileName);
-	FullPath = FPaths::ConvertRelativePathToFull(FullPath);
-	FPaths::NormalizeFilename(FullPath);
-	return FullPath;
+	return FESQLPathResolver::ResolveExistingDatabasePath(DatabaseName, bAllowReadonlyContentFallback);
 }

@@ -19,7 +19,7 @@ class UESQLTableAsset;
 struct FLinearColor;
 
 UCLASS(Abstract)
-class UNREALEXTENDEDSQLEDITOR_API UK2Node_ESQLRowArrayBridgeBase : public UK2Node
+class UNREALEXTENDEDSQLEDITOR_API UK2Node_ESQLRowArraySubsystemBase : public UK2Node
 {
 	GENERATED_BODY()
 
@@ -41,11 +41,11 @@ public:
 	virtual bool IsNodeSafeToIgnore() const override { return true; }
 
 protected:
-	virtual FName GetBridgeFunctionName() const PURE_VIRTUAL(UK2Node_ESQLRowArrayBridgeBase::GetBridgeFunctionName, return NAME_None;);
-	virtual FText GetMenuTitleText() const PURE_VIRTUAL(UK2Node_ESQLRowArrayBridgeBase::GetMenuTitleText, return FText::GetEmpty(););
-	virtual FText GetNodeTooltipText() const PURE_VIRTUAL(UK2Node_ESQLRowArrayBridgeBase::GetNodeTooltipText, return FText::GetEmpty(););
-	virtual void AllocateOperationPins() PURE_VIRTUAL(UK2Node_ESQLRowArrayBridgeBase::AllocateOperationPins, );
-	virtual void ExpandOperationPins(FKismetCompilerContext& CompilerContext, UEdGraph* SourceGraph, UK2Node_CallFunction* FunctionNode) PURE_VIRTUAL(UK2Node_ESQLRowArrayBridgeBase::ExpandOperationPins, );
+	virtual FName GetSubsystemFunctionName() const PURE_VIRTUAL(UK2Node_ESQLRowArraySubsystemBase::GetSubsystemFunctionName, return NAME_None;);
+	virtual FText GetMenuTitleText() const PURE_VIRTUAL(UK2Node_ESQLRowArraySubsystemBase::GetMenuTitleText, return FText::GetEmpty(););
+	virtual FText GetNodeTooltipText() const PURE_VIRTUAL(UK2Node_ESQLRowArraySubsystemBase::GetNodeTooltipText, return FText::GetEmpty(););
+	virtual void AllocateOperationPins() PURE_VIRTUAL(UK2Node_ESQLRowArraySubsystemBase::AllocateOperationPins, );
+	virtual void ExpandOperationPins(FKismetCompilerContext& CompilerContext, UEdGraph* SourceGraph, UK2Node_CallFunction* FunctionNode) PURE_VIRTUAL(UK2Node_ESQLRowArraySubsystemBase::ExpandOperationPins, );
 	virtual void ValidateOperationPins(class FCompilerResultsLog& MessageLog) const {}
 	virtual void RefreshCustomPinTypes() {}
 
@@ -64,7 +64,7 @@ private:
 };
 
 UCLASS(Abstract)
-class UNREALEXTENDEDSQLEDITOR_API UK2Node_ESQLQuerySpecBridgeBase : public UK2Node, public IK2Node_AddPinInterface, public FESQLQueryClauseUiBase
+class UNREALEXTENDEDSQLEDITOR_API UK2Node_ESQLQuerySpecSubsystemBase : public UK2Node, public IK2Node_AddPinInterface, public FESQLQueryClauseUiBase
 {
 	GENERATED_BODY()
 
@@ -91,11 +91,11 @@ public:
 	virtual bool CanRemovePin(const UEdGraphPin* Pin) const override;
 
 protected:
-	virtual FName GetBridgeFunctionName() const PURE_VIRTUAL(UK2Node_ESQLQuerySpecBridgeBase::GetBridgeFunctionName, return NAME_None;);
-	virtual FText GetMenuTitleText() const PURE_VIRTUAL(UK2Node_ESQLQuerySpecBridgeBase::GetMenuTitleText, return FText::GetEmpty(););
-	virtual FText GetNodeTooltipText() const PURE_VIRTUAL(UK2Node_ESQLQuerySpecBridgeBase::GetNodeTooltipText, return FText::GetEmpty(););
-	virtual void AllocateResultPins() PURE_VIRTUAL(UK2Node_ESQLQuerySpecBridgeBase::AllocateResultPins, );
-	virtual void ExpandResultPins(FKismetCompilerContext& CompilerContext, UEdGraph* SourceGraph, UK2Node_CallFunction* FunctionNode) PURE_VIRTUAL(UK2Node_ESQLQuerySpecBridgeBase::ExpandResultPins, );
+	virtual FName GetSubsystemFunctionName() const PURE_VIRTUAL(UK2Node_ESQLQuerySpecSubsystemBase::GetSubsystemFunctionName, return NAME_None;);
+	virtual FText GetMenuTitleText() const PURE_VIRTUAL(UK2Node_ESQLQuerySpecSubsystemBase::GetMenuTitleText, return FText::GetEmpty(););
+	virtual FText GetNodeTooltipText() const PURE_VIRTUAL(UK2Node_ESQLQuerySpecSubsystemBase::GetNodeTooltipText, return FText::GetEmpty(););
+	virtual void AllocateResultPins() PURE_VIRTUAL(UK2Node_ESQLQuerySpecSubsystemBase::AllocateResultPins, );
+	virtual void ExpandResultPins(FKismetCompilerContext& CompilerContext, UEdGraph* SourceGraph, UK2Node_CallFunction* FunctionNode) PURE_VIRTUAL(UK2Node_ESQLQuerySpecSubsystemBase::ExpandResultPins, );
 	virtual void ValidateAdditionalPins(class FCompilerResultsLog& MessageLog) const {}
 
 	UEdGraphPin* GetWorldContextPin(const TArray<UEdGraphPin*>* PinsToSearch = nullptr) const;
@@ -107,7 +107,7 @@ protected:
 	virtual FESQLQueryClauseUiState& GetQueryClauseUiState() override { return ClauseUiState; }
 	virtual const FESQLQueryClauseUiState& GetQueryClauseUiState() const override { return ClauseUiState; }
 
-	UEdGraphPin* GetLegacyQuerySpecPin() const;
+	UEdGraphPin* GetQuerySpecPin() const;
 
 private:
 	mutable FNodeTextCache CachedNodeTitle;
@@ -117,12 +117,12 @@ private:
 };
 
 UCLASS()
-class UNREALEXTENDEDSQLEDITOR_API UK2Node_ESQLGetRows : public UK2Node_ESQLRowArrayBridgeBase
+class UNREALEXTENDEDSQLEDITOR_API UK2Node_ESQLGetRows : public UK2Node_ESQLRowArraySubsystemBase
 {
 	GENERATED_BODY()
 
 protected:
-	virtual FName GetBridgeFunctionName() const override;
+	virtual FName GetSubsystemFunctionName() const override;
 	virtual FText GetMenuTitleText() const override;
 	virtual FText GetNodeTooltipText() const override;
 	virtual void AllocateOperationPins() override;
@@ -130,12 +130,12 @@ protected:
 };
 
 UCLASS(meta = (ESQLHideFromBlueprintPalette = "true"))
-class UNREALEXTENDEDSQLEDITOR_API UK2Node_ESQLQueryRows : public UK2Node_ESQLQuerySpecBridgeBase
+class UNREALEXTENDEDSQLEDITOR_API UK2Node_ESQLQueryRows : public UK2Node_ESQLQuerySpecSubsystemBase
 {
 	GENERATED_BODY()
 
 protected:
-	virtual FName GetBridgeFunctionName() const override;
+	virtual FName GetSubsystemFunctionName() const override;
 	virtual FText GetMenuTitleText() const override;
 	virtual FText GetNodeTooltipText() const override;
 	virtual void AllocateResultPins() override;
@@ -143,12 +143,12 @@ protected:
 };
 
 UCLASS(meta = (ESQLHideFromBlueprintPalette = "true"))
-class UNREALEXTENDEDSQLEDITOR_API UK2Node_ESQLCountRowsQuery : public UK2Node_ESQLQuerySpecBridgeBase
+class UNREALEXTENDEDSQLEDITOR_API UK2Node_ESQLCountRowsQuery : public UK2Node_ESQLQuerySpecSubsystemBase
 {
 	GENERATED_BODY()
 
 protected:
-	virtual FName GetBridgeFunctionName() const override;
+	virtual FName GetSubsystemFunctionName() const override;
 	virtual FText GetMenuTitleText() const override;
 	virtual FText GetNodeTooltipText() const override;
 	virtual void AllocateResultPins() override;
@@ -159,7 +159,7 @@ private:
 };
 
 UCLASS(meta = (ESQLHideFromBlueprintPalette = "true"))
-class UNREALEXTENDEDSQLEDITOR_API UK2Node_ESQLFindRows : public UK2Node_ESQLRowArrayBridgeBase, public IK2Node_AddPinInterface, public FESQLQueryClauseUiBase
+class UNREALEXTENDEDSQLEDITOR_API UK2Node_ESQLFindRows : public UK2Node_ESQLRowArraySubsystemBase, public IK2Node_AddPinInterface, public FESQLQueryClauseUiBase
 {
 	GENERATED_BODY()
 
@@ -172,7 +172,7 @@ public:
 	virtual bool CanRemovePin(const UEdGraphPin* Pin) const override;
 
 protected:
-	virtual FName GetBridgeFunctionName() const override;
+	virtual FName GetSubsystemFunctionName() const override;
 	virtual FText GetMenuTitleText() const override;
 	virtual FText GetNodeTooltipText() const override;
 	virtual void AllocateOperationPins() override;
@@ -186,19 +186,19 @@ protected:
 	virtual const FESQLQueryClauseUiState& GetQueryClauseUiState() const override { return ClauseUiState; }
 
 private:
-	UEdGraphPin* GetLegacyQuerySpecPin() const;
+	UEdGraphPin* GetQuerySpecPin() const;
 
 	UPROPERTY()
 	FESQLQueryClauseUiState ClauseUiState;
 };
 
 UCLASS(meta = (ESQLHideFromBlueprintPalette = "true"))
-class UNREALEXTENDEDSQLEDITOR_API UK2Node_ESQLFindRowsByField : public UK2Node_ESQLRowArrayBridgeBase
+class UNREALEXTENDEDSQLEDITOR_API UK2Node_ESQLFindRowsByField : public UK2Node_ESQLRowArraySubsystemBase
 {
 	GENERATED_BODY()
 
 protected:
-	virtual FName GetBridgeFunctionName() const override;
+	virtual FName GetSubsystemFunctionName() const override;
 	virtual FText GetMenuTitleText() const override;
 	virtual FText GetNodeTooltipText() const override;
 	virtual void AllocateOperationPins() override;
@@ -208,12 +208,12 @@ protected:
 };
 
 UCLASS(meta = (ESQLHideFromBlueprintPalette = "true"))
-class UNREALEXTENDEDSQLEDITOR_API UK2Node_ESQLLoadPage : public UK2Node_ESQLRowArrayBridgeBase
+class UNREALEXTENDEDSQLEDITOR_API UK2Node_ESQLLoadPage : public UK2Node_ESQLRowArraySubsystemBase
 {
 	GENERATED_BODY()
 
 protected:
-	virtual FName GetBridgeFunctionName() const override;
+	virtual FName GetSubsystemFunctionName() const override;
 	virtual FText GetMenuTitleText() const override;
 	virtual FText GetNodeTooltipText() const override;
 	virtual void AllocateOperationPins() override;

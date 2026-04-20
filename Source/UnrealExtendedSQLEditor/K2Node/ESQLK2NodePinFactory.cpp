@@ -6,7 +6,6 @@
 #include "EdGraphSchema_K2.h"
 #include "K2Node/ESQLAsyncTypedK2Nodes.h"
 #include "K2Node/ESQLK2FieldFilterUtils.h"
-#include "K2Node/ESQLPlayerTypedK2Nodes.h"
 #include "K2Node/ESQLQueryBuilderK2Nodes.h"
 #include "K2Node/ESQLRowQueryK2Nodes.h"
 #include "K2Node/SGraphPinESQLId.h"
@@ -70,7 +69,6 @@ TSharedPtr<SGraphPin> FESQLK2NodePinFactory::CreatePin(UEdGraphPin* Pin) const
 			&& !Node->IsA<UK2Node_ESQLLoadPage>()
 			&& !Node->IsA<UK2Node_ESQLCountRows>()
 			&& !Node->IsA<UK2Node_ESQLFindFirstRowByField>()
-			&& !Node->IsA<UK2Node_ESQLFindPlayerRows>()
 			&& !Node->IsA<UK2Node_ESQLAsyncFindRows>()
 			&& !Node->IsA<UK2Node_ESQLMakeQuerySpec>()))
 	{

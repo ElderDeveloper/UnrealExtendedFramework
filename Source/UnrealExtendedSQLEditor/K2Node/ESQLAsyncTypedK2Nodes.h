@@ -132,7 +132,7 @@ protected:
 	virtual const FESQLQueryClauseUiState& GetQueryClauseUiState() const override { return ClauseUiState; }
 
 private:
-	UEdGraphPin* GetLegacyQuerySpecPin() const;
+	UEdGraphPin* GetQuerySpecPin() const;
 
 	UPROPERTY()
 	FESQLQueryClauseUiState ClauseUiState;

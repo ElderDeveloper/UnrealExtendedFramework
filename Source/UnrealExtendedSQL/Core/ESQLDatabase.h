@@ -10,13 +10,18 @@
 // Forward declaration — avoid exposing sqlite3.h in header
 struct sqlite3;
 
+class FESQLDatabase;
+using FESQLDatabaseOpenResult = TESQLValueOrError<TSharedPtr<FESQLDatabase>>;
+using FESQLStatementPrepareResult = TESQLValueOrError<TSharedPtr<FESQLStatement>>;
+
 /**
  * RAII wrapper around a sqlite3* connection handle.
  * NOT a UObject — used internally by UESQLSubsystem and can be used
  * from any C++ code without depending on the UObject ecosystem.
  *
- * Thread safety: All public methods acquire the CriticalSection.
- * Multiple threads may safely call Execute/Prepare concurrently.
+	* Thread affinity: higher-level code should keep a single connection on one
+	* owning thread. Debug builds assert if sqlite-handle operations hop threads.
+	* Public methods that touch the sqlite handle serialize through CriticalSection.
  *
  * All Execute/Query functions use sqlite3_prepare_v2() internally,
  * NEVER sqlite3_exec(). Multi-statement SQL strings are rejected —
@@ -38,20 +43,22 @@ public:
 	/** Open a file-backed database (Persistent mode).
 	    On open, automatically executes:
 	      PRAGMA journal_mode=WAL;    (if bUseWALMode from settings, default: true)
+	      PRAGMA synchronous=NORMAL;
 	      PRAGMA foreign_keys=ON;     (SQLite FK enforcement is OFF by default)
+	      sqlite3_busy_timeout(5000);
 	    Creates the file and parent directories if they don't exist. */
-	static TSharedPtr<FESQLDatabase> Open(const FString& FilePath, FString& OutError);
+	static FESQLDatabaseOpenResult Open(const FString& FilePath);
 
 	/** Open a file-backed database in READ-ONLY mode.
 	    Use this for editor tools that only need to query data (e.g. FESQLId picker)
 	    without conflicting with an existing read-write connection. */
-	static TSharedPtr<FESQLDatabase> OpenReadOnly(const FString& FilePath, FString& OutError);
+	static FESQLDatabaseOpenResult OpenReadOnly(const FString& FilePath);
 
 	/** Open a purely in-memory database (Session mode).
 	    The database lives only in RAM — no file is created on disk.
 	    Use BackupToFile() to persist it (snapshot), and
 	    RestoreFromFile() to load a snapshot into memory. */
-	static TSharedPtr<FESQLDatabase> OpenInMemory(FString& OutError);
+	static FESQLDatabaseOpenResult OpenInMemory();
 
 	/** Close the database connection. Clears statement cache. */
 	void Close();
@@ -80,16 +87,16 @@ public:
 
 	// ── Prepared Statement API ───────────────────────────────────────────
 
-	/** Prepare (compile) a SQL statement. Returns nullptr on error.
+	/** Prepare (compile) a SQL statement. Returns structured error on failure.
 	    For repeated queries, prefer GetOrPrepare() which uses the cache. */
-	TSharedPtr<FESQLStatement> Prepare(const FString& SQL, FString& OutError);
+	FESQLStatementPrepareResult Prepare(const FString& SQL);
 
 
 	// ── Transaction Helpers ──────────────────────────────────────────────
 
-	bool BeginTransaction();
-	bool CommitTransaction();
-	bool RollbackTransaction();
+	FESQLErrorResult BeginTransaction();
+	FESQLErrorResult CommitTransaction();
+	FESQLErrorResult RollbackTransaction();
 
 
 	// ── Backup / Snapshot ────────────────────────────────────────────────
@@ -97,25 +104,12 @@ public:
 	/** Backup this database (memory or file) to a .db file on disk.
 	    Uses sqlite3_backup API — safe to call while the DB is live.
 	    This is the implementation behind UESQLSubsystem::SaveSnapshot(). */
-	bool BackupToFile(const FString& DestFilePath, FString& OutError);
+	FESQLErrorResult BackupToFile(const FString& DestFilePath);
 
 	/** Replace this database's contents with data from a .db file on disk.
 	    Uses sqlite3_backup API — the current contents are fully overwritten.
 	    This is the implementation behind UESQLSubsystem::LoadSnapshot(). */
-	bool RestoreFromFile(const FString& SourceFilePath, FString& OutError);
-
-
-	// ── SQL Dump (VCS Pipeline) ──────────────────────────────────────────
-
-	/** Export this database to a .sqldump text file.
-	    Writes CREATE TABLE + sorted INSERT OR REPLACE for every user table.
-	    Convenience wrapper around FESQLDumpPipeline::ExportDatabaseToDump(). */
-	bool ExportToSQLDump(const FString& DumpFilePath, FString& OutError);
-
-	/** Import a .sqldump text file into this database.
-	    Executes statements in a transaction.
-	    Convenience wrapper around FESQLDumpPipeline::ImportDumpToDatabase(). */
-	bool ImportFromSQLDump(const FString& DumpFilePath, FString& OutError);
+	FESQLErrorResult RestoreFromFile(const FString& SourceFilePath);
 
 
 	// ── Metadata ─────────────────────────────────────────────────────────
@@ -129,21 +123,33 @@ public:
 	/** English-language error message from the last failed operation. */
 	FString GetLastErrorMessage() const;
 
+	/** Clear the debug owning-thread marker before an idle connection is returned
+	    to a pool for later reuse on another worker thread. */
+	void ResetThreadAffinity();
+
 private:
 
 	/** Private constructor — use Open() or OpenInMemory(). */
 	FESQLDatabase();
 
 	/** Internal: initialize PRAGMAs after open. */
-	bool ApplyPragmas(FString& OutError);
+	FESQLErrorResult ApplyPragmas(bool bReadOnly);
+
+	/** Internal: lazily bind a connection to the first thread that uses it. */
+	void CheckThreadAffinity(const TCHAR* Operation) const;
 
 	/** Internal: execute a prepared statement and collect results into FESQLQueryResult. */
 	FESQLQueryResult ExecuteStatement(TSharedPtr<FESQLStatement> Statement);
+
+	/** Internal: implementation behind the public GetOrPrepare entrypoint.
+	    Caller must already hold CriticalSection. */
+	FESQLStatementPrepareResult GetOrPrepareLocked(const FString& SQL);
 
 	sqlite3* DbHandle = nullptr;
 	FString DatabasePath;          // Empty for in-memory
 	bool bInMemory = false;
 	mutable FCriticalSection CriticalSection;
+	mutable TOptional<uint32> OwningThreadId;
 
 	// ── Statement Cache ──────────────────────────────────────────────────
 	/** Caches compiled sqlite3_stmt* handles keyed by SQL string.
@@ -158,5 +164,5 @@ private:
 public:
 	/** Get a cached statement or prepare a new one. Resets the statement before returning.
 	    Prefer this over Prepare() for repeated queries (e.g. InsertRow in a loop). */
-	TSharedPtr<FESQLStatement> GetOrPrepare(const FString& SQL, FString& OutError);
+	FESQLStatementPrepareResult GetOrPrepare(const FString& SQL);
 };

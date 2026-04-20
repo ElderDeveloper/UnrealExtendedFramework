@@ -87,8 +87,6 @@ public:
 		UESQLTableAsset* InTableAsset
 	);
 
-	virtual bool CanEditRows() const;
-
 
 	// ── FAssetEditorToolkit interface ─────────────────────────────────────
 
@@ -120,7 +118,6 @@ public:
 	/** Get the database connection. */
 	TSharedPtr<FESQLDatabase> GetDatabase() const { return Database; }
 
-	void HandlePostChange();
 	void SetHighlightedRow(FName Name);
 	FText GetFilterText() const;
 	FSlateColor GetRowTextColor(FName RowName) const;
@@ -144,8 +141,6 @@ protected:
 	// ── Slate builders ───────────────────────────────────────────────────
 
 	virtual void PostRegenerateMenusAndToolbars() override;
-
-	FReply OnFindRowInContentBrowserClicked();
 
 	FText GetCellText(FESQLEditorRowPtr InRowDataPointer, int32 ColumnIndex) const;
 	FText GetCellToolTipText(FESQLEditorRowPtr InRowDataPointer, int32 ColumnIndex) const;
@@ -178,15 +173,6 @@ protected:
 	TSharedRef<SWidget> MakeCellWidget(FESQLEditorRowPtr InRowDataPtr, const int32 InRowIndex, const FName& InColumnId);
 	void OnRowSelectionChanged(FESQLEditorRowPtr InNewSelection, ESelectInfo::Type InSelectInfo);
 
-
-	// ── Row operations ───────────────────────────────────────────────────
-
-	void CopySelectedRow();
-	void PasteOnSelectedRow();
-	void DuplicateSelectedRow();
-	void RenameSelectedRowCommand();
-	void DeleteSelectedRow();
-
 	virtual void CreateAndRegisterTableTab(const TSharedRef<class FTabManager>& InTabManager);
 	virtual void CreateAndRegisterTableDetailsTab(const TSharedRef<class FTabManager>& InTabManager);
 	virtual void CreateAndRegisterRowEditorTab(const TSharedRef<class FTabManager>& InTabManager);
@@ -194,19 +180,10 @@ protected:
 
 	// ── Toolbar / Sorting ────────────────────────────────────────────────
 
-	void OnAddClicked();
-	void OnRemoveClicked();
-	void OnCopyClicked();
-	void OnPasteClicked();
-	void OnDuplicateClicked();
-	bool CanEditTable() const;
-
 	void SetDefaultSort();
 	EColumnSortMode::Type GetColumnSortMode(const FName ColumnId) const;
 	void OnColumnSortModeChanged(const EColumnSortPriority::Type SortPriority, const FName& ColumnId, const EColumnSortMode::Type InSortMode);
 	void OnColumnNameSortModeChanged(const EColumnSortPriority::Type SortPriority, const FName& ColumnId, const EColumnSortMode::Type InSortMode);
-
-	void OnEditDataTableStructClicked();
 
 	void ExtendToolbar(TSharedPtr<FExtender> Extender);
 	void FillToolbar(FToolBarBuilder& ToolbarBuilder);
@@ -214,10 +191,14 @@ protected:
 
 	// ── SQL-specific toolbar actions ─────────────────────────────────────
 
+	void OnBuildTestDatabaseClicked();
 	void OnImportCSVClicked();
 	void OnExportCSVClicked();
 	void OnRefreshClicked();
 	void OnRunQueryClicked();
+	class UESQLSubsystem* ResolvePreviewSubsystem(FString& OutError) const;
+	bool ReopenPreviewDatabase(const FString& DatabasePath, FString& OutError);
+	bool BuildSubsystemPreviewDatabase(FString& OutResolvedPath, FString& OutError);
 
 
 protected:

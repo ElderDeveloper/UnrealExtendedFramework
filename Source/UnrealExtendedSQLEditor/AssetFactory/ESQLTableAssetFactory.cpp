@@ -219,7 +219,7 @@ UObject* UESQLTableAssetFactory::FactoryCreateNew(
 		NewAsset->RowStruct = SelectedStruct;
 		NewAsset->TableName = SelectedStruct->GetName();
 		// DatabaseName and other properties keep their defaults
-		// The actual CREATE TABLE happens when Initialize() is called
+		// The actual CREATE TABLE happens when the editor or subsystem prepares the table context
 
 		UE_LOG(LogExtendedSQLEditor, Log, TEXT("Created SQL Table Asset '%s' with struct '%s'"),
 			*InName.ToString(), *SelectedStruct->GetName());

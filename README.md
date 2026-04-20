@@ -1,8 +1,14 @@
 # Unreal Extended Framework
-Kemal Erdem YILMAZ Blueprint and C++ Extended Framework
+Kemal Erdem YILMAZ Blueprint and C++ framework plugin for Unreal Engine.
 
+This repository contains runtime and editor modules for gameplay systems, backend utilities, online service integrations, and typed SQLite tooling.
 
-This plugin contains lot's of libraries and systems to enhance the Unreal Engine development experience.
+Current SQL documentation starts in the Unreal Extended SQL section below and is backed by:
+
+- `ExtendedSQL.md`
+- `ExtendedSQLBlueprint.md`
+- `ExtendedSQLImplementation.md`
+- `ExtendedSQLiteFeasibility.md`
 
 
 
@@ -71,6 +77,11 @@ This plugin contains lot's of libraries and systems to enhance the Unreal Engine
 >    5.4 [Widgets](#extended-settings-widgets)  
 > 6. [Unreal Extended Steam](#extended-steam)  
 >    6.1 [Subsystems](#extended-steam-subsystem)  
+> 7. [Unreal Extended SQL](#extended-sql)  
+>    7.1 [Runtime Model](#extended-sql-runtime)  
+>    7.2 [Table Assets](#extended-sql-assets)  
+>    7.3 [Authoring Workflow](#extended-sql-authoring)  
+>    7.4 [Documentation](#extended-sql-docs)  
 
 
 
@@ -103,4 +114,67 @@ All settings options that can be used for game settings and some settings relete
 <a name="extended-steam"></a>
 ### 6.Unreal Extended Steam
 Steam sdk integration for Unreal Engine
+
+
+<a name="extended-sql"></a>
+### 7.Unreal Extended SQL
+Typed SQLite runtime and editor tooling for Unreal Engine.
+
+The current SQL module is built around three public ideas:
+
+- `UESQLSubsystem` is the runtime front door for database lifecycle, typed row queries, raw SQL, async work, transactions, and snapshots.
+- `UESQLTableAsset` is metadata-first and defines row struct, database name, table name, primary key, label column, scope, and persistence.
+- `.usqlite/` is the authored source of truth for team workflows, while `.db` files are treated as derived runtime or preview artifacts.
+
+
+<a name="extended-sql-runtime"></a>
+#### 7.1 Runtime Model
+
+Use `UESQLSubsystem` for runtime behavior.
+
+- Open, close, and delete logical databases.
+- Load, save, find, count, page, and delete typed rows through a `UESQLTableAsset`.
+- Run raw SQL only for advanced or tooling-focused cases.
+- Use the same subsystem model for async queries, transactions, backups, and snapshots.
+
+
+<a name="extended-sql-assets"></a>
+#### 7.2 Table Assets
+
+`UESQLTableAsset` is the typed schema contract between editor authoring and runtime execution.
+
+- It describes the row struct and SQL table identity.
+- It provides picker-friendly metadata such as primary key and default label column.
+- It validates authoring problems in the editor before they turn into runtime failures.
+- It is an input to subsystem calls, not the main runtime service surface.
+
+
+<a name="extended-sql-authoring"></a>
+#### 7.3 Authoring Workflow
+
+The intended authoring flow is:
+
+1. Define a row struct.
+2. Create a `UESQLTableAsset`.
+3. Save and validate the sibling `.usqlite/` project.
+4. Build or preview a derived test `.db` through the editor and subsystem-backed tools.
+
+This keeps SQL data merge-friendly and consistent with the current architecture reset.
+
+
+<a name="extended-sql-docs"></a>
+#### 7.4 Documentation
+
+For the current SQL guides, start with:
+
+- `ExtendedSQL.md`
+- `ExtendedSQLBlueprint.md`
+- `ExtendedSQLImplementation.md`
+- `ExtendedSQLiteFeasibility.md`
+
+For a fast path:
+
+1. read `ExtendedSQL.md` for the product overview
+2. read `ExtendedSQLBlueprint.md` for the supported Blueprint workflow
+3. read `ExtendedSQLImplementation.md` for current runtime and authoring responsibilities
 

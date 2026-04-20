@@ -1,15 +1,65 @@
 // Copyright Kemal Erdem YILMAZ. All Rights Reserved.
 
 #include "ESQLDatabase.h"
-#include "ESQLUnrealVFS.h"
+#include "Private/Paths/ESQLPathResolver.h"
+#include "Private/ThirdParty/ESQLVendorSqlite.h"
 #include "Shared/ESQLSettings.h"
 #include "UnrealExtendedSQL.h"
 #include "HAL/PlatformFileManager.h"
-#include "Misc/Paths.h"
+#include "HAL/PlatformTLS.h"
 
-THIRD_PARTY_INCLUDES_START
-#include "sqlite3.h"
-THIRD_PARTY_INCLUDES_END
+namespace
+{
+FESQLError MakeSqlError(EESQLErrorCode Code, FString Message, FString SqlFragment = FString())
+{
+	return FESQLError::Make(Code, MoveTemp(Message), MoveTemp(SqlFragment));
+}
+
+template <typename TValue>
+TESQLValueOrError<TValue> MakeValueError(EESQLErrorCode Code, FString Message, FString SqlFragment = FString())
+{
+	return TESQLValueOrError<TValue>::MakeError(MakeSqlError(Code, MoveTemp(Message), MoveTemp(SqlFragment)));
+}
+
+FESQLErrorResult MakeOperationError(EESQLErrorCode Code, FString Message, FString SqlFragment = FString())
+{
+	return FESQLErrorResult::Failure(MakeSqlError(Code, MoveTemp(Message), MoveTemp(SqlFragment)));
+}
+
+FESQLQueryResult MakeQueryError(EESQLErrorCode Code, FString Message, FString SqlFragment = FString())
+{
+	return FESQLQueryResult::Failure(MakeSqlError(Code, MoveTemp(Message), MoveTemp(SqlFragment)));
+}
+
+FESQLErrorResult ExecuteSqliteStatement(sqlite3* DbHandle, const char* Sql, EESQLErrorCode ErrorCode)
+{
+	sqlite3_stmt* Statement = nullptr;
+	const int PrepareResult = sqlite3_prepare_v2(DbHandle, Sql, -1, &Statement, nullptr);
+	if (PrepareResult != SQLITE_OK)
+	{
+		return MakeOperationError(
+			ErrorCode,
+			FString::Printf(TEXT("Failed to prepare SQL '%s': %hs"), UTF8_TO_TCHAR(Sql), sqlite3_errmsg(DbHandle)),
+			UTF8_TO_TCHAR(Sql));
+	}
+
+	int StepResult = SQLITE_ROW;
+	while ((StepResult = sqlite3_step(Statement)) == SQLITE_ROW)
+	{
+	}
+
+	sqlite3_finalize(Statement);
+	if (StepResult != SQLITE_DONE)
+	{
+		return MakeOperationError(
+			ErrorCode,
+			FString::Printf(TEXT("Failed to execute SQL '%s': %hs"), UTF8_TO_TCHAR(Sql), sqlite3_errmsg(DbHandle)),
+			UTF8_TO_TCHAR(Sql));
+	}
+
+	return FESQLErrorResult::Success();
+}
+}
 
 
 // ── Construction / Destruction ───────────────────────────────────────────────
@@ -26,54 +76,44 @@ FESQLDatabase::~FESQLDatabase()
 
 // ── Open / Close ─────────────────────────────────────────────────────────────
 
-TSharedPtr<FESQLDatabase> FESQLDatabase::Open(const FString& FilePath, FString& OutError)
+FESQLDatabaseOpenResult FESQLDatabase::Open(const FString& FilePath)
 {
 	TSharedPtr<FESQLDatabase> Database = MakeShareable(new FESQLDatabase());
 
-	// CRITICAL: Convert to absolute path — UE's FPaths::ProjectSavedDir() returns
-	// relative paths like "../../../../../../Users/..." which SQLite cannot open.
-	const FString AbsPath = FPaths::ConvertRelativePathToFull(FilePath);
+	const FString AbsPath = FESQLPathResolver::ResolveAbsolutePath(FilePath);
 	Database->DatabasePath = AbsPath;
 	Database->bInMemory = false;
 
-	// Ensure parent directory exists
-	const FString Directory = FPaths::GetPath(AbsPath);
-	if (!Directory.IsEmpty())
-	{
-		IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
-		if (!PlatformFile.DirectoryExists(*Directory))
-		{
-			PlatformFile.CreateDirectoryTree(*Directory);
-		}
-	}
+	FESQLPathResolver::EnsureParentDirectoryExists(AbsPath);
 
 	const FTCHARToUTF8 Utf8Path(*AbsPath);
 	const int Result = sqlite3_open_v2(
 		Utf8Path.Get(),
 		&Database->DbHandle,
-		SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE,
-		FESQLUnrealVFS::GetVFSName()
+		SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_NOMUTEX,
+		nullptr
 	);
 
 	if (Result != SQLITE_OK)
 	{
-		OutError = FString::Printf(TEXT("Failed to open database '%s': %hs"),
+		const FESQLError Error = MakeSqlError(EESQLErrorCode::OpenFailed, FString::Printf(TEXT("Failed to open database '%s': %hs"),
 			*FilePath,
-			Database->DbHandle ? sqlite3_errmsg(Database->DbHandle) : "unknown error");
-		UE_LOG(LogExtendedSQL, Error, TEXT("%s"), *OutError);
+			Database->DbHandle ? sqlite3_errmsg(Database->DbHandle) : "unknown error"));
+		UE_LOG(LogExtendedSQL, Error, TEXT("%s"), *Error.Message);
 
 		if (Database->DbHandle)
 		{
 			sqlite3_close(Database->DbHandle);
 			Database->DbHandle = nullptr;
 		}
-		return nullptr;
+		return FESQLDatabaseOpenResult::MakeError(Error);
 	}
 
-	if (!Database->ApplyPragmas(OutError))
+	const FESQLErrorResult PragmaResult = Database->ApplyPragmas(false);
+	if (!PragmaResult.bSuccess)
 	{
 		Database->Close();
-		return nullptr;
+		return FESQLDatabaseOpenResult::MakeError(PragmaResult.Error);
 	}
 
 	const UESQLSettings* Settings = UESQLSettings::Get();
@@ -82,77 +122,88 @@ TSharedPtr<FESQLDatabase> FESQLDatabase::Open(const FString& FilePath, FString& 
 		UE_LOG(LogExtendedSQL, Log, TEXT("Opened database: %s"), *FilePath);
 	}
 
-	return Database;
+	return FESQLDatabaseOpenResult::MakeValue(Database);
 }
 
-TSharedPtr<FESQLDatabase> FESQLDatabase::OpenReadOnly(const FString& FilePath, FString& OutError)
+FESQLDatabaseOpenResult FESQLDatabase::OpenReadOnly(const FString& FilePath)
 {
 	TSharedPtr<FESQLDatabase> Database = MakeShareable(new FESQLDatabase());
 
-	const FString AbsPath = FPaths::ConvertRelativePathToFull(FilePath);
+	const FString AbsPath = FESQLPathResolver::ResolveAbsolutePath(FilePath);
 	Database->DatabasePath = AbsPath;
 	Database->bInMemory = false;
 
 	if (!FPlatformFileManager::Get().GetPlatformFile().FileExists(*AbsPath))
 	{
-		OutError = FString::Printf(TEXT("Database file does not exist: %s"), *FilePath);
-		return nullptr;
+		return FESQLDatabaseOpenResult::MakeError(MakeSqlError(
+			EESQLErrorCode::IoFailure,
+			FString::Printf(TEXT("Database file does not exist: %s"), *FilePath)));
 	}
 
 	const FTCHARToUTF8 Utf8Path(*AbsPath);
-	// Use nullptr for VFS (default SQLite VFS) — our custom UE VFS uses
-	// exclusive file handles via OpenWrite() which block concurrent access.
-	// The default OS VFS supports proper shared locking for read-only connections.
 	const int Result = sqlite3_open_v2(
 		Utf8Path.Get(),
 		&Database->DbHandle,
-		SQLITE_OPEN_READONLY,
+		SQLITE_OPEN_READONLY | SQLITE_OPEN_NOMUTEX,
 		nullptr
 	);
 
 	if (Result != SQLITE_OK)
 	{
-		OutError = FString::Printf(TEXT("Failed to open database (read-only) '%s': %hs"),
+		const FESQLError Error = MakeSqlError(EESQLErrorCode::OpenFailed, FString::Printf(TEXT("Failed to open database (read-only) '%s': %hs"),
 			*FilePath,
-			Database->DbHandle ? sqlite3_errmsg(Database->DbHandle) : "unknown error");
-		UE_LOG(LogExtendedSQL, Error, TEXT("%s"), *OutError);
+			Database->DbHandle ? sqlite3_errmsg(Database->DbHandle) : "unknown error"));
+		UE_LOG(LogExtendedSQL, Error, TEXT("%s"), *Error.Message);
 
 		if (Database->DbHandle)
 		{
 			sqlite3_close(Database->DbHandle);
 			Database->DbHandle = nullptr;
 		}
-		return nullptr;
+		return FESQLDatabaseOpenResult::MakeError(Error);
 	}
 
-	return Database;
+	const FESQLErrorResult PragmaResult = Database->ApplyPragmas(true);
+	if (!PragmaResult.bSuccess)
+	{
+		Database->Close();
+		return FESQLDatabaseOpenResult::MakeError(PragmaResult.Error);
+	}
+
+	return FESQLDatabaseOpenResult::MakeValue(Database);
 }
 
-TSharedPtr<FESQLDatabase> FESQLDatabase::OpenInMemory(FString& OutError)
+FESQLDatabaseOpenResult FESQLDatabase::OpenInMemory()
 {
 	TSharedPtr<FESQLDatabase> Database = MakeShareable(new FESQLDatabase());
 	Database->bInMemory = true;
 
-	const int Result = sqlite3_open(":memory:", &Database->DbHandle);
+	const int Result = sqlite3_open_v2(
+		":memory:",
+		&Database->DbHandle,
+		SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_MEMORY | SQLITE_OPEN_NOMUTEX,
+		nullptr
+	);
 
 	if (Result != SQLITE_OK)
 	{
-		OutError = FString::Printf(TEXT("Failed to open in-memory database: %hs"),
-			Database->DbHandle ? sqlite3_errmsg(Database->DbHandle) : "unknown error");
-		UE_LOG(LogExtendedSQL, Error, TEXT("%s"), *OutError);
+		const FESQLError Error = MakeSqlError(EESQLErrorCode::OpenFailed, FString::Printf(TEXT("Failed to open in-memory database: %hs"),
+			Database->DbHandle ? sqlite3_errmsg(Database->DbHandle) : "unknown error"));
+		UE_LOG(LogExtendedSQL, Error, TEXT("%s"), *Error.Message);
 
 		if (Database->DbHandle)
 		{
 			sqlite3_close(Database->DbHandle);
 			Database->DbHandle = nullptr;
 		}
-		return nullptr;
+		return FESQLDatabaseOpenResult::MakeError(Error);
 	}
 
-	if (!Database->ApplyPragmas(OutError))
+	const FESQLErrorResult PragmaResult = Database->ApplyPragmas(false);
+	if (!PragmaResult.bSuccess)
 	{
 		Database->Close();
-		return nullptr;
+		return FESQLDatabaseOpenResult::MakeError(PragmaResult.Error);
 	}
 
 	const UESQLSettings* Settings = UESQLSettings::Get();
@@ -161,12 +212,16 @@ TSharedPtr<FESQLDatabase> FESQLDatabase::OpenInMemory(FString& OutError)
 		UE_LOG(LogExtendedSQL, Log, TEXT("Opened in-memory database"));
 	}
 
-	return Database;
+	return FESQLDatabaseOpenResult::MakeValue(Database);
 }
 
 void FESQLDatabase::Close()
 {
 	FScopeLock Lock(&CriticalSection);
+	if (DbHandle)
+	{
+		CheckThreadAffinity(TEXT("Close"));
+	}
 
 	// Clear statement cache first — all statements must be finalized before closing
 	StatementCache.Empty();
@@ -200,45 +255,71 @@ FString FESQLDatabase::GetDatabasePath() const
 	return DatabasePath;
 }
 
+void FESQLDatabase::CheckThreadAffinity(const TCHAR* Operation) const
+{
+#if DO_CHECK
+	const uint32 CurrentThreadId = FPlatformTLS::GetCurrentThreadId();
+	if (!OwningThreadId.IsSet())
+	{
+		OwningThreadId = CurrentThreadId;
+		return;
+	}
+
+	checkf(
+		OwningThreadId.GetValue() == CurrentThreadId,
+		TEXT("ESQLDatabase '%s' is bound to thread %u but thread %u attempted %s while the connection is opened with SQLITE_OPEN_NOMUTEX."),
+		DatabasePath.IsEmpty() ? TEXT(":memory:") : *DatabasePath,
+		OwningThreadId.GetValue(),
+		CurrentThreadId,
+		Operation);
+#else
+	(void)Operation;
+#endif
+}
+
 
 // ── PRAGMAs ──────────────────────────────────────────────────────────────────
 
-bool FESQLDatabase::ApplyPragmas(FString& OutError)
+FESQLErrorResult FESQLDatabase::ApplyPragmas(bool bReadOnly)
 {
 	if (!DbHandle)
 	{
-		OutError = TEXT("Cannot apply PRAGMAs — database not open");
-		return false;
+		return MakeOperationError(EESQLErrorCode::InvalidState, TEXT("Cannot apply PRAGMAs — database not open"));
 	}
 
 	const UESQLSettings* Settings = UESQLSettings::Get();
 
-	// WAL mode (if enabled in settings)
-	if (Settings && Settings->bUseWALMode && !bInMemory)
+	if (sqlite3_busy_timeout(DbHandle, 5000) != SQLITE_OK)
 	{
-		char* ErrMsg = nullptr;
-		int Result = sqlite3_exec(DbHandle, "PRAGMA journal_mode=WAL;", nullptr, nullptr, &ErrMsg);
-		if (Result != SQLITE_OK)
+		return MakeOperationError(EESQLErrorCode::PragmaFailed, FString::Printf(TEXT("Failed to set busy timeout: %hs"), sqlite3_errmsg(DbHandle)));
+	}
+
+	const FESQLErrorResult ForeignKeysResult = ExecuteSqliteStatement(DbHandle, "PRAGMA foreign_keys=ON;", EESQLErrorCode::PragmaFailed);
+	if (!ForeignKeysResult.bSuccess)
+	{
+		return ForeignKeysResult;
+	}
+
+	// WAL mode only applies to writable file-backed databases.
+	if (!bReadOnly && Settings && Settings->bUseWALMode && !bInMemory)
+	{
+		const FESQLErrorResult WalResult = ExecuteSqliteStatement(DbHandle, "PRAGMA journal_mode=WAL;", EESQLErrorCode::PragmaFailed);
+		if (!WalResult.bSuccess)
 		{
-			OutError = FString::Printf(TEXT("Failed to set WAL mode: %hs"), ErrMsg ? ErrMsg : "unknown");
-			if (ErrMsg) sqlite3_free(ErrMsg);
-			return false;
+			return WalResult;
 		}
 	}
 
-	// Foreign keys (always enabled)
+	if (!bReadOnly && !bInMemory)
 	{
-		char* ErrMsg = nullptr;
-		int Result = sqlite3_exec(DbHandle, "PRAGMA foreign_keys=ON;", nullptr, nullptr, &ErrMsg);
-		if (Result != SQLITE_OK)
+		const FESQLErrorResult SyncResult = ExecuteSqliteStatement(DbHandle, "PRAGMA synchronous=NORMAL;", EESQLErrorCode::PragmaFailed);
+		if (!SyncResult.bSuccess)
 		{
-			OutError = FString::Printf(TEXT("Failed to enable foreign keys: %hs"), ErrMsg ? ErrMsg : "unknown");
-			if (ErrMsg) sqlite3_free(ErrMsg);
-			return false;
+			return SyncResult;
 		}
 	}
 
-	return true;
+	return FESQLErrorResult::Success();
 }
 
 
@@ -267,8 +348,10 @@ FESQLQueryResult FESQLDatabase::Execute(const FString& SQL, const TArray<FESQLBi
 
 	if (!DbHandle)
 	{
-		return FESQLQueryResult::Failure(TEXT("Database not open"));
+		return MakeQueryError(EESQLErrorCode::InvalidState, TEXT("Database not open"), SQL);
 	}
+
+	CheckThreadAffinity(TEXT("Execute"));
 
 	const UESQLSettings* Settings = UESQLSettings::Get();
 	if (Settings && Settings->bEnableVerboseLogging)
@@ -276,58 +359,20 @@ FESQLQueryResult FESQLDatabase::Execute(const FString& SQL, const TArray<FESQLBi
 		UE_LOG(LogExtendedSQL, Log, TEXT("SQL: %s"), *SQL);
 	}
 
-	FString PrepError;
-	TSharedPtr<FESQLStatement> Statement = GetOrPrepare(SQL, PrepError);
-	if (!Statement)
+	const FESQLStatementPrepareResult PrepareResult = GetOrPrepareLocked(SQL);
+	if (!PrepareResult)
 	{
-		return FESQLQueryResult::Failure(PrepError);
+		return FESQLQueryResult::Failure(PrepareResult.GetError());
 	}
+	TSharedPtr<FESQLStatement> Statement = PrepareResult.GetValue();
 
 	// Bind parameters
-	if (Bindings.Num() > 0)
+	if (Bindings.Num() > 0 && !Statement->BindValues(Bindings))
 	{
-		for (int32 Index = 0; Index < Bindings.Num(); ++Index)
-		{
-			const FESQLBindingValue& Binding = Bindings[Index];
-
-			bool bBound = false;
-			if (Binding.IsNull())
-			{
-				bBound = Statement->BindNull(Index + 1);
-			}
-			else
-			{
-				switch (Binding.ValueType)
-				{
-				case EESQLColumnType::Null:
-					bBound = Statement->BindNull(Index + 1);
-					break;
-
-				case EESQLColumnType::Integer:
-					bBound = Statement->BindInt(Index + 1, Binding.IntegerValue);
-					break;
-
-				case EESQLColumnType::Float:
-					bBound = Statement->BindFloat(Index + 1, Binding.FloatValue);
-					break;
-
-				case EESQLColumnType::Blob:
-					bBound = Statement->BindBlob(Index + 1, Binding.BlobValue);
-					break;
-
-				case EESQLColumnType::Text:
-				default:
-					bBound = Statement->BindText(Index + 1, Binding.TextValue);
-					break;
-				}
-			}
-
-			if (!bBound)
-			{
-				return FESQLQueryResult::Failure(FString::Printf(TEXT("Failed to bind parameters: %hs"),
-					sqlite3_errmsg(DbHandle)));
-			}
-		}
+		return MakeQueryError(
+			EESQLErrorCode::BindFailed,
+			FString::Printf(TEXT("Failed to bind parameters: %hs"), sqlite3_errmsg(DbHandle)),
+			SQL);
 	}
 
 	return ExecuteStatement(Statement);
@@ -340,57 +385,43 @@ FESQLQueryResult FESQLDatabase::ExecuteStatement(TSharedPtr<FESQLStatement> Stat
 {
 	if (!Statement || !Statement->IsValid())
 	{
-		return FESQLQueryResult::Failure(TEXT("Invalid statement"));
+		return MakeQueryError(EESQLErrorCode::InvalidArgument, TEXT("Invalid statement"));
 	}
 
 	TArray<FESQLRow> Rows;
 	TArray<FESQLColumn> Columns;
-	bool bColumnsPopulated = false;
-
-	// Step through all result rows
-	while (Statement->Step())
+	const int32 ColumnCount = Statement->GetColumnCount();
+	Columns.Reserve(ColumnCount);
+	for (int32 ColumnIndex = 0; ColumnIndex < ColumnCount; ++ColumnIndex)
 	{
-		// Populate column definitions on first row
-		if (!bColumnsPopulated)
-		{
-			const int32 ColCount = Statement->GetColumnCount();
-			Columns.Reserve(ColCount);
-			for (int32 i = 0; i < ColCount; ++i)
-			{
-				FESQLColumn Col;
-				Col.Name = Statement->GetColumnName(i);
-				Col.Type = Statement->GetColumnType(i);
-				Columns.Add(Col);
-			}
-			bColumnsPopulated = true;
-		}
-
-		// Read row data
-		FESQLRow Row;
-		const int32 ColCount = Statement->GetColumnCount();
-		for (int32 i = 0; i < ColCount; ++i)
-		{
-			const FString ColName = Statement->GetColumnName(i);
-			const bool bIsNull = Statement->GetColumnType(i) == EESQLColumnType::Null;
-			const FString Value = bIsNull ? FString() : Statement->GetColumnText(i);
-			Row.Columns.Add(ColName, Value);
-			if (bIsNull)
-			{
-				Row.NullColumns.Add(ColName);
-			}
-		}
-		Rows.Add(MoveTemp(Row));
+		FESQLColumn Column;
+		Column.Name = Statement->GetColumnName(ColumnIndex);
+		Column.Type = EESQLColumnType::Null;
+		Columns.Add(MoveTemp(Column));
 	}
 
-	// Check for errors (Step returns false on both DONE and ERROR)
-	if (!Statement->IsDone())
+	FESQLError RowError;
+	if (!Statement->EnumerateRows(
+		[&Rows, &Columns, &Statement](const FESQLRow& Row)
+		{
+			if (Rows.IsEmpty())
+			{
+				for (int32 ColumnIndex = 0; ColumnIndex < Columns.Num(); ++ColumnIndex)
+				{
+					Columns[ColumnIndex].Type = Statement->GetColumnType(ColumnIndex);
+				}
+			}
+
+			Rows.Add(Row);
+			return true;
+		},
+		&RowError))
 	{
-		return FESQLQueryResult::Failure(FString::Printf(TEXT("SQL execution error: %hs"),
-			sqlite3_errmsg(DbHandle)));
+		return FESQLQueryResult::Failure(RowError);
 	}
 
-	const int32 RowsAffected = GetChangesCount();
-	const int64 LastRowId = GetLastInsertRowId();
+	const int32 RowsAffected = DbHandle ? sqlite3_changes(DbHandle) : 0;
+	const int64 LastRowId = DbHandle ? sqlite3_last_insert_rowid(DbHandle) : 0;
 
 	return FESQLQueryResult::Success(Rows, Columns, RowsAffected, LastRowId);
 }
@@ -398,15 +429,16 @@ FESQLQueryResult FESQLDatabase::ExecuteStatement(TSharedPtr<FESQLStatement> Stat
 
 // ── Prepared Statement API ───────────────────────────────────────────────────
 
-TSharedPtr<FESQLStatement> FESQLDatabase::Prepare(const FString& SQL, FString& OutError)
+FESQLStatementPrepareResult FESQLDatabase::Prepare(const FString& SQL)
 {
 	FScopeLock Lock(&CriticalSection);
 
 	if (!DbHandle)
 	{
-		OutError = TEXT("Database not open");
-		return nullptr;
+		return MakeValueError<TSharedPtr<FESQLStatement>>(EESQLErrorCode::InvalidState, TEXT("Database not open"), SQL);
 	}
+
+	CheckThreadAffinity(TEXT("Prepare"));
 
 	TSharedPtr<FESQLStatement> Statement = MakeShareable(new FESQLStatement());
 
@@ -415,15 +447,29 @@ TSharedPtr<FESQLStatement> FESQLDatabase::Prepare(const FString& SQL, FString& O
 
 	if (Result != SQLITE_OK)
 	{
-		OutError = FString::Printf(TEXT("Failed to prepare SQL: %hs\nSQL: %s"),
-			sqlite3_errmsg(DbHandle), *SQL);
-		return nullptr;
+		return MakeValueError<TSharedPtr<FESQLStatement>>(
+			EESQLErrorCode::PrepareFailed,
+			FString::Printf(TEXT("Failed to prepare SQL: %hs"), sqlite3_errmsg(DbHandle)),
+			SQL);
 	}
 
-	return Statement;
+	return FESQLStatementPrepareResult::MakeValue(Statement);
 }
 
-TSharedPtr<FESQLStatement> FESQLDatabase::GetOrPrepare(const FString& SQL, FString& OutError)
+FESQLStatementPrepareResult FESQLDatabase::GetOrPrepare(const FString& SQL)
+{
+	FScopeLock Lock(&CriticalSection);
+
+	if (!DbHandle)
+	{
+		return MakeValueError<TSharedPtr<FESQLStatement>>(EESQLErrorCode::InvalidState, TEXT("Database not open"), SQL);
+	}
+
+	CheckThreadAffinity(TEXT("GetOrPrepare"));
+	return GetOrPrepareLocked(SQL);
+}
+
+FESQLStatementPrepareResult FESQLDatabase::GetOrPrepareLocked(const FString& SQL)
 {
 	// Check cache first
 	if (TSharedPtr<FESQLStatement>* Found = StatementCache.Find(SQL))
@@ -434,7 +480,7 @@ TSharedPtr<FESQLStatement> FESQLDatabase::GetOrPrepare(const FString& SQL, FStri
 			// Reset + clear bindings before returning (prevent stale-binding bugs)
 			CachedStmt->Reset();
 			CachedStmt->ClearBindings();
-			return CachedStmt;
+			return FESQLStatementPrepareResult::MakeValue(CachedStmt);
 		}
 	}
 
@@ -447,86 +493,86 @@ TSharedPtr<FESQLStatement> FESQLDatabase::GetOrPrepare(const FString& SQL, FStri
 
 	if (Result != SQLITE_OK)
 	{
-		OutError = FString::Printf(TEXT("Failed to prepare SQL: %hs\nSQL: %s"),
-			sqlite3_errmsg(DbHandle), *SQL);
-		return nullptr;
+		return MakeValueError<TSharedPtr<FESQLStatement>>(
+			EESQLErrorCode::PrepareFailed,
+			FString::Printf(TEXT("Failed to prepare SQL: %hs"), sqlite3_errmsg(DbHandle)),
+			SQL);
 	}
 
 	// Cache the statement
 	StatementCache.Add(SQL, Statement);
-	return Statement;
+	return FESQLStatementPrepareResult::MakeValue(Statement);
 }
 
 
 // ── Transactions ─────────────────────────────────────────────────────────────
 
-bool FESQLDatabase::BeginTransaction()
+FESQLErrorResult FESQLDatabase::BeginTransaction()
 {
 	FESQLQueryResult Result = Execute(TEXT("BEGIN TRANSACTION"));
-	return Result.bSuccess;
+	return Result.bSuccess
+		? FESQLErrorResult::Success()
+		: FESQLErrorResult::Failure(Result.Error.HasError() ? Result.Error : MakeSqlError(EESQLErrorCode::TransactionFailed, Result.ErrorMessage, TEXT("BEGIN TRANSACTION")));
 }
 
-bool FESQLDatabase::CommitTransaction()
+FESQLErrorResult FESQLDatabase::CommitTransaction()
 {
 	FESQLQueryResult Result = Execute(TEXT("COMMIT"));
-	return Result.bSuccess;
+	return Result.bSuccess
+		? FESQLErrorResult::Success()
+		: FESQLErrorResult::Failure(Result.Error.HasError() ? Result.Error : MakeSqlError(EESQLErrorCode::TransactionFailed, Result.ErrorMessage, TEXT("COMMIT")));
 }
 
-bool FESQLDatabase::RollbackTransaction()
+FESQLErrorResult FESQLDatabase::RollbackTransaction()
 {
 	FESQLQueryResult Result = Execute(TEXT("ROLLBACK"));
-	return Result.bSuccess;
+	return Result.bSuccess
+		? FESQLErrorResult::Success()
+		: FESQLErrorResult::Failure(Result.Error.HasError() ? Result.Error : MakeSqlError(EESQLErrorCode::TransactionFailed, Result.ErrorMessage, TEXT("ROLLBACK")));
 }
 
 
 // ── Backup / Snapshot ────────────────────────────────────────────────────────
 
-bool FESQLDatabase::BackupToFile(const FString& DestFilePath, FString& OutError)
+FESQLErrorResult FESQLDatabase::BackupToFile(const FString& DestFilePath)
 {
 	FScopeLock Lock(&CriticalSection);
 
 	if (!DbHandle)
 	{
-		OutError = TEXT("Database not open");
-		return false;
+		return MakeOperationError(EESQLErrorCode::InvalidState, TEXT("Database not open"));
 	}
 
-	// Ensure destination directory exists
-	const FString Directory = FPaths::GetPath(DestFilePath);
-	if (!Directory.IsEmpty())
-	{
-		IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
-		if (!PlatformFile.DirectoryExists(*Directory))
-		{
-			PlatformFile.CreateDirectoryTree(*Directory);
-		}
-	}
+	CheckThreadAffinity(TEXT("BackupToFile"));
+
+	const FString AbsoluteDestPath = FESQLPathResolver::ResolveAbsolutePath(DestFilePath);
+	FESQLPathResolver::EnsureParentDirectoryExists(AbsoluteDestPath);
 
 	// Open destination database
 	sqlite3* pDest = nullptr;
-	const FTCHARToUTF8 Utf8Path(*DestFilePath);
+	const FTCHARToUTF8 Utf8Path(*AbsoluteDestPath);
 	int Result = sqlite3_open_v2(
 		Utf8Path.Get(),
 		&pDest,
-		SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE,
-		FESQLUnrealVFS::GetVFSName()
+		SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_NOMUTEX,
+		nullptr
 	);
 
 	if (Result != SQLITE_OK)
 	{
-		OutError = FString::Printf(TEXT("Failed to open backup destination '%s': %hs"),
-			*DestFilePath, pDest ? sqlite3_errmsg(pDest) : "unknown");
+		const FESQLErrorResult ErrorResult = MakeOperationError(EESQLErrorCode::BackupFailed, FString::Printf(TEXT("Failed to open backup destination '%s': %hs"),
+			*AbsoluteDestPath, pDest ? sqlite3_errmsg(pDest) : "unknown"));
 		if (pDest) sqlite3_close(pDest);
-		return false;
+		return ErrorResult;
 	}
 
 	// Perform backup
 	sqlite3_backup* pBackup = sqlite3_backup_init(pDest, "main", DbHandle, "main");
 	if (!pBackup)
 	{
-		OutError = FString::Printf(TEXT("Failed to init backup: %hs"), sqlite3_errmsg(pDest));
+		const FESQLErrorResult ErrorResult = MakeOperationError(EESQLErrorCode::BackupFailed, FString::Printf(TEXT("Failed to init backup: %hs"), sqlite3_errmsg(pDest)));
 		sqlite3_close(pDest);
-		return false;
+		return ErrorResult;
 	}
 
 	Result = sqlite3_backup_step(pBackup, -1);  // -1 = copy all pages at once
@@ -535,47 +581,48 @@ bool FESQLDatabase::BackupToFile(const FString& DestFilePath, FString& OutError)
 
 	if (Result != SQLITE_DONE)
 	{
-		OutError = FString::Printf(TEXT("Backup failed with error %d"), Result);
-		return false;
+		return MakeOperationError(EESQLErrorCode::BackupFailed, FString::Printf(TEXT("Backup failed with error %d"), Result));
 	}
 
-	return true;
+	return FESQLErrorResult::Success();
 }
 
-bool FESQLDatabase::RestoreFromFile(const FString& SourceFilePath, FString& OutError)
+FESQLErrorResult FESQLDatabase::RestoreFromFile(const FString& SourceFilePath)
 {
 	FScopeLock Lock(&CriticalSection);
 
 	if (!DbHandle)
 	{
-		OutError = TEXT("Database not open");
-		return false;
+		return MakeOperationError(EESQLErrorCode::InvalidState, TEXT("Database not open"));
 	}
+
+	CheckThreadAffinity(TEXT("RestoreFromFile"));
+
+	const FString AbsoluteSourcePath = FESQLPathResolver::ResolveAbsolutePath(SourceFilePath);
 
 	// Verify source exists
 	IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
-	if (!PlatformFile.FileExists(*SourceFilePath))
+	if (!PlatformFile.FileExists(*AbsoluteSourcePath))
 	{
-		OutError = FString::Printf(TEXT("Source file does not exist: %s"), *SourceFilePath);
-		return false;
+		return MakeOperationError(EESQLErrorCode::IoFailure, FString::Printf(TEXT("Source file does not exist: %s"), *AbsoluteSourcePath));
 	}
 
 	// Open source database
 	sqlite3* pSource = nullptr;
-	const FTCHARToUTF8 Utf8Path(*SourceFilePath);
+	const FTCHARToUTF8 Utf8Path(*AbsoluteSourcePath);
 	int Result = sqlite3_open_v2(
 		Utf8Path.Get(),
 		&pSource,
-		SQLITE_OPEN_READONLY,
-		FESQLUnrealVFS::GetVFSName()
+		SQLITE_OPEN_READONLY | SQLITE_OPEN_NOMUTEX,
+		nullptr
 	);
 
 	if (Result != SQLITE_OK)
 	{
-		OutError = FString::Printf(TEXT("Failed to open source '%s': %hs"),
-			*SourceFilePath, pSource ? sqlite3_errmsg(pSource) : "unknown");
+		const FESQLErrorResult ErrorResult = MakeOperationError(EESQLErrorCode::RestoreFailed, FString::Printf(TEXT("Failed to open source '%s': %hs"),
+			*AbsoluteSourcePath, pSource ? sqlite3_errmsg(pSource) : "unknown"));
 		if (pSource) sqlite3_close(pSource);
-		return false;
+		return ErrorResult;
 	}
 
 	// Clear statement cache — all existing statements are invalidated
@@ -585,9 +632,9 @@ bool FESQLDatabase::RestoreFromFile(const FString& SourceFilePath, FString& OutE
 	sqlite3_backup* pBackup = sqlite3_backup_init(DbHandle, "main", pSource, "main");
 	if (!pBackup)
 	{
-		OutError = FString::Printf(TEXT("Failed to init restore: %hs"), sqlite3_errmsg(DbHandle));
+		const FESQLErrorResult ErrorResult = MakeOperationError(EESQLErrorCode::RestoreFailed, FString::Printf(TEXT("Failed to init restore: %hs"), sqlite3_errmsg(DbHandle)));
 		sqlite3_close(pSource);
-		return false;
+		return ErrorResult;
 	}
 
 	Result = sqlite3_backup_step(pBackup, -1);
@@ -596,54 +643,37 @@ bool FESQLDatabase::RestoreFromFile(const FString& SourceFilePath, FString& OutE
 
 	if (Result != SQLITE_DONE)
 	{
-		OutError = FString::Printf(TEXT("Restore failed with error %d"), Result);
-		return false;
+		return MakeOperationError(EESQLErrorCode::RestoreFailed, FString::Printf(TEXT("Restore failed with error %d"), Result));
 	}
 
-	return true;
+	return FESQLErrorResult::Success();
 }
-
-
-// ── SQL Dump (VCS Pipeline) ──────────────────────────────────────────────────
-
-#include "VCSPipeline/ESQLDumpPipeline.h"
-
-bool FESQLDatabase::ExportToSQLDump(const FString& DumpFilePath, FString& OutError)
-{
-	if (!IsOpen())
-	{
-		OutError = TEXT("Database not open");
-		return false;
-	}
-
-	return FESQLDumpPipeline::ExportDatabaseToDump(SharedThis(this), DumpFilePath, OutError);
-}
-
-bool FESQLDatabase::ImportFromSQLDump(const FString& DumpFilePath, FString& OutError)
-{
-	if (!IsOpen())
-	{
-		OutError = TEXT("Database not open");
-		return false;
-	}
-
-	return FESQLDumpPipeline::ImportDumpToDatabase(SharedThis(this), DumpFilePath, OutError);
-}
-
 int64 FESQLDatabase::GetLastInsertRowId() const
 {
+	FScopeLock Lock(&CriticalSection);
 	if (!DbHandle) return 0;
+	CheckThreadAffinity(TEXT("GetLastInsertRowId"));
 	return sqlite3_last_insert_rowid(DbHandle);
 }
 
 int32 FESQLDatabase::GetChangesCount() const
 {
+	FScopeLock Lock(&CriticalSection);
 	if (!DbHandle) return 0;
+	CheckThreadAffinity(TEXT("GetChangesCount"));
 	return sqlite3_changes(DbHandle);
 }
 
 FString FESQLDatabase::GetLastErrorMessage() const
 {
+	FScopeLock Lock(&CriticalSection);
 	if (!DbHandle) return FString();
+	CheckThreadAffinity(TEXT("GetLastErrorMessage"));
 	return UTF8_TO_TCHAR(sqlite3_errmsg(DbHandle));
+}
+
+void FESQLDatabase::ResetThreadAffinity()
+{
+	FScopeLock Lock(&CriticalSection);
+	OwningThreadId.Reset();
 }

@@ -33,11 +33,14 @@ public:
 
 	// ── Binding (1-indexed, matching SQLite ?1, ?2, etc.) ────────────────
 
+	bool BindBool(int32 Index, bool Value);
 	bool BindInt(int32 Index, int64 Value);
 	bool BindFloat(int32 Index, double Value);
 	bool BindText(int32 Index, const FString& Value);
 	bool BindBlob(int32 Index, const TArray<uint8>& Data);
 	bool BindNull(int32 Index);
+	bool BindValue(int32 Index, const FESQLBindingValue& Value);
+	bool BindValues(const TArray<FESQLBindingValue>& Bindings);
 
 	/** Bind all values from a string array as TEXT.
 	    Bindings[0] → ?1, Bindings[1] → ?2, etc. */
@@ -52,6 +55,10 @@ public:
 	/** Step one row. Returns true while there are rows to read (SQLITE_ROW).
 	    Returns false when done (SQLITE_DONE) or on error. */
 	bool Step();
+
+	/** Enumerate each row produced by the current statement.
+	    Return false from the visitor to stop early without treating it as an error. */
+	bool EnumerateRows(TFunctionRef<bool(const FESQLRow&)> Visitor, FESQLError* OutError = nullptr);
 
 	/** True if the last Step() returned SQLITE_DONE. */
 	bool IsDone() const;
@@ -79,6 +86,9 @@ public:
 	/** Returns the original SQL string. */
 	FString GetSQL() const;
 
+	/** Returns the last structured sqlite error captured by Step/EnumerateRows. */
+	FESQLError GetLastError(EESQLErrorCode Code = EESQLErrorCode::StepFailed, const FString& SqlFragment = FString()) const;
+
 private:
 
 	friend class FESQLDatabase;
@@ -88,4 +98,5 @@ private:
 
 	sqlite3_stmt* StmtHandle = nullptr;
 	bool bDone = false;
+	int32 LastStepResult = 0;
 };

@@ -1,6 +1,6 @@
 // Copyright Kemal Erdem YILMAZ. All Rights Reserved.
-// Adapted from Epic Games SRowEditor — struct-aware property editing preserved,
-// data reads/writes go through FESQLDatabase.
+// Adapted from Epic Games SRowEditor — struct-aware row preview preserved,
+// data reads go through FESQLDatabase.
 
 #pragma once
 
@@ -17,10 +17,9 @@ class FStructOnScope;
 
 
 /**
- * Inline row editor for SQL Table Assets.
- * Shows the currently selected row's fields as a struct property editor
- * (using IStructureDetailsView). Changes are written back to the .db file
- * via parameterized UPDATE statements.
+ * Inline row preview for SQL Table Assets.
+ * Shows the currently selected row's fields as a struct details view
+ * (using IStructureDetailsView) without mutating the preview database.
  *
  * Adapted from SRowEditor — the struct-aware property editing, field layout,
  * and change notification are preserved. UDataTable is replaced with
@@ -58,9 +57,6 @@ public:
 
 private:
 
-	/** Called when a property value is changed in the details panel. */
-	void OnPropertyValueChanged(const FPropertyChangedEvent& PropertyChangedEvent);
-
 	/** Build the row name combo box. */
 	TSharedRef<SWidget> BuildRowNameComboBox();
 
@@ -73,9 +69,6 @@ private:
 	/** Load the selected row's data from the database into the struct instance. */
 	bool LoadRowDataIntoStruct();
 
-	/** Write the current struct instance back to the database. */
-	bool WriteStructToDatabase();
-
 	bool RebuildStructInstance();
 	void ReleaseStructInstance();
 
@@ -86,7 +79,7 @@ private:
 	/** Database connection. */
 	TSharedPtr<FESQLDatabase> Database;
 
-	/** Owning SQL table editor. Used to refresh the grid after writes. */
+	/** Owning SQL table editor. Used to refresh the grid after preview updates. */
 	TWeakPtr<FESQLTableEditorToolkit> SQLTableEditor;
 
 	/** Currently selected row name. */
@@ -104,6 +97,4 @@ private:
 	/** Combo box for selecting the current row. */
 	TSharedPtr<SWidget> RowNameComboBox;
 
-	/** Flag to prevent recursive property change notifications. */
-	bool bIsWritingToDatabase = false;
 };

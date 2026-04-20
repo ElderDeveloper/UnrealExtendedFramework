@@ -6,7 +6,6 @@
 #include "EdGraph/EdGraphPin.h"
 #include "Input/Reply.h"
 #include "K2Node/ESQLAsyncTypedK2Nodes.h"
-#include "K2Node/ESQLPlayerTypedK2Nodes.h"
 #include "K2Node/ESQLQueryBuilderK2Nodes.h"
 #include "K2Node/ESQLRowQueryK2Nodes.h"
 #include "SGraphPin.h"
@@ -65,10 +64,6 @@ namespace
 			return QueryUi;
 		}
 		if (FESQLQueryClauseUiBase* QueryUi = CastQueryClauseUi<UK2Node_ESQLFindRows>(Node))
-		{
-			return QueryUi;
-		}
-		if (FESQLQueryClauseUiBase* QueryUi = CastQueryClauseUi<UK2Node_ESQLFindPlayerRows>(Node))
 		{
 			return QueryUi;
 		}

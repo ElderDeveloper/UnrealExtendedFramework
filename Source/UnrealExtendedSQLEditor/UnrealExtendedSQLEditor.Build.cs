@@ -37,8 +37,7 @@ public class UnrealExtendedSQLEditor : ModuleRules
 			"PropertyEditor",       // Details panel, IStructureDetailsView
 			"AssetTools",           // IAssetTools, RegisterAssetTypeActions
 			"Json",                 // Layout data persistence
-			"DesktopPlatform",      // File open/save dialogs (CSV import/export)
-			"StructUtils"           // UUserDefinedStruct
+			"DesktopPlatform"       // File open/save dialogs (CSV import/export)
 		});
 	}
 }

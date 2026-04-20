@@ -2,13 +2,13 @@
 
 #include "K2Node/ESQLQueryBuilderK2Nodes.h"
 
-#include "Blueprint/ESQLBlueprintBridge.h"
 #include "BlueprintActionDatabaseRegistrar.h"
 #include "BlueprintNodeSpawner.h"
 #include "EdGraph/EdGraph.h"
 #include "EdGraph/EdGraphPin.h"
 #include "EdGraphSchema_K2.h"
 #include "K2Node/ESQLK2FieldFilterUtils.h"
+#include "K2Node/ESQLRuntimeReflectionUtils.h"
 #include "K2Node_CallFunction.h"
 #include "K2Node_MakeArray.h"
 #include "Kismet2/BlueprintEditorUtils.h"
@@ -629,7 +629,12 @@ UEdGraphPin* FESQLQueryClauseUiBase::FindOffsetPin() const
 UEdGraphPin* FESQLQueryClauseUiBase::BuildFilterPin(int32 Index, FKismetCompilerContext& CompilerContext, UEdGraph* SourceGraph)
 {
 	UK2Node_CallFunction* MakeFilterNode = CompilerContext.SpawnIntermediateNode<UK2Node_CallFunction>(GetQueryClauseNode(), SourceGraph);
-	MakeFilterNode->FunctionReference.SetExternalMember(GET_FUNCTION_NAME_CHECKED(UESQLBlueprintBridge, MakeSQLFieldFilter), UESQLBlueprintBridge::StaticClass());
+	static const FName MakeSQLFieldFilterFunctionName(TEXT("MakeSQLFieldFilter"));
+	if (!ESQLRuntimeReflectionUtils::BindSQLBlueprintLibraryFunction(*MakeFilterNode, MakeSQLFieldFilterFunctionName))
+	{
+		CompilerContext.MessageLog.Error(*LOCTEXT("MissingMakeSQLFieldFilterLibraryClass", "@@ could not resolve the runtime SQL blueprint helper class.").ToString(), GetQueryClauseNode());
+		return nullptr;
+	}
 	MakeFilterNode->AllocateDefaultPins();
 
 	MoveOrCopyPinToIntermediate(CompilerContext, FindPinChecked(MakeFilterFieldPinName(Index)), MakeFilterNode->FindPinChecked(TEXT("FieldName")));
@@ -647,7 +652,12 @@ UEdGraphPin* FESQLQueryClauseUiBase::BuildFilterPin(int32 Index, FKismetCompiler
 UEdGraphPin* FESQLQueryClauseUiBase::BuildSortPin(int32 Index, FKismetCompilerContext& CompilerContext, UEdGraph* SourceGraph)
 {
 	UK2Node_CallFunction* MakeSortNode = CompilerContext.SpawnIntermediateNode<UK2Node_CallFunction>(GetQueryClauseNode(), SourceGraph);
-	MakeSortNode->FunctionReference.SetExternalMember(GET_FUNCTION_NAME_CHECKED(UESQLBlueprintBridge, MakeSQLSortRule), UESQLBlueprintBridge::StaticClass());
+	static const FName MakeSQLSortRuleFunctionName(TEXT("MakeSQLSortRule"));
+	if (!ESQLRuntimeReflectionUtils::BindSQLBlueprintLibraryFunction(*MakeSortNode, MakeSQLSortRuleFunctionName))
+	{
+		CompilerContext.MessageLog.Error(*LOCTEXT("MissingMakeSQLSortRuleLibraryClass", "@@ could not resolve the runtime SQL blueprint helper class.").ToString(), GetQueryClauseNode());
+		return nullptr;
+	}
 	MakeSortNode->AllocateDefaultPins();
 
 	MoveOrCopyPinToIntermediate(CompilerContext, FindPinChecked(MakeSortFieldPinName(Index)), MakeSortNode->FindPinChecked(TEXT("FieldName")));
@@ -714,7 +724,12 @@ UEdGraphPin* FESQLQueryClauseUiBase::BuildSortArrayPin(FKismetCompilerContext& C
 UEdGraphPin* FESQLQueryClauseUiBase::BuildQuerySpecPin(FKismetCompilerContext& CompilerContext, UEdGraph* SourceGraph)
 {
 	UK2Node_CallFunction* MakeQuerySpecNode = CompilerContext.SpawnIntermediateNode<UK2Node_CallFunction>(GetQueryClauseNode(), SourceGraph);
-	MakeQuerySpecNode->FunctionReference.SetExternalMember(GET_FUNCTION_NAME_CHECKED(UESQLBlueprintBridge, MakeSQLQuerySpec), UESQLBlueprintBridge::StaticClass());
+	static const FName MakeSQLQuerySpecFunctionName(TEXT("MakeSQLQuerySpec"));
+	if (!ESQLRuntimeReflectionUtils::BindSQLBlueprintLibraryFunction(*MakeQuerySpecNode, MakeSQLQuerySpecFunctionName))
+	{
+		CompilerContext.MessageLog.Error(*LOCTEXT("MissingMakeSQLQuerySpecLibraryClass", "@@ could not resolve the runtime SQL blueprint helper class.").ToString(), GetQueryClauseNode());
+		return nullptr;
+	}
 	MakeQuerySpecNode->AllocateDefaultPins();
 
 	if (UEdGraphPin* FiltersArrayPin = BuildFilterArrayPin(CompilerContext, SourceGraph))
