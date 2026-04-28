@@ -1,11 +1,11 @@
-﻿// Fill out your copyright notice in the Description page of Project Settings.
+// Fill out your copyright notice in the Description page of Project Settings.
 
 
 #include "EFAsyncFloatTimeline.h"
 
 
 
-UEFAsyncFloatTimeline* UEFAsyncFloatTimeline::ExtendedFloatTimeline(const FName TimelineName , UCurveFloat* FloatCurve ,const UObject* WorldContextObject , float PassTime , TEnumAsByte<EFTimelinePlayType> TimelinePlayType)
+UEFAsyncFloatTimeline* UEFAsyncFloatTimeline::ExtendedFloatTimeline(const FName TimelineName , UCurveFloat* FloatCurve ,const UObject* WorldContextObject , float PassTime , TEnumAsByte<EFTimelinePlayType> TimelinePlayType , bool bTickWhenPaused)
 {
 	if (!ensure(WorldContextObject) && !ensure(FloatCurve))	return nullptr;
 
@@ -68,6 +68,7 @@ UEFAsyncFloatTimeline* UEFAsyncFloatTimeline::ExtendedFloatTimeline(const FName 
 	Timeline->SelectedFloatCurve = FloatCurve;
 	Timeline->CurveLastTime = FloatCurve->FloatCurve.GetLastKey().Time;
 	Timeline->CurveFirstTime = FloatCurve->FloatCurve.GetFirstKey().Time;
+	Timeline->bTickWhenPaused = bTickWhenPaused;
 
 	
 	
@@ -180,7 +181,10 @@ void UEFAsyncFloatTimeline::InternalCompleted()
 {
 	if (WorldContext)
 	{
-		WorldContext->GetWorld()->GetTimerManager().ClearTimer(TimerHandle);
+		FTimerManager& TimerMgr = bTickWhenPaused
+			? WorldContext->GetWorld()->GetGameInstance()->GetTimerManager()
+			: WorldContext->GetWorld()->GetTimerManager();
+		TimerMgr.ClearTimer(TimerHandle);
 		TimerHandle.Invalidate();
 		SetReadyToDestroy();
 		ConditionalBeginDestroy();
@@ -205,8 +209,18 @@ void UEFAsyncFloatTimeline::Activate()
 void UEFAsyncFloatTimeline::Reset()
 {
 	if (TimerHandle.IsValid() && WorldContext)
-		WorldContext->GetWorld()->GetTimerManager().ClearTimer(TimerHandle);
+	{
+		FTimerManager& TimerMgr = bTickWhenPaused
+			? WorldContext->GetWorld()->GetGameInstance()->GetTimerManager()
+			: WorldContext->GetWorld()->GetTimerManager();
+		TimerMgr.ClearTimer(TimerHandle);
+	}
 
 	if (WorldContext)
-		WorldContext->GetWorld()->GetTimerManager().SetTimer(TimerHandle,this,&UEFAsyncFloatTimeline::InternalTick,LoopTime,true);
+	{
+		FTimerManager& TimerMgr = bTickWhenPaused
+			? WorldContext->GetWorld()->GetGameInstance()->GetTimerManager()
+			: WorldContext->GetWorld()->GetTimerManager();
+		TimerMgr.SetTimer(TimerHandle,this,&UEFAsyncFloatTimeline::InternalTick,LoopTime,true);
+	}
 }

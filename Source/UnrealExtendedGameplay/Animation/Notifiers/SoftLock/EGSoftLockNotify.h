@@ -25,24 +25,14 @@ class UNREALEXTENDEDGAMEPLAY_API UEGSoftLockNotify : public UAnimNotifyState
 
 	
 protected:
-	#if ENGINE_MAJOR_VERSION != 5
-		virtual void NotifyBegin(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, float TotalDuration) override;
-		virtual void NotifyEnd(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation) override;
-		virtual void NotifyTick(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, float FrameDeltaTime) override;
-	#endif
-
+	virtual void NotifyBegin(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, float TotalDuration, const FAnimNotifyEventReference& EventReference) override;
+	virtual void NotifyEnd(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, const FAnimNotifyEventReference& EventReference) override;
+	virtual void NotifyTick(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, float FrameDeltaTime, const FAnimNotifyEventReference& EventReference) override;
 		
-
-
-	#if ENGINE_MAJOR_VERSION == 5
-		virtual void NotifyBegin(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, float TotalDuration, const FAnimNotifyEventReference& EventReference) override;
-		virtual void NotifyEnd(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, const FAnimNotifyEventReference& EventReference) override;
-		virtual void NotifyTick(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, float FrameDeltaTime, const FAnimNotifyEventReference& EventReference) override;
-	#endif
-		
-
-	void FindSoftLockActor(USkeletalMeshComponent* MeshComp);
+	AActor* FindSoftLockActor(USkeletalMeshComponent* MeshComp) const;
+	AActor* GetSoftLockActor(USkeletalMeshComponent* MeshComp);
+	void ClearSoftLockActor(USkeletalMeshComponent* MeshComp);
+	void TickSoftLock(USkeletalMeshComponent* MeshComp, float FrameDeltaTime);
 private:
-
-	AActor* SoftLockActor = nullptr;
+	TMap<TWeakObjectPtr<USkeletalMeshComponent>, TWeakObjectPtr<AActor>> SoftLockActors;
 };

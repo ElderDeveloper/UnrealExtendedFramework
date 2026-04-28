@@ -1,4 +1,4 @@
-﻿// Fill out your copyright notice in the Description page of Project Settings.
+// Fill out your copyright notice in the Description page of Project Settings.
 
 #pragma once
 
@@ -44,6 +44,7 @@ class UNREALEXTENDEDFRAMEWORK_API UEFAsyncFloatTimeline : public UBlueprintAsync
 	float CurveLastTime = 0;
 	float CurveFirstTime = 0;
 	EFTimelinePlaySide TimelinePlaySide = Ext_Forward;
+	bool bTickWhenPaused = false;
 	
 	const UObject* WorldContext;
 	FTimerHandle TimerHandle;
@@ -66,7 +67,7 @@ public:
 	* InternalUseOnly to hide sync version in BPs
 	*/
 	UFUNCTION(BlueprintCallable, meta = (DisplayName=" Extended Float Timeline", WorldContext = "WorldContextObject" , BlueprintInternalUseOnly = "true"), Category = "AsyncNode")
-	static UEFAsyncFloatTimeline* ExtendedFloatTimeline(const FName TimelineName , UCurveFloat* FloatCurve , const UObject* WorldContextObject  , float PassTime = 0.005 , TEnumAsByte<EFTimelinePlayType> TimelinePlayType = Ext_Play );
+	static UEFAsyncFloatTimeline* ExtendedFloatTimeline(const FName TimelineName , UCurveFloat* FloatCurve , const UObject* WorldContextObject  , float PassTime = 0.005 , TEnumAsByte<EFTimelinePlayType> TimelinePlayType = Ext_Play , bool bTickWhenPaused = false );
 
 	UFUNCTION(BlueprintCallable, meta = (DisplayName=" Extended Float Timeline Manipulate", WorldContext = "WorldContextObject"), Category = "AsyncNode")
 	static void ExtendedFloatTimelineManipulate(const FName TimelineName, const UObject* WorldContextObject , TEnumAsByte<EFTimelinePlayType> TimelinePlayType = Ext_Play);
