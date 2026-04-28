@@ -64,14 +64,14 @@ public class UnrealExtendedFramework : ModuleRules
 		
 		PublicIncludePaths.AddRange(
 			new string[] {
-				// ... add public include paths required here ...
+				Path.Combine(ModuleDirectory),
 			}
 			);
 				
 		
 		PrivateIncludePaths.AddRange(
 			new string[] {
-				// ... add other private include paths required here ...
+				Path.Combine(ModuleDirectory),
 			}
 			);
 			
@@ -102,6 +102,7 @@ public class UnrealExtendedFramework : ModuleRules
 				"OnlineSubsystem",
 				"OnlineSubsystemUtils",
 				"OnlineSubsystemNull",
+				"VoiceChat",
 				"Projects"
 
 				// ... add other public dependencies that you statically link with here ...

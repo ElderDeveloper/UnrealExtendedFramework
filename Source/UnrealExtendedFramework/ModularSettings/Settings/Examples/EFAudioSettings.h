@@ -4,8 +4,127 @@
 #include "Kismet/GameplayStatics.h"
 #include "Sound/SoundClass.h"
 #include "Sound/SoundMix.h"
+#include "UnrealExtendedFramework/ModularSettings/Settings/AudioDevice/EFAudioDeviceSubsystem.h"
 #include "UnrealExtendedFramework/ModularSettings/Settings/EFModularSettingsBase.h"
 #include "EFAudioSettings.generated.h"
+
+UCLASS(Abstract, Blueprintable, EditInlineNew)
+class UNREALEXTENDEDFRAMEWORK_API UEFModularAudioDeviceSettingBase : public UEFModularSettingsMultiSelect
+{
+	GENERATED_BODY()
+
+public:
+	UEFModularAudioDeviceSettingBase()
+	{
+		ConfigCategory = TEXT("Audio");
+		DefaultValue = TEXT("Default");
+	}
+
+	virtual void OnRegistered() override
+	{
+		Super::OnRegistered();
+		RefreshValues();
+	}
+
+	virtual void RefreshValues_Implementation() override
+	{
+		const FString PreviouslySelectedValue = GetValueAsString();
+		Values.Reset();
+		DisplayNames.Reset();
+
+		UEFAudioDeviceSubsystem* AudioDeviceSubsystem = UEFAudioDeviceSubsystem::GetAudioDeviceSubsystem(this);
+		if (!AudioDeviceSubsystem)
+		{
+			Values.Add(DefaultValue);
+			DisplayNames.Add(GetDefaultDeviceDisplayName());
+			SelectedIndex = 0;
+			return;
+		}
+
+		AudioDeviceSubsystem->RefreshDeviceList();
+
+		const TArray<FEFAudioDeviceInfo> Devices = GetDeviceType() == EEFAudioDeviceType::Input
+			? AudioDeviceSubsystem->GetInputDevices()
+			: AudioDeviceSubsystem->GetOutputDevices();
+
+		for (const FEFAudioDeviceInfo& DeviceInfo : Devices)
+		{
+			Values.Add(DeviceInfo.DeviceID);
+			DisplayNames.Add(FText::FromString(DeviceInfo.DeviceName));
+		}
+
+		if (Values.Num() == 0)
+		{
+			Values.Add(DefaultValue);
+			DisplayNames.Add(GetDefaultDeviceDisplayName());
+		}
+
+		const FEFAudioDeviceInfo ActiveDevice = GetDeviceType() == EEFAudioDeviceType::Input
+			? AudioDeviceSubsystem->GetActiveInputDevice()
+			: AudioDeviceSubsystem->GetActiveOutputDevice();
+
+		FString DesiredValue = PreviouslySelectedValue;
+		if (DesiredValue.IsEmpty() && !ActiveDevice.DeviceID.IsEmpty())
+		{
+			DesiredValue = ActiveDevice.DeviceID;
+		}
+
+		if (DesiredValue.IsEmpty())
+		{
+			DesiredValue = DefaultValue;
+		}
+
+		int32 DesiredIndex = Values.Find(DesiredValue);
+		if (DesiredIndex == INDEX_NONE && !ActiveDevice.DeviceID.IsEmpty())
+		{
+			DesiredIndex = Values.Find(ActiveDevice.DeviceID);
+		}
+
+		SelectedIndex = DesiredIndex != INDEX_NONE ? DesiredIndex : 0;
+	}
+
+	virtual void Apply_Implementation() override
+	{
+		UEFAudioDeviceSubsystem* AudioDeviceSubsystem = UEFAudioDeviceSubsystem::GetAudioDeviceSubsystem(this);
+		if (!AudioDeviceSubsystem)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("AudioDeviceSubsystem is not available for %s."), *GetName());
+			return;
+		}
+
+		RefreshValues();
+		if (!Values.IsValidIndex(SelectedIndex))
+		{
+			UE_LOG(LogTemp, Warning, TEXT("No valid audio device selection is available for %s."), *GetName());
+			return;
+		}
+
+		const FString DeviceID = Values[SelectedIndex];
+		const EEFAudioDeviceSelectionResult Result = GetDeviceType() == EEFAudioDeviceType::Input
+			? AudioDeviceSubsystem->SelectInputDevice(DeviceID)
+			: AudioDeviceSubsystem->SelectOutputDevice(DeviceID);
+
+		if (Result != EEFAudioDeviceSelectionResult::Success)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("Failed to apply audio device '%s' for %s: %s"), *DeviceID, *GetName(), *AudioDeviceSubsystem->GetLastError());
+		}
+
+		RefreshValues();
+	}
+
+protected:
+	virtual EEFAudioDeviceType GetDeviceType() const
+	{
+		return EEFAudioDeviceType::Output;
+	}
+
+	virtual FText GetDefaultDeviceDisplayName() const
+	{
+		return NSLOCTEXT("Settings", "DefaultAudioDevice", "System Default Device");
+	}
+};
+
+
 
 UCLASS(Blueprintable,EditInlineNew,  DisplayName= "Extended Master Volume")
 class UNREALEXTENDEDFRAMEWORK_API UEFModularAudioSettingMasterVolume : public UEFModularSettingsFloat
@@ -26,8 +145,19 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Audio")
 	TObjectPtr<USoundClass> SoundClass;
 
-	virtual void Apply_Implementation() override;
+	virtual void Apply_Implementation() override
+	{
+		if (GlobalSoundMix && SoundClass)
+		{
+			UGameplayStatics::SetSoundMixClassOverride(GetWorld(), GlobalSoundMix.Get(), SoundClass.Get(), Value, 1.0f, 0.0f);
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("GlobalSoundMix or SoundClass is not valid!"));
+		}
+	}
 };
+
 
 
 UCLASS(Blueprintable,EditInlineNew,  DisplayName= "Extended Music Volume")
@@ -49,8 +179,19 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Audio")
 	TObjectPtr<USoundClass> SoundClass;
 	
-	virtual void Apply_Implementation() override;
+	virtual void Apply_Implementation() override
+	{
+		if (GlobalSoundMix && SoundClass)
+		{
+			UGameplayStatics::SetSoundMixClassOverride(GetWorld(), GlobalSoundMix.Get(), SoundClass.Get(), Value, 1.0f, 0.0f);
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("GlobalSoundMix or SoundClass is not valid!"));
+		}
+	}
 };
+
 
 
 UCLASS(Blueprintable,EditInlineNew,  DisplayName= "Extended SFX Volume")
@@ -72,8 +213,19 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Audio")
 	TObjectPtr<USoundClass> SoundClass;
 	
-	virtual void Apply_Implementation() override;
+	virtual void Apply_Implementation() override
+	{
+		if (GlobalSoundMix && SoundClass)
+		{
+			UGameplayStatics::SetSoundMixClassOverride(GetWorld(), GlobalSoundMix.Get(), SoundClass.Get(), Value, 1.0f, 0.0f);
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("GlobalSoundMix or SoundClass is not valid!"));
+		}
+	}
 };
+
 
 
 UCLASS(Blueprintable,EditInlineNew,  DisplayName= "Extended Voice Volume")
@@ -95,8 +247,19 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Audio")
 	TObjectPtr<USoundClass> SoundClass;
 
-	virtual void Apply_Implementation() override;
+	virtual void Apply_Implementation() override
+	{
+		if (GlobalSoundMix && SoundClass)
+		{
+			UGameplayStatics::SetSoundMixClassOverride(GetWorld(), GlobalSoundMix.Get(), SoundClass.Get(), Value, 1.0f, 0.0f);
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("GlobalSoundMix or SoundClass is not valid!"));
+		}
+	}
 };
+
 
 
 UCLASS(Blueprintable,EditInlineNew,  DisplayName= "Extended Ambient Volume")
@@ -118,68 +281,70 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Audio")
 	TObjectPtr<USoundClass> SoundClass;
 
-	virtual void Apply_Implementation() override;
+	virtual void Apply_Implementation() override
+	{
+		if (GlobalSoundMix && SoundClass)
+		{
+			UGameplayStatics::SetSoundMixClassOverride(GetWorld(), GlobalSoundMix.Get(), SoundClass.Get(), Value, 1.0f, 0.0f);
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("GlobalSoundMix or SoundClass is not valid!"));
+		}
+	}
 };	
 
 
-inline void UEFModularAudioSettingMasterVolume::Apply_Implementation()
-{
-	if (GlobalSoundMix && SoundClass)
-	{
-		UGameplayStatics::SetSoundMixClassOverride(GetWorld(), GlobalSoundMix.Get(), SoundClass.Get(), Value, 1.0f, 0.0f);
-	}
-	else
-	{
-		UE_LOG(LogTemp, Warning, TEXT("GlobalSoundMix or SoundClass is not valid!"));
-	}
-}
 
-inline void UEFModularAudioSettingMusicVolume::Apply_Implementation()
+UCLASS(Blueprintable, EditInlineNew, DisplayName = "Extended Output Device")
+class UNREALEXTENDEDFRAMEWORK_API UEFModularAudioSettingOutputDevice : public UEFModularAudioDeviceSettingBase
 {
-	if (GlobalSoundMix && SoundClass)
-	{
-		UGameplayStatics::SetSoundMixClassOverride(GetWorld(), GlobalSoundMix.Get(), SoundClass.Get(), Value, 1.0f, 0.0f);
-	}
-	else
-	{
-		UE_LOG(LogTemp, Warning, TEXT("GlobalSoundMix or SoundClass is not valid!"));
-	}
-}
+	GENERATED_BODY()
 
-inline void UEFModularAudioSettingSFXVolume::Apply_Implementation()
+public:
+	UEFModularAudioSettingOutputDevice()
+	{
+		DisplayName = NSLOCTEXT("Settings", "OutputDevice", "Output Device");
+		SettingTag = FGameplayTag::RequestGameplayTag(FName("Settings.Audio.OutputDevice"));
+	}
+
+protected:
+	virtual EEFAudioDeviceType GetDeviceType() const override
+	{
+		return EEFAudioDeviceType::Output;
+	}
+
+	virtual FText GetDefaultDeviceDisplayName() const override
+	{
+		return NSLOCTEXT("Settings", "DefaultOutputDevice", "System Default Output");
+	}
+};
+
+
+
+UCLASS(Blueprintable, EditInlineNew, DisplayName = "Extended Input Device")
+class UNREALEXTENDEDFRAMEWORK_API UEFModularAudioSettingInputDevice : public UEFModularAudioDeviceSettingBase
 {
-	if (GlobalSoundMix && SoundClass)
-	{
-		UGameplayStatics::SetSoundMixClassOverride(GetWorld(), GlobalSoundMix.Get(), SoundClass.Get(), Value, 1.0f, 0.0f);
-	}
-	else
-	{
-		UE_LOG(LogTemp, Warning, TEXT("GlobalSoundMix or SoundClass is not valid!"));
-	}
-}
+	GENERATED_BODY()
 
-inline void UEFModularAudioSettingVoiceVolume::Apply_Implementation()
-{
-	if (GlobalSoundMix && SoundClass)
+public:
+	UEFModularAudioSettingInputDevice()
 	{
-		UGameplayStatics::SetSoundMixClassOverride(GetWorld(), GlobalSoundMix.Get(), SoundClass.Get(), Value, 1.0f, 0.0f);
+		DisplayName = NSLOCTEXT("Settings", "InputDevice", "Input Device");
+		SettingTag = FGameplayTag::RequestGameplayTag(FName("Settings.Audio.InputDevice"));
 	}
-	else
-	{
-		UE_LOG(LogTemp, Warning, TEXT("GlobalSoundMix or SoundClass is not valid!"));
-	}
-}
 
-inline void UEFModularAudioSettingAmbientVolume::Apply_Implementation()
-{
-	if (GlobalSoundMix && SoundClass)
+protected:
+	virtual EEFAudioDeviceType GetDeviceType() const override
 	{
-		UGameplayStatics::SetSoundMixClassOverride(GetWorld(), GlobalSoundMix.Get(), SoundClass.Get(), Value, 1.0f, 0.0f);
+		return EEFAudioDeviceType::Input;
 	}
-	else
-	{
-		UE_LOG(LogTemp, Warning, TEXT("GlobalSoundMix or SoundClass is not valid!"));
-	}
-}
 
- 
+	virtual FText GetDefaultDeviceDisplayName() const override
+	{
+		return NSLOCTEXT("Settings", "DefaultInputDevice", "System Default Input");
+	}
+};
+
+
+
