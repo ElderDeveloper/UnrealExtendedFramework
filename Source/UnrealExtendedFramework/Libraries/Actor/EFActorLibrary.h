@@ -73,34 +73,7 @@ public:
 	static float GetActorRotationRoll(AActor* Actor);
 
 
-
-	// <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< DIRECTION VECTORS >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-
-	/**
-	 * Returns the actor's forward direction vector (unit length).
-	 * @param Actor The actor to query (defaults to self)
-	 * @return Forward vector, or FVector::ZeroVector if Actor is null
-	 */
-	UFUNCTION(BlueprintPure, meta=(DisplayName = "Get Actor Forward Vector", CompactNodeTitle = "(Self)Forward", DefaultToSelf = "Actor"), Category="ExtendedFramework|Actor|Direction")
-	static FVector GetActorForwardVector(AActor* Actor);
-
-	/**
-	 * Returns the actor's right direction vector (unit length).
-	 * @param Actor The actor to query (defaults to self)
-	 * @return Right vector, or FVector::ZeroVector if Actor is null
-	 */
-	UFUNCTION(BlueprintPure, meta=(DisplayName = "Get Actor Right Vector", CompactNodeTitle = "(Self)Right", DefaultToSelf = "Actor"), Category="ExtendedFramework|Actor|Direction")
-	static FVector GetActorRightVector(AActor* Actor);
-
-	/**
-	 * Returns the actor's up direction vector (unit length).
-	 * @param Actor The actor to query (defaults to self)
-	 * @return Up vector, or FVector::ZeroVector if Actor is null
-	 */
-	UFUNCTION(BlueprintPure, meta=(DisplayName = "Get Actor Up Vector", CompactNodeTitle = "(Self)Up", DefaultToSelf = "Actor"), Category="ExtendedFramework|Actor|Direction")
-	static FVector GetActorUpVector(AActor* Actor);
-
-
+	
 	// <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< SET ROTATION >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
 	/**
@@ -239,26 +212,5 @@ public:
 	 */
 	UFUNCTION(BlueprintPure, Category="ExtendedFramework|Actor")
 	static FVector LocalToWorld(const AActor* Actor , const FVector& LocalLocation);
-
-
-	// <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< DISTANCE >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-
-	/**
-	 * Returns the 3D distance between two actors.
-	 * @param ActorA First actor
-	 * @param ActorB Second actor
-	 * @return Distance in world units, or -1.0 if either actor is null
-	 */
-	UFUNCTION(BlueprintPure, meta=(CompactNodeTitle = "Distance", Keywords = "Distance Between"), Category="ExtendedFramework|Actor|Distance")
-	static float DistanceBetweenActors(const AActor* ActorA, const AActor* ActorB);
-
-	/**
-	 * Returns the 2D distance between two actors (ignoring Z axis).
-	 * @param ActorA First actor
-	 * @param ActorB Second actor
-	 * @return 2D distance in world units, or -1.0 if either actor is null
-	 */
-	UFUNCTION(BlueprintPure, meta=(CompactNodeTitle = "Distance 2D", Keywords = "Distance Between 2D"), Category="ExtendedFramework|Actor|Distance")
-	static float DistanceBetweenActors2D(const AActor* ActorA, const AActor* ActorB);
 
 };

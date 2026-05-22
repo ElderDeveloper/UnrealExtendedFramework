@@ -49,28 +49,6 @@ float UEFActorLibrary::GetActorRotationRoll(AActor* Actor)
 	return 0;
 }
 
-
-// ================================ DIRECTION VECTORS ================================
-
-FVector UEFActorLibrary::GetActorForwardVector(AActor* Actor)
-{
-	if (Actor) return Actor->GetActorForwardVector();
-	return FVector::ZeroVector;
-}
-
-FVector UEFActorLibrary::GetActorRightVector(AActor* Actor)
-{
-	if (Actor) return Actor->GetActorRightVector();
-	return FVector::ZeroVector;
-}
-
-FVector UEFActorLibrary::GetActorUpVector(AActor* Actor)
-{
-	if (Actor) return Actor->GetActorUpVector();
-	return FVector::ZeroVector;
-}
-
-
 // ================================ SET ROTATION ================================
 
 void UEFActorLibrary::RotateToObjectYaw(AActor* From, AActor* To)
@@ -257,25 +235,4 @@ FVector UEFActorLibrary::LocalToWorld(const AActor* Actor, const FVector& LocalL
 		return UKismetMathLibrary::TransformLocation(Actor->GetActorTransform(), LocalLocation);
 	}
 	return FVector::ZeroVector;
-}
-
-
-// ================================ DISTANCE ================================
-
-float UEFActorLibrary::DistanceBetweenActors(const AActor* ActorA, const AActor* ActorB)
-{
-	if (!ActorA || !ActorB)
-	{
-		return -1.0f;
-	}
-	return FVector::Dist(ActorA->GetActorLocation(), ActorB->GetActorLocation());
-}
-
-float UEFActorLibrary::DistanceBetweenActors2D(const AActor* ActorA, const AActor* ActorB)
-{
-	if (!ActorA || !ActorB)
-	{
-		return -1.0f;
-	}
-	return FVector::Dist2D(ActorA->GetActorLocation(), ActorB->GetActorLocation());
 }

@@ -38,36 +38,6 @@ public:
 	/** Converts a std::string to an FString. C++ only. */
 	static FString StdStringToFString(const std::string in) { return FString(in.c_str()); }
 
-	/** Converts an FString to FText. */
-	UFUNCTION(BlueprintPure, meta=(DisplayName = "StringToText", BlueprintAutocast), Category="ConversionLibrary|String")
-	static FText FStringToText(const FString& in) { return FText::FromString(in); }
-
-	/** Converts an FString to FName. */
-	UFUNCTION(BlueprintPure, meta=(DisplayName = "StringToName", BlueprintAutocast), Category="ConversionLibrary|String")
-	static FName FStringToName(const FString& in) { return FName(*in); }
-
-	/** Converts an FString to float. Returns 0 if the string is not a valid number. */
-	UFUNCTION(BlueprintPure, meta=(DisplayName = "StringToFloat", BlueprintAutocast), Category="ConversionLibrary|String")
-	static float FStringToFloat(const FString& in) { return FCString::Atof(*in); }
-
-	/** Converts an FString to double. C++ only. Returns 0 if the string is not a valid number. */
-	static double FStringToDouble(const FString& in) { return FCString::Atod(*in); }
-
-	/** Converts an FString to double (Blueprint-exposed version).
-	 * @param in The string to convert
-	 * @return The parsed double value, or 0 if invalid
-	 */
-	UFUNCTION(BlueprintPure, meta=(DisplayName = "StringToDouble", BlueprintAutocast), Category="ConversionLibrary|String")
-	static double FStringToDoubleBP(const FString& in) { return FCString::Atod(*in); }
-
-	/** Converts an FString to int32. Returns 0 if the string is not a valid number. */
-	UFUNCTION(BlueprintPure, meta=(DisplayName = "StringToint32", BlueprintAutocast), Category="ConversionLibrary|String")
-	static int32 FStringToInt32(const FString& in) { return FCString::Atoi(*in); }
-
-	/** Converts an FString to int64. Returns 0 if the string is not a valid number. */
-	UFUNCTION(BlueprintPure, meta=(DisplayName = "StringToint64", BlueprintAutocast), Category="ConversionLibrary|String")
-	static int64 FStringToInt64(const FString& in) { return FCString::Atoi64(*in); }
-
 	/**
 	 * Parses an FString into an FVector (expects format "X=... Y=... Z=...").
 	 * @param in The string to parse
@@ -103,10 +73,6 @@ public:
 
 #pragma region Float
 
-	/** Converts a float to FString with sanitized formatting (removes trailing zeros). */
-	UFUNCTION(BlueprintPure, meta=(DisplayName = "FloatToString", BlueprintAutocast), Category="ConversionLibrary|Float")
-	static FString FloatToFString(const float in) { return FString::SanitizeFloat(in); }
-
 	/** Converts a float to std::string. C++ only. */
 	static std::string FloatToStdString(const float in) { return std::string(TCHAR_TO_UTF8(*FString::SanitizeFloat(in))); }
 
@@ -134,8 +100,6 @@ public:
 	UFUNCTION(BlueprintPure, meta=(DisplayName = "FloatToint64", BlueprintAutocast), Category="ConversionLibrary|Float")
 	static int64 FloatToInt64(const float in , EIntContype Type);
 
-	/** Converts a float to double (lossless widening). C++ only. */
-	static double FloatToDouble(const float in) { return in; }
 
 	/** Converts a float to bool. Returns true for any non-zero value. */
 	UFUNCTION(BlueprintPure, meta=(DisplayName = "FloatToBool", BlueprintAutocast), Category="ConversionLibrary|Float")
@@ -177,9 +141,6 @@ public:
 
 #pragma region Int32
 
-	/** Converts an int32 to FString. */
-	UFUNCTION(BlueprintPure, meta=(DisplayName = "int32ToFString", BlueprintAutocast), Category="ConversionLibrary|Int32")
-	static FString Int32ToFString(const int32 in) { return FString::FromInt(in); }
 
 	/** Converts an int32 to std::string. C++ only. */
 	static std::string Int32ToStdString(const int32 in) { return std::string(TCHAR_TO_UTF8(*FString::FromInt(in))); }
@@ -191,17 +152,6 @@ public:
 	/** Converts an int32 to FName. */
 	UFUNCTION(BlueprintPure, meta=(DisplayName = "int32ToName", BlueprintAutocast), Category="ConversionLibrary|Int32")
 	static FName Int32ToName(const int32 in) { return FName(*FString::FromInt(in)); }
-
-	/** Converts an int32 to float. Note: may lose precision for large values. */
-	UFUNCTION(BlueprintPure, meta=(DisplayName = "int32ToFloat", BlueprintAutocast), Category="ConversionLibrary|Int32")
-	static float Int32ToFloat(const int32 in) { return static_cast<float>(in); }
-
-	/** Converts an int32 to int64 (lossless widening). */
-	UFUNCTION(BlueprintPure, meta=(DisplayName = "int32Toint64", BlueprintAutocast), Category="ConversionLibrary|Int32")
-	static int64 Int32ToInt64(const int32 in) { return static_cast<int64>(in); }
-
-	/** Converts an int32 to double (lossless). C++ only. */
-	static double Int32ToDouble(const int32 in) { return static_cast<double>(in); }
 
 	/** Converts an int32 to bool. Returns true for any non-zero value. */
 	UFUNCTION(BlueprintPure, meta=(DisplayName = "int32ToBool", BlueprintAutocast), Category="ConversionLibrary|Int32")
@@ -227,16 +177,6 @@ public:
 
 #pragma endregion
 
-
-	// <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< Double >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-
-#pragma region Double
-
-	/** Converts a double to FString with full precision. */
-	UFUNCTION(BlueprintPure, meta=(DisplayName = "DoubleToString", BlueprintAutocast), Category="ConversionLibrary|Double")
-	static FString DoubleToFString(const double in) { return FString::Printf(TEXT("%.17g"), in); }
-
-#pragma endregion
 
 
 	// <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< Bool >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
@@ -288,9 +228,6 @@ public:
 
 #pragma region Vector
 
-	/** Converts an FVector to its string representation "X=... Y=... Z=...". */
-	UFUNCTION(BlueprintPure, meta=(DisplayName = "VectorToFString", BlueprintAutocast), Category="ConversionLibrary|Vector")
-	static FString VectorToFString(const FVector& in) { return in.ToString(); }
 
 	/** Converts an FVector to std::string. C++ only. */
 	static std::string VectorToStdString(const FVector& in) { return std::string(TCHAR_TO_UTF8(*in.ToString())); }
@@ -326,10 +263,6 @@ public:
 
 #pragma region Rotator
 
-	/** Converts an FRotator to its string representation "P=... Y=... R=...". */
-	UFUNCTION(BlueprintPure, meta=(DisplayName = "RotatorToFString", BlueprintAutocast), Category="ConversionLibrary|Rotator")
-	static FString RotatorToFString(const FRotator& in) { return in.ToString(); }
-
 	/** Converts an FRotator to std::string. C++ only. */
 	static std::string RotatorToStdString(const FRotator& in) { return std::string(TCHAR_TO_UTF8(*in.ToString())); }
 
@@ -362,10 +295,6 @@ public:
 	// <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< Transform >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
 #pragma region Transform
-
-	/** Converts an FTransform to its string representation. */
-	UFUNCTION(BlueprintPure, meta=(DisplayName = "TransformToFString", BlueprintAutocast), Category="ConversionLibrary|Transform")
-	static FString TransformToFString(const FTransform& in) { return in.ToString(); }
 
 	/** Converts an FTransform to FText. */
 	UFUNCTION(BlueprintPure, meta=(DisplayName = "TransformToText", BlueprintAutocast), Category="ConversionLibrary|Transform")

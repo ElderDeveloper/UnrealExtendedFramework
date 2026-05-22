@@ -68,21 +68,6 @@ float UEFEditorLibrary::GetGameplayFramePerSecond(const UObject* WorldContextObj
 }
 
 
-float UEFEditorLibrary::GetDeltaSeconds(const UObject* WorldContextObject)
-{
-	if (!WorldContextObject)
-	{
-		return 0.f;
-	}
-
-	if (UWorld* World = GEngine->GetWorldFromContextObject(WorldContextObject, EGetWorldErrorMode::LogAndReturnNull))
-	{
-		return World->GetDeltaSeconds();
-	}
-	return 0.f;
-}
-
-
 void UEFEditorLibrary::SetDefaultGameMap(const FString& MapName)
 {
 	if (const auto GameMaps = UGameMapsSettings::GetGameMapsSettings())

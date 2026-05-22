@@ -68,14 +68,6 @@ public:
 	UFUNCTION(BlueprintPure, meta=(DisplayName = "Get Distance Between Component And Actor", CompactNodeTitle = "Distance"), Category="ExtendedFramework|Math|Distance")
 	static float GetDistanceBetweenComponentAndActor(const USceneComponent* From, const AActor* To);
 
-	/** Returns the euclidean distance between two vectors. */
-	UFUNCTION(BlueprintPure, meta=(DisplayName = "Get Distance Between Vectors", CompactNodeTitle = "Distance"), Category="ExtendedFramework|Math|Distance")
-	static float GetDistanceBetweenVectors(const FVector From, const FVector To);
-
-	/** Returns the squared distance between two vectors (no square root — faster for comparisons). */
-	UFUNCTION(BlueprintPure, meta=(DisplayName = "Get Distance Between Vectors No Square Root", CompactNodeTitle = "DistanceNoSqrt"), Category="ExtendedFramework|Math|Distance")
-	static float GetDistanceBetweenVectorsNoSquareRoot(const FVector From, const FVector To);
-
 	/** Returns the closest actor to OwnerActor from the given array. */
 	UFUNCTION(BlueprintPure, meta=(DisplayName = "Actor Get Closest Actor", CompactNodeTitle = "Actor Closest Actor"), Category="ExtendedFramework|Math|Distance")
 	static AActor* GetClosestActorFromActorArray(const AActor* OwnerActor, UPARAM(ref) const TArray<AActor*>& TargetArray);
@@ -278,13 +270,7 @@ public:
 
 	// <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< Conversion / Utility >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
-	/**
-	 * Converts a rotator to a quaternion using the engine's built-in conversion.
-	 * @note DisplayName kept as "RotatorToQuad" for backward compatibility.
-	 */
-	UFUNCTION(BlueprintPure, meta=(DisplayName = "RotatorToQuad", CompactNodeTitle = "RotToQuat"), Category="ExtendedFramework|Math")
-	static FQuat RotatorToQuat(const FRotator Rotator);
-	
+
 	/** Clamps each component of a Vector2D independently to [Min, Max]. */
 	UFUNCTION(BlueprintPure, meta=(DisplayName = "Clamp 2D"), Category="ExtendedFramework|Math")
 	static FVector2D ClampVector2D(const FVector2D Vector, const float Min, const float Max);

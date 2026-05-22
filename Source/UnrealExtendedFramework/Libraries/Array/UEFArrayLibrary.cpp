@@ -8,19 +8,6 @@
 
 // ================================ RANDOM ================================
 
-int32 UUEFArrayLibrary::GetRandomArrayMember(const TArray<int32>& TargetArray, int32& Item)
-{
-	if (TargetArray.Num() > 0)
-	{
-		const int32 RandomIndex = FMath::RandRange(0, TargetArray.Num() - 1);
-		Item = TargetArray[RandomIndex];
-		return RandomIndex;
-	}
-
-	// Ensure the output is deterministic on empty arrays (avoids uninitialised garbage in Blueprint)
-	Item = 0;
-	return -1;
-}
 
 
 void UUEFArrayLibrary::GetRandomArrayMembers(const TArray<int32>& TargetArray, TArray<int32>& Items, const int32 Amount, const bool bUnique)
@@ -91,49 +78,6 @@ void UUEFArrayLibrary::SortStringArray(const TArray<FString>& StringArray, TArra
 }
 
 
-// ================================ SHUFFLE ================================
-
-DEFINE_FUNCTION(UUEFArrayLibrary::execShuffleArray)
-{
-	Stack.MostRecentProperty = nullptr;
-	Stack.StepCompiledIn<FArrayProperty>(nullptr);
-	void* ArrayAddr = Stack.MostRecentPropertyAddress;
-	FArrayProperty* ArrayProperty = CastField<FArrayProperty>(Stack.MostRecentProperty);
-
-	if (!ArrayProperty)
-	{
-		Stack.bArrayContextFailed = true;
-		return;
-	}
-
-	P_FINISH;
-	P_NATIVE_BEGIN;
-	GenericArray_Shuffle(ArrayAddr, ArrayProperty);
-	P_NATIVE_END;
-}
-
-void UUEFArrayLibrary::GenericArray_Shuffle(void* TargetArray, const FArrayProperty* ArrayProperty)
-{
-	if (!TargetArray || !ArrayProperty)
-	{
-		return;
-	}
-
-	FScriptArrayHelper ArrayHelper(ArrayProperty, TargetArray);
-	const int32 LastIndex = ArrayHelper.Num() - 1;
-
-	// Fisher-Yates shuffle: swap each element with a random element at or before its position
-	for (int32 i = LastIndex; i > 0; --i)
-	{
-		const int32 j = FMath::RandRange(0, i);
-		if (i != j)
-		{
-			ArrayHelper.SwapValues(i, j);
-		}
-	}
-}
-
-
 // ================================ FILTER ================================
 
 void UUEFArrayLibrary::FilterFloatArrayByRange(const TArray<float>& SourceArray, TArray<float>& FilteredArray, float Min, float Max)
@@ -158,28 +102,4 @@ void UUEFArrayLibrary::FilterIntArrayByRange(const TArray<int32>& SourceArray, T
 			FilteredArray.Add(Value);
 		}
 	}
-}
-
-
-// ================================ CONDITION ================================
-
-void UUEFArrayLibrary::ExtendedIsValidIndex(const TArray<int32>& Array, const int32 index, TEnumAsByte<EFConditionOutput>& OutPins, int32& Item)
-{
-	if (Array.IsValidIndex(index))
-	{
-		Item = Array[index];
-		OutPins = UEF_True;
-		return;
-	}
-	OutPins = UEF_False;
-}
-
-void UUEFArrayLibrary::IsArrayNotEmpty(const TArray<int32>& Array, TEnumAsByte<EFConditionOutput>& OutPins)
-{
-	if (Array.Num() > 0)
-	{
-		OutPins = UEF_True;
-		return;
-	}
-	OutPins = UEF_False;
 }

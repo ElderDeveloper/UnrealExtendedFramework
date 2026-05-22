@@ -55,26 +55,7 @@ public:
 	UFUNCTION(BlueprintPure, meta=(DisplayName = "!=-1", CompactNodeTitle = "!=-1", BlueprintThreadSafe), Category="Condition|Float")
 	static bool FloatIsNotEqualToMinusOne(const float Value) { return !FMath::IsNearlyEqual(Value, -1.f); }
 
-	/**
-	 * Returns true if Value is within the [Min, Max] range (inclusive), using near-equality for bounds.
-	 * @param Value The float to test
-	 * @param Min The minimum bound (inclusive)
-	 * @param Max The maximum bound (inclusive)
-	 */
-	UFUNCTION(BlueprintPure, meta=(DisplayName = "Float In Range", CompactNodeTitle = "InRange", BlueprintThreadSafe), Category="Condition|Float")
-	static bool IsValueInRange(const float Value, const float Min, const float Max) { return Value >= Min && Value <= Max; }
-
-	/**
-	 * Returns true if A and B are nearly equal within the specified tolerance.
-	 * @param A First float
-	 * @param B Second float
-	 * @param Tolerance The comparison tolerance (defaults to 1)
-	 */
-	UFUNCTION(BlueprintPure, meta=(DisplayName = "Nearly Equal", CompactNodeTitle = "~=", BlueprintThreadSafe), Category="Condition|Float")
-	static bool IsNearlyEqual(const float A, const float B, const float Tolerance = 1) { return FMath::IsNearlyEqual(A, B, Tolerance); }
-
 #pragma endregion
-
 	
 	// <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< Int32 >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
@@ -112,38 +93,8 @@ public:
 	UFUNCTION(BlueprintPure, meta=(DisplayName = "!=-1", CompactNodeTitle = "!=-1", BlueprintThreadSafe), Category="Condition|Int")
 	static bool IntIsNotEqualToMinusOne(const int32 Value) { return Value != -1; }
 
-	/**
-	 * Returns true if Value is within the [Min, Max] range (inclusive).
-	 * @param Value The integer to test
-	 * @param Min The minimum bound (inclusive)
-	 * @param Max The maximum bound (inclusive)
-	 */
-	UFUNCTION(BlueprintPure, meta=(DisplayName = "Int In Range", CompactNodeTitle = "InRange", BlueprintThreadSafe), Category="Condition|Int")
-	static bool IntIsValueInRange(const int32 Value, const int32 Min, const int32 Max) { return Value >= Min && Value <= Max; }
-
 #pragma endregion
 
-	
-	// <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< Byte >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-
-#pragma region Byte
-	
-	/** Returns true if Value is strictly greater than zero. */
-	UFUNCTION(BlueprintPure, meta=(DisplayName = ">0", CompactNodeTitle = ">0", BlueprintThreadSafe), Category="Condition|Byte")
-	static bool ByteIsBiggerThanZero(const uint8 Value) { return Value > 0; }
-	
-	/** Returns true if Value is exactly zero. */
-	UFUNCTION(BlueprintPure, meta=(DisplayName = "=0", CompactNodeTitle = "=0", BlueprintThreadSafe), Category="Condition|Byte")
-	static bool ByteIsEqualToZero(const uint8 Value) { return Value == 0; }
-	
-	/** Returns true if Value is not zero. */
-	UFUNCTION(BlueprintPure, meta=(DisplayName = "!=0", CompactNodeTitle = "!=0", BlueprintThreadSafe), Category="Condition|Byte")
-	static bool ByteIsNotEqualToZero(const uint8 Value) { return Value != 0; }
-
-#pragma endregion
-
-
-	// <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< Utility >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
 #pragma region Utility
 

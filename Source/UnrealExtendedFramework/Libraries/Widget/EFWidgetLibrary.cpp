@@ -17,18 +17,6 @@
 
 
 
-
-FVector2D UEFWidgetLibrary::GetGameViewportSize()
-{
-	FVector2D Result = FVector2D(1, 1);
- 
-	if (GEngine && GEngine->GameViewport)
-	{
-		GEngine->GameViewport->GetViewportSize(Result);
-	}
-	return Result;
-}
-
 FVector2D UEFWidgetLibrary::GetGameResolution()
 {
 	return FVector2D(GSystemResolution.ResX, GSystemResolution.ResY);

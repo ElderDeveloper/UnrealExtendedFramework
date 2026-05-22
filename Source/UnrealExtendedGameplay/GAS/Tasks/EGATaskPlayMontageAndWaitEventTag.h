@@ -4,19 +4,19 @@
 
 #include "CoreMinimal.h"
 #include "Abilities/Tasks/AbilityTask.h"
-#include "EGATaskPlayMontageAndWaitEvent.generated.h"
+#include "EGATaskPlayMontageAndWaitEventTag.generated.h"
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FGAPlayMontageAndWaitForEventDelegate, FGameplayTag, EventTag , FGameplayEventData, EventData);
 
 UCLASS()
-class UNREALEXTENDEDGAMEPLAY_API UEGATaskPlayMontageAndWaitEvent : public UAbilityTask
+class UNREALEXTENDEDGAMEPLAY_API UEGATaskPlayMontageAndWaitEventTag : public UAbilityTask
 {
 	GENERATED_BODY()
 
 	
 public:
 	// Sets default values for this actor's properties
-	UEGATaskPlayMontageAndWaitEvent();
+	UEGATaskPlayMontageAndWaitEventTag();
 
 
 	virtual void Activate() override;
@@ -41,7 +41,7 @@ public:
 	FGAPlayMontageAndWaitForEventDelegate OnMontageEventReceived;
 
 	UFUNCTION(BlueprintCallable, Category="UEExtended|Ability|Tasks", meta = (HidePin = "OwningAbility", DefaultToSelf = "OwningAbility", BlueprintInternalUseOnly = "TRUE"))
-	static UEGATaskPlayMontageAndWaitEvent* PlayMontageAndWaitForEvent
+	static UEGATaskPlayMontageAndWaitEventTag* PlayMontageAndWaitForEventTag
 	(
 		UGameplayAbility* OwningAbility,
 		FName TaskInstanceName,

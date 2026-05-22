@@ -24,10 +24,6 @@ class UNREALEXTENDEDFRAMEWORK_API UEFWidgetLibrary : public UBlueprintFunctionLi
 	
 public:
 
-	/** Returns the current game viewport size in pixels. */
-	UFUNCTION(BlueprintPure, Category="Extended Widget")
-	static FVector2D GetGameViewportSize();
-
 	/** Returns the current system resolution (ResX, ResY). */
 	UFUNCTION(BlueprintPure, Category="Extended Widget")
 	static FVector2D GetGameResolution();

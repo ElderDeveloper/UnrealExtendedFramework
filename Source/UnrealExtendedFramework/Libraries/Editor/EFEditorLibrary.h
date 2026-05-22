@@ -54,14 +54,6 @@ public:
 	static float GetGameplayFramePerSecond(const UObject* WorldContextObject);
 
 	/**
-	 * Returns the current world delta seconds.
-	 * @param WorldContextObject World context
-	 * @return Delta time in seconds, or 0 if world is unavailable
-	 */
-	UFUNCTION(BlueprintPure, meta = (WorldContext = "WorldContextObject", Keywords="Delta Time"), Category = "Extended Editor")
-	static float GetDeltaSeconds(const UObject* WorldContextObject);
-
-	/**
 	 * Sets the default game map in the project settings (persists to config).
 	 * @param MapName Asset path of the map (e.g. "/Game/Maps/MainMenu")
 	 */

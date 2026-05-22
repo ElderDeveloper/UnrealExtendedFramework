@@ -1,19 +1,19 @@
 ﻿// Fill out your copyright notice in the Description page of Project Settings.
 
 
-#include "EGATaskPlayMontageAndWaitEvent.h"
+#include "EGATaskPlayMontageAndWaitEventTag.h"
 #include "AbilitySystemComponent.h"
 #include "AbilitySystemGlobals.h"
 #include "GameFramework/Character.h"
 
 
 // Sets default values
-UEGATaskPlayMontageAndWaitEvent::UEGATaskPlayMontageAndWaitEvent()
+UEGATaskPlayMontageAndWaitEventTag::UEGATaskPlayMontageAndWaitEventTag()
 {
 	PlaybackRate = 1.f;	bStopWhenAbilityEnds = true;
 }
 
-void UEGATaskPlayMontageAndWaitEvent::Activate()
+void UEGATaskPlayMontageAndWaitEventTag::Activate()
 {
 	if (Ability == nullptr) return;
 
@@ -28,7 +28,7 @@ void UEGATaskPlayMontageAndWaitEvent::Activate()
 			MontageEventHandle = AbilitySystemComponent->AddGameplayEventTagContainerDelegate
 			(
 				EventTags,FGameplayEventTagMulticastDelegate::FDelegate::CreateUObject
-				(	this,&UEGATaskPlayMontageAndWaitEvent::OnGameplayEventReceived	)
+				(	this,&UEGATaskPlayMontageAndWaitEventTag::OnGameplayEventReceived	)
 			);
 
 
@@ -36,12 +36,12 @@ void UEGATaskPlayMontageAndWaitEvent::Activate()
 			{
 				if (ShouldBroadcastAbilityTaskDelegates() == false)	return;
 				
-				MontageCancelledHandle = Ability->OnGameplayAbilityCancelled.AddUObject(this,&UEGATaskPlayMontageAndWaitEvent::OnAbilityCanceled);
+				MontageCancelledHandle = Ability->OnGameplayAbilityCancelled.AddUObject(this,&UEGATaskPlayMontageAndWaitEventTag::OnAbilityCanceled);
 				
-				MontageBlendingOutDelegate.BindUObject(this,&UEGATaskPlayMontageAndWaitEvent::OnMontageBlendingOut);
+				MontageBlendingOutDelegate.BindUObject(this,&UEGATaskPlayMontageAndWaitEventTag::OnMontageBlendingOut);
 				AnimInstance->Montage_SetBlendingOutDelegate(MontageBlendingOutDelegate,MontageToPlay);
 
-				MontageEndedDelegate.BindUObject(this,&UEGATaskPlayMontageAndWaitEvent::OnMontageEnded);
+				MontageEndedDelegate.BindUObject(this,&UEGATaskPlayMontageAndWaitEventTag::OnMontageEnded);
 				AnimInstance->Montage_SetEndDelegate(MontageEndedDelegate,MontageToPlay);
 
 				if(auto const Character = Cast<ACharacter>(GetAvatarActor()))
@@ -68,19 +68,19 @@ void UEGATaskPlayMontageAndWaitEvent::Activate()
 	}
 }
 
-void UEGATaskPlayMontageAndWaitEvent::ExternalCancel()
+void UEGATaskPlayMontageAndWaitEventTag::ExternalCancel()
 {
 	check(AbilitySystemComponent.IsValid());
 	OnAbilityCanceled();
 	Super::ExternalCancel();
 }
 
-FString UEGATaskPlayMontageAndWaitEvent::GetDebugString() const
+FString UEGATaskPlayMontageAndWaitEventTag::GetDebugString() const
 {
 	return Super::GetDebugString();
 }
 
-void UEGATaskPlayMontageAndWaitEvent::OnDestroy(bool bInOwnerFinished)
+void UEGATaskPlayMontageAndWaitEventTag::OnDestroy(bool bInOwnerFinished)
 {
 	if (Ability)
 	{
@@ -99,7 +99,7 @@ void UEGATaskPlayMontageAndWaitEvent::OnDestroy(bool bInOwnerFinished)
 	Super::OnDestroy(bInOwnerFinished);
 }
 
-UEGATaskPlayMontageAndWaitEvent* UEGATaskPlayMontageAndWaitEvent::PlayMontageAndWaitForEvent(
+UEGATaskPlayMontageAndWaitEventTag* UEGATaskPlayMontageAndWaitEventTag::PlayMontageAndWaitForEventTag(
 	UGameplayAbility* OwningAbility, FName TaskInstanceName, UAnimMontage* MontageToPlay,
 	FGameplayTagContainer EventTags, float PlaybackRate, FName StartSection, bool bStopWhenAbilityEnds,
 	float AnimRootMotionTranslationScale)
@@ -107,7 +107,7 @@ UEGATaskPlayMontageAndWaitEvent* UEGATaskPlayMontageAndWaitEvent::PlayMontageAnd
 
 	UAbilitySystemGlobals::NonShipping_ApplyGlobalAbilityScaler_Rate(PlaybackRate);
 
-	UEGATaskPlayMontageAndWaitEvent* MyObj = NewAbilityTask<UEGATaskPlayMontageAndWaitEvent>(OwningAbility, TaskInstanceName);
+	UEGATaskPlayMontageAndWaitEventTag* MyObj = NewAbilityTask<UEGATaskPlayMontageAndWaitEventTag>(OwningAbility, TaskInstanceName);
 	MyObj->MontageToPlay = MontageToPlay;
 	MyObj->EventTags = EventTags;
 	MyObj->PlaybackRate = PlaybackRate;
@@ -118,7 +118,7 @@ UEGATaskPlayMontageAndWaitEvent* UEGATaskPlayMontageAndWaitEvent::PlayMontageAnd
 	return MyObj;
 }
 
-bool UEGATaskPlayMontageAndWaitEvent::StopPlayingMontage() const
+bool UEGATaskPlayMontageAndWaitEventTag::StopPlayingMontage() const
 {
 	if(const auto ActorInfo = Ability->GetCurrentActorInfo())
 	{
@@ -146,7 +146,7 @@ bool UEGATaskPlayMontageAndWaitEvent::StopPlayingMontage() const
 }
 
 
-void UEGATaskPlayMontageAndWaitEvent::OnMontageBlendingOut(UAnimMontage* Montage, bool bInterrupted) const
+void UEGATaskPlayMontageAndWaitEventTag::OnMontageBlendingOut(UAnimMontage* Montage, bool bInterrupted) const
 {
 	if (Ability)
 	{
@@ -166,7 +166,7 @@ void UEGATaskPlayMontageAndWaitEvent::OnMontageBlendingOut(UAnimMontage* Montage
 	}
 }
 
-void UEGATaskPlayMontageAndWaitEvent::OnAbilityCanceled() const
+void UEGATaskPlayMontageAndWaitEventTag::OnAbilityCanceled() const
 {
 	if (StopPlayingMontage())
 	{
@@ -177,7 +177,7 @@ void UEGATaskPlayMontageAndWaitEvent::OnAbilityCanceled() const
 	}
 }
 
-void UEGATaskPlayMontageAndWaitEvent::OnMontageEnded(UAnimMontage* Montage, bool bInterrupted)
+void UEGATaskPlayMontageAndWaitEventTag::OnMontageEnded(UAnimMontage* Montage, bool bInterrupted)
 {
 	if (!bInterrupted)
 	{
@@ -189,7 +189,7 @@ void UEGATaskPlayMontageAndWaitEvent::OnMontageEnded(UAnimMontage* Montage, bool
 	EndTask();
 }
 
-void UEGATaskPlayMontageAndWaitEvent::OnGameplayEventReceived(FGameplayTag EventTag,
+void UEGATaskPlayMontageAndWaitEventTag::OnGameplayEventReceived(FGameplayTag EventTag,
 	const FGameplayEventData* Payload) const
 {
 	if(ShouldBroadcastAbilityTaskDelegates())

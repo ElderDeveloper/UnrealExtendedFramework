@@ -168,13 +168,6 @@ void UEFMonitorLibrary::GetMonitorSafeAreas(FRect& TitleSafeArea, float& TitleSa
 	ActionSafeArea.Bottom = DisplayMetrics.ActionSafePaddingSize.W;
 }
 
-void UEFMonitorLibrary::GetPrimaryDisplayResolution(int32& Width, int32& Height)
-{
-	FDisplayMetrics DisplayMetrics;
-	FDisplayMetrics::RebuildDisplayMetrics(DisplayMetrics);
-	Width = DisplayMetrics.PrimaryDisplayWidth;
-	Height = DisplayMetrics.PrimaryDisplayHeight;
-}
 
 void UEFMonitorLibrary::PrintDisplayInfoToLog()
 {

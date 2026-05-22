@@ -100,9 +100,6 @@ public:
 	UFUNCTION(BlueprintPure, meta = (DisplayName = "Get Monitor Safe Areas", Keywords = "Display Device Safe Monitor"), Category = "Display Info")
 	static void GetMonitorSafeAreas(FRect& TitleSafeArea, float& TitleSafeRatio, FRect& ActionSafeArea);
 
-	/** Returns the primary display resolution (width and height). */
-	UFUNCTION(BlueprintPure, meta = (DisplayName = "Get Primary Display Resolution", Keywords = "Display Device Primary Resolution Monitor"), Category = "Display Info")
-	static void GetPrimaryDisplayResolution(int32& Width, int32& Height);
 
 	/** Prints all display information to the output log. */
 	UFUNCTION(BlueprintCallable, meta = (DisplayName = "Print Display Info To Log", Keywords = "Display Device Info Log Print Monitor"), Category = "Display Info")

@@ -96,15 +96,6 @@ float UEFMathLibrary::GetDistanceBetweenComponentAndActor(const USceneComponent*
 	return 0;
 }
 
-float UEFMathLibrary::GetDistanceBetweenVectors(const FVector From, const FVector To)
-{
-	return FVector::Dist(From, To);
-}
-
-float UEFMathLibrary::GetDistanceBetweenVectorsNoSquareRoot(const FVector From, const FVector To)
-{
-	return FVector::DistSquared(From, To);
-}
 
 AActor* UEFMathLibrary::GetClosestActorFromActorArray(const AActor* OwnerActor, const TArray<AActor*>& TargetArray)
 {
@@ -467,16 +458,6 @@ FVector UEFMathLibrary::CalculateLaunchVelocity(const FVector targetLocation, co
 	returnVector.Z = (targetLocation.Z - (startPosition.Z + zVelocity)) / duration;
 	return returnVector;
 }
-
-
-
-// BUG FIX: RotatorToQuad (now RotatorToQuat) — previously used manual quaternion math
-// that could produce slightly different results from the engine. Now uses FRotator::Quaternion().
-FQuat UEFMathLibrary::RotatorToQuat(const FRotator Rotator)
-{
-	return Rotator.Quaternion();
-}
-
 
 
 //<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< MATH >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
