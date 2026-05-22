@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include "AudioMixerBlueprintLibrary.h"
 #include "CoreMinimal.h"
 #include "Subsystems/GameInstanceSubsystem.h"
 #include "EFAudioDeviceSubsystem.generated.h"
@@ -163,6 +164,27 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Audio|Devices")
 	bool IsOutputDeviceSelectionSupported() const;
 
+	UFUNCTION(BlueprintCallable, Category = "Audio|Devices|Meter")
+	float GetCurrentInputLevel();
+
+	UFUNCTION(BlueprintCallable, Category = "Audio|Devices|Meter")
+	float GetCurrentOutputLevel();
+
+	UFUNCTION(BlueprintCallable, Category = "Audio|Devices|Meter")
+	float GetCurrentInputLevelRaw();
+
+	UFUNCTION(BlueprintCallable, Category = "Audio|Devices|Meter")
+	float GetCurrentOutputLevelRaw();
+
+	UFUNCTION(BlueprintCallable, Category = "Audio|Devices|Meter")
+	float GetDeviceLevel(EEFAudioDeviceType DeviceType, const FString& DeviceID);
+
+	UFUNCTION(BlueprintCallable, Category = "Audio|Devices|Meter")
+	float GetDeviceLevelRaw(EEFAudioDeviceType DeviceType, const FString& DeviceID);
+
+	UFUNCTION(BlueprintPure, Category = "Audio|Devices")
+	FString ResolvePreferredDeviceID(EEFAudioDeviceType DeviceType, const FString& DeviceID) const;
+
 	UPROPERTY(BlueprintAssignable, Category = "Audio|Devices|Events")
 	FOnAudioDevicesChanged OnAudioDevicesChanged;
 
@@ -181,12 +203,23 @@ private:
 
 	void AcquireVoiceChatUser();
 	void ReleaseVoiceChatUser();
+	void RestartInputLevelCapture();
+	void StopInputLevelCapture();
+	void EnsureOutputAnalysisStarted();
+	void StopOutputAnalysis();
 	void EnumerateVoiceChatDevices();
 	void EnumeratePlatformDevices();
 	void AddPlatformDefaultFallbacks();
 
+	UFUNCTION()
+	void HandleCompletedOutputDeviceSwap(const FSwapAudioOutputResult& SwapResult);
+
 	EEFAudioDeviceSelectionResult SelectDevice(const FString& DeviceID, EEFAudioDeviceType DeviceType);
 	bool TrySelectVoiceChatDevice(const FString& DeviceID, EEFAudioDeviceType DeviceType);
+	void ScheduleInputLevelCaptureRetry();
+	void StopInputLevelCaptureRetry();
+	void HandleInputLevelCaptureRetry();
+	bool IsInputLevelCaptureUsable() const;
 
 	void AddOrUpdateDevice(const FEFAudioDeviceInfo& DeviceInfo);
 	const FEFAudioDeviceInfo* FindDevice(const FString& DeviceID, EEFAudioDeviceType DeviceType) const;
@@ -213,12 +246,19 @@ private:
 
 	TArray<FEFAudioDeviceInfo> OutputDevices;
 	TArray<FEFAudioDeviceInfo> InputDevices;
+	TMap<FString, FString> PreferredDeviceIdAliases;
 	FString ActiveOutputDeviceID = TEXT("Default");
 	FString ActiveInputDeviceID = TEXT("Default");
 	FString LastError;
 
 	FTimerHandle DeviceMonitorTimerHandle;
+	FTimerHandle InputLevelCaptureRetryTimerHandle;
 	IVoiceChatUser* VoiceChatUser = nullptr;
 	bool bOwnsVoiceChatUser = false;
 	bool bIsInitialized = false;
+	TSharedPtr<class IVoiceCapture> InputLevelCapture;
+	FString PendingInputLevelCaptureDeviceID;
+	int32 InputLevelCaptureRetryAttempts = 0;
+	TArray<float> OutputAnalysisFrequencies;
+	bool bIsOutputAnalysisActive = false;
 };

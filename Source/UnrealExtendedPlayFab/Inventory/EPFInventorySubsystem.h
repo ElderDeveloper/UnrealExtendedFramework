@@ -12,9 +12,12 @@ struct UNREALEXTENDEDPLAYFAB_API FEPFInventoryItem
 {
 	GENERATED_BODY()
 
-	/** Unique instance ID of this item in the player's inventory */
+	/** Inventory stack id. Preserved in ItemInstanceId for compatibility. */
 	UPROPERTY(BlueprintReadOnly, Category = "PlayFab|Inventory")
 	FString ItemInstanceId;
+
+	UPROPERTY(BlueprintReadOnly, Category = "PlayFab|Inventory")
+	FString StackId;
 
 	/** Catalog item ID (matches the catalog definition) */
 	UPROPERTY(BlueprintReadOnly, Category = "PlayFab|Inventory")
@@ -24,11 +27,15 @@ struct UNREALEXTENDEDPLAYFAB_API FEPFInventoryItem
 	UPROPERTY(BlueprintReadOnly, Category = "PlayFab|Inventory")
 	FString DisplayName;
 
-	/** Item class (e.g., "weapon", "consumable", "armor") */
+	/** Item type (e.g., currency, catalogItem, bundle) */
 	UPROPERTY(BlueprintReadOnly, Category = "PlayFab|Inventory")
 	FString ItemClass;
 
-	/** Remaining uses (-1 = unlimited) */
+	/** Current stack amount. Mirrored into RemainingUses for compatibility. */
+	UPROPERTY(BlueprintReadOnly, Category = "PlayFab|Inventory")
+	int32 Amount = 0;
+
+	/** Remaining amount (-1 = unknown) */
 	UPROPERTY(BlueprintReadOnly, Category = "PlayFab|Inventory")
 	int32 RemainingUses = -1;
 
@@ -54,7 +61,10 @@ struct UNREALEXTENDEDPLAYFAB_API FEPFCatalogItem
 	UPROPERTY(BlueprintReadOnly, Category = "PlayFab|Inventory")
 	FString ItemClass;
 
-	/** Virtual currency prices (key = currency code, value = price) */
+	UPROPERTY(BlueprintReadOnly, Category = "PlayFab|Inventory")
+	FString ItemType;
+
+	/** Flattened Economy price amounts keyed by price item id */
 	UPROPERTY(BlueprintReadOnly, Category = "PlayFab|Inventory")
 	TMap<FString, int32> VirtualCurrencyPrices;
 };
@@ -66,8 +76,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnEPFItemPurchased, const FEPFResu
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnEPFItemConsumed, const FEPFResult&, Result, int32, RemainingUses);
 
 /**
- * Manages PlayFab Player Inventory and Catalog — browse items, purchase, consume.
- * Items and catalog are defined in the PlayFab dashboard.
+ * Manages PlayFab Economy v2 inventory and catalog reads plus purchase/subtract operations.
  */
 UCLASS()
 class UNREALEXTENDEDPLAYFAB_API UEPFInventorySubsystem : public UEPFSubsystem
@@ -81,19 +90,19 @@ public:
 
 	// ── Actions ──────────────────────────────────────────────────────────────
 
-	/** Fetch the player's current inventory (items owned) */
+	/** Fetch the authenticated entity's current inventory items */
 	UFUNCTION(BlueprintCallable, Category = "PlayFab|Inventory")
 	void GetInventory();
 
-	/** Fetch the store catalog (items available for purchase) */
+	/** Fetch the public catalog or an optional store-specific catalog view, including item and currency definitions */
 	UFUNCTION(BlueprintCallable, Category = "PlayFab|Inventory")
-	void GetCatalog(const FString& CatalogVersion = TEXT(""));
+	void GetCatalog(const FString& StoreId = TEXT(""));
 
-	/** Purchase an item from the catalog using virtual currency */
+	/** Purchase an item from the catalog using Economy price item ids */
 	UFUNCTION(BlueprintCallable, Category = "PlayFab|Inventory")
-	void PurchaseItem(const FString& ItemId, const FString& CurrencyCode, int32 Price, const FString& CatalogVersion = TEXT(""));
+	void PurchaseItem(const FString& ItemId, const FString& CurrencyCode, int32 Price, const FString& StoreId = TEXT(""));
 
-	/** Consume a use of a consumable item */
+	/** Subtract amount from an inventory stack */
 	UFUNCTION(BlueprintCallable, Category = "PlayFab|Inventory")
 	void ConsumeItem(const FString& ItemInstanceId, int32 ConsumeCount = 1);
 

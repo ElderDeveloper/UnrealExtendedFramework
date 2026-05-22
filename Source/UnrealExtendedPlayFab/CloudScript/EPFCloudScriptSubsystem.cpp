@@ -29,8 +29,6 @@ void UEPFCloudScriptSubsystem::ExecuteFunction(const FString& FunctionName, cons
 		Body->SetObjectField(TEXT("FunctionParameter"), ParamObj);
 	}
 
-	Body->SetBoolField(TEXT("GeneratePlayStreamEvent"), true);
-
 	SendPlayFabRequestDetailed(
 		TEXT("/Client/ExecuteCloudScript"),
 		Body,

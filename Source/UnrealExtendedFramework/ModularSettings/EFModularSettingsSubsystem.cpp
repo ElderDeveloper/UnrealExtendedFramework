@@ -8,8 +8,10 @@
 #include "Kismet/GameplayStatics.h"
 #include "SaveGame/EFSettingsSaveGame.h"
 #include "Settings/EFModularSettingsBase.h"
+#include "Settings/Examples/EFGraphicsSettings.h"
 #include "Async/Async.h"
 #include "GameFramework/GameUserSettings.h"
+#include "UnrealExtendedFramework/Libraries/Monitor/EFMonitorLibrary.h"
 
 static const FString SettingsSaveSlotName = TEXT("ModularSettingsSave");
 static const int32 SettingsUserIndex = 0;
@@ -69,6 +71,90 @@ namespace EFModularSettingsConsole
 	static FGameplayTag MakeTag(const TCHAR* TagName)
 	{
 		return FGameplayTag::RequestGameplayTag(FName(TagName), false);
+	}
+
+	static bool TryParseAspectRatio(const FString& ValueString, int32& OutWidthPart, int32& OutHeightPart)
+	{
+		FString LeftPart;
+		FString RightPart;
+		if (!ValueString.Split(TEXT(":"), &LeftPart, &RightPart) && !ValueString.Split(TEXT("/"), &LeftPart, &RightPart))
+		{
+			return false;
+		}
+
+		OutWidthPart = FCString::Atoi(*LeftPart);
+		OutHeightPart = FCString::Atoi(*RightPart);
+		return OutWidthPart > 0 && OutHeightPart > 0;
+	}
+
+	static bool TryParseWindowMode(const FString& ValueString, EWindowMode::Type& OutWindowMode, FString& OutModeName)
+	{
+		if (ValueString.Equals(TEXT("windowed"), ESearchCase::IgnoreCase))
+		{
+			OutWindowMode = EWindowMode::Windowed;
+			OutModeName = TEXT("Windowed");
+			return true;
+		}
+
+		if (ValueString.Equals(TEXT("borderless"), ESearchCase::IgnoreCase)
+			|| ValueString.Equals(TEXT("windowedfullscreen"), ESearchCase::IgnoreCase))
+		{
+			OutWindowMode = EWindowMode::WindowedFullscreen;
+			OutModeName = TEXT("Borderless");
+			return true;
+		}
+
+		if (ValueString.Equals(TEXT("fullscreen"), ESearchCase::IgnoreCase))
+		{
+			OutWindowMode = EWindowMode::Fullscreen;
+			OutModeName = TEXT("Fullscreen");
+			return true;
+		}
+
+		return false;
+	}
+
+	static int32 AlignDimensionForAspectTest(const int32 Value)
+	{
+		return Value > 1 ? Value - (Value % 2) : Value;
+	}
+
+	static FIntPoint ComputeLargestFittingResolution(const int32 MaxWidth, const int32 MaxHeight, const float TargetAspectRatio)
+	{
+		if (MaxWidth <= 0 || MaxHeight <= 0 || TargetAspectRatio <= 0.0f)
+		{
+			return FIntPoint::ZeroValue;
+		}
+
+		const int32 WidthLimitedHeight = AlignDimensionForAspectTest(FMath::FloorToInt(static_cast<float>(MaxWidth) / TargetAspectRatio));
+		const int32 HeightLimitedWidth = AlignDimensionForAspectTest(FMath::FloorToInt(static_cast<float>(MaxHeight) * TargetAspectRatio));
+
+		FIntPoint BestResolution = FIntPoint::ZeroValue;
+		int64 BestPixelCount = -1;
+
+		auto TryCandidate = [&](const int32 CandidateWidth, const int32 CandidateHeight)
+		{
+			if (CandidateWidth <= 0 || CandidateHeight <= 0)
+			{
+				return;
+			}
+
+			if (CandidateWidth > MaxWidth || CandidateHeight > MaxHeight)
+			{
+				return;
+			}
+
+			const int64 PixelCount = static_cast<int64>(CandidateWidth) * static_cast<int64>(CandidateHeight);
+			if (PixelCount > BestPixelCount)
+			{
+				BestResolution = FIntPoint(CandidateWidth, CandidateHeight);
+				BestPixelCount = PixelCount;
+			}
+		};
+
+		TryCandidate(MaxWidth, WidthLimitedHeight);
+		TryCandidate(HeightLimitedWidth, MaxHeight);
+		return BestResolution;
 	}
 }
 
@@ -185,6 +271,11 @@ void UEFModularSettingsSubsystem::RegisterConsoleCommands()
 		TEXT("Settings.Upscaler.Status"),
 		TEXT("Log the current upscaler-related modular settings."),
 		FConsoleCommandWithArgsDelegate::CreateUObject(this, &UEFModularSettingsSubsystem::HandleUpscalerStatusCommand));
+
+	RegisterConsoleCommand(
+		TEXT("Settings.Display.TestAspect"),
+		TEXT("Apply the largest resolution that fits the current monitor for a target aspect ratio. Usage: Settings.Display.TestAspect <16:9|19:9|21:9|32:9|Native> [Windowed|Fullscreen|Borderless]"),
+		FConsoleCommandWithArgsDelegate::CreateUObject(this, &UEFModularSettingsSubsystem::HandleDisplayTestAspectCommand));
 }
 
 
@@ -532,15 +623,22 @@ void UEFModularSettingsSubsystem::LoadFromDisk()
 				{
 					if (UEFModularSettingsBase* OverallSetting = Settings.FindRef(OverallQualityTag))
 					{
-						// Map the detected level to our setting values
-						FString DetectedValue;
-						if (DetectedQuality == 0) DetectedValue = TEXT("Low");
-						else if (DetectedQuality == 1) DetectedValue = TEXT("Medium");
-						else if (DetectedQuality == 2) DetectedValue = TEXT("High");
-						else if (DetectedQuality == 3) DetectedValue = TEXT("Ultra");
-						else DetectedValue = TEXT("Custom"); // -1 or mixed results
-						
-						OverallSetting->SetValueFromString(DetectedValue);
+						if (UEFOverallQualitySetting* OverallQualitySetting = Cast<UEFOverallQualitySetting>(OverallSetting))
+						{
+							OverallQualitySetting->SyncFromCurrentEngineState();
+						}
+						else
+						{
+							// Fallback for non-standard overall-quality implementations.
+							FString DetectedValue;
+							if (DetectedQuality == 0) DetectedValue = TEXT("Low");
+							else if (DetectedQuality == 1) DetectedValue = TEXT("Medium");
+							else if (DetectedQuality == 2) DetectedValue = TEXT("High");
+							else if (DetectedQuality == 3) DetectedValue = TEXT("Ultra");
+							else DetectedValue = TEXT("Custom"); // -1 or mixed results
+
+							OverallSetting->SetValueFromString(DetectedValue);
+						}
 					}
 				}
 
@@ -754,6 +852,131 @@ void UEFModularSettingsSubsystem::HandleUpscalerStatusCommand(const TArray<FStri
 	}
 
 	LogUpscalerStatus();
+}
+
+
+void UEFModularSettingsSubsystem::HandleDisplayTestAspectCommand(const TArray<FString>& Args)
+{
+	if (Args.Num() < 1)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Usage: Settings.Display.TestAspect <16:9|19:9|21:9|32:9|Native> [Windowed|Fullscreen|Borderless]"));
+		return;
+	}
+
+	if (!GEngine)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Settings.Display.TestAspect requires a valid engine instance."));
+		return;
+	}
+
+	UGameUserSettings* UserSettings = GEngine->GetGameUserSettings();
+	if (!UserSettings)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Settings.Display.TestAspect requires GameUserSettings."));
+		return;
+	}
+
+	const FString AspectArgument = Args[0].TrimStartAndEnd();
+	EWindowMode::Type WindowMode = EWindowMode::Windowed;
+	FString WindowModeName = TEXT("Windowed");
+
+	if (Args.Num() >= 2 && !EFModularSettingsConsole::TryParseWindowMode(Args[1], WindowMode, WindowModeName))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Settings.Display.TestAspect invalid window mode '%s'. Expected Windowed, Fullscreen, or Borderless."), *Args[1]);
+		return;
+	}
+
+	int32 MonitorWidth = 0;
+	int32 MonitorHeight = 0;
+	UEFMonitorLibrary::GetCurrentMonitorResolution(MonitorWidth, MonitorHeight);
+	if (MonitorWidth <= 0 || MonitorHeight <= 0)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Settings.Display.TestAspect could not determine the current monitor resolution."));
+		return;
+	}
+
+	FIntPoint TargetResolution = FIntPoint(MonitorWidth, MonitorHeight);
+	FString AspectLabel = TEXT("Native");
+
+	if (!AspectArgument.Equals(TEXT("native"), ESearchCase::IgnoreCase)
+		&& !AspectArgument.Equals(TEXT("reset"), ESearchCase::IgnoreCase))
+	{
+		int32 AspectWidth = 0;
+		int32 AspectHeight = 0;
+		if (!EFModularSettingsConsole::TryParseAspectRatio(AspectArgument, AspectWidth, AspectHeight))
+		{
+			UE_LOG(LogTemp, Warning, TEXT("Settings.Display.TestAspect invalid aspect ratio '%s'. Expected values like 16:9, 19:9, 21:9, 32:9, or Native."), *AspectArgument);
+			return;
+		}
+
+		AspectLabel = FString::Printf(TEXT("%d:%d"), AspectWidth, AspectHeight);
+		const float TargetAspectRatio = static_cast<float>(AspectWidth) / static_cast<float>(AspectHeight);
+		TargetResolution = EFModularSettingsConsole::ComputeLargestFittingResolution(MonitorWidth, MonitorHeight, TargetAspectRatio);
+		if (TargetResolution.X <= 0 || TargetResolution.Y <= 0)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("Settings.Display.TestAspect could not compute a valid resolution for aspect %s on monitor %dx%d."),
+				*AspectLabel,
+				MonitorWidth,
+				MonitorHeight);
+			return;
+		}
+	}
+
+	const float NativeAspect = static_cast<float>(MonitorWidth) / static_cast<float>(MonitorHeight);
+	const float RequestedAspect = static_cast<float>(TargetResolution.X) / static_cast<float>(TargetResolution.Y);
+	if (WindowMode == EWindowMode::WindowedFullscreen && !FMath::IsNearlyEqual(NativeAspect, RequestedAspect, 0.01f))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Settings.Display.TestAspect switched Borderless to Windowed because borderless always uses the monitor's native aspect ratio."));
+		WindowMode = EWindowMode::Windowed;
+		WindowModeName = TEXT("Windowed");
+	}
+
+	UserSettings->SetFullscreenMode(WindowMode);
+	UserSettings->SetScreenResolution(TargetResolution);
+	UserSettings->ApplySettings(false);
+	UserSettings->SaveSettings();
+
+	const FString ResolutionString = FString::Printf(TEXT("%dx%d"), TargetResolution.X, TargetResolution.Y);
+
+	if (UEFModularSettingsMultiSelect* DisplayModeSetting = Cast<UEFModularSettingsMultiSelect>(GetSettingByTag(EFModularSettingsConsole::MakeTag(TEXT("Settings.Display.DisplayMode")))))
+	{
+		const int32 DisplayModeIndex = DisplayModeSetting->Values.IndexOfByPredicate([&WindowModeName](const FString& Candidate)
+		{
+			return Candidate.Equals(WindowModeName, ESearchCase::IgnoreCase);
+		});
+
+		if (DisplayModeSetting->Values.IsValidIndex(DisplayModeIndex))
+		{
+			DisplayModeSetting->SetSelectedIndex(DisplayModeIndex);
+			DisplayModeSetting->SaveCurrentValue();
+			DisplayModeSetting->ClearDirty();
+			OnSettingsChanged.Broadcast(DisplayModeSetting);
+		}
+	}
+
+	if (UEFModularSettingsMultiSelect* ResolutionSetting = Cast<UEFModularSettingsMultiSelect>(GetSettingByTag(EFModularSettingsConsole::MakeTag(TEXT("Settings.Graphics.Resolution")))))
+	{
+		ResolutionSetting->RefreshValues();
+		if (!ResolutionSetting->Values.Contains(ResolutionString))
+		{
+			ResolutionSetting->Values.Add(ResolutionString);
+			ResolutionSetting->DisplayNames.Add(FText::FromString(ResolutionString));
+		}
+
+		ResolutionSetting->SetValueFromString(ResolutionString);
+		ResolutionSetting->SaveCurrentValue();
+		ResolutionSetting->ClearDirty();
+		OnSettingsChanged.Broadcast(ResolutionSetting);
+	}
+
+	SaveToDisk();
+
+	UE_LOG(LogTemp, Log, TEXT("Settings.Display.TestAspect applied %s as %s on monitor %dx%d using %s mode."),
+		*AspectLabel,
+		*ResolutionString,
+		MonitorWidth,
+		MonitorHeight,
+		*WindowModeName);
 }
 
 

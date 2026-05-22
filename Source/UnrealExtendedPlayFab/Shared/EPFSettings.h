@@ -87,7 +87,7 @@ public:
 
 	/**
 	 * If true, the Analytics subsystem automatically hooks into PlayFab login/logout,
-	 * level transitions, and app lifecycle events and sends them as PlayStream events.
+	 * level transitions, and app lifecycle events and sends them as telemetry.
 	 * Events captured while offline are persisted to disk and flushed on next login.
 	 */
 	UPROPERTY(config, EditAnywhere, BlueprintReadOnly, Category = "Auto Analytics",

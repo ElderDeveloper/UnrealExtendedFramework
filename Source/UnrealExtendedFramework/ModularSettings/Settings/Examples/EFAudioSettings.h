@@ -74,6 +74,8 @@ public:
 			DesiredValue = DefaultValue;
 		}
 
+		DesiredValue = AudioDeviceSubsystem->ResolvePreferredDeviceID(GetDeviceType(), DesiredValue);
+
 		int32 DesiredIndex = Values.Find(DesiredValue);
 		if (DesiredIndex == INDEX_NONE && !ActiveDevice.DeviceID.IsEmpty())
 		{
@@ -81,6 +83,16 @@ public:
 		}
 
 		SelectedIndex = DesiredIndex != INDEX_NONE ? DesiredIndex : 0;
+	}
+
+	virtual void SetValueFromString(const FString& Value) override
+	{
+		UEFAudioDeviceSubsystem* AudioDeviceSubsystem = UEFAudioDeviceSubsystem::GetAudioDeviceSubsystem(this);
+		const FString ResolvedValue = AudioDeviceSubsystem
+			? AudioDeviceSubsystem->ResolvePreferredDeviceID(GetDeviceType(), Value)
+			: Value;
+
+		Super::SetValueFromString(ResolvedValue);
 	}
 
 	virtual void Apply_Implementation() override

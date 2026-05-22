@@ -10,13 +10,9 @@
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnEPFEventLogged, const FEPFResult&, Result);
 
 /**
- * Logs PlayStream analytics events — replaces GameAnalytics.
- * Events appear in the PlayFab dashboard and feed into segmentation, A/B testing, and reports.
- *
- * Auto-tracking (optional, toggled via Project Settings → Extended PlayFab → Auto Analytics):
- *  - Hooks into login/logout, level transitions, and app lifecycle automatically.
- *  - Events generated while offline are persisted to Saved/EPF/AnalyticsQueue.json and
- *    flushed to PlayFab the next time the player successfully logs in.
+ * Logs PlayFab analytics as telemetry events.
+ * All events share one namespace and one payload envelope so gameplay and
+ * lifecycle telemetry can be queried the same way in PlayFab.
  */
 UCLASS()
 class UNREALEXTENDEDPLAYFAB_API UEPFAnalyticsSubsystem : public UEPFSubsystem
@@ -28,29 +24,29 @@ public:
 	virtual void Initialize(FSubsystemCollectionBase& Collection) override;
 	virtual void Deinitialize() override;
 
-	// ── Manual Event Actions ──────────────────────────────────────────────────
+	// ── Telemetry Actions ─────────────────────────────────────────────────────
 
-	/** Log a single player event */
+	/** Log a single telemetry event */
 	UFUNCTION(BlueprintCallable, Category = "PlayFab|Analytics")
 	void LogEvent(const FString& EventName, const TMap<FString, FString>& Body);
 
-	/** Log an event with no custom body (just the event name) */
+	/** Log a telemetry event with no custom body */
 	UFUNCTION(BlueprintCallable, Category = "PlayFab|Analytics")
 	void LogSimpleEvent(const FString& EventName);
 
-	/** Log a batch of events */
+	/** Log a batch of telemetry events */
 	UFUNCTION(BlueprintCallable, Category = "PlayFab|Analytics")
 	void LogEvents(const TArray<FEPFAnalyticsEvent>& Events);
 
-	/** Log a character-scoped event */
+	/** Log a telemetry event tagged with a character id */
 	UFUNCTION(BlueprintCallable, Category = "PlayFab|Analytics")
 	void LogCharacterEvent(const FString& CharacterId, const FString& EventName, const TMap<FString, FString>& Body);
 
-	/** Log a title-scoped event (global, not player-specific) */
+	/** Log a telemetry event tagged as title scope */
 	UFUNCTION(BlueprintCallable, Category = "PlayFab|Analytics")
 	void LogTitleEvent(const FString& EventName, const TMap<FString, FString>& Body);
 
-	/** Report device information to PlayFab (OS, device model, etc.) */
+	/** Log device information as telemetry */
 	UFUNCTION(BlueprintCallable, Category = "PlayFab|Analytics")
 	void ReportDeviceInfo();
 
@@ -139,8 +135,17 @@ private:
 	/** Unregister all auto-tracking delegates */
 	void UnregisterAutoTrackingHooks();
 
+	/** Write a single telemetry event using the normalized payload schema. */
+	void WriteTelemetryEvent(
+		const FString& EventName,
+		const TMap<FString, FString>& Body,
+		const FString& EventSource,
+		const FString& EventScope,
+		const FString& TargetId = FString(),
+		const FString& OriginalTimestamp = FString());
+
 	/**
-	 * If the player is authenticated, send the event immediately via LogEvent().
+	 * If an entity token is available, send the auto-tracked event immediately via telemetry.
 	 * Otherwise, push it into the offline queue (respecting OfflineQueueLimit)
 	 * and save the queue to disk.
 	 */

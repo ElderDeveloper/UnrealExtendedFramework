@@ -121,6 +121,13 @@ public:
 	/** Check if a specific upscaler is available on this hardware at runtime. */
 	UFUNCTION(BlueprintPure, Category = "Upscaler")
 	static bool IsUpscalerAvailable(const FString& UpscalerName);
+
+private:
+	static constexpr int32 AvailabilityRetryLimit = 20;
+	static constexpr float AvailabilityRetryDelaySeconds = 0.25f;
+
+	bool bAvailabilityRetryScheduled = false;
+	int32 AvailabilityRetryCount = 0;
 };
 
 

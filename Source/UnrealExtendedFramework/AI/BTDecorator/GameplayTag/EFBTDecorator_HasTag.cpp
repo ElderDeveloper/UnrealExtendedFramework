@@ -27,10 +27,10 @@ bool UEFBTDecorator_HasTag::CalculateRawConditionValue(UBehaviorTreeComponent& O
 	{
 		if (UAbilitySystemComponent* AbilitySystemComponent = UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(ActorToCheck))
 		{
-			UE_LOG(LogTemp, Log, TEXT("EFBTDecorator_HasTag: Checking tags on %s"), *ActorToCheck->GetName());
-			UE_LOG(LogTemp, Log, TEXT("EFBTDecorator_HasTag: Actor has tags: %s"), *AbilitySystemComponent->GetOwnedGameplayTags().ToString());
-			UE_LOG(LogTemp, Log, TEXT("EFBTDecorator_HasTag: Searching for tag: %s"), *SearchTag.ToString());
-			return AbilitySystemComponent->HasAnyMatchingGameplayTags(SearchTag);
+			const FGameplayTagContainer OwnedTags = AbilitySystemComponent->GetOwnedGameplayTags();
+			const bool bHasMatchingTag = AbilitySystemComponent->HasAnyMatchingGameplayTags(SearchTag);
+			UE_LOG(LogTemp, Log, TEXT("EFBTDecorator_HasTag: Actor=%s OwnedTags=%s SearchTag=%s Match=%s"), *ActorToCheck->GetName(), *OwnedTags.ToString(), *SearchTag.ToString(), bHasMatchingTag ? TEXT("true") : TEXT("false"));
+			return bHasMatchingTag;
 		}
 	}
 	else

@@ -5,12 +5,16 @@
 #include "Engine/Engine.h"
 #include "Engine/GameInstance.h"
 #include "Engine/World.h"
+#include "AudioMixerBlueprintLibrary.h"
 #include "TimerManager.h"
 #include "UnrealExtendedFramework.h"
+#include "Voice.h"
 #include "VoiceChat.h"
+#include "Interfaces/VoiceCapture.h"
 
 #if PLATFORM_WINDOWS
 #include "Windows/AllowWindowsPlatformTypes.h"
+#include <endpointvolume.h>
 #include <mmdeviceapi.h>
 #include <propsys.h>
 #include <functiondiscoverykeys_devpkey.h>
@@ -20,7 +24,11 @@
 namespace
 {
 	constexpr float DeviceMonitorIntervalSeconds = 2.0f;
+	constexpr float InputLevelCaptureRetryIntervalSeconds = 0.35f;
+	constexpr int32 InputLevelCaptureMaxRetryAttempts = 12;
 	const FString DefaultDeviceId = TEXT("Default");
+	constexpr float InputLevelBoost = 10.0f;
+	constexpr float OutputLevelBoost = 6.0f;
 
 	bool IsSameDeviceIdentity(const FEFAudioDeviceInfo& Left, const FEFAudioDeviceInfo& Right)
 	{
@@ -28,6 +36,149 @@ namespace
 			&& Left.DeviceID == Right.DeviceID
 			&& Left.Backend == Right.Backend;
 	}
+
+	FString NormalizeEndpointDisplayName(const FString& DeviceName)
+	{
+		FString NormalizedName = DeviceName.ToLower().TrimStartAndEnd();
+		NormalizedName.ReplaceInline(TEXT("default - "), TEXT(""));
+		NormalizedName.ReplaceInline(TEXT("system default "), TEXT(""));
+		NormalizedName.ReplaceInline(TEXT("  "), TEXT(" "));
+		return NormalizedName;
+	}
+
+	bool AreLikelySameEndpointName(const FString& LeftName, const FString& RightName)
+	{
+		const FString Left = NormalizeEndpointDisplayName(LeftName);
+		const FString Right = NormalizeEndpointDisplayName(RightName);
+		return !Left.IsEmpty()
+			&& !Right.IsEmpty()
+			&& (Left.Equals(Right, ESearchCase::IgnoreCase) || Left.Contains(Right) || Right.Contains(Left));
+	}
+
+	FString MakeDeviceAliasKey(EEFAudioDeviceType DeviceType, const FString& DeviceID)
+	{
+		return FString::Printf(TEXT("%d:%s"), static_cast<int32>(DeviceType), *DeviceID);
+	}
+
+#if PLATFORM_WINDOWS
+	FString GetWindowsDeviceId(IMMDevice* Device)
+	{
+		LPWSTR RawDeviceID = nullptr;
+		if (FAILED(Device->GetId(&RawDeviceID)) || !RawDeviceID)
+		{
+			return FString();
+		}
+
+		FString DeviceID(RawDeviceID);
+		CoTaskMemFree(RawDeviceID);
+		return DeviceID;
+	}
+
+	FString GetWindowsDeviceName(IMMDevice* Device, const FString& FallbackName)
+	{
+		IPropertyStore* PropertyStore = nullptr;
+		if (FAILED(Device->OpenPropertyStore(STGM_READ, &PropertyStore)) || !PropertyStore)
+		{
+			return FallbackName;
+		}
+
+		PROPVARIANT FriendlyName;
+		PropVariantInit(&FriendlyName);
+		FString DeviceName = FallbackName;
+		if (SUCCEEDED(PropertyStore->GetValue(PKEY_Device_FriendlyName, &FriendlyName)) && FriendlyName.vt == VT_LPWSTR && FriendlyName.pwszVal)
+		{
+			DeviceName = FriendlyName.pwszVal;
+		}
+
+		PropVariantClear(&FriendlyName);
+		PropertyStore->Release();
+		return DeviceName;
+	}
+
+	FString ResolveWindowsEndpointId(IMMDeviceEnumerator* DeviceEnumerator, const FEFAudioDeviceInfo& DeviceInfo, EEFAudioDeviceType DeviceType)
+	{
+		const EDataFlow DataFlow = DeviceType == EEFAudioDeviceType::Input ? eCapture : eRender;
+		if (DeviceInfo.bIsDefaultDevice || DeviceInfo.DeviceID.Equals(DefaultDeviceId, ESearchCase::IgnoreCase))
+		{
+			IMMDevice* DefaultEndpoint = nullptr;
+			if (SUCCEEDED(DeviceEnumerator->GetDefaultAudioEndpoint(DataFlow, eConsole, &DefaultEndpoint)) && DefaultEndpoint)
+			{
+				const FString DefaultEndpointID = GetWindowsDeviceId(DefaultEndpoint);
+				DefaultEndpoint->Release();
+				return DefaultEndpointID;
+			}
+
+			return FString();
+		}
+
+		if (DeviceInfo.Backend == EEFAudioDeviceBackend::WindowsCoreAudio)
+		{
+			return DeviceInfo.DeviceID;
+		}
+
+		IMMDeviceCollection* DeviceCollection = nullptr;
+		if (FAILED(DeviceEnumerator->EnumAudioEndpoints(DataFlow, DEVICE_STATE_ACTIVE, &DeviceCollection)) || !DeviceCollection)
+		{
+			return FString();
+		}
+
+		FString ResolvedDeviceID;
+		UINT DeviceCount = 0;
+		DeviceCollection->GetCount(&DeviceCount);
+		for (UINT DeviceIndex = 0; DeviceIndex < DeviceCount; ++DeviceIndex)
+		{
+			IMMDevice* Device = nullptr;
+			if (FAILED(DeviceCollection->Item(DeviceIndex, &Device)) || !Device)
+			{
+				continue;
+			}
+
+			const FString CandidateID = GetWindowsDeviceId(Device);
+			const FString CandidateName = GetWindowsDeviceName(Device, CandidateID);
+			if (DeviceInfo.DeviceID == CandidateID || CandidateName.Equals(DeviceInfo.DeviceName, ESearchCase::IgnoreCase))
+			{
+				ResolvedDeviceID = CandidateID;
+				Device->Release();
+				break;
+			}
+
+			Device->Release();
+		}
+
+		DeviceCollection->Release();
+		return ResolvedDeviceID;
+	}
+
+	float GetWindowsEndpointPeakLevel(IMMDeviceEnumerator* DeviceEnumerator, const FEFAudioDeviceInfo& DeviceInfo, EEFAudioDeviceType DeviceType)
+	{
+		const FString EndpointID = ResolveWindowsEndpointId(DeviceEnumerator, DeviceInfo, DeviceType);
+		if (EndpointID.IsEmpty())
+		{
+			return -1.0f;
+		}
+
+		IMMDevice* EndpointDevice = nullptr;
+		if (FAILED(DeviceEnumerator->GetDevice(*EndpointID, &EndpointDevice)) || !EndpointDevice)
+		{
+			return -1.0f;
+		}
+
+		IAudioMeterInformation* MeterInformation = nullptr;
+		const HRESULT ActivateResult = EndpointDevice->Activate(__uuidof(IAudioMeterInformation), CLSCTX_ALL, nullptr, reinterpret_cast<void**>(&MeterInformation));
+		if (FAILED(ActivateResult) || !MeterInformation)
+		{
+			EndpointDevice->Release();
+			return -1.0f;
+		}
+
+		float PeakValue = 0.0f;
+		const HRESULT PeakResult = MeterInformation->GetPeakValue(&PeakValue);
+		MeterInformation->Release();
+		EndpointDevice->Release();
+
+		return SUCCEEDED(PeakResult) ? PeakValue : -1.0f;
+	}
+#endif
 }
 
 void UEFAudioDeviceSubsystem::Initialize(FSubsystemCollectionBase& Collection)
@@ -41,15 +192,21 @@ void UEFAudioDeviceSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 
 	AcquireVoiceChatUser();
 	RefreshDeviceCache(false);
+	RestartInputLevelCapture();
+	ScheduleInputLevelCaptureRetry();
 	StartDeviceMonitoring();
 }
 
 void UEFAudioDeviceSubsystem::Deinitialize()
 {
 	StopDeviceMonitoring();
+	StopInputLevelCaptureRetry();
+	StopOutputAnalysis();
+	StopInputLevelCapture();
 	ReleaseVoiceChatUser();
 	OutputDevices.Empty();
 	InputDevices.Empty();
+	PreferredDeviceIdAliases.Empty();
 	ActiveOutputDeviceID = DefaultDeviceId;
 	ActiveInputDeviceID = DefaultDeviceId;
 	LastError.Reset();
@@ -173,6 +330,194 @@ bool UEFAudioDeviceSubsystem::IsOutputDeviceSelectionSupported() const
 	return HasSelectableDevice(EEFAudioDeviceType::Output);
 }
 
+float UEFAudioDeviceSubsystem::GetCurrentInputLevel()
+{
+	return FMath::Clamp(GetCurrentInputLevelRaw(), 0.0f, 1.0f);
+}
+
+float UEFAudioDeviceSubsystem::GetCurrentOutputLevel()
+{
+	return FMath::Clamp(GetCurrentOutputLevelRaw(), 0.0f, 1.0f);
+}
+
+float UEFAudioDeviceSubsystem::GetCurrentInputLevelRaw()
+{
+	return GetDeviceLevelRaw(EEFAudioDeviceType::Input, ActiveInputDeviceID);
+}
+
+float UEFAudioDeviceSubsystem::GetCurrentOutputLevelRaw()
+{
+	return GetDeviceLevelRaw(EEFAudioDeviceType::Output, ActiveOutputDeviceID);
+}
+
+float UEFAudioDeviceSubsystem::GetDeviceLevel(EEFAudioDeviceType DeviceType, const FString& DeviceID)
+{
+	return FMath::Clamp(GetDeviceLevelRaw(DeviceType, DeviceID), 0.0f, 1.0f);
+}
+
+float UEFAudioDeviceSubsystem::GetDeviceLevelRaw(EEFAudioDeviceType DeviceType, const FString& DeviceID)
+{
+	const FString PreferredDeviceID = ResolvePreferredDeviceID(DeviceType, DeviceID);
+	const FEFAudioDeviceInfo* DeviceInfo = FindDevice(PreferredDeviceID, DeviceType);
+	if (!DeviceInfo)
+	{
+		return 0.0f;
+	}
+
+	if (DeviceType == EEFAudioDeviceType::Input && PreferredDeviceID == ActiveInputDeviceID && !IsInputLevelCaptureUsable())
+	{
+		ScheduleInputLevelCaptureRetry();
+	}
+
+#if PLATFORM_WINDOWS
+	HRESULT CoInitializeResult = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+	const bool bShouldUninitializeCOM = SUCCEEDED(CoInitializeResult);
+	if (SUCCEEDED(CoInitializeResult) || CoInitializeResult == RPC_E_CHANGED_MODE)
+	{
+		IMMDeviceEnumerator* DeviceEnumerator = nullptr;
+		if (SUCCEEDED(CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL, IID_PPV_ARGS(&DeviceEnumerator))) && DeviceEnumerator)
+		{
+			const float PeakLevel = GetWindowsEndpointPeakLevel(DeviceEnumerator, *DeviceInfo, DeviceType);
+			DeviceEnumerator->Release();
+			if (bShouldUninitializeCOM)
+			{
+				CoUninitialize();
+			}
+
+			return PeakLevel >= 0.0f ? PeakLevel : 0.0f;
+		}
+
+		if (bShouldUninitializeCOM)
+		{
+			CoUninitialize();
+		}
+	}
+#endif
+
+	if (DeviceType == EEFAudioDeviceType::Output)
+	{
+		EnsureOutputAnalysisStarted();
+
+		UWorld* World = ResolveWorld();
+		if (!bIsOutputAnalysisActive || !World || OutputAnalysisFrequencies.Num() == 0)
+		{
+			return 0.0f;
+		}
+
+		TArray<float> Magnitudes;
+		UAudioMixerBlueprintLibrary::GetMagnitudeForFrequencies(World, OutputAnalysisFrequencies, Magnitudes, nullptr);
+		if (Magnitudes.Num() == 0)
+		{
+			return 0.0f;
+		}
+
+		float SumMagnitude = 0.0f;
+		float PeakMagnitude = 0.0f;
+		for (const float Magnitude : Magnitudes)
+		{
+			SumMagnitude += Magnitude;
+			PeakMagnitude = FMath::Max(PeakMagnitude, Magnitude);
+		}
+
+		const float AverageMagnitude = SumMagnitude / static_cast<float>(Magnitudes.Num());
+		const float CombinedMagnitude = FMath::Max(PeakMagnitude, AverageMagnitude * 1.5f);
+		return CombinedMagnitude * OutputLevelBoost;
+	}
+
+	if (!InputLevelCapture.IsValid())
+	{
+		RestartInputLevelCapture();
+	}
+
+	if (!InputLevelCapture.IsValid())
+	{
+		return 0.0f;
+	}
+
+	uint32 AvailableVoiceData = 0;
+	const EVoiceCaptureState::Type VoiceState = InputLevelCapture->GetCaptureState(AvailableVoiceData);
+	if (VoiceState == EVoiceCaptureState::NotCapturing)
+	{
+		InputLevelCapture->Start();
+		return 0.0f;
+	}
+
+	if (VoiceState != EVoiceCaptureState::Ok || AvailableVoiceData == 0)
+	{
+		return 0.0f;
+	}
+
+	TArray<uint8> VoiceBuffer;
+	VoiceBuffer.SetNumUninitialized(AvailableVoiceData);
+
+	uint32 ReadBytes = 0;
+	uint64 SampleCount = 0;
+	const EVoiceCaptureState::Type ReadState = InputLevelCapture->GetVoiceData(VoiceBuffer.GetData(), AvailableVoiceData, ReadBytes, SampleCount);
+	if (ReadState != EVoiceCaptureState::Ok || ReadBytes == 0)
+	{
+		return 0.0f;
+	}
+
+	const int16* Samples = reinterpret_cast<const int16*>(VoiceBuffer.GetData());
+	const int32 NumSamples = ReadBytes / sizeof(int16);
+	if (NumSamples <= 0)
+	{
+		return 0.0f;
+	}
+
+	float SumSquares = 0.0f;
+	for (int32 Index = 0; Index < NumSamples; ++Index)
+	{
+		const float Sample = static_cast<float>(Samples[Index]) / 32768.0f;
+		SumSquares += Sample * Sample;
+	}
+
+	const float Rms = FMath::Sqrt(SumSquares / static_cast<float>(NumSamples));
+	return Rms * InputLevelBoost;
+}
+
+FString UEFAudioDeviceSubsystem::ResolvePreferredDeviceID(EEFAudioDeviceType DeviceType, const FString& DeviceID) const
+{
+	const FString NormalizedDeviceID = NormalizeDeviceId(DeviceID);
+	if (const FString* PreferredAlias = PreferredDeviceIdAliases.Find(MakeDeviceAliasKey(DeviceType, NormalizedDeviceID)))
+	{
+		return *PreferredAlias;
+	}
+
+	const FEFAudioDeviceInfo* DeviceInfo = FindDevice(NormalizedDeviceID, DeviceType);
+	if (!DeviceInfo)
+	{
+		const TArray<FEFAudioDeviceInfo>& Devices = DeviceType == EEFAudioDeviceType::Input ? InputDevices : OutputDevices;
+		if (const FEFAudioDeviceInfo* WindowsDevice = Devices.FindByPredicate([&NormalizedDeviceID](const FEFAudioDeviceInfo& Candidate)
+		{
+			return Candidate.Backend == EEFAudioDeviceBackend::WindowsCoreAudio
+				&& AreLikelySameEndpointName(Candidate.DeviceName, NormalizedDeviceID);
+		}))
+		{
+			return WindowsDevice->DeviceID;
+		}
+
+		return NormalizedDeviceID;
+	}
+
+#if PLATFORM_WINDOWS
+	if (DeviceInfo->Backend != EEFAudioDeviceBackend::WindowsCoreAudio)
+	{
+		const TArray<FEFAudioDeviceInfo>& Devices = DeviceType == EEFAudioDeviceType::Input ? InputDevices : OutputDevices;
+		if (const FEFAudioDeviceInfo* WindowsDevice = Devices.FindByPredicate([DeviceInfo](const FEFAudioDeviceInfo& Candidate)
+		{
+			return Candidate.Backend == EEFAudioDeviceBackend::WindowsCoreAudio
+				&& AreLikelySameEndpointName(Candidate.DeviceName, DeviceInfo->DeviceName);
+		}))
+		{
+			return WindowsDevice->DeviceID;
+		}
+	}
+#endif
+
+	return DeviceInfo->DeviceID;
+}
+
 UWorld* UEFAudioDeviceSubsystem::ResolveWorld() const
 {
 	if (UWorld* World = GetWorld())
@@ -194,6 +539,7 @@ void UEFAudioDeviceSubsystem::RefreshDeviceCache(bool bBroadcastChanges)
 
 	OutputDevices.Empty();
 	InputDevices.Empty();
+	PreferredDeviceIdAliases.Empty();
 
 	AcquireVoiceChatUser();
 	EnumerateVoiceChatDevices();
@@ -287,6 +633,142 @@ void UEFAudioDeviceSubsystem::ReleaseVoiceChatUser()
 	bOwnsVoiceChatUser = false;
 }
 
+void UEFAudioDeviceSubsystem::RestartInputLevelCapture()
+{
+	StopInputLevelCapture();
+
+	if (!FVoiceModule::IsAvailable())
+	{
+		return;
+	}
+
+	const FEFAudioDeviceInfo ActiveInputDevice = GetActiveInputDevice();
+	const FString CaptureDeviceName = ActiveInputDevice.bIsDefaultDevice || IsDefaultDeviceId(ActiveInputDevice.DeviceID)
+		? FString()
+		: ActiveInputDevice.DeviceName;
+
+	InputLevelCapture = FVoiceModule::Get().CreateVoiceCapture(CaptureDeviceName);
+	if (InputLevelCapture.IsValid())
+	{
+		InputLevelCapture->Start();
+	}
+}
+
+void UEFAudioDeviceSubsystem::StopInputLevelCapture()
+{
+	if (InputLevelCapture.IsValid())
+	{
+		InputLevelCapture->Stop();
+		InputLevelCapture.Reset();
+	}
+}
+
+void UEFAudioDeviceSubsystem::ScheduleInputLevelCaptureRetry()
+{
+	UWorld* World = ResolveWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	FTimerManager& TimerManager = World->GetTimerManager();
+	if (TimerManager.IsTimerActive(InputLevelCaptureRetryTimerHandle)
+		&& PendingInputLevelCaptureDeviceID == ActiveInputDeviceID)
+	{
+		return;
+	}
+
+	PendingInputLevelCaptureDeviceID = ActiveInputDeviceID;
+	InputLevelCaptureRetryAttempts = 0;
+
+	TimerManager.ClearTimer(InputLevelCaptureRetryTimerHandle);
+	TimerManager.SetTimer(
+		InputLevelCaptureRetryTimerHandle,
+		this,
+		&UEFAudioDeviceSubsystem::HandleInputLevelCaptureRetry,
+		InputLevelCaptureRetryIntervalSeconds,
+		true);
+}
+
+void UEFAudioDeviceSubsystem::StopInputLevelCaptureRetry()
+{
+	if (UWorld* World = ResolveWorld())
+	{
+		World->GetTimerManager().ClearTimer(InputLevelCaptureRetryTimerHandle);
+	}
+
+	PendingInputLevelCaptureDeviceID.Reset();
+	InputLevelCaptureRetryAttempts = 0;
+}
+
+void UEFAudioDeviceSubsystem::HandleInputLevelCaptureRetry()
+{
+	if (PendingInputLevelCaptureDeviceID != ActiveInputDeviceID
+		|| (InputLevelCaptureRetryAttempts > 0 && IsInputLevelCaptureUsable()))
+	{
+		StopInputLevelCaptureRetry();
+		return;
+	}
+
+	if (InputLevelCaptureRetryAttempts >= InputLevelCaptureMaxRetryAttempts)
+	{
+		StopInputLevelCaptureRetry();
+		return;
+	}
+
+	++InputLevelCaptureRetryAttempts;
+	RestartInputLevelCapture();
+}
+
+bool UEFAudioDeviceSubsystem::IsInputLevelCaptureUsable() const
+{
+	if (!InputLevelCapture.IsValid())
+	{
+		return false;
+	}
+
+	uint32 AvailableVoiceData = 0;
+	const EVoiceCaptureState::Type VoiceState = InputLevelCapture->GetCaptureState(AvailableVoiceData);
+	return VoiceState == EVoiceCaptureState::Ok || VoiceState == EVoiceCaptureState::NoData;
+}
+
+void UEFAudioDeviceSubsystem::EnsureOutputAnalysisStarted()
+{
+	if (bIsOutputAnalysisActive)
+	{
+		return;
+	}
+
+	UWorld* World = ResolveWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	if (OutputAnalysisFrequencies.Num() == 0)
+	{
+		OutputAnalysisFrequencies = { 125.0f, 500.0f, 1000.0f, 2000.0f, 4000.0f };
+	}
+
+	UAudioMixerBlueprintLibrary::StartAnalyzingOutput(World, nullptr, EFFTSize::Medium, EFFTPeakInterpolationMethod::Linear, EFFTWindowType::Hann, 0.0f, EAudioSpectrumType::MagnitudeSpectrum);
+	bIsOutputAnalysisActive = true;
+}
+
+void UEFAudioDeviceSubsystem::StopOutputAnalysis()
+{
+	if (!bIsOutputAnalysisActive)
+	{
+		return;
+	}
+
+	if (UWorld* World = ResolveWorld())
+	{
+		UAudioMixerBlueprintLibrary::StopAnalyzingOutput(World, nullptr);
+	}
+
+	bIsOutputAnalysisActive = false;
+}
+
 void UEFAudioDeviceSubsystem::EnumerateVoiceChatDevices()
 {
 	if (!VoiceChatUser)
@@ -368,7 +850,7 @@ void UEFAudioDeviceSubsystem::AddPlatformDefaultFallbacks()
 EEFAudioDeviceSelectionResult UEFAudioDeviceSubsystem::SelectDevice(const FString& DeviceID, EEFAudioDeviceType DeviceType)
 {
 	LastError.Reset();
-	const FString NormalizedDeviceID = NormalizeDeviceId(DeviceID);
+	const FString NormalizedDeviceID = ResolvePreferredDeviceID(DeviceType, DeviceID);
 	const FEFAudioDeviceInfo* DeviceInfo = FindDevice(NormalizedDeviceID, DeviceType);
 
 	if (!DeviceInfo)
@@ -377,15 +859,52 @@ EEFAudioDeviceSelectionResult UEFAudioDeviceSubsystem::SelectDevice(const FStrin
 		return EEFAudioDeviceSelectionResult::InvalidDevice;
 	}
 
+#if PLATFORM_WINDOWS
+	if (DeviceType == EEFAudioDeviceType::Input
+		&& (DeviceInfo->Backend == EEFAudioDeviceBackend::WindowsCoreAudio || DeviceInfo->Backend == EEFAudioDeviceBackend::PlatformDefault))
+	{
+		ActiveInputDeviceID = NormalizedDeviceID;
+		RestartInputLevelCapture();
+		ScheduleInputLevelCaptureRetry();
+		OnActiveAudioDeviceChanged.Broadcast(DeviceType, *DeviceInfo);
+		StartDeviceMonitoring();
+		return EEFAudioDeviceSelectionResult::Success;
+	}
+
+	if (DeviceType == EEFAudioDeviceType::Output
+		&& (DeviceInfo->Backend == EEFAudioDeviceBackend::WindowsCoreAudio || DeviceInfo->Backend == EEFAudioDeviceBackend::PlatformDefault))
+	{
+		UWorld* World = ResolveWorld();
+		if (!World)
+		{
+			SetLastError(TEXT("No valid world was available to swap the active audio output device."));
+			return EEFAudioDeviceSelectionResult::BackendUnavailable;
+		}
+
+		FOnCompletedDeviceSwap OnCompletedDeviceSwap;
+		OnCompletedDeviceSwap.BindUFunction(this, GET_FUNCTION_NAME_CHECKED(UEFAudioDeviceSubsystem, HandleCompletedOutputDeviceSwap));
+		const FString MixerDeviceID = IsDefaultDeviceId(NormalizedDeviceID) ? FString() : NormalizedDeviceID;
+		UAudioMixerBlueprintLibrary::SwapAudioOutputDevice(World, MixerDeviceID, OnCompletedDeviceSwap);
+
+		ActiveOutputDeviceID = NormalizedDeviceID;
+		OnActiveAudioDeviceChanged.Broadcast(DeviceType, *DeviceInfo);
+		StartDeviceMonitoring();
+		return EEFAudioDeviceSelectionResult::Success;
+	}
+#endif
+
 	if (DeviceInfo->Backend == EEFAudioDeviceBackend::PlatformDefault && IsDefaultDeviceId(NormalizedDeviceID))
 	{
 		if (DeviceType == EEFAudioDeviceType::Input)
 		{
 			ActiveInputDeviceID = NormalizedDeviceID;
+			RestartInputLevelCapture();
+			ScheduleInputLevelCaptureRetry();
 		}
 		else
 		{
 			ActiveOutputDeviceID = NormalizedDeviceID;
+			EnsureOutputAnalysisStarted();
 		}
 
 		OnActiveAudioDeviceChanged.Broadcast(DeviceType, *DeviceInfo);
@@ -411,10 +930,13 @@ EEFAudioDeviceSelectionResult UEFAudioDeviceSubsystem::SelectDevice(const FStrin
 	if (DeviceType == EEFAudioDeviceType::Input)
 	{
 		ActiveInputDeviceID = NormalizedDeviceID;
+		RestartInputLevelCapture();
+		ScheduleInputLevelCaptureRetry();
 	}
 	else
 	{
 		ActiveOutputDeviceID = NormalizedDeviceID;
+		EnsureOutputAnalysisStarted();
 	}
 
 	OnActiveAudioDeviceChanged.Broadcast(DeviceType, *DeviceInfo);
@@ -443,6 +965,22 @@ bool UEFAudioDeviceSubsystem::TrySelectVoiceChatDevice(const FString& DeviceID, 
 	return true;
 }
 
+void UEFAudioDeviceSubsystem::HandleCompletedOutputDeviceSwap(const FSwapAudioOutputResult& SwapResult)
+{
+	if (SwapResult.Result == ESwapAudioOutputDeviceResultState::Success)
+	{
+		ActiveOutputDeviceID = SwapResult.RequestedDeviceId.IsEmpty() ? DefaultDeviceId : NormalizeDeviceId(SwapResult.RequestedDeviceId);
+		if (const FEFAudioDeviceInfo* DeviceInfo = FindDevice(ActiveOutputDeviceID, EEFAudioDeviceType::Output))
+		{
+			OnActiveAudioDeviceChanged.Broadcast(EEFAudioDeviceType::Output, *DeviceInfo);
+		}
+		return;
+	}
+
+	ActiveOutputDeviceID = SwapResult.CurrentDeviceId.IsEmpty() ? DefaultDeviceId : NormalizeDeviceId(SwapResult.CurrentDeviceId);
+	SetLastError(FString::Printf(TEXT("Failed to swap the active audio output device to '%s'."), *SwapResult.RequestedDeviceId));
+}
+
 void UEFAudioDeviceSubsystem::AddOrUpdateDevice(const FEFAudioDeviceInfo& DeviceInfo)
 {
 	TArray<FEFAudioDeviceInfo>& Devices = DeviceInfo.DeviceType == EEFAudioDeviceType::Input ? InputDevices : OutputDevices;
@@ -451,9 +989,31 @@ void UEFAudioDeviceSubsystem::AddOrUpdateDevice(const FEFAudioDeviceInfo& Device
 	{
 		if (ExistingDevice.DeviceID == DeviceInfo.DeviceID)
 		{
-			if (!ExistingDevice.bCanBeSelected && DeviceInfo.bCanBeSelected)
+			if (ExistingDevice.Backend != EEFAudioDeviceBackend::WindowsCoreAudio
+				&& DeviceInfo.Backend == EEFAudioDeviceBackend::WindowsCoreAudio)
+			{
+				PreferredDeviceIdAliases.Add(MakeDeviceAliasKey(DeviceInfo.DeviceType, ExistingDevice.DeviceID), DeviceInfo.DeviceID);
+				ExistingDevice = DeviceInfo;
+			}
+			else if (!ExistingDevice.bCanBeSelected && DeviceInfo.bCanBeSelected)
 			{
 				ExistingDevice = DeviceInfo;
+			}
+			return;
+		}
+
+		if (ExistingDevice.DeviceType == DeviceInfo.DeviceType
+			&& AreLikelySameEndpointName(ExistingDevice.DeviceName, DeviceInfo.DeviceName)
+			&& (ExistingDevice.Backend == EEFAudioDeviceBackend::WindowsCoreAudio || DeviceInfo.Backend == EEFAudioDeviceBackend::WindowsCoreAudio))
+		{
+			if (DeviceInfo.Backend == EEFAudioDeviceBackend::WindowsCoreAudio)
+			{
+				PreferredDeviceIdAliases.Add(MakeDeviceAliasKey(DeviceInfo.DeviceType, ExistingDevice.DeviceID), DeviceInfo.DeviceID);
+				ExistingDevice = DeviceInfo;
+			}
+			else if (ExistingDevice.Backend == EEFAudioDeviceBackend::WindowsCoreAudio)
+			{
+				PreferredDeviceIdAliases.Add(MakeDeviceAliasKey(DeviceInfo.DeviceType, DeviceInfo.DeviceID), ExistingDevice.DeviceID);
 			}
 			return;
 		}
@@ -749,7 +1309,7 @@ void UEFAudioDeviceSubsystem::EnumerateWindowsCoreAudioDevices()
 					DeviceInfo.bIsDefaultDevice = DeviceID == DefaultEndpointID;
 					DeviceInfo.bIsInputDevice = DeviceType == EEFAudioDeviceType::Input;
 					DeviceInfo.bIsConnected = true;
-					DeviceInfo.bCanBeSelected = false;
+					DeviceInfo.bCanBeSelected = true;
 					DeviceInfo.DeviceType = DeviceType;
 					DeviceInfo.Backend = EEFAudioDeviceBackend::WindowsCoreAudio;
 					DeviceInfo.BackendName = GetBackendName(DeviceInfo.Backend);

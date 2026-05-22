@@ -10,7 +10,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnEPFStatsReceived, const FEPFResu
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnEPFStatsUpdated, const FEPFResult&, Result);
 
 /**
- * Manages PlayFab player statistics — update and query stats.
+ * Manages PlayFab entity statistics through the Progression statistics service.
  */
 UCLASS()
 class UNREALEXTENDEDPLAYFAB_API UEPFStatsSubsystem : public UEPFSubsystem
@@ -24,19 +24,19 @@ public:
 
 	// ── Actions ──────────────────────────────────────────────────────────────
 
-	/** Update one or more player statistics */
+	/** Update one or more statistics using their primary score column */
 	UFUNCTION(BlueprintCallable, Category = "PlayFab|Stats")
-	void UpdateStats(const TMap<FString, int32>& StatsToUpdate);
+	void UpdateStats(const TMap<FString, int32>& StatsToUpdate, const FString& TransactionId = TEXT(""));
 
-	/** Update a single statistic */
+	/** Update a single statistic using its primary score column */
 	UFUNCTION(BlueprintCallable, Category = "PlayFab|Stats")
-	void UpdateStat(const FString& StatName, int32 Value);
+	void UpdateStat(const FString& StatName, int32 Value, const FString& TransactionId = TEXT(""));
 
-	/** Query player statistics (specific names) */
+	/** Query statistics for specific names */
 	UFUNCTION(BlueprintCallable, Category = "PlayFab|Stats")
 	void GetStats(const TArray<FString>& StatNames);
 
-	/** Query all player statistics */
+	/** Query all statistics for the authenticated entity */
 	UFUNCTION(BlueprintCallable, Category = "PlayFab|Stats")
 	void GetAllStats();
 
@@ -75,4 +75,7 @@ public:
 private:
 
 	TArray<FEPFStatistic> CachedStats;
+
+	void ParseStatisticsResponse(const FEPFResult& Result, TSharedPtr<FJsonObject> Response, const TArray<FString>* RequestedNames = nullptr);
+	static int32 ParsePrimaryScore(const TArray<FString>& Scores);
 };

@@ -204,6 +204,12 @@ struct UNREALEXTENDEDPLAYFAB_API FEPFStatistic
 	int32 Value = 0;
 
 	UPROPERTY(BlueprintReadOnly, Category = "PlayFab|Stats")
+	TArray<FString> Scores;
+
+	UPROPERTY(BlueprintReadOnly, Category = "PlayFab|Stats")
+	FString Metadata;
+
+	UPROPERTY(BlueprintReadOnly, Category = "PlayFab|Stats")
 	int32 Version = 0;
 };
 
@@ -222,10 +228,25 @@ struct UNREALEXTENDEDPLAYFAB_API FEPFLeaderboardEntry
 	FString PlayFabId;
 
 	UPROPERTY(BlueprintReadOnly, Category = "PlayFab|Leaderboards")
+	FString EntityId;
+
+	UPROPERTY(BlueprintReadOnly, Category = "PlayFab|Leaderboards")
+	FString EntityType;
+
+	UPROPERTY(BlueprintReadOnly, Category = "PlayFab|Leaderboards")
 	FString DisplayName;
 
 	UPROPERTY(BlueprintReadOnly, Category = "PlayFab|Leaderboards")
 	int32 StatValue = 0;
+
+	UPROPERTY(BlueprintReadOnly, Category = "PlayFab|Leaderboards")
+	TArray<FString> Scores;
+
+	UPROPERTY(BlueprintReadOnly, Category = "PlayFab|Leaderboards")
+	FString Metadata;
+
+	UPROPERTY(BlueprintReadOnly, Category = "PlayFab|Leaderboards")
+	FDateTime LastUpdated;
 };
 
 

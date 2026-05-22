@@ -153,6 +153,7 @@ private:
 	void HandleUpscalerFrameGenerationCommand(const TArray<FString>& Args);
 	void HandleUpscalerResolutionScaleCommand(const TArray<FString>& Args);
 	void HandleUpscalerStatusCommand(const TArray<FString>& Args);
+	void HandleDisplayTestAspectCommand(const TArray<FString>& Args);
 
 	TArray<FString> RegisteredConsoleCommands;
 };

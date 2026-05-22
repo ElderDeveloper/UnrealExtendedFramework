@@ -37,6 +37,7 @@ namespace
 			ApiPath.StartsWith(TEXT("/Data/")) ||
 			ApiPath.StartsWith(TEXT("/Profiles/")) ||
 			ApiPath.StartsWith(TEXT("/Economy/")) ||
+			ApiPath.StartsWith(TEXT("/Event/")) ||
 			ApiPath.StartsWith(TEXT("/Events/")) ||
 			ApiPath.StartsWith(TEXT("/Insights/")) ||
 			ApiPath.StartsWith(TEXT("/Progression/")) ||

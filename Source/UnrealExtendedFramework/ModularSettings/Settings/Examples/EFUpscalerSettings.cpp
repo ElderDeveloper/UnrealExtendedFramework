@@ -177,51 +177,75 @@ void UEFUpscalerSelectSetting::Apply_Implementation()
 	}
 
 	const FString RequestedUpscaler = Values[SelectedIndex];
-	FString SelectedUpscaler = RequestedUpscaler;
-	if (!IsUpscalerAvailable(SelectedUpscaler))
+	FString AppliedUpscaler = RequestedUpscaler;
+	if (!IsUpscalerAvailable(RequestedUpscaler))
 	{
-		const int32 FallbackIndex = Values.IndexOfByPredicate([this](const FString& Candidate)
-		{
-			return IsUpscalerAvailable(Candidate);
-		});
+		AppliedUpscaler = TEXT("None");
 
-		if (Values.IsValidIndex(FallbackIndex))
+		if (RequestedUpscaler != TEXT("None") && !bAvailabilityRetryScheduled)
 		{
-			SelectedIndex = FallbackIndex;
-			SelectedUpscaler = Values[SelectedIndex];
-			UE_LOG(LogTemp, Warning, TEXT("Upscaler '%s' is unavailable. Falling back to '%s'."),
-				*RequestedUpscaler, *SelectedUpscaler);
-		}
-		else
-		{
-			UE_LOG(LogTemp, Warning, TEXT("No available upscaler option found. Disabling all upscalers."));
-			SelectedUpscaler = TEXT("None");
+			if (AvailabilityRetryCount < AvailabilityRetryLimit)
+			{
+				++AvailabilityRetryCount;
+				bAvailabilityRetryScheduled = true;
+
+				if (AvailabilityRetryCount == 1)
+				{
+					UE_LOG(LogTemp, Warning, TEXT("Upscaler '%s' is not available yet. Preserving the saved selection and retrying apply."),
+						*RequestedUpscaler);
+				}
+
+				FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateWeakLambda(this, [this](float)
+				{
+					bAvailabilityRetryScheduled = false;
+					Apply();
+					return false;
+				}), AvailabilityRetryDelaySeconds);
+			}
+			else if (AvailabilityRetryCount == AvailabilityRetryLimit)
+			{
+				++AvailabilityRetryCount;
+				UE_LOG(LogTemp, Warning, TEXT("Upscaler '%s' did not become available after startup retries. Preserving the selection and applying 'None' for now."),
+					*RequestedUpscaler);
+			}
 		}
 	}
+	else
+	{
+		AvailabilityRetryCount = 0;
+		bAvailabilityRetryScheduled = false;
+	}
 
-	UE_LOG(LogTemp, Log, TEXT("Applying Upscaler: %s"), *SelectedUpscaler);
+	if (AppliedUpscaler == RequestedUpscaler)
+	{
+		UE_LOG(LogTemp, Log, TEXT("Applying Upscaler: %s"), *AppliedUpscaler);
+	}
+	else
+	{
+		UE_LOG(LogTemp, Log, TEXT("Applying Upscaler: %s (requested: %s)"), *AppliedUpscaler, *RequestedUpscaler);
+	}
 
 	// Step 1: Reset screen percentage to 100% (upscalers will set their own)
 	EFUpscalerInternal::SetScreenPercentage(100.0f);
 
 	// Step 2: Disable unselected upscalers. DLSS enable/disable is driven by DLSS.RayReconstruction.
 #if WITH_DLSS
-	if (UDLSSLibrary::IsDLSSSupported() && SelectedUpscaler != TEXT("DLSS"))
+	if (UDLSSLibrary::IsDLSSSupported() && AppliedUpscaler != TEXT("DLSS"))
 	{
 		UDLSSLibrary::EnableDLSS(false);
 		UDLSSLibrary::EnableDLSSRR(false);
 	}
 #endif
 
-	EFUpscalerInternal::SetFSREnabled(SelectedUpscaler == TEXT("FSR"));
-	EFUpscalerInternal::SetXeSSEnabled(SelectedUpscaler == TEXT("XeSS"));
+	EFUpscalerInternal::SetFSREnabled(AppliedUpscaler == TEXT("FSR"));
+	EFUpscalerInternal::SetXeSSEnabled(AppliedUpscaler == TEXT("XeSS"));
 
 	// Step 3: Deferred apply of the active upscaler's sub-settings (next frame).
 	// This ensures the upscaler is fully initialized before we configure it.
-	FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateWeakLambda(this, [this, SelectedUpscaler](float)
+	FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateWeakLambda(this, [this, AppliedUpscaler](float)
 	{
 		// Trigger sub-setting apply by looking them up from the subsystem
-		if (SelectedUpscaler == TEXT("DLSS"))
+		if (AppliedUpscaler == TEXT("DLSS"))
 		{
 			// DLSS.RayReconstruction is the driver for DLSS enable/disable.
 			if (auto* Setting = UEFModularSettingsLibrary::GetModularSetting(this,
@@ -238,7 +262,7 @@ void UEFUpscalerSelectSetting::Apply_Implementation()
 				Setting->Apply();
 			}
 		}
-		else if (SelectedUpscaler == TEXT("FSR"))
+		else if (AppliedUpscaler == TEXT("FSR"))
 		{
 			if (auto* Setting = UEFModularSettingsLibrary::GetModularSetting(this,
 				FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.Upscaler.FSR.Mode")),
@@ -253,7 +277,7 @@ void UEFUpscalerSelectSetting::Apply_Implementation()
 				Setting->Apply();
 			}
 		}
-		else if (SelectedUpscaler == TEXT("XeSS"))
+		else if (AppliedUpscaler == TEXT("XeSS"))
 		{
 			if (auto* Setting = UEFModularSettingsLibrary::GetModularSetting(this,
 				FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.Upscaler.XeSS.QualityMode")),

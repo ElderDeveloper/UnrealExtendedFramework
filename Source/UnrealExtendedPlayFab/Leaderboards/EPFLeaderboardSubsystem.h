@@ -9,7 +9,7 @@
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnEPFLeaderboardReceived, const FEPFResult&, Result, const TArray<FEPFLeaderboardEntry>&, Entries);
 
 /**
- * Manages PlayFab leaderboards — global, around-player, and friends queries.
+ * Manages PlayFab Progression leaderboard queries.
  */
 UCLASS()
 class UNREALEXTENDEDPLAYFAB_API UEPFLeaderboardSubsystem : public UEPFSubsystem
@@ -23,15 +23,15 @@ public:
 
 	// ── Actions ──────────────────────────────────────────────────────────────
 
-	/** Query a global leaderboard */
+	/** Query a global leaderboard by leaderboard definition name */
 	UFUNCTION(BlueprintCallable, Category = "PlayFab|Leaderboards")
 	void GetLeaderboard(const FString& StatisticName, int32 StartPosition = 0, int32 MaxResultsCount = 10);
 
-	/** Query leaderboard centered around the local player */
+	/** Query a leaderboard centered around the authenticated entity */
 	UFUNCTION(BlueprintCallable, Category = "PlayFab|Leaderboards")
 	void GetLeaderboardAroundPlayer(const FString& StatisticName, int32 MaxResultsCount = 10);
 
-	/** Query friends leaderboard */
+	/** Query the authenticated entity's friends on a leaderboard */
 	UFUNCTION(BlueprintCallable, Category = "PlayFab|Leaderboards")
 	void GetFriendsLeaderboard(const FString& StatisticName, int32 MaxResultsCount = 10);
 

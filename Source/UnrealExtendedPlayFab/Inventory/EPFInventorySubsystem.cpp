@@ -3,6 +3,119 @@
 #include "EPFInventorySubsystem.h"
 #include "UnrealExtendedPlayFab.h"
 #include "Dom/JsonObject.h"
+#include "Dom/JsonValue.h"
+
+namespace
+{
+	TSharedRef<FJsonObject> MakeEntityKeyObject(const FString& EntityId, const FString& EntityType)
+	{
+		TSharedRef<FJsonObject> Entity = MakeShared<FJsonObject>();
+		Entity->SetStringField(TEXT("Id"), EntityId);
+		Entity->SetStringField(TEXT("Type"), EntityType);
+		return Entity;
+	}
+
+	FString GetLocalizedField(const TSharedPtr<FJsonObject>& Object, const FString& FieldName)
+	{
+		const TSharedPtr<FJsonObject>* LocalizedObject = nullptr;
+		if (!Object.IsValid() || !Object->TryGetObjectField(FieldName, LocalizedObject) || !LocalizedObject)
+		{
+			return FString();
+		}
+
+		FString NeutralValue;
+		if ((*LocalizedObject)->TryGetStringField(TEXT("NEUTRAL"), NeutralValue))
+		{
+			return NeutralValue;
+		}
+
+		for (const TPair<FString, TSharedPtr<FJsonValue>>& Pair : (*LocalizedObject)->Values)
+		{
+			FString Value;
+			if (Pair.Value.IsValid() && Pair.Value->TryGetString(Value))
+			{
+				return Value;
+			}
+		}
+
+		return FString();
+	}
+
+	void ExtractPriceAmounts(const TSharedPtr<FJsonObject>& CatalogObject, TMap<FString, int32>& OutPrices)
+	{
+		const TSharedPtr<FJsonObject>* PriceOptions = nullptr;
+		if (!CatalogObject.IsValid() || !CatalogObject->TryGetObjectField(TEXT("PriceOptions"), PriceOptions) || !PriceOptions)
+		{
+			return;
+		}
+
+		const TArray<TSharedPtr<FJsonValue>>* PricesArray = nullptr;
+		if (!(*PriceOptions)->TryGetArrayField(TEXT("Prices"), PricesArray) || !PricesArray)
+		{
+			return;
+		}
+
+		for (const TSharedPtr<FJsonValue>& PriceValue : *PricesArray)
+		{
+			const TSharedPtr<FJsonObject>* PriceObject = nullptr;
+			if (!PriceValue.IsValid() || !PriceValue->TryGetObject(PriceObject) || !PriceObject)
+			{
+				continue;
+			}
+
+			const TArray<TSharedPtr<FJsonValue>>* AmountsArray = nullptr;
+			if (!(*PriceObject)->TryGetArrayField(TEXT("Amounts"), AmountsArray) || !AmountsArray)
+			{
+				continue;
+			}
+
+			for (const TSharedPtr<FJsonValue>& AmountValue : *AmountsArray)
+			{
+				const TSharedPtr<FJsonObject>* AmountObject = nullptr;
+				if (!AmountValue.IsValid() || !AmountValue->TryGetObject(AmountObject) || !AmountObject)
+				{
+					continue;
+				}
+
+				FString PriceItemId;
+				double PriceAmount = 0.0;
+				(*AmountObject)->TryGetStringField(TEXT("ItemId"), PriceItemId);
+				if (!PriceItemId.IsEmpty() && (*AmountObject)->TryGetNumberField(TEXT("Amount"), PriceAmount))
+				{
+					OutPrices.Add(PriceItemId, static_cast<int32>(PriceAmount));
+				}
+			}
+		}
+	}
+
+	FString GetJsonScalarString(const TSharedPtr<FJsonValue>& Value)
+	{
+		if (!Value.IsValid())
+		{
+			return FString();
+		}
+
+		FString StringValue;
+		if (Value->TryGetString(StringValue))
+		{
+			return StringValue;
+		}
+
+		double NumberValue = 0.0;
+		if (Value->TryGetNumber(NumberValue))
+		{
+			return FString::Printf(TEXT("%.0f"), NumberValue);
+		}
+
+		bool BoolValue = false;
+		if (Value->TryGetBool(BoolValue))
+		{
+			return BoolValue ? TEXT("true") : TEXT("false");
+		}
+
+		return FString();
+	}
+}
 
 void UEPFInventorySubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
@@ -24,44 +137,60 @@ void UEPFInventorySubsystem::Deinitialize()
 void UEPFInventorySubsystem::GetInventory()
 {
 	TSharedRef<FJsonObject> Body = MakeShared<FJsonObject>();
+	Body->SetObjectField(TEXT("Entity"), MakeEntityKeyObject(GetEntityId(), GetEntityType()));
+	Body->SetStringField(TEXT("Filter"), TEXT("type ne 'currency'"));
+	Body->SetNumberField(TEXT("Count"), 50);
 
 	SendPlayFabRequestDetailed(
-		TEXT("/Client/GetUserInventory"),
+		TEXT("/Inventory/GetInventoryItems"),
 		Body,
-		true,
+		EEPFAuthMode::EntityToken,
 		FOnPlayFabResponseDetailed::CreateLambda([this](const FEPFResult& Result, TSharedPtr<FJsonObject> Response)
 		{
 			if (Result.bSuccess && Response.IsValid())
 			{
 				CachedInventory.Empty();
 				const TArray<TSharedPtr<FJsonValue>>* ItemsArr = nullptr;
-				if (Response->TryGetArrayField(TEXT("Inventory"), ItemsArr) && ItemsArr)
+				if (Response->TryGetArrayField(TEXT("Items"), ItemsArr) && ItemsArr)
 				{
-					for (const auto& ItemVal : *ItemsArr)
+					for (const TSharedPtr<FJsonValue>& ItemVal : *ItemsArr)
 					{
 						const TSharedPtr<FJsonObject>* ItemObj = nullptr;
-						if (ItemVal->TryGetObject(ItemObj) && ItemObj)
+						if (ItemVal.IsValid() && ItemVal->TryGetObject(ItemObj) && ItemObj)
 						{
 							FEPFInventoryItem Item;
-							(*ItemObj)->TryGetStringField(TEXT("ItemInstanceId"), Item.ItemInstanceId);
-							(*ItemObj)->TryGetStringField(TEXT("ItemId"), Item.ItemId);
-							// DisplayName and ItemClass are optional in PlayFab inventory responses.
-							(*ItemObj)->TryGetStringField(TEXT("DisplayName"), Item.DisplayName);
-							(*ItemObj)->TryGetStringField(TEXT("ItemClass"), Item.ItemClass);
+							(*ItemObj)->TryGetStringField(TEXT("StackId"), Item.StackId);
+							Item.ItemInstanceId = Item.StackId;
+							(*ItemObj)->TryGetStringField(TEXT("Id"), Item.ItemId);
+							(*ItemObj)->TryGetStringField(TEXT("Type"), Item.ItemClass);
+							Item.DisplayName = Item.ItemId;
 
-							int32 Uses = -1;
-							if ((*ItemObj)->TryGetNumberField(TEXT("RemainingUses"), Uses))
+							for (const FEPFCatalogItem& CatalogItem : CachedCatalog)
 							{
-								Item.RemainingUses = Uses;
+								if (CatalogItem.ItemId == Item.ItemId)
+								{
+									if (!CatalogItem.DisplayName.IsEmpty())
+									{
+										Item.DisplayName = CatalogItem.DisplayName;
+									}
+									break;
+								}
+							}
+
+							double AmountValue = 0.0;
+							if ((*ItemObj)->TryGetNumberField(TEXT("Amount"), AmountValue))
+							{
+								Item.Amount = static_cast<int32>(AmountValue);
+								Item.RemainingUses = Item.Amount;
 							}
 
 							const TSharedPtr<FJsonObject>* CustomDataObj = nullptr;
-							if ((*ItemObj)->TryGetObjectField(TEXT("CustomData"), CustomDataObj) && CustomDataObj)
+							if ((*ItemObj)->TryGetObjectField(TEXT("DisplayProperties"), CustomDataObj) && CustomDataObj)
 							{
-								for (const auto& Pair : (*CustomDataObj)->Values)
+								for (const TPair<FString, TSharedPtr<FJsonValue>>& Pair : (*CustomDataObj)->Values)
 								{
-									FString Value;
-									if (Pair.Value->TryGetString(Value))
+									const FString Value = GetJsonScalarString(Pair.Value);
+									if (!Value.IsEmpty())
 									{
 										Item.CustomData.Add(Pair.Key, Value);
 									}
@@ -89,56 +218,48 @@ void UEPFInventorySubsystem::GetInventory()
 // Get Catalog
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-void UEPFInventorySubsystem::GetCatalog(const FString& CatalogVersion)
+void UEPFInventorySubsystem::GetCatalog(const FString& StoreId)
 {
 	TSharedRef<FJsonObject> Body = MakeShared<FJsonObject>();
-	if (!CatalogVersion.IsEmpty())
+	Body->SetObjectField(TEXT("Entity"), MakeEntityKeyObject(GetEntityId(), GetEntityType()));
+	Body->SetNumberField(TEXT("Count"), 50);
+	if (!StoreId.IsEmpty())
 	{
-		Body->SetStringField(TEXT("CatalogVersion"), CatalogVersion);
+		TSharedRef<FJsonObject> StoreObject = MakeShared<FJsonObject>();
+		StoreObject->SetStringField(TEXT("Id"), StoreId);
+		Body->SetObjectField(TEXT("Store"), StoreObject);
 	}
 
 	SendPlayFabRequestDetailed(
-		TEXT("/Client/GetCatalogItems"),
+		TEXT("/Catalog/SearchItems"),
 		Body,
-		true,
+		EEPFAuthMode::EntityToken,
 		FOnPlayFabResponseDetailed::CreateLambda([this](const FEPFResult& Result, TSharedPtr<FJsonObject> Response)
 		{
 			if (Result.bSuccess && Response.IsValid())
 			{
 				CachedCatalog.Empty();
 				const TArray<TSharedPtr<FJsonValue>>* CatalogArr = nullptr;
-				if (Response->TryGetArrayField(TEXT("Catalog"), CatalogArr) && CatalogArr)
+				if (Response->TryGetArrayField(TEXT("Items"), CatalogArr) && CatalogArr)
 				{
-					for (const auto& CatVal : *CatalogArr)
+					for (const TSharedPtr<FJsonValue>& CatVal : *CatalogArr)
 					{
 						const TSharedPtr<FJsonObject>* CatObj = nullptr;
-						if (CatVal->TryGetObject(CatObj) && CatObj)
+						if (CatVal.IsValid() && CatVal->TryGetObject(CatObj) && CatObj)
 						{
 							FEPFCatalogItem Item;
-							(*CatObj)->TryGetStringField(TEXT("ItemId"), Item.ItemId);
-							// DisplayName, Description, and ItemClass are optional catalog fields.
-							(*CatObj)->TryGetStringField(TEXT("DisplayName"), Item.DisplayName);
-							(*CatObj)->TryGetStringField(TEXT("Description"), Item.Description);
-							(*CatObj)->TryGetStringField(TEXT("ItemClass"), Item.ItemClass);
-
-							const TSharedPtr<FJsonObject>* PricesObj = nullptr;
-							if ((*CatObj)->TryGetObjectField(TEXT("VirtualCurrencyPrices"), PricesObj) && PricesObj)
-							{
-								for (const auto& Pair : (*PricesObj)->Values)
-								{
-									int32 Price = 0;
-									if (Pair.Value->TryGetNumber(Price))
-									{
-										Item.VirtualCurrencyPrices.Add(Pair.Key, Price);
-									}
-								}
-							}
+							(*CatObj)->TryGetStringField(TEXT("Id"), Item.ItemId);
+							Item.DisplayName = GetLocalizedField(*CatObj, TEXT("Title"));
+							Item.Description = GetLocalizedField(*CatObj, TEXT("Description"));
+							(*CatObj)->TryGetStringField(TEXT("Type"), Item.ItemType);
+							Item.ItemClass = Item.ItemType;
+							ExtractPriceAmounts(*CatObj, Item.VirtualCurrencyPrices);
 
 							CachedCatalog.Add(Item);
 						}
 					}
 				}
-				UE_LOG(LogExtendedPlayFab, Log, TEXT("EPFInventorySubsystem — Fetched %d catalog items"), CachedCatalog.Num());
+				UE_LOG(LogExtendedPlayFab, Log, TEXT("EPFInventorySubsystem — Fetched %d catalog definitions"), CachedCatalog.Num());
 				OnCatalogReceived.Broadcast(Result, CachedCatalog);
 			}
 			else
@@ -155,7 +276,7 @@ void UEPFInventorySubsystem::GetCatalog(const FString& CatalogVersion)
 // Purchase Item
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-void UEPFInventorySubsystem::PurchaseItem(const FString& ItemId, const FString& CurrencyCode, int32 Price, const FString& CatalogVersion)
+void UEPFInventorySubsystem::PurchaseItem(const FString& ItemId, const FString& CurrencyCode, int32 Price, const FString& StoreId)
 {
 	if (ItemId.IsEmpty())
 	{
@@ -177,32 +298,35 @@ void UEPFInventorySubsystem::PurchaseItem(const FString& ItemId, const FString& 
 	}
 
 	TSharedRef<FJsonObject> Body = MakeShared<FJsonObject>();
-	Body->SetStringField(TEXT("ItemId"), ItemId);
-	Body->SetStringField(TEXT("VirtualCurrency"), CurrencyCode);
-	Body->SetNumberField(TEXT("Price"), Price);
-	if (!CatalogVersion.IsEmpty())
+	Body->SetObjectField(TEXT("Entity"), MakeEntityKeyObject(GetEntityId(), GetEntityType()));
+	Body->SetNumberField(TEXT("Amount"), 1);
+
+	TSharedRef<FJsonObject> Item = MakeShared<FJsonObject>();
+	Item->SetStringField(TEXT("Id"), ItemId);
+	Body->SetObjectField(TEXT("Item"), Item);
+
+	TArray<TSharedPtr<FJsonValue>> PriceAmounts;
+	TSharedRef<FJsonObject> PriceAmount = MakeShared<FJsonObject>();
+	PriceAmount->SetStringField(TEXT("ItemId"), CurrencyCode);
+	PriceAmount->SetNumberField(TEXT("Amount"), Price);
+	PriceAmount->SetStringField(TEXT("StackId"), TEXT("default"));
+	PriceAmounts.Add(MakeShared<FJsonValueObject>(PriceAmount));
+	Body->SetArrayField(TEXT("PriceAmounts"), PriceAmounts);
+
+	if (!StoreId.IsEmpty())
 	{
-		Body->SetStringField(TEXT("CatalogVersion"), CatalogVersion);
+		Body->SetStringField(TEXT("StoreId"), StoreId);
 	}
 
 	SendPlayFabRequestDetailed(
-		TEXT("/Client/PurchaseItem"),
+		TEXT("/Inventory/PurchaseInventoryItems"),
 		Body,
-		true,
+		EEPFAuthMode::EntityToken,
 		FOnPlayFabResponseDetailed::CreateLambda([this](const FEPFResult& Result, TSharedPtr<FJsonObject> Response)
 		{
 			FString InstanceId;
-			if (Result.bSuccess && Response.IsValid())
+			if (Result.bSuccess)
 			{
-				const TArray<TSharedPtr<FJsonValue>>* ItemsArr = nullptr;
-				if (Response->TryGetArrayField(TEXT("Items"), ItemsArr) && ItemsArr && ItemsArr->Num() > 0)
-				{
-					const TSharedPtr<FJsonObject>* FirstItem = nullptr;
-					if ((*ItemsArr)[0]->TryGetObject(FirstItem) && FirstItem)
-					{
-						InstanceId = (*FirstItem)->GetStringField(TEXT("ItemInstanceId"));
-					}
-				}
 				UE_LOG(LogExtendedPlayFab, Log, TEXT("EPFInventorySubsystem — Purchased item, instance: %s"), *InstanceId);
 			}
 			OnItemPurchased.Broadcast(Result, InstanceId);
@@ -231,19 +355,45 @@ void UEPFInventorySubsystem::ConsumeItem(const FString& ItemInstanceId, int32 Co
 	}
 
 	TSharedRef<FJsonObject> Body = MakeShared<FJsonObject>();
-	Body->SetStringField(TEXT("ItemInstanceId"), ItemInstanceId);
-	Body->SetNumberField(TEXT("ConsumeCount"), ConsumeCount);
+	Body->SetObjectField(TEXT("Entity"), MakeEntityKeyObject(GetEntityId(), GetEntityType()));
+	Body->SetNumberField(TEXT("Amount"), ConsumeCount);
+	Body->SetBoolField(TEXT("DeleteEmptyStacks"), true);
+
+	TSharedRef<FJsonObject> Item = MakeShared<FJsonObject>();
+	Item->SetStringField(TEXT("StackId"), ItemInstanceId);
+	for (const FEPFInventoryItem& CachedItem : CachedInventory)
+	{
+		if (CachedItem.StackId == ItemInstanceId)
+		{
+			Item->SetStringField(TEXT("Id"), CachedItem.ItemId);
+			break;
+		}
+	}
+	Body->SetObjectField(TEXT("Item"), Item);
 
 	SendPlayFabRequestDetailed(
-		TEXT("/Client/ConsumeItem"),
+		TEXT("/Inventory/SubtractInventoryItems"),
 		Body,
-		true,
-		FOnPlayFabResponseDetailed::CreateLambda([this](const FEPFResult& Result, TSharedPtr<FJsonObject> Response)
+		EEPFAuthMode::EntityToken,
+		FOnPlayFabResponseDetailed::CreateLambda([this, ItemInstanceId, ConsumeCount](const FEPFResult& Result, TSharedPtr<FJsonObject> Response)
 		{
 			int32 RemainingUses = -1;
-			if (Result.bSuccess && Response.IsValid())
+			if (Result.bSuccess)
 			{
-				Response->TryGetNumberField(TEXT("RemainingUses"), RemainingUses);
+				for (int32 Index = 0; Index < CachedInventory.Num(); ++Index)
+				{
+					if (CachedInventory[Index].StackId == ItemInstanceId)
+					{
+						CachedInventory[Index].Amount = FMath::Max(CachedInventory[Index].Amount - ConsumeCount, 0);
+						CachedInventory[Index].RemainingUses = CachedInventory[Index].Amount;
+						RemainingUses = CachedInventory[Index].Amount;
+						if (CachedInventory[Index].Amount == 0)
+						{
+							CachedInventory.RemoveAt(Index);
+						}
+						break;
+					}
+				}
 				UE_LOG(LogExtendedPlayFab, Log, TEXT("EPFInventorySubsystem — Consumed item, remaining: %d"), RemainingUses);
 			}
 			OnItemConsumed.Broadcast(Result, RemainingUses);
@@ -270,7 +420,7 @@ bool UEPFInventorySubsystem::OwnsItem(const FString& ItemId) const
 {
 	for (const auto& Item : CachedInventory)
 	{
-		if (Item.ItemId == ItemId) return true;
+		if (Item.ItemId == ItemId && Item.Amount > 0) return true;
 	}
 	return false;
 }
@@ -280,7 +430,7 @@ int32 UEPFInventorySubsystem::GetItemCount(const FString& ItemId) const
 	int32 Count = 0;
 	for (const auto& Item : CachedInventory)
 	{
-		if (Item.ItemId == ItemId) Count++;
+		if (Item.ItemId == ItemId) Count += FMath::Max(Item.Amount, 1);
 	}
 	return Count;
 }

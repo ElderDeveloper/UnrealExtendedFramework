@@ -23,10 +23,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnEPFCurrencyBalanceReceived, cons
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnEPFCurrencyModified, const FEPFResult&, Result, const FString&, CurrencyCode);
 
 /**
- * Manages PlayFab Virtual Currency — gold, gems, tokens, or any custom currency.
- * Balances are tracked server-side for cheat-proofing.
- *
- * Currency codes are configured in the PlayFab dashboard (e.g., "GD" for Gold, "GM" for Gems).
+ * Manages PlayFab Economy v2 currency balances stored as inventory items.
  */
 UCLASS()
 class UNREALEXTENDEDPLAYFAB_API UEPFCurrencySubsystem : public UEPFSubsystem
@@ -46,11 +43,11 @@ public:
 
 	/** Add currency to the player's balance */
 	UFUNCTION(BlueprintCallable, Category = "PlayFab|Currency")
-	void AddCurrency(const FString& CurrencyCode, int32 Amount);
+	void AddCurrency(const FString& CurrencyCode, int32 Amount, const FString& IdempotencyId = TEXT(""));
 
 	/** Subtract currency from the player's balance */
 	UFUNCTION(BlueprintCallable, Category = "PlayFab|Currency")
-	void SubtractCurrency(const FString& CurrencyCode, int32 Amount);
+	void SubtractCurrency(const FString& CurrencyCode, int32 Amount, const FString& IdempotencyId = TEXT(""));
 
 	// ── Queries ──────────────────────────────────────────────────────────────
 
@@ -78,6 +75,6 @@ private:
 
 	TMap<FString, int32> CachedBalances;
 
-	/** Parse virtual currency from GetUserInventory response */
+	/** Parse currency inventory items from Economy v2 inventory responses */
 	void ParseCurrencyResponse(const FEPFResult& Result, TSharedPtr<FJsonObject> Response);
 };

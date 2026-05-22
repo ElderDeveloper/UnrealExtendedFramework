@@ -215,19 +215,46 @@ private:
 			AddResolutionOption(Resolution);
 		}
 
+		int32 MonitorWidth = 0;
+		int32 MonitorHeight = 0;
+		UEFMonitorLibrary::GetCurrentMonitorResolution(MonitorWidth, MonitorHeight);
+		AddResolutionOption(FIntPoint(MonitorWidth, MonitorHeight));
+
+		int32 CurrentWidth = 0;
+		int32 CurrentHeight = 0;
+		if (ParseResolution(GetCurrentResolution(), CurrentWidth, CurrentHeight))
+		{
+			AddResolutionOption(FIntPoint(CurrentWidth, CurrentHeight));
+		}
+
+		if (GEngine)
+		{
+			if (UGameUserSettings* UserSettings = GEngine->GetGameUserSettings())
+			{
+				const FIntPoint SavedResolution = UserSettings->GetScreenResolution();
+				AddResolutionOption(SavedResolution);
+			}
+		}
+
 		if (Values.Num() == 0)
 		{
-			int32 MonitorWidth = 0;
-			int32 MonitorHeight = 0;
-			UEFMonitorLibrary::GetCurrentMonitorResolution(MonitorWidth, MonitorHeight);
-
 			const TArray<FIntPoint> CommonResolutions = {
 				FIntPoint(1280, 720),
 				FIntPoint(1366, 768),
 				FIntPoint(1600, 900),
+				FIntPoint(1680, 1050),
+				FIntPoint(1600, 900),
 				FIntPoint(1920, 1080),
+				FIntPoint(1920, 1200),
+				FIntPoint(2560, 1080),
 				FIntPoint(2560, 1440),
-				FIntPoint(3840, 2160)
+				FIntPoint(3440, 1440),
+				FIntPoint(3840, 1080),
+				FIntPoint(3840, 1600),
+				FIntPoint(3840, 2160),
+				FIntPoint(5120, 1440),
+				FIntPoint(5120, 2160),
+				FIntPoint(7680, 2160)
 			};
 
 			for (const FIntPoint& Resolution : CommonResolutions)
@@ -957,6 +984,35 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Settings")
 	bool bUpdateSettingsImmediately = false;
+
+	virtual void SetValueFromString(const FString& Value) override
+	{
+		const int32 CustomIndex = GetCustomQualityIndex();
+		if (CustomIndex != INDEX_NONE && Value.Equals(Values[CustomIndex], ESearchCase::IgnoreCase))
+		{
+			SetSelectedIndexDirect(CustomIndex);
+			return;
+		}
+
+		Super::SetValueFromString(Value);
+	}
+
+	void SyncFromCurrentEngineState()
+	{
+		RefreshSubSettingsFromEngine();
+
+		for (int32 PresetIndex = 0; PresetIndex < 4; ++PresetIndex)
+		{
+			if (MatchesPreset(PresetIndex))
+			{
+				CaptureResolvedPresetSnapshotFromEngine(PresetIndex);
+				SetSelectedIndexDirect(PresetIndex);
+				return;
+			}
+		}
+
+		SetSelectedIndexDirect(GetCustomQualityIndex());
+	}
 	
 	virtual void Apply_Implementation() override
 	{
@@ -1072,6 +1128,25 @@ public:
 	}
 	
 private:
+	int32 GetCustomQualityIndex() const
+	{
+		return Values.Num() > 0 ? Values.Num() - 1 : INDEX_NONE;
+	}
+
+	void SetSelectedIndexDirect(int32 Index)
+	{
+		if (!Values.IsValidIndex(Index))
+		{
+			return;
+		}
+
+		if (SelectedIndex != Index)
+		{
+			SelectedIndex = Index;
+			MarkDirty();
+		}
+	}
+
 	struct FResolvedPresetSnapshot
 	{
 		TMap<FGameplayTag, int32> ResolvedIndices;

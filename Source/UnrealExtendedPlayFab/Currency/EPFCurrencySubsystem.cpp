@@ -3,6 +3,18 @@
 #include "EPFCurrencySubsystem.h"
 #include "UnrealExtendedPlayFab.h"
 #include "Dom/JsonObject.h"
+#include "Dom/JsonValue.h"
+
+namespace
+{
+	TSharedRef<FJsonObject> MakeEntityKeyObject(const FString& EntityId, const FString& EntityType)
+	{
+		TSharedRef<FJsonObject> Entity = MakeShared<FJsonObject>();
+		Entity->SetStringField(TEXT("Id"), EntityId);
+		Entity->SetStringField(TEXT("Type"), EntityType);
+		return Entity;
+	}
+}
 
 void UEPFCurrencySubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
@@ -18,16 +30,19 @@ void UEPFCurrencySubsystem::Deinitialize()
 void UEPFCurrencySubsystem::GetBalances()
 {
 	TSharedRef<FJsonObject> Body = MakeShared<FJsonObject>();
+	Body->SetObjectField(TEXT("Entity"), MakeEntityKeyObject(GetEntityId(), GetEntityType()));
+	Body->SetStringField(TEXT("Filter"), TEXT("type eq 'currency'"));
+	Body->SetNumberField(TEXT("Count"), 50);
 
 	SendPlayFabRequestDetailed(
-		TEXT("/Client/GetUserInventory"),
+		TEXT("/Inventory/GetInventoryItems"),
 		Body,
-		true,
+		EEPFAuthMode::EntityToken,
 		FOnPlayFabResponseDetailed::CreateUObject(this, &UEPFCurrencySubsystem::ParseCurrencyResponse)
 	);
 }
 
-void UEPFCurrencySubsystem::AddCurrency(const FString& CurrencyCode, int32 Amount)
+void UEPFCurrencySubsystem::AddCurrency(const FString& CurrencyCode, int32 Amount, const FString& IdempotencyId)
 {
 	if (CurrencyCode.IsEmpty())
 	{
@@ -43,18 +58,27 @@ void UEPFCurrencySubsystem::AddCurrency(const FString& CurrencyCode, int32 Amoun
 	}
 
 	TSharedRef<FJsonObject> Body = MakeShared<FJsonObject>();
-	Body->SetStringField(TEXT("VirtualCurrency"), CurrencyCode);
+	Body->SetObjectField(TEXT("Entity"), MakeEntityKeyObject(GetEntityId(), GetEntityType()));
 	Body->SetNumberField(TEXT("Amount"), Amount);
 
+	TSharedRef<FJsonObject> Item = MakeShared<FJsonObject>();
+	Item->SetStringField(TEXT("Id"), CurrencyCode);
+	Item->SetStringField(TEXT("StackId"), TEXT("default"));
+	Body->SetObjectField(TEXT("Item"), Item);
+	if (!IdempotencyId.IsEmpty())
+	{
+		Body->SetStringField(TEXT("IdempotencyId"), IdempotencyId);
+	}
+
 	SendPlayFabRequestDetailed(
-		TEXT("/Client/AddUserVirtualCurrency"),
+		TEXT("/Inventory/AddInventoryItems"),
 		Body,
-		true,
-		FOnPlayFabResponseDetailed::CreateLambda([this, CurrencyCode](const FEPFResult& Result, TSharedPtr<FJsonObject> Response)
+		EEPFAuthMode::EntityToken,
+		FOnPlayFabResponseDetailed::CreateLambda([this, CurrencyCode, Amount](const FEPFResult& Result, TSharedPtr<FJsonObject>)
 		{
-			if (Result.bSuccess && Response.IsValid())
+			if (Result.bSuccess)
 			{
-				const int32 NewBalance = static_cast<int32>(Response->GetNumberField(TEXT("Balance")));
+				const int32 NewBalance = FMath::Max(GetCachedBalance(CurrencyCode), 0) + Amount;
 				CachedBalances.Add(CurrencyCode, NewBalance);
 				UE_LOG(LogExtendedPlayFab, Log, TEXT("EPFCurrencySubsystem — Added %s, new balance: %d"), *CurrencyCode, NewBalance);
 			}
@@ -63,7 +87,7 @@ void UEPFCurrencySubsystem::AddCurrency(const FString& CurrencyCode, int32 Amoun
 	);
 }
 
-void UEPFCurrencySubsystem::SubtractCurrency(const FString& CurrencyCode, int32 Amount)
+void UEPFCurrencySubsystem::SubtractCurrency(const FString& CurrencyCode, int32 Amount, const FString& IdempotencyId)
 {
 	if (CurrencyCode.IsEmpty())
 	{
@@ -79,18 +103,28 @@ void UEPFCurrencySubsystem::SubtractCurrency(const FString& CurrencyCode, int32 
 	}
 
 	TSharedRef<FJsonObject> Body = MakeShared<FJsonObject>();
-	Body->SetStringField(TEXT("VirtualCurrency"), CurrencyCode);
+	Body->SetObjectField(TEXT("Entity"), MakeEntityKeyObject(GetEntityId(), GetEntityType()));
 	Body->SetNumberField(TEXT("Amount"), Amount);
+	Body->SetBoolField(TEXT("DeleteEmptyStacks"), true);
+
+	TSharedRef<FJsonObject> Item = MakeShared<FJsonObject>();
+	Item->SetStringField(TEXT("Id"), CurrencyCode);
+	Item->SetStringField(TEXT("StackId"), TEXT("default"));
+	Body->SetObjectField(TEXT("Item"), Item);
+	if (!IdempotencyId.IsEmpty())
+	{
+		Body->SetStringField(TEXT("IdempotencyId"), IdempotencyId);
+	}
 
 	SendPlayFabRequestDetailed(
-		TEXT("/Client/SubtractUserVirtualCurrency"),
+		TEXT("/Inventory/SubtractInventoryItems"),
 		Body,
-		true,
-		FOnPlayFabResponseDetailed::CreateLambda([this, CurrencyCode](const FEPFResult& Result, TSharedPtr<FJsonObject> Response)
+		EEPFAuthMode::EntityToken,
+		FOnPlayFabResponseDetailed::CreateLambda([this, CurrencyCode, Amount](const FEPFResult& Result, TSharedPtr<FJsonObject>)
 		{
-			if (Result.bSuccess && Response.IsValid())
+			if (Result.bSuccess)
 			{
-				const int32 NewBalance = static_cast<int32>(Response->GetNumberField(TEXT("Balance")));
+				const int32 NewBalance = FMath::Max(FMath::Max(GetCachedBalance(CurrencyCode), 0) - Amount, 0);
 				CachedBalances.Add(CurrencyCode, NewBalance);
 				UE_LOG(LogExtendedPlayFab, Log, TEXT("EPFCurrencySubsystem — Subtracted %s, new balance: %d"), *CurrencyCode, NewBalance);
 			}
@@ -129,15 +163,24 @@ void UEPFCurrencySubsystem::ParseCurrencyResponse(const FEPFResult& Result, TSha
 	if (Result.bSuccess && Response.IsValid())
 	{
 		CachedBalances.Empty();
-		const TSharedPtr<FJsonObject>* VCObj = nullptr;
-		if (Response->TryGetObjectField(TEXT("VirtualCurrency"), VCObj) && VCObj)
+		const TArray<TSharedPtr<FJsonValue>>* ItemsArray = nullptr;
+		if (Response->TryGetArrayField(TEXT("Items"), ItemsArray) && ItemsArray)
 		{
-			for (const auto& Pair : (*VCObj)->Values)
+			for (const TSharedPtr<FJsonValue>& ItemValue : *ItemsArray)
 			{
-				int32 Amount = 0;
-				if (Pair.Value->TryGetNumber(Amount))
+				const TSharedPtr<FJsonObject>* ItemObj = nullptr;
+				if (!ItemValue.IsValid() || !ItemValue->TryGetObject(ItemObj) || !ItemObj)
 				{
-					CachedBalances.Add(Pair.Key, Amount);
+					continue;
+				}
+
+				FString ItemId;
+				(*ItemObj)->TryGetStringField(TEXT("Id"), ItemId);
+
+				double AmountNumber = 0.0;
+				if (!ItemId.IsEmpty() && (*ItemObj)->TryGetNumberField(TEXT("Amount"), AmountNumber))
+				{
+					CachedBalances.Add(ItemId, static_cast<int32>(AmountNumber));
 				}
 			}
 		}

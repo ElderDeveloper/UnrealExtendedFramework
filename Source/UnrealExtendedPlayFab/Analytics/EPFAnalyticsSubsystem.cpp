@@ -18,6 +18,17 @@
 #include "Containers/Ticker.h"
 #include "GenericPlatform/GenericPlatformInputDeviceMapper.h"
 
+namespace
+{
+	constexpr const TCHAR* TelemetryNamespace = TEXT("custom.telemetry");
+	constexpr const TCHAR* TelemetrySchemaVersion = TEXT("1");
+	constexpr const TCHAR* TelemetrySourceAuto = TEXT("auto");
+	constexpr const TCHAR* TelemetrySourceManual = TEXT("manual");
+	constexpr const TCHAR* TelemetryScopePlayer = TEXT("player");
+	constexpr const TCHAR* TelemetryScopeCharacter = TEXT("character");
+	constexpr const TCHAR* TelemetryScopeTitle = TEXT("title");
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 FString UEPFAnalyticsSubsystem::GetQueueFilePath()
@@ -48,7 +59,6 @@ void UEPFAnalyticsSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 		{
 			TMap<FString, FString> Body;
 			Body.Add(TEXT("Platform"),     FString(FPlatformProperties::PlatformName()));
-			Body.Add(TEXT("Timestamp"),    SessionStartTime.ToIso8601());
 			DispatchOrQueue(TEXT("session_start"), Body);
 		}
 	}
@@ -59,7 +69,7 @@ void UEPFAnalyticsSubsystem::Deinitialize()
 	if (bAutoAnalyticsEnabled)
 	{
 		const UEPFSettings* Settings = GetSettings();
-		if (Settings && Settings->AutoAnalyticsConfig.bTrackSessionEnd && IsAuthenticated())
+		if (Settings && Settings->AutoAnalyticsConfig.bTrackSessionEnd)
 		{
 			const FDateTime Now = FDateTime::UtcNow();
 			const FTimespan Duration = Now - SessionStartTime;
@@ -67,7 +77,7 @@ void UEPFAnalyticsSubsystem::Deinitialize()
 			TMap<FString, FString> Body;
 			Body.Add(TEXT("SessionDurationSeconds"), FString::FromInt(FMath::FloorToInt(Duration.GetTotalSeconds())));
 			Body.Add(TEXT("EventsLogged"),           FString::FromInt(EventsLoggedCount));
-			LogEvent(TEXT("session_end"), Body);
+			DispatchOrQueue(TEXT("session_end"), Body);
 		}
 
 		UnregisterAutoTrackingHooks();
@@ -313,12 +323,15 @@ void UEPFAnalyticsSubsystem::OnPlayFabLoginCompleted(const FEPFResult& Result, c
 	{
 		TMap<FString, FString> Body;
 		Body.Add(TEXT("PlayFabId"), PlayFabId);
-		LogEvent(TEXT("player_login"), Body);
+		DispatchOrQueue(TEXT("player_login"), Body);
 	}
 
 	if (Settings->AutoAnalyticsConfig.bTrackDeviceInfo)
 	{
-		ReportDeviceInfo();
+		TMap<FString, FString> Body;
+		Body.Add(TEXT("OS"), FPlatformMisc::GetOSVersion());
+		Body.Add(TEXT("Device"), FString(FPlatformProperties::PlatformName()));
+		WriteTelemetryEvent(TEXT("device_info"), Body, TelemetrySourceAuto, TelemetryScopePlayer);
 	}
 
 	// Authenticated — flush any events that were queued offline.
@@ -330,8 +343,7 @@ void UEPFAnalyticsSubsystem::OnPlayFabLogoutCompleted()
 	const UEPFSettings* Settings = GetSettings();
 	if (Settings && Settings->AutoAnalyticsConfig.bTrackLogout)
 	{
-		// Player is about to lose the session token; log synchronously before it clears.
-		LogSimpleEvent(TEXT("player_logout"));
+		DispatchOrQueue(TEXT("player_logout"), {});
 	}
 }
 
@@ -379,9 +391,9 @@ void UEPFAnalyticsSubsystem::OnAppActivated()
 
 void UEPFAnalyticsSubsystem::DispatchOrQueue(const FString& EventName, const TMap<FString, FString>& Body)
 {
-	if (IsAuthenticated())
+	if (!GetEntityToken().IsEmpty())
 	{
-		LogEvent(EventName, Body);
+		WriteTelemetryEvent(EventName, Body, TelemetrySourceAuto, TelemetryScopePlayer);
 		return;
 	}
 
@@ -409,6 +421,73 @@ void UEPFAnalyticsSubsystem::DispatchOrQueue(const FString& EventName, const TMa
 		TEXT("EPFAnalyticsSubsystem — Queued offline event '%s' (%d in queue)"), *EventName, OfflineQueue.Num());
 }
 
+void UEPFAnalyticsSubsystem::WriteTelemetryEvent(
+	const FString& EventName,
+	const TMap<FString, FString>& Body,
+	const FString& EventSource,
+	const FString& EventScope,
+	const FString& TargetId,
+	const FString& OriginalTimestamp)
+{
+	if (EventName.IsEmpty())
+	{
+		OnEventLogged.Broadcast(FEPFResult::Failure(TEXT("EventName cannot be empty")));
+		return;
+	}
+
+	const FString ClientTimestamp = OriginalTimestamp.IsEmpty() ? FDateTime::UtcNow().ToIso8601() : OriginalTimestamp;
+
+	TSharedRef<FJsonObject> RequestBody = MakeShared<FJsonObject>();
+	TArray<TSharedPtr<FJsonValue>> Events;
+
+	TSharedRef<FJsonObject> EventObj = MakeShared<FJsonObject>();
+	EventObj->SetStringField(TEXT("EventNamespace"), TelemetryNamespace);
+	EventObj->SetStringField(TEXT("Name"), EventName);
+	EventObj->SetStringField(TEXT("OriginalTimestamp"), ClientTimestamp);
+
+	TSharedRef<FJsonObject> PayloadObj = MakeShared<FJsonObject>();
+	PayloadObj->SetStringField(TEXT("schema_version"), TelemetrySchemaVersion);
+	PayloadObj->SetStringField(TEXT("event_source"), EventSource);
+	PayloadObj->SetStringField(TEXT("event_scope"), EventScope);
+	PayloadObj->SetStringField(TEXT("client_timestamp"), ClientTimestamp);
+	PayloadObj->SetBoolField(TEXT("was_queued_offline"), !OriginalTimestamp.IsEmpty());
+	if (!TargetId.IsEmpty())
+	{
+		PayloadObj->SetStringField(TEXT("target_id"), TargetId);
+	}
+
+	TSharedRef<FJsonObject> PropertiesObj = MakeShared<FJsonObject>();
+	for (const auto& Pair : Body)
+	{
+		PropertiesObj->SetStringField(Pair.Key, Pair.Value);
+	}
+	PayloadObj->SetObjectField(TEXT("properties"), PropertiesObj);
+	EventObj->SetObjectField(TEXT("Payload"), PayloadObj);
+	Events.Add(MakeShared<FJsonValueObject>(EventObj));
+
+	RequestBody->SetArrayField(TEXT("Events"), Events);
+
+	SendPlayFabRequestDetailed(
+		TEXT("/Event/WriteTelemetryEvents"),
+		RequestBody,
+		EEPFAuthMode::EntityToken,
+		FOnPlayFabResponseDetailed::CreateLambda([this, EventName](const FEPFResult& Result, TSharedPtr<FJsonObject> Response)
+		{
+			if (Result.bSuccess)
+			{
+				EventsLoggedCount++;
+				UE_LOG(LogExtendedPlayFab, Verbose, TEXT("EPFAnalyticsSubsystem — Telemetry event logged: %s"), *EventName);
+			}
+			else
+			{
+				UE_LOG(LogExtendedPlayFab, Warning, TEXT("EPFAnalyticsSubsystem — Failed to log telemetry event: %s"), *EventName);
+			}
+
+			OnEventLogged.Broadcast(Result);
+		})
+	);
+}
+
 // ── Offline Queue Actions ─────────────────────────────────────────────────────
 
 void UEPFAnalyticsSubsystem::FlushOfflineQueue()
@@ -418,10 +497,10 @@ void UEPFAnalyticsSubsystem::FlushOfflineQueue()
 		return;
 	}
 
-	if (!IsAuthenticated())
+	if (GetEntityToken().IsEmpty())
 	{
 		UE_LOG(LogExtendedPlayFab, Warning,
-			TEXT("EPFAnalyticsSubsystem — FlushOfflineQueue called but player is not authenticated; skipping."));
+			TEXT("EPFAnalyticsSubsystem — FlushOfflineQueue called without an entity token; skipping."));
 		return;
 	}
 
@@ -435,9 +514,7 @@ void UEPFAnalyticsSubsystem::FlushOfflineQueue()
 
 	for (const FEPFQueuedEvent& Queued : Snapshot)
 	{
-		TMap<FString, FString> BodyWithMeta = Queued.Body;
-		BodyWithMeta.Add(TEXT("queued_at"), Queued.Timestamp);
-		LogEvent(Queued.EventName, BodyWithMeta);
+		WriteTelemetryEvent(Queued.EventName, Queued.Body, TelemetrySourceAuto, TelemetryScopePlayer, FString(), Queued.Timestamp);
 	}
 
 	// Broadcast a single flush-complete notification using the last dispatched state.
@@ -574,34 +651,7 @@ void UEPFAnalyticsSubsystem::LoadQueueFromDisk()
 
 void UEPFAnalyticsSubsystem::LogEvent(const FString& EventName, const TMap<FString, FString>& Body)
 {
-	TSharedRef<FJsonObject> RequestBody = MakeShared<FJsonObject>();
-	RequestBody->SetStringField(TEXT("EventName"), EventName);
-
-	TSharedRef<FJsonObject> BodyObj = MakeShared<FJsonObject>();
-	for (const auto& Pair : Body)
-	{
-		BodyObj->SetStringField(Pair.Key, Pair.Value);
-	}
-	RequestBody->SetObjectField(TEXT("Body"), BodyObj);
-
-	SendPlayFabRequestDetailed(
-		TEXT("/Client/WritePlayerEvent"),
-		RequestBody,
-		true,
-		FOnPlayFabResponseDetailed::CreateLambda([this, EventName](const FEPFResult& Result, TSharedPtr<FJsonObject> Response)
-		{
-			if (Result.bSuccess)
-			{
-				EventsLoggedCount++;
-				UE_LOG(LogExtendedPlayFab, Verbose, TEXT("EPFAnalyticsSubsystem — Event logged: %s"), *EventName);
-			}
-			else
-			{
-				UE_LOG(LogExtendedPlayFab, Warning, TEXT("EPFAnalyticsSubsystem — Failed to log event: %s"), *EventName);
-			}
-			OnEventLogged.Broadcast(Result);
-		})
-	);
+	WriteTelemetryEvent(EventName, Body, TelemetrySourceManual, TelemetryScopePlayer);
 }
 
 void UEPFAnalyticsSubsystem::LogSimpleEvent(const FString& EventName)
@@ -622,56 +672,23 @@ void UEPFAnalyticsSubsystem::LogCharacterEvent(const FString& CharacterId, const
 {
 	if (CharacterId.IsEmpty() || EventName.IsEmpty()) { OnEventLogged.Broadcast(FEPFResult::Failure(TEXT("CharacterId and EventName are required"))); return; }
 
-	TSharedRef<FJsonObject> RequestBody = MakeShared<FJsonObject>();
-	RequestBody->SetStringField(TEXT("CharacterId"), CharacterId);
-	RequestBody->SetStringField(TEXT("EventName"), EventName);
-
-	TSharedRef<FJsonObject> BodyObj = MakeShared<FJsonObject>();
-	for (const auto& Pair : Body) BodyObj->SetStringField(Pair.Key, Pair.Value);
-	RequestBody->SetObjectField(TEXT("Body"), BodyObj);
-
-	SendPlayFabRequestDetailed(TEXT("/Client/WriteCharacterEvent"), RequestBody, true,
-		FOnPlayFabResponseDetailed::CreateLambda([this, EventName](const FEPFResult& Result, TSharedPtr<FJsonObject>)
-		{
-			if (Result.bSuccess) { EventsLoggedCount++; UE_LOG(LogExtendedPlayFab, Verbose, TEXT("EPFAnalytics — Character event: %s"), *EventName); }
-			OnEventLogged.Broadcast(Result);
-		}));
+	WriteTelemetryEvent(EventName, Body, TelemetrySourceManual, TelemetryScopeCharacter, CharacterId);
 }
 
 void UEPFAnalyticsSubsystem::LogTitleEvent(const FString& EventName, const TMap<FString, FString>& Body)
 {
 	if (EventName.IsEmpty()) { OnEventLogged.Broadcast(FEPFResult::Failure(TEXT("EventName cannot be empty"))); return; }
 
-	TSharedRef<FJsonObject> RequestBody = MakeShared<FJsonObject>();
-	RequestBody->SetStringField(TEXT("EventName"), EventName);
-
-	TSharedRef<FJsonObject> BodyObj = MakeShared<FJsonObject>();
-	for (const auto& Pair : Body) BodyObj->SetStringField(Pair.Key, Pair.Value);
-	RequestBody->SetObjectField(TEXT("Body"), BodyObj);
-
-	SendPlayFabRequestDetailed(TEXT("/Client/WriteTitleEvent"), RequestBody, true,
-		FOnPlayFabResponseDetailed::CreateLambda([this, EventName](const FEPFResult& Result, TSharedPtr<FJsonObject>)
-		{
-			if (Result.bSuccess) { EventsLoggedCount++; UE_LOG(LogExtendedPlayFab, Verbose, TEXT("EPFAnalytics — Title event: %s"), *EventName); }
-			OnEventLogged.Broadcast(Result);
-		}));
+	TMap<FString, FString> EnrichedBody = Body;
+	WriteTelemetryEvent(EventName, EnrichedBody, TelemetrySourceManual, TelemetryScopeTitle);
 }
 
 void UEPFAnalyticsSubsystem::ReportDeviceInfo()
 {
-	TSharedRef<FJsonObject> RequestBody = MakeShared<FJsonObject>();
-
-	TSharedRef<FJsonObject> InfoObj = MakeShared<FJsonObject>();
-	InfoObj->SetStringField(TEXT("OS"),     FPlatformMisc::GetOSVersion());
-	InfoObj->SetStringField(TEXT("Device"), FPlatformProperties::PlatformName());
-	RequestBody->SetObjectField(TEXT("Info"), InfoObj);
-
-	SendPlayFabRequestDetailed(TEXT("/Client/ReportDeviceInfo"), RequestBody, true,
-		FOnPlayFabResponseDetailed::CreateLambda([this](const FEPFResult& Result, TSharedPtr<FJsonObject>)
-		{
-			if (Result.bSuccess) UE_LOG(LogExtendedPlayFab, Log, TEXT("EPFAnalytics — Device info reported"));
-			OnEventLogged.Broadcast(Result);
-		}));
+	TMap<FString, FString> Body;
+	Body.Add(TEXT("OS"), FPlatformMisc::GetOSVersion());
+	Body.Add(TEXT("Device"), FString(FPlatformProperties::PlatformName()));
+	WriteTelemetryEvent(TEXT("device_info"), Body, TelemetrySourceManual, TelemetryScopePlayer);
 }
 
 // ── Queries ───────────────────────────────────────────────────────────────────

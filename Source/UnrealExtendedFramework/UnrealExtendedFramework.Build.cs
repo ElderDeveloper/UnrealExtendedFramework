@@ -82,6 +82,7 @@ public class UnrealExtendedFramework : ModuleRules
 				"Core",
 				"CoreUObject",
 				"Engine",
+				"AudioMixer",
 				"InputCore",
 				"EnhancedInput",
 				"DeveloperSettings",
@@ -124,7 +125,8 @@ public class UnrealExtendedFramework : ModuleRules
 				"XmlParser",
 				"ApplicationCore", "AnimGraphRuntime", "Niagara",
 				"PhysicsCore",
-				"RHI"
+				"RHI",
+				"Voice"
 			}
 			);
 		
