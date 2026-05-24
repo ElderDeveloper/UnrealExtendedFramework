@@ -46,6 +46,7 @@ Settings.Audio.SFXVolume,Settings.Audio.SFXVolume,Settings.Audio.SFXVolume
 Settings.Audio.VoiceVolume,Settings.Audio.VoiceVolume,Settings.Audio.VoiceVolume
 Settings.Audio.AmbientVolume,Settings.Audio.AmbientVolume,Settings.Audio.AmbientVolume
 Settings.Audio.OutputDevice,Settings.Audio.OutputDevice,Settings.Audio.OutputDevice
+Settings.Audio.InputDevice,Settings.Audio.InputDevice,Settings.Audio.InputDevice
 Settings.Accessibility.SubtitlesEnabled,Settings.Accessibility.SubtitlesEnabled,Settings.Accessibility.SubtitlesEnabled
 Settings.Accessibility.SubtitleTextSize,Settings.Accessibility.SubtitleTextSize,Settings.Accessibility.SubtitleTextSize
 Settings.Accessibility.SubtitleBgOpacity,Settings.Accessibility.SubtitleBgOpacity,Settings.Accessibility.SubtitleBgOpacity
