@@ -103,3 +103,59 @@ void UUEFArrayLibrary::FilterIntArrayByRange(const TArray<int32>& SourceArray, T
 		}
 	}
 }
+
+
+
+bool UUEFArrayLibrary::FindMapValueByKey(const TMap<int32, int32>& TargetMap, const int32& Key, int32& Value)
+{
+	checkNoEntry();
+	return false;
+}
+
+DEFINE_FUNCTION(UUEFArrayLibrary::execFindMapValueByKey)
+{
+	Stack.MostRecentProperty = nullptr;
+	Stack.StepCompiledIn<FMapProperty>(nullptr);
+	const void* TargetMapPtr = Stack.MostRecentPropertyAddress;
+	const FMapProperty* MapProperty = CastField<FMapProperty>(Stack.MostRecentProperty);
+
+	Stack.MostRecentProperty = nullptr;
+	Stack.StepCompiledIn<FProperty>(nullptr);
+	const void* KeyPtr = Stack.MostRecentPropertyAddress;
+	const FProperty* KeyProperty = Stack.MostRecentProperty;
+
+	Stack.MostRecentProperty = nullptr;
+	Stack.StepCompiledIn<FProperty>(nullptr);
+	void* ValuePtr = Stack.MostRecentPropertyAddress;
+	const FProperty* ValueProperty = Stack.MostRecentProperty;
+
+	P_FINISH;
+	P_NATIVE_BEGIN;
+	*(bool*)RESULT_PARAM = GenericFindMapValueByKey(TargetMapPtr, MapProperty, KeyPtr, KeyProperty, ValuePtr, ValueProperty);
+	P_NATIVE_END;
+}
+
+bool UUEFArrayLibrary::GenericFindMapValueByKey(const void* TargetMap, const FMapProperty* MapProperty,
+	const void* KeyPtr, const FProperty* KeyProperty, void* ValuePtr, const FProperty* ValueProperty)
+{
+	if (TargetMap == nullptr || MapProperty == nullptr || KeyPtr == nullptr || ValuePtr == nullptr || KeyProperty == nullptr || ValueProperty == nullptr)
+	{
+		return false;
+	}
+
+	if (!MapProperty->KeyProp->SameType(KeyProperty) || !MapProperty->ValueProp->SameType(ValueProperty))
+	{
+		return false;
+	}
+
+	FScriptMapHelper MapHelper(MapProperty, TargetMap);
+	const int32 MapIndex = MapHelper.FindMapIndexWithKey(KeyPtr);
+	if (!MapHelper.IsValidIndex(MapIndex))
+	{
+		MapProperty->ValueProp->InitializeValue(ValuePtr);
+		return false;
+	}
+
+	MapProperty->ValueProp->CopyCompleteValue(ValuePtr, MapHelper.GetValuePtr(MapIndex));
+	return true;
+}

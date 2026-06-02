@@ -18,6 +18,8 @@ class UNREALEXTENDEDFRAMEWORK_API UUEFArrayLibrary : public UBlueprintFunctionLi
 
 public:
 
+
+
 	// <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< RANDOM >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 	
 	/**
@@ -83,5 +85,12 @@ public:
 	UFUNCTION(BlueprintCallable, meta = (DisplayName = "Filter Int Array By Range"), Category = "Array|Filter")
 	static void FilterIntArrayByRange(const TArray<int32>& SourceArray, TArray<int32>& FilteredArray, int32 Min, int32 Max);
 	
+
+	UFUNCTION(BlueprintPure, CustomThunk, meta = (DisplayName = "Find Map Value By Key", CompactNodeTitle = "Find", MapParam = "TargetMap", MapKeyParam = "Key", MapValueParam = "Value", BlueprintThreadSafe), Category = "Array|Library")
+	static bool FindMapValueByKey(const TMap<int32, int32>& TargetMap, const int32& Key, int32& Value);
+	DECLARE_FUNCTION(execFindMapValueByKey);
+
+	private:
+	static bool GenericFindMapValueByKey(const void* TargetMap, const FMapProperty* MapProperty, const void* KeyPtr, const FProperty* KeyProperty, void* ValuePtr, const FProperty* ValueProperty);
 
 };
