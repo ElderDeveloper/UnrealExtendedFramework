@@ -44,6 +44,9 @@ public class UnrealExtendedEditor : ModuleRules
 				"UnrealEd",
 				"BlueprintGraph",
 				"GraphEditor",
+				"AnimGraph",
+				"AnimGraphRuntime",
+				"UnrealExtendedFramework",
 				}
 			);
 			

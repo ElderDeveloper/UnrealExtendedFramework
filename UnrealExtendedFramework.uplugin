@@ -17,9 +17,8 @@
 	"Modules": [
 		{
 			"Name": "UnrealExtendedEditor",
-			"Type": "Editor",
-			"LoadingPhase": "Default",
-			"WhitelistTargets": [ "Editor" ]
+			"Type": "UncookedOnly",
+			"LoadingPhase": "Default"
 		},
 		{
 			"Name": "UnrealExtendedFramework",
