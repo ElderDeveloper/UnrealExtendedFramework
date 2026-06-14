@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "Engine/Engine.h"
+#include "Engine/World.h"
 #include "Engine/LocalPlayer.h"
 #include "GameFramework/PlayerController.h"
 #include "UnrealExtendedFramework/ModularSettings/Settings/EFModularSettingsBase.h"
@@ -21,11 +22,21 @@ class UInputMappingContext;
 
 namespace EFInputSettingsHelper
 {
-	inline UEnhancedInputLocalPlayerSubsystem* GetEnhancedInputSubsystem()
+	inline APlayerController* GetFirstLocalPlayerController(const UObject* WorldContextObject)
 	{
-		if (!GEngine) return nullptr;
-		
-		APlayerController* PC = GEngine->GetFirstLocalPlayerController(GEngine->GetCurrentPlayWorld());
+		UWorld* World = WorldContextObject ? WorldContextObject->GetWorld() : nullptr;
+		if (!World)
+		{
+			return nullptr;
+		}
+
+		APlayerController* FirstController = World->GetFirstPlayerController();
+		return FirstController && FirstController->IsLocalController() ? FirstController : nullptr;
+	}
+
+	inline UEnhancedInputLocalPlayerSubsystem* GetEnhancedInputSubsystem(const UObject* WorldContextObject)
+	{
+		APlayerController* PC = GetFirstLocalPlayerController(WorldContextObject);
 		if (!PC) return nullptr;
 		
 		ULocalPlayer* LP = PC->GetLocalPlayer();
@@ -82,7 +93,7 @@ public:
 	{
 		if (!InputAction || !CurrentKey.IsValid()) return;
 		
-		if (UEnhancedInputLocalPlayerSubsystem* EIS = EFInputSettingsHelper::GetEnhancedInputSubsystem())
+		if (UEnhancedInputLocalPlayerSubsystem* EIS = EFInputSettingsHelper::GetEnhancedInputSubsystem(this))
 		{
 			if (UEnhancedInputUserSettings* UserSettings = EIS->GetUserSettings())
 			{
@@ -165,9 +176,8 @@ public:
 	
 	virtual void Apply_Implementation() override
 	{
-		if (GEngine && GEngine->GetFirstLocalPlayerController(GEngine->GetCurrentPlayWorld()))
+		if (APlayerController* PC = EFInputSettingsHelper::GetFirstLocalPlayerController(this))
 		{
-			APlayerController* PC = GEngine->GetFirstLocalPlayerController(GEngine->GetCurrentPlayWorld());
 			if (PC && PC->PlayerInput)
 			{
 				PC->PlayerInput->SetMouseSensitivity(Value);
@@ -382,14 +392,11 @@ public:
 	
 	virtual void Apply_Implementation() override
 	{
-		if (GEngine && GEngine->GetFirstLocalPlayerController(GEngine->GetCurrentPlayWorld()))
+		if (APlayerController* PC = EFInputSettingsHelper::GetFirstLocalPlayerController(this))
 		{
-			if (APlayerController* PC = GEngine->GetFirstLocalPlayerController(GEngine->GetCurrentPlayWorld()))
-			{
-				// Enable/disable force feedback
-				PC->SetDisableHaptics(!Value);
-				UE_LOG(LogTemp, Log, TEXT("Applied Controller Vibration: %s"), Value ? TEXT("Enabled") : TEXT("Disabled"));
-			}
+			// Enable/disable force feedback
+			PC->SetDisableHaptics(!Value);
+			UE_LOG(LogTemp, Log, TEXT("Applied Controller Vibration: %s"), Value ? TEXT("Enabled") : TEXT("Disabled"));
 		}
 	}
 };

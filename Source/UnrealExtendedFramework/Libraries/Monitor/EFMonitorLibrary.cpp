@@ -3,6 +3,7 @@
 
 #include "EFMonitorLibrary.h"
 #include "GenericPlatform/GenericApplication.h"
+#include "HAL/ThreadingBase.h"
 #include "Kismet/KismetSystemLibrary.h"
 
 
@@ -254,7 +255,10 @@ TArray<FIntPoint> UEFMonitorLibrary::GetCurrentMonitorSupportedResolutions()
 {
 	TArray<FIntPoint> SupportedResolutions;
 
-	int32 MonitorIndex = GetGameWindowMonitorIndex();
+	if (!IsInGameThread())
+	{
+		return SupportedResolutions;
+	}
 
 	UKismetSystemLibrary::GetSupportedFullscreenResolutions(SupportedResolutions);
 

@@ -8,6 +8,7 @@
 #include "Engine/Engine.h"
 #include "GameFramework/GameUserSettings.h"
 #include "HAL/IConsoleManager.h"
+#include "HAL/ThreadingBase.h"
 #include "EFGraphicsSettings.generated.h"
 
 namespace EFGraphicsSettingsInternal
@@ -100,7 +101,9 @@ public:
 		ConfigCategory = TEXT("Graphics");
 		DefaultValue = TEXT("1920x1080");
 
-		PopulateResolutionOptions();
+		Values = { DefaultValue };
+		DisplayNames = { FText::FromString(DefaultValue) };
+		SelectedIndex = 0;
 	}
 
 	virtual void OnRegistered() override
@@ -175,6 +178,11 @@ public:
 private:
 	void PopulateResolutionOptions()
 	{
+		if (!IsInGameThread())
+		{
+			return;
+		}
+
 		const FString PreviousResolution = Values.IsValidIndex(SelectedIndex)
 			? Values[SelectedIndex]
 			: GetCurrentResolution();

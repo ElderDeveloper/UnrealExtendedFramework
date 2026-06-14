@@ -1,5 +1,7 @@
 #include "EFModularSettingsBase.h"
 
+#include "Engine/Engine.h"
+#include "Engine/World.h"
 #include "Net/UnrealNetwork.h"
 #include "UnrealExtendedFramework/ModularSettings/Components/EFPlayerSettingsComponent.h"
 #include "UnrealExtendedFramework/ModularSettings/Components/EFWorldSettingsComponent.h"
@@ -17,7 +19,19 @@ UWorld *UEFModularSettingsBase::GetWorld() const
     return ModularSettingsSubsystem->GetWorld();
   }
 
-  return GEngine->GetCurrentPlayWorld();
+  if (GEngine)
+  {
+    for (const FWorldContext& WorldContext : GEngine->GetWorldContexts())
+    {
+      UWorld* World = WorldContext.World();
+      if (World && (World->WorldType == EWorldType::Game || World->WorldType == EWorldType::PIE))
+      {
+        return World;
+      }
+    }
+  }
+
+  return nullptr;
 }
 
 void UEFModularSettingsBase::NotifyValueChanged() 
