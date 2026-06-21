@@ -115,6 +115,7 @@ namespace
 
 		return FString();
 	}
+
 }
 
 void UEPFInventorySubsystem::Initialize(FSubsystemCollectionBase& Collection)
@@ -138,7 +139,6 @@ void UEPFInventorySubsystem::GetInventory()
 {
 	TSharedRef<FJsonObject> Body = MakeShared<FJsonObject>();
 	Body->SetObjectField(TEXT("Entity"), MakeEntityKeyObject(GetEntityId(), GetEntityType()));
-	Body->SetStringField(TEXT("Filter"), TEXT("type ne 'currency'"));
 	Body->SetNumberField(TEXT("Count"), 50);
 
 	SendPlayFabRequestDetailed(
