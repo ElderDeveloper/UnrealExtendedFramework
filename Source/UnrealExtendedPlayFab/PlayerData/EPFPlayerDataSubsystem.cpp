@@ -94,6 +94,63 @@ void UEPFPlayerDataSubsystem::GetAllPlayerData()
 	);
 }
 
+void UEPFPlayerDataSubsystem::GetUserDataForPlayer(const FString& PlayFabId, const TArray<FString>& Keys)
+{
+	if (PlayFabId.IsEmpty())
+	{
+		OnOtherPlayerDataReceived.Broadcast(FEPFResult::Failure(TEXT("GetUserDataForPlayer: PlayFabId is empty")), PlayFabId);
+		return;
+	}
+
+	TSharedRef<FJsonObject> Body = MakeShared<FJsonObject>();
+	Body->SetStringField(TEXT("PlayFabId"), PlayFabId);
+
+	if (Keys.Num() > 0)
+	{
+		TArray<TSharedPtr<FJsonValue>> KeysArray;
+		for (const FString& Key : Keys)
+		{
+			KeysArray.Add(MakeShared<FJsonValueString>(Key));
+		}
+		Body->SetArrayField(TEXT("Keys"), KeysArray);
+	}
+
+	SendPlayFabRequestDetailed(
+		TEXT("/Client/GetUserData"),
+		Body,
+		EEPFAuthMode::SessionTicket,
+		FOnPlayFabResponseDetailed::CreateLambda([this, PlayFabId](const FEPFResult& Result, TSharedPtr<FJsonObject> Response)
+		{
+			// Another player's data is stored in a separate cache and deliberately NOT merged
+			// into CachedData, which holds the signed-in player's own data.
+			TMap<FString, FString> Data;
+			if (Result.bSuccess && Response.IsValid())
+			{
+				const TSharedPtr<FJsonObject>* DataObj = nullptr;
+				if (Response->TryGetObjectField(TEXT("Data"), DataObj) && DataObj)
+				{
+					for (const auto& Pair : (*DataObj)->Values)
+					{
+						const TSharedPtr<FJsonObject>* EntryObj = nullptr;
+						if (Pair.Value->TryGetObject(EntryObj) && EntryObj)
+						{
+							Data.Add(Pair.Key, (*EntryObj)->GetStringField(TEXT("Value")));
+						}
+					}
+				}
+			}
+			OtherPlayerDataCache.Add(PlayFabId, MoveTemp(Data));
+			OnOtherPlayerDataReceived.Broadcast(Result, PlayFabId);
+		})
+	);
+}
+
+TMap<FString, FString> UEPFPlayerDataSubsystem::GetCachedOtherPlayerData(const FString& PlayFabId) const
+{
+	const TMap<FString, FString>* Found = OtherPlayerDataCache.Find(PlayFabId);
+	return Found ? *Found : TMap<FString, FString>();
+}
+
 void UEPFPlayerDataSubsystem::SetPlayerData(const TMap<FString, FString>& Data, bool bPublic)
 {
 	TSharedRef<FJsonObject> Body = MakeShared<FJsonObject>();
