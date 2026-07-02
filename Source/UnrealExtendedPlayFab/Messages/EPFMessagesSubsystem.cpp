@@ -43,12 +43,13 @@ void UEPFMessagesSubsystem::FetchMessages()
 				{
 					for (const auto& Pair : (*DataObj)->Values)
 					{
-						if (Pair.Key.StartsWith(MessageKeyPrefix))
+						const FString DataKey(Pair.Key.Len(), *Pair.Key);
+						if (DataKey.StartsWith(MessageKeyPrefix))
 						{
 							const TSharedPtr<FJsonObject>* ValueObj = nullptr;
 							if (Pair.Value->TryGetObject(ValueObj) && ValueObj)
 							{
-								RawData.Add(Pair.Key, (*ValueObj)->GetStringField(TEXT("Value")));
+								RawData.Add(DataKey, (*ValueObj)->GetStringField(TEXT("Value")));
 							}
 						}
 					}
@@ -85,7 +86,7 @@ void UEPFMessagesSubsystem::ParseMessages(const TMap<FString, FString>& RawData)
 		if (FJsonSerializer::Deserialize(Reader, MsgJson) && MsgJson.IsValid())
 		{
 			FEPFPlayerMessage Msg;
-			Msg.MessageId = Pair.Key.RightChop(MessageKeyPrefix.Len()); // remove "msg_" prefix
+			Msg.MessageId = FString(Pair.Key.Len(), *Pair.Key).RightChop(MessageKeyPrefix.Len()); // remove "msg_" prefix
 			Msg.Subject = MsgJson->GetStringField(TEXT("subject"));
 			Msg.Body = MsgJson->GetStringField(TEXT("body"));
 			Msg.Sender = MsgJson->GetStringField(TEXT("sender"));

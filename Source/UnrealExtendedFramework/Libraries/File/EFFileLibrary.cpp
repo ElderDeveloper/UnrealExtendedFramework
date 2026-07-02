@@ -452,13 +452,13 @@ TSharedRef<FJsonValue> UEFFileLibrary::JsonValueToAnyStruct(FProperty* Property,
 					{
 						OutObject->SetField(Prop->GetName(),
 						                    UEFFileLibrary::JsonValueToAnyStruct(
-							                    Prop, *InObject->Values.Find(Prop->GetAuthoredName())));
+							                    Prop, InObject->TryGetField(Prop->GetAuthoredName())));
 					}
 					else if (InObject->HasField(Prop->GetName()))
 					{
 						OutObject->SetField(Prop->GetName(),
 						                    UEFFileLibrary::JsonValueToAnyStruct(
-							                    Prop, *InObject->Values.Find(Prop->GetName())));
+							                    Prop, InObject->TryGetField(Prop->GetName())));
 					}
 				}
 			}
@@ -575,7 +575,7 @@ bool UEFFileLibrary::JsonValueToAnyStruct(TSharedPtr<FJsonValue> JsonValue, FPro
 			for (const auto& Entry : JsonObject->Values)
 			{
 				const int32 Idx = Helper.AddDefaultValue_Invalid_NeedsRehash();
-				TSharedPtr<FJsonValueString> StrKeyVal = MakeShared<FJsonValueString>(Entry.Key);
+				TSharedPtr<FJsonValueString> StrKeyVal = MakeShared<FJsonValueString>(FString(Entry.Key.Len(), *Entry.Key));
 				if (!UEFFileLibrary::JsonValueToAnyStruct(StrKeyVal, mapProperty->KeyProp, Helper.GetKeyPtr(Idx)) || !
 					UEFFileLibrary::JsonValueToAnyStruct(Entry.Value, mapProperty->ValueProp, Helper.GetValuePtr(Idx)))
 				{
@@ -631,7 +631,7 @@ bool UEFFileLibrary::JsonValueToAnyStruct(TSharedPtr<FJsonValue> JsonValue, FPro
 			const auto JsonObject = JsonValue->AsObject();
 			if (!JsonObject->HasTypedField<EJson::String>(TEXT("_ClassName")))
 			{
-				JsonObject->SetStringField("_ClassName", PropValue->GetClass()->GetFName().ToString());
+				JsonObject->SetStringField(TEXT("_ClassName"), PropValue->GetClass()->GetFName().ToString());
 			}
 			return FJsonObjectConverter::JsonObjectToUStruct(JsonObject.ToSharedRef(), objectProperty->PropertyClass,
 			                                                 PropValue, 0, 0);
@@ -885,7 +885,7 @@ FString UEFFileLibrary::AnyStructToXmlValue(FProperty* Property, TSharedPtr<FJso
 				FProperty* Prop = *It;
 				if (Object->HasField(Prop->GetAuthoredName()))
 				{
-					auto Val = Object->Values.Find(Prop->GetAuthoredName())->ToSharedRef();
+					auto Val = Object->TryGetField(Prop->GetAuthoredName()).ToSharedRef();
 					Arr = UEFFileLibrary::AnyStructToXmlValue(Prop, Val, Depth + 1);
 					UEFFileLibrary::CreateTagNode(Prop->GetAuthoredName(), Arr, Depth,
 					                              (Val->Type == EJson::Array || Val->Type == EJson::Object));
@@ -893,7 +893,7 @@ FString UEFFileLibrary::AnyStructToXmlValue(FProperty* Property, TSharedPtr<FJso
 				}
 				else if (Object->HasField(Prop->GetName()))
 				{
-					auto Val = Object->Values.Find(Prop->GetName())->ToSharedRef();
+					auto Val = Object->TryGetField(Prop->GetName()).ToSharedRef();
 					Arr = UEFFileLibrary::AnyStructToXmlValue(Prop, Val, Depth + 1);
 					UEFFileLibrary::CreateTagNode(Prop->GetName(), Arr, Depth,
 					                              (Val->Type == EJson::Array || Val->Type == EJson::Object));
@@ -931,7 +931,7 @@ FString UEFFileLibrary::AnyStructToXmlValue(FProperty* Property, TSharedPtr<FJso
 				FProperty* Prop = *It;
 				if (Object->HasField(Prop->GetAuthoredName()))
 				{
-					auto Val = Object->Values.Find(Prop->GetAuthoredName())->ToSharedRef();
+					auto Val = Object->TryGetField(Prop->GetAuthoredName()).ToSharedRef();
 					Arr = UEFFileLibrary::AnyStructToXmlValue(Prop, Val, Depth + 1);
 					UEFFileLibrary::CreateTagNode(Prop->GetAuthoredName(), Arr, Depth,
 					                              (Val->Type == EJson::Array || Val->Type == EJson::Object));
@@ -939,7 +939,7 @@ FString UEFFileLibrary::AnyStructToXmlValue(FProperty* Property, TSharedPtr<FJso
 				}
 				else if (Object->HasField(Prop->GetName()))
 				{
-					auto Val = Object->Values.Find(Prop->GetName())->ToSharedRef();
+					auto Val = Object->TryGetField(Prop->GetName()).ToSharedRef();
 					Arr = UEFFileLibrary::AnyStructToXmlValue(Prop, Val, Depth + 1);
 					UEFFileLibrary::CreateTagNode(Prop->GetName(), Arr, Depth,
 					                              (Val->Type == EJson::Array || Val->Type == EJson::Object));

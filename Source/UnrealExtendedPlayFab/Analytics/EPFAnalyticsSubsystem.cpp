@@ -629,7 +629,7 @@ void UEPFAnalyticsSubsystem::LoadQueueFromDisk()
 				FString StrVal;
 				if (Pair.Value->TryGetString(StrVal))
 				{
-					Queued.Body.Add(Pair.Key, StrVal);
+					Queued.Body.Add(FString(Pair.Key.Len(), *Pair.Key), StrVal);
 				}
 			}
 		}

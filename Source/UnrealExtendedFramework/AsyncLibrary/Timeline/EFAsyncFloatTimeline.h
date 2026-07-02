@@ -39,7 +39,7 @@ class UNREALEXTENDEDFRAMEWORK_API UEFAsyncFloatTimeline : public UBlueprintAsync
 	*/
 
 	FName ExtendedTimelineName;
-	float LoopTime = 0.1;
+	float LoopTime = 0.1f;
 	float TimePassed = 0.f;
 	float CurveLastTime = 0;
 	float CurveFirstTime = 0;

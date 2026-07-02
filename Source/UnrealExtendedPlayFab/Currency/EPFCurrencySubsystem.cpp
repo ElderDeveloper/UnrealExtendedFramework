@@ -145,7 +145,7 @@ TArray<FEPFCurrencyBalance> UEPFCurrencySubsystem::GetAllCachedBalances() const
 	for (const auto& Pair : CachedBalances)
 	{
 		FEPFCurrencyBalance Balance;
-		Balance.CurrencyCode = Pair.Key;
+		Balance.CurrencyCode = FString(Pair.Key.Len(), *Pair.Key);
 		Balance.Amount = Pair.Value;
 		Result.Add(Balance);
 	}

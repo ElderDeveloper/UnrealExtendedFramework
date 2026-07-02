@@ -115,7 +115,7 @@ void UEPFCharacterSubsystem::GetCharacterData(const FString& CharacterId, const 
 					for (const auto& Pair : (*DataObj)->Values)
 					{
 						const TSharedPtr<FJsonObject>* ValObj = nullptr;
-						if (Pair.Value->TryGetObject(ValObj) && ValObj) Data.Add(Pair.Key, (*ValObj)->GetStringField(TEXT("Value")));
+						if (Pair.Value->TryGetObject(ValObj) && ValObj) Data.Add(FString(Pair.Key.Len(), *Pair.Key), (*ValObj)->GetStringField(TEXT("Value")));
 					}
 				}
 			}
@@ -157,7 +157,7 @@ void UEPFCharacterSubsystem::GetCharacterStatistics(const FString& CharacterId)
 				{
 					for (const auto& Pair : (*StatsObj)->Values)
 					{
-						double Val = 0; if (Pair.Value->TryGetNumber(Val)) Stats.Add(Pair.Key, static_cast<int32>(Val));
+						double Val = 0; if (Pair.Value->TryGetNumber(Val)) Stats.Add(FString(Pair.Key.Len(), *Pair.Key), static_cast<int32>(Val));
 					}
 				}
 			}
@@ -270,4 +270,3 @@ void UEPFCharacterSubsystem::ParseCharacterLeaderboard(const FEPFResult& Result,
 	}
 	OnCharacterLeaderboardReceived.Broadcast(Result, Entries);
 }
-

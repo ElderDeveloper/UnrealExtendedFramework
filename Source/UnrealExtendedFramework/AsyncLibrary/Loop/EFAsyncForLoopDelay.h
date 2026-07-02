@@ -31,7 +31,7 @@ class UNREALEXTENDEDFRAMEWORK_API UEFAsyncForLoopDelay : public UBlueprintAsyncA
 	* Static property to prevent restarting the async node multiple times before execution has finished
 	*/
 	
-	float LoopTime = 0.1;
+	float LoopTime = 0.1f;
 	int32 LoopIndex = 0;
 
 	int32 FirstArrayIndex;

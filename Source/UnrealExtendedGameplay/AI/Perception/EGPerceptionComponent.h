@@ -45,7 +45,7 @@ public:
 	float DetectionDropDelay = 4;
 
 	UPROPERTY(EditDefaultsOnly , BlueprintReadWrite , Category="Detection")
-	float DetectionDropRate = 0.01;
+	float DetectionDropRate = 0.01f;
 	
 	UPROPERTY(EditDefaultsOnly , BlueprintReadWrite , Category="Detection")
 	float DetectionDistanceMin;

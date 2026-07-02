@@ -89,7 +89,7 @@ void UEPFStatsSubsystem::UpdateStats(const TMap<FString, int32>& StatsToUpdate, 
 					bool bFound = false;
 					for (FEPFStatistic& Stat : CachedStats)
 					{
-						if (Stat.StatName == Pair.Key)
+						if (Stat.StatName == FString(Pair.Key.Len(), *Pair.Key))
 						{
 							Stat.Value = Pair.Value;
 							Stat.Scores = { FString::FromInt(Pair.Value) };
@@ -100,7 +100,7 @@ void UEPFStatsSubsystem::UpdateStats(const TMap<FString, int32>& StatsToUpdate, 
 					if (!bFound)
 					{
 						FEPFStatistic NewStat;
-						NewStat.StatName = Pair.Key;
+						NewStat.StatName = FString(Pair.Key.Len(), *Pair.Key);
 						NewStat.Value = Pair.Value;
 						NewStat.Scores = { FString::FromInt(Pair.Value) };
 						CachedStats.Add(NewStat);
@@ -192,7 +192,7 @@ void UEPFStatsSubsystem::ParseStatisticsResponse(const FEPFResult& Result, TShar
 				AssignStatisticFromJson(*StatObj, Stat);
 				if (Stat.StatName.IsEmpty())
 				{
-					Stat.StatName = Pair.Key;
+					Stat.StatName = FString(Pair.Key.Len(), *Pair.Key);
 				}
 				Stat.Value = ParsePrimaryScore(Stat.Scores);
 				if (!Stat.StatName.IsEmpty())

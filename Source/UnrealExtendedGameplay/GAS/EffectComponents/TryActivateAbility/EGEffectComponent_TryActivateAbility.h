@@ -1,4 +1,5 @@
-// ... existing code ...
+#pragma once
+
 #include "CoreMinimal.h"
 #include "GameplayEffectComponent.h"
 #include "GameplayTagContainer.h"

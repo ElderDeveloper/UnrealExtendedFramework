@@ -31,6 +31,11 @@
 			"LoadingPhase": "Default"
 		},
 		{
+			"Name": "UnrealExtendedGAS",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		},
+		{
 			"Name": "UnrealExtendedBackend",
 			"Type": "Runtime",
 			"LoadingPhase": "Default"

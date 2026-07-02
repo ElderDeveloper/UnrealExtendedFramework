@@ -41,7 +41,7 @@ protected:
 	float HealthFillDelay = 2;
 
 	UPROPERTY(EditDefaultsOnly,Category="Stats Component|Health|Refill")
-	float HealthFillSpeed = 0.05;
+	float HealthFillSpeed = 0.05f;
 
 	UPROPERTY(EditDefaultsOnly,Category="Stats Component|Health|Refill")
 	float HealthFillPercent = 10;
@@ -70,7 +70,7 @@ protected:
 	float ShieldFillDelay = 1.5;
 
 	UPROPERTY(EditDefaultsOnly,Category="Stats Component|Shield|Refill")
-	float ShieldFillSpeed = 0.05;
+	float ShieldFillSpeed = 0.05f;
 
 	UPROPERTY(EditDefaultsOnly,Category="Stats Component|Shield|Refill")
 	float ShieldFillPercent = 10;

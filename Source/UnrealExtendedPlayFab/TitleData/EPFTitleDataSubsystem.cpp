@@ -45,7 +45,7 @@ void UEPFTitleDataSubsystem::GetTitleData(const TArray<FString>& Keys)
 						FString Value;
 						if (Pair.Value->TryGetString(Value))
 						{
-							CachedData.Add(Pair.Key, Value);
+							CachedData.Add(FString(Pair.Key.Len(), *Pair.Key), Value);
 						}
 					}
 				}

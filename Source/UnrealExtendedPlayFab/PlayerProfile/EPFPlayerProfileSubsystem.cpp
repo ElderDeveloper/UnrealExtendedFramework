@@ -237,7 +237,7 @@ void UEPFPlayerProfileSubsystem::GetPlayerCombinedInfo(bool bGetStats, bool bGet
 							const TSharedPtr<FJsonObject>* ValueObj = nullptr;
 							if (Pair.Value->TryGetObject(ValueObj) && ValueObj)
 							{
-								Profile.PlayerData.Add(Pair.Key, (*ValueObj)->GetStringField(TEXT("Value")));
+								Profile.PlayerData.Add(FString(Pair.Key.Len(), *Pair.Key), (*ValueObj)->GetStringField(TEXT("Value")));
 							}
 						}
 					}

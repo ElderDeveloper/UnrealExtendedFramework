@@ -4,8 +4,11 @@
 #include "EGPlayMontageNotify.h"
 
 
-void UEGPlayMontageNotify::Notify(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation)
+void UEGPlayMontageNotify::Notify(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, const FAnimNotifyEventReference& EventReference)
 {
+	(void)Animation;
+	(void)EventReference;
+
 	if (MeshComp && MontageToPlay)
 	{
 		if(const auto animInstance = MeshComp->GetAnimInstance())

@@ -45,7 +45,7 @@ void UEPFPlayerDataSubsystem::GetPlayerData(const TArray<FString>& Keys)
 						const TSharedPtr<FJsonObject>* EntryObj = nullptr;
 						if (Pair.Value->TryGetObject(EntryObj) && EntryObj)
 						{
-							CachedData.Add(Pair.Key, (*EntryObj)->GetStringField(TEXT("Value")));
+							CachedData.Add(FString(Pair.Key.Len(), *Pair.Key), (*EntryObj)->GetStringField(TEXT("Value")));
 						}
 					}
 				}
@@ -80,7 +80,7 @@ void UEPFPlayerDataSubsystem::GetAllPlayerData()
 						const TSharedPtr<FJsonObject>* EntryObj = nullptr;
 						if (Pair.Value->TryGetObject(EntryObj) && EntryObj)
 						{
-							CachedData.Add(Pair.Key, (*EntryObj)->GetStringField(TEXT("Value")));
+							CachedData.Add(FString(Pair.Key.Len(), *Pair.Key), (*EntryObj)->GetStringField(TEXT("Value")));
 						}
 					}
 				}
@@ -134,7 +134,7 @@ void UEPFPlayerDataSubsystem::GetUserDataForPlayer(const FString& PlayFabId, con
 						const TSharedPtr<FJsonObject>* EntryObj = nullptr;
 						if (Pair.Value->TryGetObject(EntryObj) && EntryObj)
 						{
-							Data.Add(Pair.Key, (*EntryObj)->GetStringField(TEXT("Value")));
+							Data.Add(FString(Pair.Key.Len(), *Pair.Key), (*EntryObj)->GetStringField(TEXT("Value")));
 						}
 					}
 				}

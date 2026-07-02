@@ -254,3 +254,4 @@ private:
 	void OnMontageEnded(UAnimMontage* Montage, bool bInterrupted);
 };
 
+#pragma once

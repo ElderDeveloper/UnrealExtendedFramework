@@ -35,7 +35,7 @@ class UNREALEXTENDEDFRAMEWORK_API UEFAsyncVectorTimeline : public UBlueprintAsyn
 	* Static property to prevent restarting the async node multiple times before execution has finished
 	*/
 	
-	float LoopTime = 0.1;
+	float LoopTime = 0.1f;
 	float TimePassed = 0.f;
 	float CurveLastTime = 0;
 	

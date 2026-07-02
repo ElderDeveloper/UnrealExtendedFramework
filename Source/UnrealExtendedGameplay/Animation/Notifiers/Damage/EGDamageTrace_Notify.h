@@ -116,7 +116,7 @@ public:
 	bool UseEngineTickForCollisionCalculation = true;
 
 	UPROPERTY(EditAnywhere, meta = (EditCondition = "!UseEngineTickForCollisionCalculation") , Category="Trace Damage")
-	float CollisionCalculationTickSpeed = 0.01;
+	float CollisionCalculationTickSpeed = 0.01f;
 	
 
 

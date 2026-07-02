@@ -56,7 +56,7 @@ void UEPFSharedDataSubsystem::GetSharedGroupData(const FString& SharedGroupId, c
 						const TSharedPtr<FJsonObject>* ValObj = nullptr;
 						if (Pair.Value->TryGetObject(ValObj) && ValObj)
 						{
-							Data.Add(Pair.Key, (*ValObj)->GetStringField(TEXT("Value")));
+							Data.Add(FString(Pair.Key.Len(), *Pair.Key), (*ValObj)->GetStringField(TEXT("Value")));
 						}
 					}
 				}

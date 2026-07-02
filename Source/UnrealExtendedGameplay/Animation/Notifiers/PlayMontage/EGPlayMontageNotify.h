@@ -26,5 +26,5 @@ public:
 	float InTimeToStartMontageAt = 0;
 	
 	// Begin UAnimNotify interface
-	virtual void Notify(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation) override;
+	virtual void Notify(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, const FAnimNotifyEventReference& EventReference) override;
 };

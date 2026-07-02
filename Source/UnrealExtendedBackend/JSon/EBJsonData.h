@@ -69,7 +69,13 @@ struct FExtendedJson
 	void GetExtendedJsonKeys(TArray<FString>& GeneratedKeys) const
 	{
 		if(JsonObject)
-			JsonObject->Values.GenerateKeyArray(GeneratedKeys);
+		{
+			GeneratedKeys.Reset(JsonObject->Values.Num());
+			for (const auto& Pair : JsonObject->Values)
+			{
+				GeneratedKeys.Add(FString(Pair.Key.Len(), *Pair.Key));
+			}
+		}
 	}
 	
 };
