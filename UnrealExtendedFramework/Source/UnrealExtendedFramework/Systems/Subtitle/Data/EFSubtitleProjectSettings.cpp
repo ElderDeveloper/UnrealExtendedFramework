@@ -1,0 +1,16 @@
+﻿// EFSubtitleProjectSettings.cpp
+#include "EFSubtitleProjectSettings.h"
+#include "UnrealExtendedFramework/Systems/Subtitle/Policy/EFSubtitleAudioPlayer.h"
+#include "UnrealExtendedFramework/Systems/Subtitle/Policy/EFSubtitleQueuePolicy.h"
+#include "UnrealExtendedFramework/Systems/Subtitle/Widget/EFSubtitleDisplayWidget.h"
+
+UEFSubtitleProjectSettings::UEFSubtitleProjectSettings()
+{
+	DefaultFont = FSlateFontInfo();
+	DefaultFontColor = FLinearColor::White;
+	ShadowOffset = FVector2D(1.0f, 1.0f);
+	ShadowColor = FLinearColor(0.0f, 0.0f, 0.0f, 0.5f);
+	SubtitleWidgetClass = UEFSubtitleDisplayWidget::StaticClass();
+	QueuePolicyClass = UEFSubtitleQueuePolicy_Default::StaticClass();
+	AudioPlayerClass = UEFSubtitleAudioPlayer_Default::StaticClass();
+}

@@ -1,0 +1,7 @@
+QuestGraph_64x.png | QuestGraph_16x.png - http://game-icons.net/lorc/originals/conversation.html
+QuestNodeData_64x.png | QuestNodeData_16x.png - https://thenounproject.com/search/?q=data&i=2556692
+Event_96x.png | QuestEventCustom_64x.png | QuestEventCustom_16x.png - https://thenounproject.com/search/?q=event&i=1757908
+Condition_96x.png | QuestConditionCustom_64x.png | QuestConditionCustom_16x.png - https://thenounproject.com/term/correct-answer/152639/
+QuestTextArgumentCustom_64x.png | QuestTextArgumentCustom_16x.png - https://thenounproject.com/search/?q=text&i=646000
+QuestionMark_16x.png - http://game-icons.net/lorc/originals/uncertainty.html
+Quest_ShowPrimarySecondaryEdges_40x.png - https://thenounproject.com/ArtZ91/collection/strategy/?i=152647

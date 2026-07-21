@@ -1,0 +1,29 @@
+{
+	"FileVersion": 3,
+	"Version": 2,
+	"VersionName": "1.0.0",
+	"FriendlyName": "Unreal Extended Perf Sentinel",
+	"Description": "Extended Framework performance tracing, deterministic UE 5.8 extraction, regression gates, and evidence-backed reports.",
+	"Category": "Extended",
+	"CreatedBy": "Kemal Erdem YILMAZ",
+	"CreatedByURL": "",
+	"DocsURL": "",
+	"MarketplaceURL": "",
+	"SupportURL": "",
+	"CanContainContent": false,
+	"IsBetaVersion": true,
+	"IsExperimentalVersion": false,
+	"Installed": false,
+	"Modules": [
+		{
+			"Name": "UnrealExtendedPerfSentinel",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		},
+		{
+			"Name": "UnrealExtendedPerfSentinelEditor",
+			"Type": "Editor",
+			"LoadingPhase": "Default"
+		}
+	]
+}

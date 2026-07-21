@@ -1,0 +1,42 @@
+UnrealExtendedSteam — Proprietary Software License
+==================================================
+
+Copyright (c) 2026 Kemal Erdem YILMAZ (moonpunchgames.com).
+All Rights Reserved.
+
+This software and its accompanying source code, documentation, and assets
+(collectively, the "Software") are the proprietary and confidential property of
+Kemal Erdem YILMAZ (the "Author"). The Software is licensed, not sold.
+
+1. Grant
+   Subject to a separate written agreement or an official distribution channel
+   through which you legitimately obtained the Software, the Author grants you a
+   non-exclusive, non-transferable license to use and integrate the Software
+   into your own Unreal Engine projects.
+
+2. Restrictions
+   Except as expressly permitted by such an agreement or by applicable law, you
+   may NOT: (a) redistribute, sublicense, sell, rent, lease, or otherwise make
+   the Software available to any third party as a standalone product or as
+   source; (b) remove or alter any copyright, trademark, or other proprietary
+   notices; or (c) represent the Software as your own.
+
+3. Third-Party Components
+   The Software integrates with the Steamworks SDK, which is the property of
+   Valve Corporation and is governed by the Steamworks SDK Access Agreement.
+   The Steamworks SDK is NOT included with or redistributed by the Software; you
+   must obtain it directly from Valve. See
+   Source/ThirdParty/ExtendedSteamLibrary/SDK/README.md for details.
+
+4. Disclaimer of Warranty
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+   FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT.
+
+5. Limitation of Liability
+   IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER
+   LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT, OR OTHERWISE, ARISING FROM,
+   OUT OF, OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+   SOFTWARE.
+
+For licensing inquiries, contact the Author via moonpunchgames.com.

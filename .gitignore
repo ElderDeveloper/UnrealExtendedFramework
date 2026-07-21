@@ -73,3 +73,18 @@ Plugins/*/Intermediate/*
 # Cache files for the editor to use
 DerivedDataCache/*
 /Examples
+/UnrealExtendedEOS/Intermediate
+/UnrealExtendedFramework/Intermediate
+/UnrealExtendedSteam/Intermediate
+/UnrealExtendedGAS/Intermediate
+/UnrealExtendedPlayFab/Intermediate
+/UnrealExtendedGameplay/Intermediate
+/UnrealExtendedQuest/Intermediate
+/UnrealExtendedEOS/Binaries
+/UnrealExtendedGAS/Binaries
+/UnrealExtendedQuest/Binaries
+/UnrealExtendedSteam/Binaries
+/UnrealExtendedPlayFab/Binaries
+/UnrealExtendedGameplay/Binaries
+/UnrealExtendedFramework/Binaries
+/UnrealExtendedPerfSentinel/Binaries

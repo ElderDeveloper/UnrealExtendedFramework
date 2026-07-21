@@ -1,0 +1,6 @@
+# Drop-in Steamworks SDK location. Valve's SDK must never be committed to this
+# (public) repository - everything in this folder except this file and the
+# README is ignored.
+*
+!.gitignore
+!README.md
