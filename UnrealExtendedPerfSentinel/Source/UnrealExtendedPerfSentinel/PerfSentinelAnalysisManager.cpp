@@ -24,17 +24,17 @@ bool FPerfSentinelAnalysisManager::StartAnalysis(const FPerfSentinelAnalysisRequ
 	LastError.Reset();
 	CancellationToken = MakeShared<FPerfSentinelCancellationToken, ESPMode::ThreadSafe>();
 
-	const TWeakPtr<FPerfSentinelAnalysisManager> WeakThis = AsShared();
+	const TWeakPtr<FPerfSentinelAnalysisManager> WeakSelf = AsShared();
 	const TSharedPtr<FPerfSentinelCancellationToken, ESPMode::ThreadSafe> Token = CancellationToken;
-	WorkerFuture = Async(EAsyncExecution::ThreadPool, [WeakThis, Token, Request]()
+	WorkerFuture = Async(EAsyncExecution::ThreadPool, [WeakSelf, Token, Request]()
 	{
 		FPerfSentinelPythonRunner Runner;
 		FPerfSentinelProcessResult Result;
 		FString Error;
 		const bool bSucceeded = Runner.RunAnalysis(Request, Result, Error, Token.Get());
-		AsyncTask(ENamedThreads::GameThread, [WeakThis, bSucceeded, Result = MoveTemp(Result), Error = MoveTemp(Error)]() mutable
+		AsyncTask(ENamedThreads::GameThread, [WeakSelf, bSucceeded, Result = MoveTemp(Result), Error = MoveTemp(Error)]() mutable
 		{
-			if (const TSharedPtr<FPerfSentinelAnalysisManager> Pinned = WeakThis.Pin())
+			if (const TSharedPtr<FPerfSentinelAnalysisManager> Pinned = WeakSelf.Pin())
 			{
 				Pinned->CompleteOnGameThread(bSucceeded, MoveTemp(Result), MoveTemp(Error));
 			}

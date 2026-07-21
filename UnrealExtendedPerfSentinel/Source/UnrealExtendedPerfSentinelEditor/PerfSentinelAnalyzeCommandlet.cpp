@@ -7,6 +7,7 @@
 #include "Common/ProviderLock.h"
 #include "HAL/PlatformFileManager.h"
 #include "TraceServices/ITraceServicesModule.h"
+#include "Misc/EngineVersionComparison.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Parse.h"
 #include "Misc/Paths.h"
@@ -25,7 +26,9 @@
 #include "TraceServices/Model/Memory.h"
 #include "TraceServices/Model/Modules.h"
 #include "TraceServices/Model/NetProfiler.h"
+#if !UE_VERSION_OLDER_THAN(5, 8, 0)
 #include "TraceServices/Model/ObjectProvider.h"
+#endif
 #include "TraceServices/Model/Screenshot.h"
 #include "TraceServices/Model/StackSamples.h"
 #include "TraceServices/Model/TasksProfiler.h"
@@ -97,6 +100,16 @@ UPerfSentinelAnalyzeCommandlet::UPerfSentinelAnalyzeCommandlet()
 
 int32 UPerfSentinelAnalyzeCommandlet::Main(const FString& Params)
 {
+#if UE_VERSION_OLDER_THAN(5, 8, 0)
+	// This commandlet's trace extraction targets the UE 5.8 TraceServices API
+	// (timeline readers, stack-sample / object providers, allocation timelines).
+	// Those APIs are unavailable on earlier engines, so report unsupported here
+	// rather than failing to compile. The runtime PerfSentinel module is unaffected.
+	(void)Params;
+	UE_LOG(LogTemp, Warning,
+		TEXT("PerfSentinelAnalyze requires UE 5.8+ TraceServices; skipping extraction on this engine version."));
+	return 0;
+#else
 	FString TracePath;
 	FString OutputPath;
 	FParse::Value(*Params, TEXT("Trace="), TracePath);
@@ -814,4 +827,5 @@ int32 UPerfSentinelAnalyzeCommandlet::Main(const FString& Params)
 
 	UE_LOG(LogTemp, Display, TEXT("PerfSentinelAnalyze wrote native evidence: %s"), *OutputPath);
 	return 0;
+#endif // UE 5.8+ TraceServices extraction
 }
