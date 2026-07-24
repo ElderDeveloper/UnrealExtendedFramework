@@ -105,21 +105,41 @@ bool FExtendedSteamSharedModule::InitializeSteamClient()
 	}
 #endif
 
-#if ESTEAM_SDK_AT_LEAST(159)
-	SteamErrMsg InitError;
-	FMemory::Memzero(InitError);
-	if (SteamAPI_InitEx(&InitError) != k_ESteamAPIInitResult_OK)
+	// Another Steam integration may already have loaded steam_api64.dll. Windows reuses
+	// modules by basename, so the loaded DLL can be newer than the SDK used to compile
+	// this module. Newer Steamworks DLLs export SteamAPI_InitFlat instead of SteamAPI_Init.
+	// Resolve initialization dynamically to tolerate either ABI without invoking a
+	// missing delay-load import (which raises 0xc06d007f before we can fail cleanly).
+	using FSteamAPIInitFlat = int32 (*)(ANSICHAR* OutError);
+	using FSteamAPIInitLegacy = bool (*)();
+
+	if (FSteamAPIInitFlat InitFlat = reinterpret_cast<FSteamAPIInitFlat>(
+		FPlatformProcess::GetDllExport(SteamDllHandle, TEXT("SteamAPI_InitFlat"))))
 	{
-		UE_LOG(LogExtendedSteam, Warning, TEXT("InitializeSteamClient: SteamAPI_InitEx failed: %s"), UTF8_TO_TCHAR(InitError));
+		ANSICHAR InitError[1024] = {};
+		if (InitFlat(InitError) != 0)
+		{
+			UE_LOG(LogExtendedSteam, Warning, TEXT("InitializeSteamClient: SteamAPI_InitFlat failed: %s"),
+				UTF8_TO_TCHAR(InitError));
+			return false;
+		}
+	}
+	else if (FSteamAPIInitLegacy InitLegacy = reinterpret_cast<FSteamAPIInitLegacy>(
+		FPlatformProcess::GetDllExport(SteamDllHandle, TEXT("SteamAPI_Init"))))
+	{
+		if (!InitLegacy())
+		{
+			UE_LOG(LogExtendedSteam, Warning,
+				TEXT("InitializeSteamClient: SteamAPI_Init failed (is the Steam client running?)"));
+			return false;
+		}
+	}
+	else
+	{
+		UE_LOG(LogExtendedSteam, Error,
+			TEXT("InitializeSteamClient: loaded Steam API library exports neither SteamAPI_InitFlat nor SteamAPI_Init"));
 		return false;
 	}
-#else
-	if (!SteamAPI_Init())
-	{
-		UE_LOG(LogExtendedSteam, Warning, TEXT("InitializeSteamClient: SteamAPI_Init failed (is the Steam client running?)"));
-		return false;
-	}
-#endif
 
 	bSteamClientInitialized = true;
 	EnsureCallbackPump();

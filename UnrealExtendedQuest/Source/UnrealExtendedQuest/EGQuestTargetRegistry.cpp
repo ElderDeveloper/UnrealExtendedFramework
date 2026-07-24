@@ -6,13 +6,19 @@
 
 namespace
 {
-	/** Prefer ActorGuid (stable across travel for placed actors) over path names. */
+	/** Prefer ActorGuid in editor and a cooked-safe object path for placed runtime actors. */
 	FName MakeActorStableId(const AActor& Actor)
 	{
+#if WITH_EDITOR
 		const FGuid ActorGuid = Actor.GetActorGuid();
 		if (ActorGuid.IsValid())
 		{
 			return FName(*ActorGuid.ToString(EGuidFormats::DigitsWithHyphensLower));
+		}
+#endif
+		if (Actor.HasAnyFlags(RF_WasLoaded))
+		{
+			return FName(*Actor.GetPathName(Actor.GetWorld()));
 		}
 		return FName(*FString::Printf(TEXT("Dyn.%s"), *FGuid::NewGuid().ToString(EGuidFormats::DigitsWithHyphensLower)));
 	}

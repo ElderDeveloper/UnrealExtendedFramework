@@ -446,7 +446,7 @@ FString UESteamUtilsSubsystem::GetEnteredGamepadTextInput() const
 
 bool UESteamUtilsSubsystem::DismissGamepadTextInput()
 {
-#if WITH_EXTENDEDSTEAM_SDK
+#if ESTEAM_SDK_AT_LEAST(164)
 	if (IsSteamAvailable() && SteamUtils())
 	{
 		return SteamUtils()->DismissGamepadTextInput();

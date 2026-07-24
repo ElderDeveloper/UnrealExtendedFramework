@@ -20,7 +20,9 @@ namespace
 		case k_ESteamDeviceFormFactorTablet:    return EESteamRemotePlayFormFactor::Tablet;
 		case k_ESteamDeviceFormFactorComputer:  return EESteamRemotePlayFormFactor::Computer;
 		case k_ESteamDeviceFormFactorTV:        return EESteamRemotePlayFormFactor::TV;
+#if ESTEAM_SDK_AT_LEAST(164)
 		case k_ESteamDeviceFormFactorVRHeadset: return EESteamRemotePlayFormFactor::VRHeadset;
+#endif
 		default:                                return EESteamRemotePlayFormFactor::Unknown;
 		}
 	}
@@ -184,7 +186,7 @@ bool UESteamRemotePlaySubsystem::SendRemotePlayTogetherInvite(FESteamId Friend)
 
 bool UESteamRemotePlaySubsystem::ShowRemotePlayTogetherUI()
 {
-#if WITH_EXTENDEDSTEAM_SDK
+#if ESTEAM_SDK_AT_LEAST(164)
 	if (!IsSteamAvailable() || !SteamRemotePlay())
 	{
 		LogSteamUnavailable(TEXT("ShowRemotePlayTogetherUI"));

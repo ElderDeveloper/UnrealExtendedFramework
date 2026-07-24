@@ -254,8 +254,6 @@ public:
 		return bWasNeeded;
 	}
 
-	// The authority-side script of this quest, or null when it has none.
-	TSubclassOf<UEGQuestScript> GetQuestScriptClass() const { return QuestScriptClass; }
 	void SetQuestScriptClass(TSubclassOf<UEGQuestScript> InClass) { QuestScriptClass = InClass; }
 
 #if WITH_EDITORONLY_DATA
@@ -310,6 +308,9 @@ public:
 	void EnableCompileQuest() { bCompileQuest = true; }
 	void DisableCompileQuest() { bCompileQuest = false; }
 #endif
+
+	// The authority-side script class is cooked and instantiated at runtime.
+	TSubclassOf<UEGQuestScript> GetQuestScriptClass() const { return QuestScriptClass; }
 
 	// Construct and initialize a node within this Quest.
 	template<class T>

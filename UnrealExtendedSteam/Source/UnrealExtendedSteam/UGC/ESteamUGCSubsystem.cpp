@@ -112,7 +112,9 @@ namespace
 		case EESteamItemPreviewType::Sketchfab:                      return k_EItemPreviewType_Sketchfab;
 		case EESteamItemPreviewType::EnvironmentMap_HorizontalCross: return k_EItemPreviewType_EnvironmentMap_HorizontalCross;
 		case EESteamItemPreviewType::EnvironmentMap_LatLong:         return k_EItemPreviewType_EnvironmentMap_LatLong;
+#if ESTEAM_SDK_AT_LEAST(164)
 		case EESteamItemPreviewType::Clip:                          return k_EItemPreviewType_Clip;
+#endif
 		case EESteamItemPreviewType::ReservedMax:                    return k_EItemPreviewType_ReservedMax;
 		default:                                                     return k_EItemPreviewType_Image;
 		}
@@ -126,7 +128,9 @@ namespace
 		case k_EItemPreviewType_Sketchfab:                      return EESteamItemPreviewType::Sketchfab;
 		case k_EItemPreviewType_EnvironmentMap_HorizontalCross: return EESteamItemPreviewType::EnvironmentMap_HorizontalCross;
 		case k_EItemPreviewType_EnvironmentMap_LatLong:         return EESteamItemPreviewType::EnvironmentMap_LatLong;
+#if ESTEAM_SDK_AT_LEAST(164)
 		case k_EItemPreviewType_Clip:                          return EESteamItemPreviewType::Clip;
+#endif
 		case k_EItemPreviewType_Image:                          return EESteamItemPreviewType::Image;
 		default:                                                return EESteamItemPreviewType::ReservedMax;
 		}
@@ -215,11 +219,15 @@ namespace
 		Out.bTagsTruncated = Details.m_bTagsTruncated;
 		Out.Tags = FString(UTF8_TO_TCHAR(Details.m_rgchTags));
 		Out.Tags.ParseIntoArray(Out.TagList, TEXT(","), true);
+#if ESTEAM_SDK_AT_LEAST(164)
 		// Non-legacy items report their full content size in m_ulTotalFilesSize;
 		// legacy single-file items only fill m_nFileSize.
 		Out.FileSize = Details.m_ulTotalFilesSize > 0
 			? static_cast<int64>(Details.m_ulTotalFilesSize)
 			: static_cast<int64>(Details.m_nFileSize);
+#else
+		Out.FileSize = static_cast<int64>(Details.m_nFileSize);
+#endif
 		Out.FileName = FString(UTF8_TO_TCHAR(Details.m_pchFileName));
 		Out.NumChildren = static_cast<int32>(Details.m_unNumChildren);
 		Out.Visibility = FromSteamVisibility(Details.m_eVisibility);
@@ -2157,7 +2165,7 @@ int32 UESteamUGCSubsystem::GetNumSubscribedItems(bool bIncludeLocallyDisabled) c
 #if WITH_EXTENDEDSTEAM_SDK
 	if (IsSteamAvailable() && SteamUGC())
 	{
-#if ESTEAM_SDK_AT_LEAST(151)
+#if ESTEAM_SDK_AT_LEAST(164)
 		return static_cast<int32>(SteamUGC()->GetNumSubscribedItems(bIncludeLocallyDisabled));
 #else
 		(void)bIncludeLocallyDisabled;
@@ -2179,7 +2187,7 @@ void UESteamUGCSubsystem::GetSubscribedItems(TArray<int64>& OutPublishedFileIds,
 		return;
 	}
 
-#if ESTEAM_SDK_AT_LEAST(151)
+#if ESTEAM_SDK_AT_LEAST(164)
 	const uint32 NumSubscribed = SteamUGC()->GetNumSubscribedItems(bIncludeLocallyDisabled);
 #else
 	(void)bIncludeLocallyDisabled;
@@ -2192,7 +2200,7 @@ void UESteamUGCSubsystem::GetSubscribedItems(TArray<int64>& OutPublishedFileIds,
 
 	TArray<PublishedFileId_t> FileIds;
 	FileIds.SetNumUninitialized(NumSubscribed);
-#if ESTEAM_SDK_AT_LEAST(151)
+#if ESTEAM_SDK_AT_LEAST(164)
 	const uint32 NumReturned = SteamUGC()->GetSubscribedItems(FileIds.GetData(), NumSubscribed, bIncludeLocallyDisabled);
 #else
 	const uint32 NumReturned = SteamUGC()->GetSubscribedItems(FileIds.GetData(), NumSubscribed);
@@ -2220,8 +2228,8 @@ FESteamUGCItemState UESteamUGCSubsystem::GetItemState(int64 PublishedFileId) con
 		State.bNeedsUpdate = (Flags & k_EItemStateNeedsUpdate) != 0;
 		State.bDownloading = (Flags & k_EItemStateDownloading) != 0;
 		State.bDownloadPending = (Flags & k_EItemStateDownloadPending) != 0;
-#if ESTEAM_SDK_AT_LEAST(151)
-		// k_EItemStateDisabledLocally only exists in Steamworks 1.51+.
+#if ESTEAM_SDK_AT_LEAST(164)
+		// Local disabling was added to ISteamUGC in Steamworks 1.64.
 		State.bDisabledLocally = (Flags & k_EItemStateDisabledLocally) != 0;
 #endif
 	}

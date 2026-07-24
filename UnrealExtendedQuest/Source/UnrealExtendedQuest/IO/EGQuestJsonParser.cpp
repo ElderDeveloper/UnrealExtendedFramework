@@ -378,8 +378,12 @@ bool FEGQuestJsonParser::ConvertScalarJsonValueToProperty(const TSharedPtr<FJson
 
 					// NOTE if key is a FStructProperty no need to Import the text item here as it will do that below in UStruct
 					// Add key
+#if UE_VERSION_NEWER_THAN_OR_EQUAL(5, 8, 0)
 					// UE 5.8: map keys are UE::FSharedString; FJsonValueString wants an FString.
 					const TSharedPtr<FJsonValueString> KeyAsString = MakeShared<FJsonValueString>(FString(Entry.Key.ToView()));
+#else
+					const TSharedPtr<FJsonValueString> KeyAsString = MakeShared<FJsonValueString>(Entry.Key);
+#endif
 					const bool bKeySuccess = JsonValueToProperty(KeyAsString, Helper.GetKeyProperty(), ContainerPtr, Helper.GetKeyPtr(NewIndex));
 
 					// Add value

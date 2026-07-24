@@ -3,6 +3,7 @@
 
 #include "JsonObjectConverter.h"
 #include "JsonObjectWrapper.h"
+#include "Misc/EngineVersionComparison.h"
 #include "Policies/CondensedJsonPrintPolicy.h"
 #include "UObject/UnrealType.h"
 #include "UObject/EnumProperty.h"
@@ -445,7 +446,11 @@ bool FEGQuestJsonWriter::UStructToJsonAttributes(const UStruct* StructDefinition
 			OutJsonAttributes.Empty(ProxyObject->JsonObject->Values.Num());
 			for (const auto& Pair : ProxyObject->JsonObject->Values)
 			{
+#if UE_VERSION_NEWER_THAN_OR_EQUAL(5, 8, 0)
 				OutJsonAttributes.Add(FString(Pair.Key.ToView()), Pair.Value);
+#else
+				OutJsonAttributes.Add(Pair.Key, Pair.Value);
+#endif
 			}
 		}
 

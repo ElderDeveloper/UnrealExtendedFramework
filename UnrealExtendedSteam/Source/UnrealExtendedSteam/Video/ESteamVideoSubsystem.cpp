@@ -28,8 +28,10 @@ public:
 		: Owner(InOwner)
 		, VideoURLResult(this, &FESteamVideoCallbacks::HandleVideoURLResult)
 		, OPFSettingsResult(this, &FESteamVideoCallbacks::HandleOPFSettingsResult)
+#if ESTEAM_SDK_AT_LEAST(164)
 		, BroadcastUploadStart(this, &FESteamVideoCallbacks::HandleBroadcastUploadStart)
 		, BroadcastUploadStop(this, &FESteamVideoCallbacks::HandleBroadcastUploadStop)
+#endif
 	{
 	}
 
@@ -54,6 +56,7 @@ private:
 		}
 	}
 
+#if ESTEAM_SDK_AT_LEAST(164)
 	void HandleBroadcastUploadStart(BroadcastUploadStart_t* Data)
 	{
 		if (UESteamVideoSubsystem* Subsystem = Owner.Get())
@@ -69,12 +72,15 @@ private:
 			Subsystem->OnBroadcastUploadStop.Broadcast(ToESteamBroadcastResult(Data->m_eResult));
 		}
 	}
+#endif
 
 	TWeakObjectPtr<UESteamVideoSubsystem> Owner;
 	CCallback<FESteamVideoCallbacks, GetVideoURLResult_t> VideoURLResult;
 	CCallback<FESteamVideoCallbacks, GetOPFSettingsResult_t> OPFSettingsResult;
+#if ESTEAM_SDK_AT_LEAST(164)
 	CCallback<FESteamVideoCallbacks, BroadcastUploadStart_t> BroadcastUploadStart;
 	CCallback<FESteamVideoCallbacks, BroadcastUploadStop_t> BroadcastUploadStop;
+#endif
 };
 #else
 class FESteamVideoCallbacks

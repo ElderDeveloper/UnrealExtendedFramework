@@ -28,9 +28,11 @@ namespace
 		case EESteamParentalFeature::Library:       return k_EFeatureLibrary;
 		case EESteamParentalFeature::Test:          return k_EFeatureTest;
 		case EESteamParentalFeature::SiteLicense:   return k_EFeatureSiteLicense;
+#if ESTEAM_SDK_AT_LEAST(164)
 		case EESteamParentalFeature::KioskMode:     return k_EFeatureKioskMode_Deprecated;
 		case EESteamParentalFeature::BlockAlways:   return k_EFeatureBlockAlways;
 		case EESteamParentalFeature::Desktop:       return k_EFeatureDesktop;
+#endif
 		default:                                    return k_EFeatureInvalid;
 		}
 	}
