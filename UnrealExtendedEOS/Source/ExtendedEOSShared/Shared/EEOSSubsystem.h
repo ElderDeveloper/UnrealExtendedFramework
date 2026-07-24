@@ -31,6 +31,13 @@ public:
 	UFUNCTION(BlueprintPure, Category = "EOS")
 	bool IsEOSAvailable() const;
 
+	/**
+	 * True when the process-wide EOS OSS creation budget is exhausted and no instance exists —
+	 * the platform cannot be created this session (invalid credentials/config). Retry loops
+	 * should stop polling when this returns true.
+	 */
+	static bool IsEOSCreationExhausted();
+
 protected:
 
 	/** Get the EOS Online Subsystem (may return nullptr if not configured) */

@@ -3,6 +3,7 @@
 #include "EEOSAuthSubsystem.h"
 #include "Auth/EEOSConnectSubsystem.h"
 #include "Shared/EEOSSettings.h"
+#include "Shared/EEOSBlueprintLibrary.h"
 #include "OnlineSubsystemUtils.h"
 #include "Interfaces/OnlineIdentityInterface.h"
 #include "UnrealExtendedEOS.h"
@@ -1009,6 +1010,28 @@ void UEEOSAuthSubsystem::AutoConnectLoginAfterAuth()
 	{
 		UE_LOG(LogExtendedEOS, Log, TEXT("EEOSAuthSubsystem: Auto-chain Connect login skipped — a Connect login is already pending"));
 		return;
+	}
+
+	// With bUseEOSConnect=true in [/Script/OnlineSubsystemEOS.EOSSettings], the ENGINE's login
+	// flow already performed the Connect login — the identity net id arrives as "EAS|PUID" with
+	// a real PUID half. Re-logging-in through the raw SDK here is redundant and actually fails
+	// against the backend (product-id mismatch on the re-used auth token). Adopt the engine's
+	// Connect session instead; only fall back to the raw chain for EAS-only configurations.
+	if (IOnlineSubsystem* EOSSub = GetEOSOnlineSubsystem())
+	{
+		if (IOnlineIdentityPtr IdentityInterface = EOSSub->GetIdentityInterface())
+		{
+			if (FUniqueNetIdPtr LocalId = IdentityInterface->GetUniquePlayerId(0))
+			{
+				const FString EnginePuid = UEEOSBlueprintLibrary::ExtractProductUserId(LocalId->ToString());
+				if (!EnginePuid.IsEmpty())
+				{
+					UE_LOG(LogExtendedEOS, Log, TEXT("EEOSAuthSubsystem: Adopting the engine's Connect session (PUID: %s) — no raw Connect login needed"), *EnginePuid);
+					SetConnectLoginResult(true, EnginePuid, TEXT(""));
+					return;
+				}
+			}
+		}
 	}
 
 	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSAuthSubsystem: Auto-chaining Connect login after Auth success..."));

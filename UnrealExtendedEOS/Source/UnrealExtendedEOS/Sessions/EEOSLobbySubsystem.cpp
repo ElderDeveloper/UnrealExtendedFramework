@@ -133,6 +133,14 @@ bool UEEOSLobbySubsystem::TickRetryRegisterNotifications(float /*DeltaTime*/)
 		NotificationRetryTickerHandle.Reset();
 		return false; // stop ticking
 	}
+	// EOS platform creation is permanently exhausted (invalid credentials/config) — every
+	// further retry would just re-boot the SDK into the same failure. Give up for this session.
+	if (IsEOSCreationExhausted())
+	{
+		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSLobbySubsystem — EOS unavailable for this session; stopping notification registration retries."));
+		NotificationRetryTickerHandle.Reset();
+		return false;
+	}
 	return true;
 }
 

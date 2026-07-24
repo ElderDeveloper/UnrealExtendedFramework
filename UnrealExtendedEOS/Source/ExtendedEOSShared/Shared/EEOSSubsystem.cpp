@@ -25,19 +25,57 @@ bool UEEOSSubsystem::IsEOSAvailable() const
 	return GetEOSOnlineSubsystem() != nullptr;
 }
 
+// Process-wide budget for EOS OSS CREATION attempts. Every IOnlineSubsystem::Get() call after a
+// failed creation re-attempts the full EOS SDK platform boot (which fails again if the
+// [/Script/OnlineSubsystemEOS.EOSSettings] credentials are invalid) — with 25 subsystems and
+// retry tickers, an unbounded retry floods the log with SDK boot errors every second. A few real
+// attempts cover late module load; after that the failure is config, not timing, and we latch.
+static int32 GEOSCreateAttemptsRemaining = 3;
+static bool GEOSCreateGiveUpLogged = false;
+
+bool UEEOSSubsystem::IsEOSCreationExhausted()
+{
+	return GEOSCreateAttemptsRemaining <= 0 && !IOnlineSubsystem::DoesInstanceExist(EOS_SUBSYSTEM);
+}
+
 IOnlineSubsystem* UEEOSSubsystem::GetEOSOnlineSubsystem() const
 {
-	// Only a successful lookup is cached: the OSS may not be loaded yet when the first caller
-	// asks (subsystem Initialize order is undefined), so a null result must be retried, not
-	// remembered for the rest of the session.
-	if (!CachedEOSSubsystem)
+	if (CachedEOSSubsystem)
+	{
+		return CachedEOSSubsystem;
+	}
+
+	// Cheap path: an instance that already exists can be fetched without risking a new SDK boot.
+	if (IOnlineSubsystem::DoesInstanceExist(EOS_SUBSYSTEM))
 	{
 		CachedEOSSubsystem = IOnlineSubsystem::Get(EOS_SUBSYSTEM);
-		if (!CachedEOSSubsystem && !bHasTriedCaching)
+		return CachedEOSSubsystem;
+	}
+
+	if (GEOSCreateAttemptsRemaining <= 0)
+	{
+		if (!GEOSCreateGiveUpLogged)
 		{
-			bHasTriedCaching = true;
-			UE_LOG(LogExtendedEOS, Warning, TEXT("EOS OnlineSubsystem is not available. Make sure OnlineSubsystemEOS is configured."));
+			GEOSCreateGiveUpLogged = true;
+			UE_LOG(LogExtendedEOS, Error,
+				TEXT("EOS platform failed to initialize after repeated attempts — giving up for this session. ")
+				TEXT("Check the [/Script/OnlineSubsystemEOS.EOSSettings] Artifacts entry in DefaultEngine.ini ")
+				TEXT("(ProductId/SandboxId/DeploymentId/ClientId/ClientSecret must be real values and the ")
+				TEXT("EncryptionKey must be 64 hex digits — placeholders make EOS_Platform_Create reject the options)."));
 		}
+		return nullptr;
+	}
+
+	--GEOSCreateAttemptsRemaining;
+	CachedEOSSubsystem = IOnlineSubsystem::Get(EOS_SUBSYSTEM);
+	if (CachedEOSSubsystem)
+	{
+		GEOSCreateAttemptsRemaining = 3;	// healthy again — restore the budget for OSS restarts
+	}
+	else if (!bHasTriedCaching)
+	{
+		bHasTriedCaching = true;
+		UE_LOG(LogExtendedEOS, Warning, TEXT("EOS OnlineSubsystem is not available. Make sure OnlineSubsystemEOS is configured."));
 	}
 	return CachedEOSSubsystem;
 }
