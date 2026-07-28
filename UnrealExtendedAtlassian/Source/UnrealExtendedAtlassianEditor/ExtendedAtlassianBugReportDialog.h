@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "ExtendedAtlassianContextCapture.h"
+#include "ExtendedAtlassianIssueFields.h"
 #include "ExtendedAtlassianTypes.h"
 #include "Widgets/SCompoundWidget.h"
 
@@ -36,8 +37,8 @@ public:
 	static void Open();
 
 private:
-	using FIssueTypePtr = TSharedPtr<FExtendedAtlassianIssueType>;
-	using FPriorityPtr = TSharedPtr<FExtendedAtlassianPriority>;
+	using FIssueTypePtr = FExtendedAtlassianIssueFields::FIssueTypePtr;
+	using FPriorityPtr = FExtendedAtlassianIssueFields::FPriorityPtr;
 
 	void LoadFieldOptions();
 	void Submit();
@@ -55,12 +56,10 @@ private:
 	TSharedPtr<SMultiLineEditableTextBox> DescriptionBox;
 	TSharedPtr<SEditableTextBox> LabelsBox;
 
-	TArray<FIssueTypePtr> IssueTypes;
-	FIssueTypePtr SelectedIssueType;
-	TSharedPtr<SComboBox<FIssueTypePtr>> IssueTypeCombo;
+	/** Issue type and priority lists, shared with the new issue dialog. */
+	TSharedPtr<FExtendedAtlassianIssueFields> Fields;
 
-	TArray<FPriorityPtr> Priorities;
-	FPriorityPtr SelectedPriority;
+	TSharedPtr<SComboBox<FIssueTypePtr>> IssueTypeCombo;
 	TSharedPtr<SComboBox<FPriorityPtr>> PriorityCombo;
 
 	bool bIncludeScreenshot = true;

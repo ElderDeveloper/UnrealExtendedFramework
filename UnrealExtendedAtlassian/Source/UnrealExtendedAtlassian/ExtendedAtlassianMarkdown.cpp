@@ -241,6 +241,203 @@ FString FExtendedAtlassianMarkdown::InlineToMarkup(const FString& Line)
 	return Out;
 }
 
+FString FExtendedAtlassianMarkdown::MarkupToInline(const FString& Markup)
+{
+	FString Out;
+	Out.Reserve(Markup.Len());
+
+	const int32 Length = Markup.Len();
+	int32 Index = 0;
+
+	while (Index < Length)
+	{
+		if (Markup[Index] != TEXT('<'))
+		{
+			Out.AppendChar(Markup[Index]);
+			++Index;
+			continue;
+		}
+
+		const int32 TagEnd = Markup.Find(TEXT(">"), ESearchCase::CaseSensitive, ESearchDir::FromStart, Index);
+		if (TagEnd == INDEX_NONE)
+		{
+			Out.AppendChar(Markup[Index]);
+			++Index;
+			continue;
+		}
+
+		const FString Tag = Markup.Mid(Index + 1, TagEnd - Index - 1);
+
+		// "</>" closes whatever run is open; the delimiter was already emitted on open.
+		if (Tag == TEXT("/"))
+		{
+			Index = TagEnd + 1;
+			continue;
+		}
+
+		const int32 ContentStart = TagEnd + 1;
+		const int32 CloseTag = Markup.Find(TEXT("</>"), ESearchCase::CaseSensitive, ESearchDir::FromStart, ContentStart);
+		const int32 ContentEnd = CloseTag == INDEX_NONE ? Length : CloseTag;
+
+		const FString Inner = Markup.Mid(ContentStart, ContentEnd - ContentStart);
+
+		if (Tag == TEXT("Bold"))
+		{
+			Out += FString::Printf(TEXT("**%s**"), *MarkupToInline(Inner));
+		}
+		else if (Tag == TEXT("Italic"))
+		{
+			Out += FString::Printf(TEXT("*%s*"), *MarkupToInline(Inner));
+		}
+		else if (Tag == TEXT("Strike"))
+		{
+			Out += FString::Printf(TEXT("~~%s~~"), *MarkupToInline(Inner));
+		}
+		else if (Tag == TEXT("Code"))
+		{
+			// Code content is literal: emit it verbatim rather than recursing.
+			Out += FString::Printf(TEXT("`%s`"), *Inner);
+		}
+		else if (Tag.StartsWith(TEXT("a ")))
+		{
+			FString Href;
+			const int32 HrefStart = Tag.Find(TEXT("href=\""));
+			if (HrefStart != INDEX_NONE)
+			{
+				const int32 ValueStart = HrefStart + 6;
+				const int32 ValueEnd = Tag.Find(TEXT("\""), ESearchCase::CaseSensitive, ESearchDir::FromStart, ValueStart);
+				if (ValueEnd != INDEX_NONE)
+				{
+					Href = Tag.Mid(ValueStart, ValueEnd - ValueStart);
+				}
+			}
+
+			const FString Text = MarkupToInline(Inner);
+			Out += Href.IsEmpty() ? Text : FString::Printf(TEXT("[%s](%s)"), *Text, *Href);
+		}
+		else
+		{
+			Out += MarkupToInline(Inner);
+		}
+
+		Index = CloseTag == INDEX_NONE ? Length : CloseTag + 3;
+	}
+
+	// Entities were introduced when building markup; the file must hold the real characters.
+	Out.ReplaceInline(TEXT("&lt;"), TEXT("<"));
+	Out.ReplaceInline(TEXT("&gt;"), TEXT(">"));
+	Out.ReplaceInline(TEXT("&quot;"), TEXT("\""));
+	Out.ReplaceInline(TEXT("&amp;"), TEXT("&"));
+
+	return Out;
+}
+
+FString FExtendedAtlassianMarkdown::FromBlocks(const TArray<FExtendedAtlassianDocBlock>& Blocks)
+{
+	TArray<FString> Lines;
+
+	for (int32 Index = 0; Index < Blocks.Num(); ++Index)
+	{
+		const FExtendedAtlassianDocBlock& Block = Blocks[Index];
+		const FString Indent = FString::ChrN(Block.IndentDepth * 2, TEXT(' '));
+		const FString Inline = MarkupToInline(Block.Markup);
+
+		switch (Block.Kind)
+		{
+		case EExtendedAtlassianBlockKind::Heading:
+			Lines.Add(FString::ChrN(FMath::Clamp(Block.Level, 1, 6), TEXT('#')) + TEXT(" ") + Inline);
+			Lines.Add(FString());
+			break;
+
+		case EExtendedAtlassianBlockKind::BulletItem:
+			Lines.Add(Indent + TEXT("- ") + Inline);
+			break;
+
+		case EExtendedAtlassianBlockKind::OrderedItem:
+			Lines.Add(Indent + FString::Printf(TEXT("%d. "), Block.OrderedIndex > 0 ? Block.OrderedIndex : 1) + Inline);
+			break;
+
+		case EExtendedAtlassianBlockKind::TaskItem:
+			Lines.Add(Indent + (Block.bChecked ? TEXT("- [x] ") : TEXT("- [ ] ")) + Inline);
+			break;
+
+		case EExtendedAtlassianBlockKind::Quote:
+			Lines.Add(TEXT("> ") + Inline);
+			Lines.Add(FString());
+			break;
+
+		case EExtendedAtlassianBlockKind::CodeBlock:
+			Lines.Add(TEXT("```") + Block.CodeLanguage);
+			Lines.Add(Block.RawText);
+			Lines.Add(TEXT("```"));
+			Lines.Add(FString());
+			break;
+
+		case EExtendedAtlassianBlockKind::Rule:
+			Lines.Add(TEXT("---"));
+			Lines.Add(FString());
+			break;
+
+		case EExtendedAtlassianBlockKind::Image:
+			Lines.Add(FString::Printf(TEXT("![%s](%s)"), *Block.ImageAlt, *Block.ImageUrl));
+			Lines.Add(FString());
+			break;
+
+		case EExtendedAtlassianBlockKind::TableRow:
+		{
+			TArray<FString> Cells;
+			for (const FString& Cell : Block.Cells)
+			{
+				Cells.Add(MarkupToInline(Cell));
+			}
+			Lines.Add(TEXT("| ") + FString::Join(Cells, TEXT(" | ")) + TEXT(" |"));
+
+			// A GFM table is only a table if a separator follows the header row.
+			if (Block.bIsHeaderRow)
+			{
+				TArray<FString> Dashes;
+				for (int32 CellIndex = 0; CellIndex < Block.Cells.Num(); ++CellIndex)
+				{
+					Dashes.Add(TEXT("---"));
+				}
+				Lines.Add(TEXT("| ") + FString::Join(Dashes, TEXT(" | ")) + TEXT(" |"));
+			}
+			break;
+		}
+
+		default:
+			Lines.Add(Inline);
+			Lines.Add(FString());
+			break;
+		}
+
+		// A list run needs a blank line after it, but not between its items.
+		const bool bIsListItem =
+			Block.Kind == EExtendedAtlassianBlockKind::BulletItem ||
+			Block.Kind == EExtendedAtlassianBlockKind::OrderedItem ||
+			Block.Kind == EExtendedAtlassianBlockKind::TaskItem ||
+			Block.Kind == EExtendedAtlassianBlockKind::TableRow;
+
+		if (bIsListItem)
+		{
+			const bool bNextContinuesRun =
+				Index + 1 < Blocks.Num() &&
+				(Blocks[Index + 1].Kind == Block.Kind ||
+				 (Block.Kind == EExtendedAtlassianBlockKind::TableRow &&
+				  Blocks[Index + 1].Kind == EExtendedAtlassianBlockKind::TableRow));
+
+			if (!bNextContinuesRun)
+			{
+				Lines.Add(FString());
+			}
+		}
+	}
+
+	FString Result = FString::Join(Lines, TEXT("\n"));
+	Result.TrimEndInline();
+	return Result + TEXT("\n");
+}
+
 TArray<FExtendedAtlassianDocBlock> FExtendedAtlassianMarkdown::ToBlocks(const FString& Markdown)
 {
 	using namespace ExtendedAtlassianMarkdownPrivate;

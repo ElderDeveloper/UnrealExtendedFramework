@@ -5,12 +5,16 @@
 #include "ExtendedAtlassianClient.h"
 #include "ExtendedAtlassianHtml.h"
 #include "ExtendedAtlassianLog.h"
+#include "ExtendedAtlassianMarkdown.h"
 #include "ExtendedAtlassianSettings.h"
+#include "ExtendedAtlassianStorage.h"
 #include "UnrealExtendedAtlassian.h"
 
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
 #include "GenericPlatform/GenericPlatformHttp.h"
+#include "Serialization/JsonSerializer.h"
+#include "Serialization/JsonWriter.h"
 
 namespace ExtendedAtlassianConfluencePrivate
 {
@@ -427,6 +431,239 @@ void FExtendedAtlassianConfluence::GetPage(const FString& PageId, FExtendedAtlas
 
 					OnComplete.ExecuteIfBound(true, RetryPage, FExtendedAtlassianError());
 				}));
+		}));
+}
+
+void FExtendedAtlassianConfluence::GetPageForEditing(const FString& PageId, FExtendedAtlassianPageDelegate OnComplete)
+{
+	using namespace ExtendedAtlassianConfluencePrivate;
+
+	TSharedPtr<FExtendedAtlassianClient> Client;
+	const UExtendedAtlassianSettings* Settings = nullptr;
+	FExtendedAtlassianError Error;
+
+	if (!GetClientAndSettings(Client, Settings, Error))
+	{
+		OnComplete.ExecuteIfBound(false, FExtendedAtlassianPage(), Error);
+		return;
+	}
+
+	const FString Url = FString::Printf(TEXT("%s/pages/%s?body-format=storage"),
+		*Settings->GetConfluenceApiBaseUrl(), *PageId);
+
+	Client->Get(Url, FExtendedAtlassianResponseDelegate::CreateLambda(
+		[OnComplete](const FExtendedAtlassianResponse& Response)
+		{
+			if (!Response.IsSuccess() || !Response.Object.IsValid())
+			{
+				OnComplete.ExecuteIfBound(false, FExtendedAtlassianPage(), Response.Error);
+				return;
+			}
+
+			FExtendedAtlassianPage Page = ParsePageSummary(Response.Object);
+
+			const TSharedPtr<FJsonObject>* Version = nullptr;
+			if (Response.Object->TryGetObjectField(TEXT("version"), Version) && Version->IsValid())
+			{
+				(*Version)->TryGetNumberField(TEXT("number"), Page.Version);
+			}
+
+			FString Storage;
+			const TSharedPtr<FJsonObject>* Body = nullptr;
+			if (Response.Object->TryGetObjectField(TEXT("body"), Body) && Body->IsValid())
+			{
+				const TSharedPtr<FJsonObject>* Rendered = nullptr;
+				if ((*Body)->TryGetObjectField(TEXT("storage"), Rendered) && Rendered->IsValid())
+				{
+					(*Rendered)->TryGetStringField(TEXT("value"), Storage);
+				}
+			}
+
+			// Decided before anything is editable: a page we cannot rebuild must never be savable.
+			Page.bCanRoundTrip = FExtendedAtlassianStorage::CanRoundTrip(Storage, Page.RoundTripBlockers);
+			Page.Markdown = FExtendedAtlassianStorage::ToMarkdown(Storage);
+			Page.Blocks = FExtendedAtlassianMarkdown::ToBlocks(Page.Markdown);
+			Page.Body = Page.Markdown;
+
+			if (!Page.bCanRoundTrip)
+			{
+				UE_LOG(LogExtendedAtlassian, Log,
+					TEXT("Page %s is read-only in the editor; it contains %s."),
+					*Page.Id, *FString::Join(Page.RoundTripBlockers, TEXT(", ")));
+			}
+
+			OnComplete.ExecuteIfBound(true, Page, FExtendedAtlassianError());
+		}));
+}
+
+void FExtendedAtlassianConfluence::CreatePage(
+	const FString& SpaceId,
+	const FString& ParentId,
+	const FString& Title,
+	const FString& Markdown,
+	FExtendedAtlassianPageDelegate OnComplete)
+{
+	using namespace ExtendedAtlassianConfluencePrivate;
+
+	TSharedPtr<FExtendedAtlassianClient> Client;
+	const UExtendedAtlassianSettings* Settings = nullptr;
+	FExtendedAtlassianError Error;
+
+	if (!GetClientAndSettings(Client, Settings, Error))
+	{
+		OnComplete.ExecuteIfBound(false, FExtendedAtlassianPage(), Error);
+		return;
+	}
+
+	if (SpaceId.IsEmpty() || Title.TrimStartAndEnd().IsEmpty())
+	{
+		Error.Code = TEXT("BadRequest");
+		Error.Message = TEXT("A space and a title are required to create a page.");
+		OnComplete.ExecuteIfBound(false, FExtendedAtlassianPage(), Error);
+		return;
+	}
+
+	FString Body;
+	{
+		const TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> Writer =
+			TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&Body);
+
+		Writer->WriteObjectStart();
+		Writer->WriteValue(TEXT("spaceId"), SpaceId);
+		Writer->WriteValue(TEXT("status"), TEXT("current"));
+		Writer->WriteValue(TEXT("title"), Title);
+
+		if (!ParentId.IsEmpty())
+		{
+			Writer->WriteValue(TEXT("parentId"), ParentId);
+		}
+
+		Writer->WriteObjectStart(TEXT("body"));
+		Writer->WriteValue(TEXT("representation"), TEXT("storage"));
+		Writer->WriteValue(TEXT("value"), FExtendedAtlassianStorage::FromMarkdown(Markdown));
+		Writer->WriteObjectEnd();
+
+		Writer->WriteObjectEnd();
+		Writer->Close();
+	}
+
+	Client->PostJson(Settings->GetConfluenceApiBaseUrl() + TEXT("/pages"), Body,
+		FExtendedAtlassianResponseDelegate::CreateLambda(
+			[OnComplete](const FExtendedAtlassianResponse& Response)
+			{
+				if (!Response.IsSuccess() || !Response.Object.IsValid())
+				{
+					OnComplete.ExecuteIfBound(false, FExtendedAtlassianPage(), Response.Error);
+					return;
+				}
+
+				FExtendedAtlassianPage Page = ParsePageSummary(Response.Object);
+				Page.Version = 1;
+				OnComplete.ExecuteIfBound(true, Page, FExtendedAtlassianError());
+			}));
+}
+
+void FExtendedAtlassianConfluence::UpdatePage(
+	const FString& PageId,
+	const FString& Title,
+	const FString& Markdown,
+	int32 ExpectedVersion,
+	FExtendedAtlassianPageDelegate OnComplete)
+{
+	using namespace ExtendedAtlassianConfluencePrivate;
+
+	TSharedPtr<FExtendedAtlassianClient> Client;
+	const UExtendedAtlassianSettings* Settings = nullptr;
+	FExtendedAtlassianError Error;
+
+	if (!GetClientAndSettings(Client, Settings, Error))
+	{
+		OnComplete.ExecuteIfBound(false, FExtendedAtlassianPage(), Error);
+		return;
+	}
+
+	if (ExpectedVersion <= 0)
+	{
+		// Without the base version there is no conflict detection, and a save could silently
+		// discard someone else's edit. Refuse rather than guess.
+		Error.Code = TEXT("BadRequest");
+		Error.Message = TEXT("The page version is unknown. Reload the page before saving.");
+		OnComplete.ExecuteIfBound(false, FExtendedAtlassianPage(), Error);
+		return;
+	}
+
+	FString Body;
+	{
+		const TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> Writer =
+			TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&Body);
+
+		Writer->WriteObjectStart();
+		Writer->WriteValue(TEXT("id"), PageId);
+		Writer->WriteValue(TEXT("status"), TEXT("current"));
+		Writer->WriteValue(TEXT("title"), Title);
+
+		Writer->WriteObjectStart(TEXT("body"));
+		Writer->WriteValue(TEXT("representation"), TEXT("storage"));
+		Writer->WriteValue(TEXT("value"), FExtendedAtlassianStorage::FromMarkdown(Markdown));
+		Writer->WriteObjectEnd();
+
+		Writer->WriteObjectStart(TEXT("version"));
+		Writer->WriteValue(TEXT("number"), ExpectedVersion + 1);
+		Writer->WriteValue(TEXT("message"), TEXT("Edited from Unreal Editor (Extended Atlassian)"));
+		Writer->WriteObjectEnd();
+
+		Writer->WriteObjectEnd();
+		Writer->Close();
+	}
+
+	const FString Url = FString::Printf(TEXT("%s/pages/%s"), *Settings->GetConfluenceApiBaseUrl(), *PageId);
+
+	Client->PutJson(Url, Body, FExtendedAtlassianResponseDelegate::CreateLambda(
+		[OnComplete, ExpectedVersion](const FExtendedAtlassianResponse& Response)
+		{
+			if (!Response.IsSuccess())
+			{
+				FExtendedAtlassianError Failure = Response.Error;
+
+				// 409 means someone else saved after this edit began; say so in those terms.
+				if (Failure.HttpStatus == 409)
+				{
+					Failure.Code = TEXT("VersionConflict");
+					Failure.Message = FString::Printf(
+						TEXT("This page changed in Confluence since you loaded version %d. Reload before saving, or your edit would overwrite theirs."),
+						ExpectedVersion);
+				}
+
+				OnComplete.ExecuteIfBound(false, FExtendedAtlassianPage(), Failure);
+				return;
+			}
+
+			FExtendedAtlassianPage Page = ParsePageSummary(Response.Object);
+			Page.Version = ExpectedVersion + 1;
+			OnComplete.ExecuteIfBound(true, Page, FExtendedAtlassianError());
+		}));
+}
+
+void FExtendedAtlassianConfluence::DeletePage(const FString& PageId, FExtendedAtlassianActionDelegate OnComplete)
+{
+	using namespace ExtendedAtlassianConfluencePrivate;
+
+	TSharedPtr<FExtendedAtlassianClient> Client;
+	const UExtendedAtlassianSettings* Settings = nullptr;
+	FExtendedAtlassianError Error;
+
+	if (!GetClientAndSettings(Client, Settings, Error))
+	{
+		OnComplete.ExecuteIfBound(false, Error);
+		return;
+	}
+
+	const FString Url = FString::Printf(TEXT("%s/pages/%s"), *Settings->GetConfluenceApiBaseUrl(), *PageId);
+
+	Client->Delete(Url, FExtendedAtlassianResponseDelegate::CreateLambda(
+		[OnComplete](const FExtendedAtlassianResponse& Response)
+		{
+			OnComplete.ExecuteIfBound(Response.IsSuccess(), Response.Error);
 		}));
 }
 

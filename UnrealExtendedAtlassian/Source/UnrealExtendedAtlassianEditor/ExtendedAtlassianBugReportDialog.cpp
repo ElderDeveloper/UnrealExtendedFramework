@@ -31,8 +31,6 @@
 
 namespace ExtendedAtlassianBugReportPrivate
 {
-	const TCHAR* ProjectDefaultPriorityLabel = TEXT("(project default)");
-
 	constexpr float ThumbnailMaxWidth = 320.0f;
 
 	/**
@@ -171,6 +169,8 @@ void SExtendedAtlassianBugReportDialog::Construct(const FArguments& InArgs)
 	ScreenshotPng = InArgs._ScreenshotPng;
 	ScreenshotSize = InArgs._ScreenshotSize;
 
+	Fields = MakeShared<FExtendedAtlassianIssueFields>();
+
 	const bool bHasScreenshot = ScreenshotPng.Num() > 0 && ScreenshotSize.X > 0 && ScreenshotSize.Y > 0;
 	bIncludeScreenshot = bHasScreenshot;
 
@@ -259,23 +259,18 @@ void SExtendedAtlassianBugReportDialog::Construct(const FArguments& InArgs)
 						+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 2.0f, 0.0f, 0.0f)
 						[
 							SAssignNew(IssueTypeCombo, SComboBox<FIssueTypePtr>)
-							.OptionsSource(&IssueTypes)
+							.OptionsSource(&Fields->IssueTypes)
 							.OnGenerateWidget_Lambda([](FIssueTypePtr Item)
 							{
 								return SNew(STextBlock).Text(FText::FromString(Item.IsValid() ? Item->Name : FString()));
 							})
 							.OnSelectionChanged_Lambda([this](FIssueTypePtr Item, ESelectInfo::Type)
 							{
-								SelectedIssueType = Item;
+								Fields->SelectedIssueType = Item;
 							})
 							[
 								SNew(STextBlock)
-								.Text_Lambda([this]()
-								{
-									return SelectedIssueType.IsValid()
-										? FText::FromString(SelectedIssueType->Name)
-										: LOCTEXT("LoadingTypes", "Loading...");
-								})
+								.Text_Lambda([this]() { return Fields->GetIssueTypeLabel(); })
 							]
 						]
 					]
@@ -288,23 +283,18 @@ void SExtendedAtlassianBugReportDialog::Construct(const FArguments& InArgs)
 						+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 2.0f, 0.0f, 0.0f)
 						[
 							SAssignNew(PriorityCombo, SComboBox<FPriorityPtr>)
-							.OptionsSource(&Priorities)
+							.OptionsSource(&Fields->Priorities)
 							.OnGenerateWidget_Lambda([](FPriorityPtr Item)
 							{
 								return SNew(STextBlock).Text(FText::FromString(Item.IsValid() ? Item->Name : FString()));
 							})
 							.OnSelectionChanged_Lambda([this](FPriorityPtr Item, ESelectInfo::Type)
 							{
-								SelectedPriority = Item;
+								Fields->SelectedPriority = Item;
 							})
 							[
 								SNew(STextBlock)
-								.Text_Lambda([this]()
-								{
-									return SelectedPriority.IsValid()
-										? FText::FromString(SelectedPriority->Name)
-										: FText::FromString(ProjectDefaultPriorityLabel);
-								})
+								.Text_Lambda([this]() { return Fields->GetPriorityLabel(); })
 							]
 						]
 					]
@@ -467,106 +457,43 @@ void SExtendedAtlassianBugReportDialog::Construct(const FArguments& InArgs)
 
 void SExtendedAtlassianBugReportDialog::LoadFieldOptions()
 {
-	using namespace ExtendedAtlassianBugReportPrivate;
-
 	const UExtendedAtlassianSettings* Settings = UExtendedAtlassianSettings::Get();
 	if (!Settings)
 	{
 		return;
 	}
 
-	// Seed from settings so the form is usable even if the metadata calls fail.
-	if (!Settings->DefaultIssueTypeName.IsEmpty())
-	{
-		FExtendedAtlassianIssueType Fallback;
-		Fallback.Name = Settings->DefaultIssueTypeName;
-		IssueTypes.Add(MakeShared<FExtendedAtlassianIssueType>(Fallback));
-		SelectedIssueType = IssueTypes[0];
-	}
-
-	FExtendedAtlassianPriority DefaultPriority;
-	DefaultPriority.Name = ProjectDefaultPriorityLabel;
-	Priorities.Add(MakeShared<FExtendedAtlassianPriority>(DefaultPriority));
-	SelectedPriority = Priorities[0];
-
 	const TSharedPtr<FExtendedAtlassianClient> Client = FUnrealExtendedAtlassianModule::GetClient();
 	if (!Client.IsValid() || !Client->IsReady())
 	{
+		// Still seed the fallbacks, so an offline editor shows a usable form rather than empty combos.
+		Fields->Load(FString(), Settings->DefaultIssueTypeName, Settings->DefaultPriorityName, nullptr);
+
 		SetStatus(LOCTEXT("NotConnectedStatus",
 			"Not connected to Atlassian. Set the site URL and credentials in Project Settings > Plugins > Extended Atlassian."), true);
 		return;
 	}
 
-	const FString ProjectKey = Settings->GetEffectiveBugProjectKey();
-	const FString PreferredType = Settings->DefaultIssueTypeName;
-	const FString PreferredPriority = Settings->DefaultPriorityName;
-
 	TWeakPtr<SExtendedAtlassianBugReportDialog> WeakDialog = SharedThis(this);
 
-	FExtendedAtlassianJira::GetIssueTypes(ProjectKey,
-		FExtendedAtlassianIssueTypesDelegate::CreateLambda(
-			[WeakDialog, PreferredType](bool bSuccess, const TArray<FExtendedAtlassianIssueType>& InTypes, const FExtendedAtlassianError& Error)
+	Fields->Load(Settings->GetEffectiveBugProjectKey(), Settings->DefaultIssueTypeName, Settings->DefaultPriorityName,
+		[WeakDialog]()
+		{
+			const TSharedPtr<SExtendedAtlassianBugReportDialog> Dialog = WeakDialog.Pin();
+			if (!Dialog.IsValid())
 			{
-				const TSharedPtr<SExtendedAtlassianBugReportDialog> Dialog = WeakDialog.Pin();
-				if (!Dialog.IsValid() || !bSuccess || InTypes.Num() == 0)
-				{
-					return;
-				}
+				return;
+			}
 
-				Dialog->IssueTypes.Reset();
-				for (const FExtendedAtlassianIssueType& IssueType : InTypes)
-				{
-					Dialog->IssueTypes.Add(MakeShared<FExtendedAtlassianIssueType>(IssueType));
-				}
-
-				Dialog->SelectedIssueType = Dialog->IssueTypes[0];
-				for (const FIssueTypePtr& IssueType : Dialog->IssueTypes)
-				{
-					if (IssueType.IsValid() && IssueType->Name.Equals(PreferredType, ESearchCase::IgnoreCase))
-					{
-						Dialog->SelectedIssueType = IssueType;
-						break;
-					}
-				}
-
-				if (Dialog->IssueTypeCombo.IsValid())
-				{
-					Dialog->IssueTypeCombo->RefreshOptions();
-				}
-			}));
-
-	FExtendedAtlassianJira::GetPriorities(
-		FExtendedAtlassianPrioritiesDelegate::CreateLambda(
-			[WeakDialog, PreferredPriority](bool bSuccess, const TArray<FExtendedAtlassianPriority>& InPriorities, const FExtendedAtlassianError& Error)
+			if (Dialog->IssueTypeCombo.IsValid())
 			{
-				const TSharedPtr<SExtendedAtlassianBugReportDialog> Dialog = WeakDialog.Pin();
-				if (!Dialog.IsValid() || !bSuccess)
-				{
-					return;
-				}
-
-				for (const FExtendedAtlassianPriority& Priority : InPriorities)
-				{
-					Dialog->Priorities.Add(MakeShared<FExtendedAtlassianPriority>(Priority));
-				}
-
-				if (!PreferredPriority.IsEmpty())
-				{
-					for (const FPriorityPtr& Priority : Dialog->Priorities)
-					{
-						if (Priority.IsValid() && Priority->Name.Equals(PreferredPriority, ESearchCase::IgnoreCase))
-						{
-							Dialog->SelectedPriority = Priority;
-							break;
-						}
-					}
-				}
-
-				if (Dialog->PriorityCombo.IsValid())
-				{
-					Dialog->PriorityCombo->RefreshOptions();
-				}
-			}));
+				Dialog->IssueTypeCombo->RefreshOptions();
+			}
+			if (Dialog->PriorityCombo.IsValid())
+			{
+				Dialog->PriorityCombo->RefreshOptions();
+			}
+		});
 }
 
 void SExtendedAtlassianBugReportDialog::Submit()
@@ -585,7 +512,7 @@ void SExtendedAtlassianBugReportDialog::Submit()
 		return;
 	}
 
-	if (!SelectedIssueType.IsValid() || SelectedIssueType->Name.IsEmpty())
+	if (!Fields->HasIssueType())
 	{
 		SetStatus(LOCTEXT("NeedIssueType", "Pick an issue type."), true);
 		return;
@@ -600,7 +527,7 @@ void SExtendedAtlassianBugReportDialog::Submit()
 
 	FExtendedAtlassianNewIssue NewIssue;
 	NewIssue.ProjectKey = Settings->GetEffectiveBugProjectKey();
-	NewIssue.IssueTypeName = SelectedIssueType->Name;
+	NewIssue.IssueTypeName = Fields->GetIssueTypeNameToSubmit();
 	NewIssue.Summary = Summary;
 	NewIssue.Description = DescriptionBox.IsValid() ? DescriptionBox->GetText().ToString() : FString();
 
@@ -609,22 +536,11 @@ void SExtendedAtlassianBugReportDialog::Submit()
 		NewIssue.ContextBlock = CapturedContext.ToContextBlock();
 	}
 
-	// The sentinel entry has no id; anything else is a real priority.
-	if (SelectedPriority.IsValid() && !SelectedPriority->Id.IsEmpty())
-	{
-		NewIssue.PriorityName = SelectedPriority->Name;
-	}
+	NewIssue.PriorityName = Fields->GetPriorityNameToSubmit();
 
 	if (LabelsBox.IsValid())
 	{
-		LabelsBox->GetText().ToString().ParseIntoArray(NewIssue.Labels, TEXT(","), true);
-		for (FString& Label : NewIssue.Labels)
-		{
-			Label.TrimStartAndEndInline();
-			// Jira rejects labels containing spaces outright.
-			Label.ReplaceInline(TEXT(" "), TEXT("-"));
-		}
-		NewIssue.Labels.RemoveAll([](const FString& Label) { return Label.IsEmpty(); });
+		NewIssue.Labels = FExtendedAtlassianJira::ParseLabels(LabelsBox->GetText().ToString());
 	}
 
 	// Snapshot attachment payloads now; the dialog closes as soon as the issue exists.

@@ -93,6 +93,38 @@ private:
 
 	void ShowDocument(const TArray<FExtendedAtlassianDocBlock>& Blocks, const FString& SourceText);
 
+	TSharedRef<SWidget> BuildEditActions();
+
+	/** Fetches the page as storage format and opens it for editing, or refuses with a reason. */
+	void BeginEdit();
+	void EndEdit();
+
+	/** Starts an unsaved page in the space of the current selection. */
+	void BeginNewPage();
+
+	void SaveWorkingCopy();
+	void PushToConfluence();
+	void DeleteCurrentPage();
+
+	/** The space key of whichever space contains the current selection. */
+	FString FindSpaceKeyForSelection() const;
+
+	void StartWatchingDocuments();
+	void StopWatchingDocuments();
+	void HandleDocumentsChanged(const TArray<struct FFileChangeData>& Changes);
+
+	/** Writes every page of the selected space to Saved/Documents as Markdown. */
+	void PullSpaceToDisk();
+	void PullNextPage(TSharedRef<struct FExtendedAtlassianSpacePull> Pull);
+
+	/** Finds Jira keys in the open document and fetches their current status. */
+	void RefreshReferencedIssues(const FString& SourceText);
+
+	bool bPulling = false;
+
+	TArray<TSharedPtr<FExtendedAtlassianIssue>> ReferencedIssues;
+	TSharedPtr<class SWrapBox> IssueChipsBox;
+
 	/** Turns free text into CQL, or passes through what already looks like CQL. */
 	FString BuildCqlFromInput(const FString& Input) const;
 
@@ -121,9 +153,25 @@ private:
 	FString CurrentBody;
 
 	TSharedPtr<class SExtendedAtlassianDocumentView> DocumentView;
+	TSharedPtr<class SExtendedAtlassianDocumentEditor> DocumentEditor;
 
 	/** False shows the raw text instead, which is selectable and copyable. */
 	bool bShowRendered = true;
+
+	/** Edit mode replaces both view modes with the split editor. */
+	bool bEditMode = false;
+
+	/** Identity and base version of the page being edited; empty Id means an unsaved new page. */
+	FExtendedAtlassianPage EditingPage;
+	FString EditingSpaceKey;
+	FString EditingTitle;
+
+	/** Working copy on disk, when one has been written. */
+	FString CurrentFilePath;
+
+	bool bSaving = false;
+
+	FDelegateHandle DirectoryWatcherHandle;
 
 	bool bLoadingTree = false;
 	bool bLoadingPage = false;

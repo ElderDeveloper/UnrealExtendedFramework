@@ -24,6 +24,17 @@ class UNREALEXTENDEDATLASSIAN_API FExtendedAtlassianMarkdown
 public:
 	static TArray<FExtendedAtlassianDocBlock> ToBlocks(const FString& Markdown);
 
+	/**
+	 * Serialises blocks back to Markdown.
+	 *
+	 * The inverse direction, used to write the working copy in Saved/Documents. Output aims to be
+	 * idiomatic and stable so repeated round trips do not churn the file and pollute diffs.
+	 */
+	static FString FromBlocks(const TArray<FExtendedAtlassianDocBlock>& Blocks);
+
 	/** Converts one line of inline Markdown to escaped rich-text markup. Exposed for testing. */
 	static FString InlineToMarkup(const FString& Line);
+
+	/** The inverse: rich-text markup back to inline Markdown. Exposed for testing. */
+	static FString MarkupToInline(const FString& Markup);
 };

@@ -15,6 +15,7 @@ public:
 
 	TSharedPtr<FUICommandInfo> OpenIssueBrowser;
 	TSharedPtr<FUICommandInfo> RefreshIssues;
+	TSharedPtr<FUICommandInfo> NewIssue;
 	TSharedPtr<FUICommandInfo> ReportBug;
 	TSharedPtr<FUICommandInfo> OpenConfluenceBrowser;
 	TSharedPtr<FUICommandInfo> OpenSettings;

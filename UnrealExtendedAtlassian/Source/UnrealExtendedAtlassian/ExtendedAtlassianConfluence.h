@@ -3,6 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "ExtendedAtlassianJira.h"
 #include "ExtendedAtlassianTypes.h"
 
 class FJsonObject;
@@ -31,6 +32,38 @@ public:
 
 	/** A single page including its converted body. */
 	static void GetPage(const FString& PageId, FExtendedAtlassianPageDelegate OnComplete);
+
+	/**
+	 * Fetches a page as storage format for editing.
+	 *
+	 * Populates Markdown, Version and the round-trip safety flags. Separate from GetPage because
+	 * viewing wants the rendered body and editing needs the source of truth Confluence stores.
+	 */
+	static void GetPageForEditing(const FString& PageId, FExtendedAtlassianPageDelegate OnComplete);
+
+	/** Creates a page. ParentId may be empty for a space root page. */
+	static void CreatePage(
+		const FString& SpaceId,
+		const FString& ParentId,
+		const FString& Title,
+		const FString& Markdown,
+		FExtendedAtlassianPageDelegate OnComplete);
+
+	/**
+	 * Updates a page.
+	 *
+	 * ExpectedVersion is the version the edit was based on; Confluence rejects the write if the page
+	 * has moved on, which is what stops one person's save from silently discarding another's.
+	 */
+	static void UpdatePage(
+		const FString& PageId,
+		const FString& Title,
+		const FString& Markdown,
+		int32 ExpectedVersion,
+		FExtendedAtlassianPageDelegate OnComplete);
+
+	/** Moves a page to the trash. */
+	static void DeletePage(const FString& PageId, FExtendedAtlassianActionDelegate OnComplete);
 
 	/** CQL search. Results carry titles and URLs but no body. */
 	static void Search(const FString& Cql, FExtendedAtlassianPagesDelegate OnComplete);

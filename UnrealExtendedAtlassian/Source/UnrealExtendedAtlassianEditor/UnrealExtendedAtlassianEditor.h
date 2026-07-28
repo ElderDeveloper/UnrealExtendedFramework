@@ -36,6 +36,14 @@ public:
 	/** Re-runs the current query in the open issue browser. No-op when the tab is closed. */
 	static void RefreshIssueBrowser();
 
+	/**
+	 * Opens the create form, invoking the issue browser tab first.
+	 *
+	 * The browser owns the post-create refresh and reports when the new issue falls outside the
+	 * current query, so routing through it beats creating an issue the user cannot then see.
+	 */
+	static void OpenNewIssueDialog();
+
 	/** Invokes the Confluence documentation tab, creating it if it is not already open. */
 	static void OpenConfluenceBrowser();
 

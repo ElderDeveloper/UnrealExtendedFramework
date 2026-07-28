@@ -74,6 +74,23 @@ public:
 	/** Projects the account can browse, for the project-key dropdowns in settings. */
 	static void GetProjects(FExtendedAtlassianProjectsDelegate OnComplete);
 
+	/**
+	 * Finds Jira issue keys in free text.
+	 *
+	 * Matching is restricted to known project keys on purpose: a bare [A-Z]+-[0-9]+ pattern happily
+	 * matches "UTF-8" and "UE-5", which would send junk keys to the API and show phantom issues.
+	 * Results are de-duplicated in first-appearance order.
+	 */
+	static TArray<FString> ExtractIssueKeys(const FString& Text, const TArray<FString>& ProjectKeys);
+
+	/**
+	 * Splits a comma-separated label field into labels Jira will accept.
+	 *
+	 * Spaces become hyphens because Jira rejects a label containing one outright, and blank entries
+	 * are dropped so a trailing comma cannot fail the whole create.
+	 */
+	static TArray<FString> ParseLabels(const FString& CommaSeparated);
+
 	/** Browser URL for an issue, e.g. https://site.atlassian.net/browse/TOT-123 */
 	static FString GetIssueBrowseUrl(const FString& IssueKey);
 

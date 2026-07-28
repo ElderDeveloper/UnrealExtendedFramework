@@ -19,6 +19,8 @@ void FExtendedAtlassianEditorCommands::RegisterCommands()
 {
 	UI_COMMAND(OpenIssueBrowser, "Jira Issues", "Open the Jira issue browser.", EUserInterfaceActionType::Button, FInputChord());
 	UI_COMMAND(RefreshIssues, "Refresh Issues", "Re-run the current JQL query.", EUserInterfaceActionType::Button, FInputChord());
+	UI_COMMAND(NewIssue, "New Issue...", "Create a task, story or other work item in the configured Jira project.",
+		EUserInterfaceActionType::Button, FInputChord());
 	UI_COMMAND(ReportBug, "Report Bug...", "Capture the viewport and editor state, and file a Jira issue.", EUserInterfaceActionType::Button,
 		FInputChord(EModifierKey::Control | EModifierKey::Alt, EKeys::B));
 	UI_COMMAND(OpenConfluenceBrowser, "Confluence Docs", "Open the Confluence documentation browser.", EUserInterfaceActionType::Button, FInputChord());

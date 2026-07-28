@@ -36,6 +36,15 @@ public:
 	/** Re-runs the current query. Ignored while a request is already in flight. */
 	void Refresh();
 
+	/**
+	 * Opens the create form and re-runs the query once Jira accepts the issue.
+	 *
+	 * The new issue is selected if the current query matches it. It often will not — creating an
+	 * unassigned task while "My open issues" is selected is the ordinary case — so a miss says so
+	 * rather than leaving the list looking unchanged.
+	 */
+	void OpenNewIssueDialog();
+
 private:
 	using FIssuePtr = TSharedPtr<FExtendedAtlassianIssue>;
 	using FTransitionPtr = TSharedPtr<FExtendedAtlassianTransition>;
@@ -54,6 +63,9 @@ private:
 	void ApplySort();
 
 	void LoadDetailsFor(FIssuePtr Issue);
+
+	/** Consumes PendingSelectKey against the freshly loaded results. */
+	void SelectPendingIssue();
 	void PostComment();
 	void ApplyTransition(FTransitionPtr Transition);
 
@@ -77,6 +89,9 @@ private:
 	TArray<FIssuePtr> Issues;
 	TSharedPtr<SListView<FIssuePtr>> IssueListView;
 	FIssuePtr SelectedIssue;
+
+	/** Key to select after the next query returns, set when an issue is created from this tab. */
+	FString PendingSelectKey;
 
 	TArray<FTransitionPtr> Transitions;
 	TSharedPtr<SComboBox<FTransitionPtr>> TransitionCombo;

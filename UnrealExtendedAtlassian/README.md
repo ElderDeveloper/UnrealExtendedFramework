@@ -19,6 +19,10 @@ and short SHA of the project repository.
 **Browse Jira issues.** A docked tab driven by JQL, with saved presets. Change status, post comments,
 jump to the browser.
 
+**File ordinary work.** **New Issue** in the same tab creates a task, story or whatever else the
+project offers — the plain form, with none of the bug report's capture. It files into the browsing
+project rather than the bug project, and the list refreshes onto the new issue afterwards.
+
 **Read Confluence docs.** A docked tab with a space/page tree and CQL search, so design docs sit
 beside the level instead of in another window.
 
@@ -58,6 +62,7 @@ Atlassian API token grants full access to your account. Treat it like a password
 | | |
 |---|---|
 | **Report a bug** | `Ctrl+Alt+B`, or *Window → Atlassian → Report Bug* |
+| **New issue** | **New Issue** in the Jira tab, or *Window → Atlassian → New Issue...* |
 | **Jira issues** | *Window → Atlassian → Jira Issues* |
 | **Confluence docs** | *Window → Atlassian → Confluence Docs* |
 
@@ -65,6 +70,13 @@ Atlassian API token grants full access to your account. Treat it like a password
 issue loads its description, comments and available transitions. Changing status applies immediately
 and rolls back with a notification if Jira rejects it. Results cap at 200 per query; the status line
 says so when the cap truncated the set.
+
+**New issue.** Summary and issue type are required; everything else is optional. The type defaults to
+**Task** when the project offers one, and the priority defaults to *(project default)*, which leaves
+the field out of the request — projects without a priority field reject a create that carries one.
+A failed create keeps the dialog open with what you typed. After a successful one the query re-runs:
+the new issue is selected if it matches, and the status line says so plainly when it does not, which
+is the normal outcome for an unassigned task under a preset like *My open issues*.
 
 **Bug report.** Everything is optional except the summary. If the issue is created but an attachment
 upload fails, the issue still stands and the notification names which attachment did not make it. If

@@ -2,6 +2,8 @@
 
 #include "ExtendedAtlassianHtml.h"
 
+#include "Misc/Crc.h"
+
 namespace ExtendedAtlassianHtmlPrivate
 {
 	/** Tag name, lowercased, with any attributes stripped. */
@@ -76,6 +78,92 @@ namespace ExtendedAtlassianHtmlPrivate
 		{
 			Out.AppendChar(TEXT('\n'));
 		}
+	}
+
+	/**
+	 * HTML named entities that map to a single code point.
+	 *
+	 * Confluence's storage format escapes non-ASCII this way, so without the accented Latin-1 block
+	 * every "ü", "ö" and "ç" in a Turkish document arrives as literal "&uuml;" text — and would then
+	 * be escaped again on write, permanently corrupting the page. Names are case-sensitive.
+	 */
+	/**
+	 * FString map keys compare case-insensitively in Unreal, which silently makes &Ouml; find the
+	 * "ouml" entry and turn every capital accented letter lowercase. Entity names are
+	 * case-sensitive, so the map has to be too.
+	 */
+	struct FCaseSensitiveEntityKeyFuncs : BaseKeyFuncs<TPair<FString, uint32>, FString>
+	{
+		static FORCEINLINE const FString& GetSetKey(const TPair<FString, uint32>& Element)
+		{
+			return Element.Key;
+		}
+
+		static FORCEINLINE bool Matches(const FString& A, const FString& B)
+		{
+			return A.Equals(B, ESearchCase::CaseSensitive);
+		}
+
+		static FORCEINLINE uint32 GetKeyHash(const FString& Key)
+		{
+			return FCrc::StrCrc32(*Key);
+		}
+	};
+
+	using FEntityMap = TMap<FString, uint32, FDefaultSetAllocator, FCaseSensitiveEntityKeyFuncs>;
+
+	const FEntityMap& GetNamedEntities()
+	{
+		static const FEntityMap Entities = {
+			// Core markup
+			{ TEXT("quot"), 34 }, { TEXT("amp"), 38 }, { TEXT("apos"), 39 },
+			{ TEXT("lt"), 60 }, { TEXT("gt"), 62 },
+
+			// Latin-1 punctuation and symbols
+			{ TEXT("nbsp"), 32 }, { TEXT("iexcl"), 161 }, { TEXT("cent"), 162 }, { TEXT("pound"), 163 },
+			{ TEXT("curren"), 164 }, { TEXT("yen"), 165 }, { TEXT("brvbar"), 166 }, { TEXT("sect"), 167 },
+			{ TEXT("uml"), 168 }, { TEXT("copy"), 169 }, { TEXT("ordf"), 170 }, { TEXT("laquo"), 171 },
+			{ TEXT("not"), 172 }, { TEXT("reg"), 174 }, { TEXT("macr"), 175 }, { TEXT("deg"), 176 },
+			{ TEXT("plusmn"), 177 }, { TEXT("sup2"), 178 }, { TEXT("sup3"), 179 }, { TEXT("acute"), 180 },
+			{ TEXT("micro"), 181 }, { TEXT("para"), 182 }, { TEXT("middot"), 183 }, { TEXT("cedil"), 184 },
+			{ TEXT("sup1"), 185 }, { TEXT("ordm"), 186 }, { TEXT("raquo"), 187 }, { TEXT("frac14"), 188 },
+			{ TEXT("frac12"), 189 }, { TEXT("frac34"), 190 }, { TEXT("iquest"), 191 },
+			{ TEXT("times"), 215 }, { TEXT("divide"), 247 },
+
+			// Latin-1 accented capitals
+			{ TEXT("Agrave"), 192 }, { TEXT("Aacute"), 193 }, { TEXT("Acirc"), 194 }, { TEXT("Atilde"), 195 },
+			{ TEXT("Auml"), 196 }, { TEXT("Aring"), 197 }, { TEXT("AElig"), 198 }, { TEXT("Ccedil"), 199 },
+			{ TEXT("Egrave"), 200 }, { TEXT("Eacute"), 201 }, { TEXT("Ecirc"), 202 }, { TEXT("Euml"), 203 },
+			{ TEXT("Igrave"), 204 }, { TEXT("Iacute"), 205 }, { TEXT("Icirc"), 206 }, { TEXT("Iuml"), 207 },
+			{ TEXT("ETH"), 208 }, { TEXT("Ntilde"), 209 }, { TEXT("Ograve"), 210 }, { TEXT("Oacute"), 211 },
+			{ TEXT("Ocirc"), 212 }, { TEXT("Otilde"), 213 }, { TEXT("Ouml"), 214 }, { TEXT("Oslash"), 216 },
+			{ TEXT("Ugrave"), 217 }, { TEXT("Uacute"), 218 }, { TEXT("Ucirc"), 219 }, { TEXT("Uuml"), 220 },
+			{ TEXT("Yacute"), 221 }, { TEXT("THORN"), 222 },
+
+			// Latin-1 accented lowercase
+			{ TEXT("szlig"), 223 }, { TEXT("agrave"), 224 }, { TEXT("aacute"), 225 }, { TEXT("acirc"), 226 },
+			{ TEXT("atilde"), 227 }, { TEXT("auml"), 228 }, { TEXT("aring"), 229 }, { TEXT("aelig"), 230 },
+			{ TEXT("ccedil"), 231 }, { TEXT("egrave"), 232 }, { TEXT("eacute"), 233 }, { TEXT("ecirc"), 234 },
+			{ TEXT("euml"), 235 }, { TEXT("igrave"), 236 }, { TEXT("iacute"), 237 }, { TEXT("icirc"), 238 },
+			{ TEXT("iuml"), 239 }, { TEXT("eth"), 240 }, { TEXT("ntilde"), 241 }, { TEXT("ograve"), 242 },
+			{ TEXT("oacute"), 243 }, { TEXT("ocirc"), 244 }, { TEXT("otilde"), 245 }, { TEXT("ouml"), 246 },
+			{ TEXT("oslash"), 248 }, { TEXT("ugrave"), 249 }, { TEXT("uacute"), 250 }, { TEXT("ucirc"), 251 },
+			{ TEXT("uuml"), 252 }, { TEXT("yacute"), 253 }, { TEXT("thorn"), 254 }, { TEXT("yuml"), 255 },
+
+			// Latin Extended-A that Confluence names rather than numbers
+			{ TEXT("OElig"), 338 }, { TEXT("oelig"), 339 }, { TEXT("Scaron"), 352 }, { TEXT("scaron"), 353 },
+			{ TEXT("Yuml"), 376 }, { TEXT("fnof"), 402 },
+
+			// General punctuation
+			{ TEXT("lsquo"), 8216 }, { TEXT("rsquo"), 8217 }, { TEXT("sbquo"), 8218 },
+			{ TEXT("ldquo"), 8220 }, { TEXT("rdquo"), 8221 }, { TEXT("bdquo"), 8222 },
+			{ TEXT("dagger"), 8224 }, { TEXT("Dagger"), 8225 }, { TEXT("bull"), 8226 },
+			{ TEXT("prime"), 8242 }, { TEXT("Prime"), 8243 }, { TEXT("lsaquo"), 8249 }, { TEXT("rsaquo"), 8250 },
+			{ TEXT("euro"), 8364 }, { TEXT("trade"), 8482 },
+			{ TEXT("larr"), 8592 }, { TEXT("uarr"), 8593 }, { TEXT("rarr"), 8594 }, { TEXT("darr"), 8595 },
+		};
+
+		return Entities;
 	}
 
 	/** Trims each line, collapses internal whitespace runs, and limits blank runs to one. */
@@ -591,25 +679,22 @@ FString FExtendedAtlassianHtml::DecodeEntities(const FString& In)
 			continue;
 		}
 
-		static const TMap<FString, FString> NamedEntities = {
-			{ TEXT("lt"),     TEXT("<") },
-			{ TEXT("gt"),     TEXT(">") },
-			{ TEXT("quot"),   TEXT("\"") },
-			{ TEXT("apos"),   TEXT("'") },
-			{ TEXT("nbsp"),   TEXT(" ") },
+		// Entity names are case-sensitive: &Ouml; is O-umlaut, &ouml; is o-umlaut.
+		if (const uint32* CodePoint = ExtendedAtlassianHtmlPrivate::GetNamedEntities().Find(Entity))
+		{
+			Out.AppendChar(static_cast<TCHAR>(*CodePoint));
+			continue;
+		}
+
+		// A handful expand to more than one character, or to an ASCII stand-in.
+		static const TMap<FString, FString> MultiCharEntities = {
+			{ TEXT("hellip"), TEXT("...") },
 			{ TEXT("mdash"),  TEXT("-") },
 			{ TEXT("ndash"),  TEXT("-") },
-			{ TEXT("hellip"), TEXT("...") },
-			{ TEXT("lsquo"),  TEXT("'") },
-			{ TEXT("rsquo"),  TEXT("'") },
-			{ TEXT("ldquo"),  TEXT("\"") },
-			{ TEXT("rdquo"),  TEXT("\"") },
-			{ TEXT("bull"),   TEXT("*") },
-			{ TEXT("middot"), TEXT("*") },
-			{ TEXT("amp"),    TEXT("&") },
+			{ TEXT("shy"),    TEXT("") },
 		};
 
-		if (const FString* Replacement = NamedEntities.Find(Entity.ToLower()))
+		if (const FString* Replacement = MultiCharEntities.Find(Entity.ToLower()))
 		{
 			Out += *Replacement;
 			continue;

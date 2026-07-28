@@ -178,4 +178,19 @@ struct FExtendedAtlassianPage
 
 	/** Structured content for the document renderer. */
 	TArray<FExtendedAtlassianDocBlock> Blocks;
+
+	/** Markdown working copy, produced from storage format when the page is fetched for editing. */
+	FString Markdown;
+
+	/**
+	 * Confluence version number. Required to update the page: writes carry the next number and are
+	 * rejected with 409 if anyone else saved in the meantime.
+	 */
+	int32 Version = 0;
+
+	/** False when the page contains constructs this plugin cannot rebuild, so editing is refused. */
+	bool bCanRoundTrip = true;
+
+	/** What blocked the round trip, for explaining the refusal rather than just disabling a button. */
+	TArray<FString> RoundTripBlockers;
 };

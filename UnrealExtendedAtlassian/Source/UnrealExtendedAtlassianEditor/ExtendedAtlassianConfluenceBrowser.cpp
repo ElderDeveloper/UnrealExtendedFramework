@@ -4,15 +4,24 @@
 
 #include "ExtendedAtlassianClient.h"
 #include "ExtendedAtlassianConfluence.h"
+#include "ExtendedAtlassianDocumentStore.h"
+#include "ExtendedAtlassianJira.h"
+#include "ExtendedAtlassianLog.h"
 #include "ExtendedAtlassianMarkdown.h"
 #include "ExtendedAtlassianSettings.h"
+#include "SExtendedAtlassianDocumentEditor.h"
 #include "SExtendedAtlassianDocumentView.h"
 #include "UnrealExtendedAtlassian.h"
 
+#include "DirectoryWatcherModule.h"
 #include "HAL/FileManager.h"
+#include "HAL/PlatformApplicationMisc.h"
 #include "HAL/PlatformProcess.h"
+#include "IDirectoryWatcher.h"
 #include "Misc/FileHelper.h"
+#include "Misc/MessageDialog.h"
 #include "Misc/Paths.h"
+#include "Modules/ModuleManager.h"
 #include "Styling/AppStyle.h"
 #include "Widgets/Images/SThrobber.h"
 #include "Widgets/Input/SButton.h"
@@ -21,6 +30,7 @@
 #include "Widgets/Layout/SBorder.h"
 #include "Widgets/Layout/SSplitter.h"
 #include "Widgets/Layout/SWidgetSwitcher.h"
+#include "Widgets/Layout/SWrapBox.h"
 #include "Widgets/SBoxPanel.h"
 #include "Widgets/Text/STextBlock.h"
 #include "Widgets/Views/STableRow.h"
@@ -123,11 +133,14 @@ void SExtendedAtlassianConfluenceBrowser::Construct(const FArguments& InArgs)
 		AuthChangedHandle = Client->OnAuthStateChanged().AddSP(this, &SExtendedAtlassianConfluenceBrowser::HandleAuthStateChanged);
 	}
 
+	StartWatchingDocuments();
 	RefreshTree();
 }
 
 SExtendedAtlassianConfluenceBrowser::~SExtendedAtlassianConfluenceBrowser()
 {
+	StopWatchingDocuments();
+
 	if (const TSharedPtr<FExtendedAtlassianClient> Client = FUnrealExtendedAtlassianModule::GetClient())
 	{
 		Client->OnAuthStateChanged().Remove(AuthChangedHandle);
@@ -207,6 +220,22 @@ TSharedRef<SWidget> SExtendedAtlassianConfluenceBrowser::BuildToolbar()
 				.OnClicked_Lambda([this]()
 				{
 					RefreshTree();
+					return FReply::Handled();
+				})
+			]
+
+			+ SHorizontalBox::Slot()
+			.AutoWidth()
+			.VAlign(VAlign_Center)
+			.Padding(6.0f, 0.0f, 0.0f, 0.0f)
+			[
+				SNew(SButton)
+				.Text(LOCTEXT("PullSpace", "Pull Space to Disk"))
+				.ToolTipText(LOCTEXT("PullSpaceTip", "Write every page of this space to Saved/Documents as Markdown, so the whole space is readable and greppable offline."))
+				.IsEnabled_Lambda([this]() { return !bPulling && !bLoadingTree; })
+				.OnClicked_Lambda([this]()
+				{
+					PullSpaceToDisk();
 					return FReply::Handled();
 				})
 			]
@@ -343,6 +372,24 @@ TSharedRef<SWidget> SExtendedAtlassianConfluenceBrowser::BuildContentPane()
 
 				+ SHorizontalBox::Slot()
 				.AutoWidth()
+				.Padding(0.0f, 0.0f, 6.0f, 0.0f)
+				[
+					SNew(SButton)
+					.Text(LOCTEXT("CopyMarkdown", "Copy"))
+					.ToolTipText(LOCTEXT("CopyMarkdownTip", "Copy the whole document as Markdown. The rendered view cannot be selected; use this or View Source to take text out."))
+					.OnClicked_Lambda([this]()
+					{
+						if (!CurrentBody.IsEmpty())
+						{
+							FPlatformApplicationMisc::ClipboardCopy(*CurrentBody);
+							SetStatus(LOCTEXT("Copied", "Copied the document to the clipboard as Markdown."), false);
+						}
+						return FReply::Handled();
+					})
+				]
+
+				+ SHorizontalBox::Slot()
+				.AutoWidth()
 				[
 					SNew(SButton)
 					.Text_Lambda([this]()
@@ -360,13 +407,23 @@ TSharedRef<SWidget> SExtendedAtlassianConfluenceBrowser::BuildContentPane()
 				]
 			]
 
+			// Jira epics referenced by the document, with live status. Your pages already end with
+			// an "Ilgili Jira Epic" section, so this makes an existing convention actionable.
+			+ SVerticalBox::Slot()
+			.AutoHeight()
+			.Padding(0.0f, 0.0f, 0.0f, 6.0f)
+			[
+				SAssignNew(IssueChipsBox, SWrapBox)
+				.UseAllottedSize(true)
+			]
+
 			+ SVerticalBox::Slot()
 			.FillHeight(1.0f)
 			[
 				// Rendered by default; the source view is the escape hatch when conversion gets
 				// something wrong, and the only place text can be selected and copied.
 				SNew(SWidgetSwitcher)
-				.WidgetIndex_Lambda([this]() { return bShowRendered ? 0 : 1; })
+				.WidgetIndex_Lambda([this]() { return bEditMode ? 2 : (bShowRendered ? 0 : 1); })
 
 				+ SWidgetSwitcher::Slot()
 				[
@@ -381,6 +438,18 @@ TSharedRef<SWidget> SExtendedAtlassianConfluenceBrowser::BuildContentPane()
 					.AutoWrapText(true)
 					.Text_Lambda([this]() { return FText::FromString(CurrentBody); })
 				]
+
+				+ SWidgetSwitcher::Slot()
+				[
+					SAssignNew(DocumentEditor, SExtendedAtlassianDocumentEditor)
+				]
+			]
+
+			+ SVerticalBox::Slot()
+			.AutoHeight()
+			.Padding(0.0f, 6.0f, 0.0f, 0.0f)
+			[
+				BuildEditActions()
 			]
 		];
 }
@@ -653,6 +722,615 @@ void SExtendedAtlassianConfluenceBrowser::OnNodeSelectionChanged(FNodePtr Item, 
 	LoadPageBody(Item, false);
 }
 
+TSharedRef<SWidget> SExtendedAtlassianConfluenceBrowser::BuildEditActions()
+{
+	auto IsRealConfluencePage = [this]()
+	{
+		return SelectedNode.IsValid()
+			&& SelectedNode->Kind == FExtendedAtlassianDocNode::EKind::Page
+			&& !SelectedNode->bIsPlaceholder
+			&& SelectedNode->LocalPath.IsEmpty()
+			&& !SelectedNode->Id.IsEmpty();
+	};
+
+	return SNew(SVerticalBox)
+
+		// Title, editable only while composing.
+		+ SVerticalBox::Slot()
+		.AutoHeight()
+		.Padding(0.0f, 0.0f, 0.0f, 6.0f)
+		[
+			SNew(SHorizontalBox)
+			.Visibility_Lambda([this]() { return bEditMode ? EVisibility::Visible : EVisibility::Collapsed; })
+
+			+ SHorizontalBox::Slot()
+			.AutoWidth()
+			.VAlign(VAlign_Center)
+			.Padding(0.0f, 0.0f, 6.0f, 0.0f)
+			[
+				SNew(STextBlock).Text(LOCTEXT("TitleLabel", "Title"))
+			]
+
+			+ SHorizontalBox::Slot()
+			.FillWidth(1.0f)
+			[
+				SNew(SEditableTextBox)
+				.Text_Lambda([this]() { return FText::FromString(EditingTitle); })
+				.OnTextChanged_Lambda([this](const FText& NewText) { EditingTitle = NewText.ToString(); })
+			]
+		]
+
+		+ SVerticalBox::Slot()
+		.AutoHeight()
+		[
+			SNew(SHorizontalBox)
+
+			// --- View mode ---
+			+ SHorizontalBox::Slot()
+			.AutoWidth()
+			.Padding(0.0f, 0.0f, 6.0f, 0.0f)
+			[
+				SNew(SButton)
+				.Text(LOCTEXT("EditPage", "Edit"))
+				.ToolTipText(LOCTEXT("EditPageTip", "Fetch the page source and open it for editing."))
+				.Visibility_Lambda([this]() { return bEditMode ? EVisibility::Collapsed : EVisibility::Visible; })
+				.IsEnabled_Lambda([IsRealConfluencePage]() { return IsRealConfluencePage(); })
+				.OnClicked_Lambda([this]() { BeginEdit(); return FReply::Handled(); })
+			]
+
+			+ SHorizontalBox::Slot()
+			.AutoWidth()
+			.Padding(0.0f, 0.0f, 6.0f, 0.0f)
+			[
+				SNew(SButton)
+				.Text(LOCTEXT("NewPage", "New Page"))
+				.ToolTipText(LOCTEXT("NewPageTip", "Compose a new page in the selected space."))
+				.Visibility_Lambda([this]() { return bEditMode ? EVisibility::Collapsed : EVisibility::Visible; })
+				.OnClicked_Lambda([this]() { BeginNewPage(); return FReply::Handled(); })
+			]
+
+			+ SHorizontalBox::Slot()
+			.AutoWidth()
+			.Padding(0.0f, 0.0f, 6.0f, 0.0f)
+			[
+				SNew(SButton)
+				.Text(LOCTEXT("DeletePage", "Delete Page"))
+				.ToolTipText(LOCTEXT("DeletePageTip", "Move this page to the Confluence trash."))
+				.Visibility_Lambda([this]() { return bEditMode ? EVisibility::Collapsed : EVisibility::Visible; })
+				.IsEnabled_Lambda([IsRealConfluencePage]() { return IsRealConfluencePage(); })
+				.OnClicked_Lambda([this]() { DeleteCurrentPage(); return FReply::Handled(); })
+			]
+
+			// --- Edit mode ---
+			+ SHorizontalBox::Slot()
+			.AutoWidth()
+			.Padding(0.0f, 0.0f, 6.0f, 0.0f)
+			[
+				SNew(SButton)
+				.Text(LOCTEXT("SaveToFile", "Save to File"))
+				.ToolTipText(LOCTEXT("SaveToFileTip", "Write the working copy to Saved/Documents, where other tools can read it."))
+				.Visibility_Lambda([this]() { return bEditMode ? EVisibility::Visible : EVisibility::Collapsed; })
+				.OnClicked_Lambda([this]() { SaveWorkingCopy(); return FReply::Handled(); })
+			]
+
+			+ SHorizontalBox::Slot()
+			.AutoWidth()
+			.Padding(0.0f, 0.0f, 6.0f, 0.0f)
+			[
+				SNew(SButton)
+				.Text(LOCTEXT("Push", "Push to Confluence"))
+				.ToolTipText(LOCTEXT("PushTip", "Publish this document. Always explicit - nothing is pushed automatically."))
+				.Visibility_Lambda([this]() { return bEditMode ? EVisibility::Visible : EVisibility::Collapsed; })
+				.IsEnabled_Lambda([this]() { return !bSaving && EditingPage.bCanRoundTrip; })
+				.OnClicked_Lambda([this]() { PushToConfluence(); return FReply::Handled(); })
+			]
+
+			+ SHorizontalBox::Slot()
+			.AutoWidth()
+			[
+				SNew(SButton)
+				.Text(LOCTEXT("DoneEditing", "Close Editor"))
+				.Visibility_Lambda([this]() { return bEditMode ? EVisibility::Visible : EVisibility::Collapsed; })
+				.OnClicked_Lambda([this]() { EndEdit(); return FReply::Handled(); })
+			]
+		];
+}
+
+FString SExtendedAtlassianConfluenceBrowser::FindSpaceKeyForSelection() const
+{
+	// Walk up to the owning space node; its title carries the key in "Name (KEY)" form.
+	TSharedPtr<FExtendedAtlassianDocNode> Node = SelectedNode;
+	int32 Depth = 0;
+
+	while (Node.IsValid() && Depth++ < 32)
+	{
+		if (Node->Kind == FExtendedAtlassianDocNode::EKind::Space && !Node->bIsGroup)
+		{
+			int32 Open = INDEX_NONE;
+			if (Node->Title.FindLastChar(TEXT('('), Open) && Node->Title.EndsWith(TEXT(")")))
+			{
+				return Node->Title.Mid(Open + 1, Node->Title.Len() - Open - 2);
+			}
+			return Node->Title;
+		}
+		Node = Node->Parent.Pin();
+	}
+
+	return FString();
+}
+
+void SExtendedAtlassianConfluenceBrowser::BeginEdit()
+{
+	if (!SelectedNode.IsValid() || SelectedNode->Id.IsEmpty())
+	{
+		return;
+	}
+
+	const FString PageId = SelectedNode->Id;
+	EditingSpaceKey = FindSpaceKeyForSelection();
+
+	SetStatus(LOCTEXT("FetchingSource", "Fetching page source..."), false);
+
+	TWeakPtr<SExtendedAtlassianConfluenceBrowser> WeakBrowser = SharedThis(this);
+
+	// Editing needs storage format, not the rendered body: storage is what a write accepts, and it
+	// is where macros are visible so they can be detected before anything becomes savable.
+	FExtendedAtlassianConfluence::GetPageForEditing(PageId, FExtendedAtlassianPageDelegate::CreateLambda(
+		[WeakBrowser](bool bSuccess, const FExtendedAtlassianPage& Page, const FExtendedAtlassianError& Error)
+		{
+			const TSharedPtr<SExtendedAtlassianConfluenceBrowser> Browser = WeakBrowser.Pin();
+			if (!Browser.IsValid())
+			{
+				return;
+			}
+
+			if (!bSuccess)
+			{
+				Browser->SetStatus(FText::FromString(Error.Message), true);
+				return;
+			}
+
+			Browser->EditingPage = Page;
+			Browser->EditingTitle = Page.Title;
+			Browser->bEditMode = true;
+
+			if (Browser->DocumentEditor.IsValid())
+			{
+				Browser->DocumentEditor->SetMarkdown(Page.Markdown);
+
+				// A page we cannot rebuild opens read-only: saving it would silently delete the
+				// constructs that did not survive conversion.
+				Browser->DocumentEditor->SetReadOnly(!Page.bCanRoundTrip, FText::Format(
+					LOCTEXT("ReadOnlyReason",
+						"Read-only: this page contains {0}, which this editor cannot rebuild. Saving would delete them. Use Open in Browser to edit it in Confluence."),
+					FText::FromString(FString::Join(Page.RoundTripBlockers, TEXT(", ")))));
+			}
+
+			Browser->SetStatus(Page.bCanRoundTrip
+				? FText::Format(LOCTEXT("EditingVersion", "Editing version {0}."), FText::AsNumber(Page.Version))
+				: LOCTEXT("EditingBlocked", "Opened read-only - see the banner above."), !Page.bCanRoundTrip);
+		}));
+}
+
+void SExtendedAtlassianConfluenceBrowser::BeginNewPage()
+{
+	EditingPage = FExtendedAtlassianPage();
+	EditingPage.bCanRoundTrip = true;
+	EditingSpaceKey = FindSpaceKeyForSelection();
+	EditingTitle = TEXT("New Page");
+	CurrentFilePath.Reset();
+
+	// The space to create in comes from the selection; without one there is nowhere to put it.
+	TSharedPtr<FExtendedAtlassianDocNode> Node = SelectedNode;
+	int32 Depth = 0;
+	while (Node.IsValid() && Depth++ < 32)
+	{
+		if (Node->Kind == FExtendedAtlassianDocNode::EKind::Space && !Node->bIsGroup)
+		{
+			EditingPage.SpaceId = Node->SpaceId;
+			break;
+		}
+		Node = Node->Parent.Pin();
+	}
+
+	if (EditingPage.SpaceId.IsEmpty())
+	{
+		SetStatus(LOCTEXT("NeedSpace", "Select a space or a page inside one before creating a new page."), true);
+		return;
+	}
+
+	bEditMode = true;
+
+	if (DocumentEditor.IsValid())
+	{
+		DocumentEditor->SetReadOnly(false, FText::GetEmpty());
+		DocumentEditor->SetMarkdown(TEXT("# New Page\n\n"));
+	}
+
+	SetStatus(LOCTEXT("ComposingNew", "New page - Push to Confluence creates it."), false);
+}
+
+void SExtendedAtlassianConfluenceBrowser::EndEdit()
+{
+	if (DocumentEditor.IsValid() && DocumentEditor->IsDirty())
+	{
+		const EAppReturnType::Type Answer = FMessageDialog::Open(
+			EAppMsgType::YesNo,
+			LOCTEXT("DiscardChanges", "This document has unsaved changes. Close the editor and discard them?"));
+
+		if (Answer != EAppReturnType::Yes)
+		{
+			return;
+		}
+	}
+
+	bEditMode = false;
+	SetStatus(FText::GetEmpty(), false);
+}
+
+void SExtendedAtlassianConfluenceBrowser::SaveWorkingCopy()
+{
+	if (!DocumentEditor.IsValid())
+	{
+		return;
+	}
+
+	FExtendedAtlassianPage Page = EditingPage;
+	Page.Title = EditingTitle;
+	Page.Markdown = DocumentEditor->GetMarkdown();
+
+	FString Path;
+	if (!FExtendedAtlassianDocumentStore::Save(Page, EditingSpaceKey, Path))
+	{
+		SetStatus(LOCTEXT("SaveFileFailed", "Could not write the working copy. See the Output Log."), true);
+		return;
+	}
+
+	CurrentFilePath = Path;
+	DocumentEditor->ClearDirty();
+
+	SetStatus(FText::Format(LOCTEXT("SavedFile", "Saved {0}"), FText::FromString(Path)), false);
+}
+
+void SExtendedAtlassianConfluenceBrowser::PushToConfluence()
+{
+	if (!DocumentEditor.IsValid() || bSaving)
+	{
+		return;
+	}
+
+	if (!EditingPage.bCanRoundTrip)
+	{
+		SetStatus(LOCTEXT("PushBlocked", "This page cannot be saved from the editor without losing content."), true);
+		return;
+	}
+
+	const FString Title = EditingTitle.TrimStartAndEnd();
+	if (Title.IsEmpty())
+	{
+		SetStatus(LOCTEXT("NeedTitle", "Give the page a title first."), true);
+		return;
+	}
+
+	const FString Markdown = DocumentEditor->GetMarkdown();
+	bSaving = true;
+
+	TWeakPtr<SExtendedAtlassianConfluenceBrowser> WeakBrowser = SharedThis(this);
+
+	auto OnDone = FExtendedAtlassianPageDelegate::CreateLambda(
+		[WeakBrowser](bool bSuccess, const FExtendedAtlassianPage& Page, const FExtendedAtlassianError& Error)
+		{
+			const TSharedPtr<SExtendedAtlassianConfluenceBrowser> Browser = WeakBrowser.Pin();
+			if (!Browser.IsValid())
+			{
+				return;
+			}
+
+			Browser->bSaving = false;
+
+			if (!bSuccess)
+			{
+				// The editor stays open and dirty: a rejected push must never cost the edit.
+				Browser->SetStatus(FText::FromString(Error.Message), true);
+				return;
+			}
+
+			Browser->EditingPage.Id = Page.Id.IsEmpty() ? Browser->EditingPage.Id : Page.Id;
+			Browser->EditingPage.Version = Page.Version;
+
+			if (Browser->DocumentEditor.IsValid())
+			{
+				Browser->DocumentEditor->ClearDirty();
+			}
+
+			// The cached render is now stale.
+			Browser->PageBodyCache.Remove(Browser->EditingPage.Id);
+			Browser->PageBlockCache.Remove(Browser->EditingPage.Id);
+
+			Browser->SetStatus(FText::Format(
+				LOCTEXT("Pushed", "Published as version {0}."), FText::AsNumber(Page.Version)), false);
+		});
+
+	if (EditingPage.Id.IsEmpty())
+	{
+		FExtendedAtlassianConfluence::CreatePage(EditingPage.SpaceId, FString(), Title, Markdown, OnDone);
+		SetStatus(LOCTEXT("Creating", "Creating page..."), false);
+		return;
+	}
+
+	FExtendedAtlassianConfluence::UpdatePage(EditingPage.Id, Title, Markdown, EditingPage.Version, OnDone);
+	SetStatus(LOCTEXT("Publishing", "Publishing..."), false);
+}
+
+void SExtendedAtlassianConfluenceBrowser::DeleteCurrentPage()
+{
+	if (!SelectedNode.IsValid() || SelectedNode->Id.IsEmpty())
+	{
+		return;
+	}
+
+	const FString PageId = SelectedNode->Id;
+	const FString Title = SelectedNode->Title;
+
+	// Deleting someone's documentation is worth an explicit confirmation naming the page.
+	const EAppReturnType::Type Answer = FMessageDialog::Open(
+		EAppMsgType::YesNo,
+		FText::Format(LOCTEXT("ConfirmDelete", "Move \"{0}\" to the Confluence trash?"), FText::FromString(Title)));
+
+	if (Answer != EAppReturnType::Yes)
+	{
+		return;
+	}
+
+	TWeakPtr<SExtendedAtlassianConfluenceBrowser> WeakBrowser = SharedThis(this);
+
+	FExtendedAtlassianConfluence::DeletePage(PageId, FExtendedAtlassianActionDelegate::CreateLambda(
+		[WeakBrowser, Title](bool bSuccess, const FExtendedAtlassianError& Error)
+		{
+			const TSharedPtr<SExtendedAtlassianConfluenceBrowser> Browser = WeakBrowser.Pin();
+			if (!Browser.IsValid())
+			{
+				return;
+			}
+
+			if (!bSuccess)
+			{
+				Browser->SetStatus(FText::FromString(Error.Message), true);
+				return;
+			}
+
+			Browser->SetStatus(FText::Format(
+				LOCTEXT("Deleted", "Moved \"{0}\" to the trash."), FText::FromString(Title)), false);
+
+			Browser->RefreshTree();
+		}));
+}
+
+/** In-flight state for a whole-space pull, which outlives any single request. */
+struct FExtendedAtlassianSpacePull
+{
+	TArray<FExtendedAtlassianPage> Pages;
+	FString SpaceKey;
+	FString SpaceTitle;
+	int32 Index = 0;
+	int32 SavedCount = 0;
+	int32 FailedCount = 0;
+	TWeakPtr<SExtendedAtlassianConfluenceBrowser> Browser;
+};
+
+void SExtendedAtlassianConfluenceBrowser::PullSpaceToDisk()
+{
+	if (bPulling)
+	{
+		return;
+	}
+
+	// Find the space that owns the selection, so the button works from a page as well as a space.
+	TSharedPtr<FExtendedAtlassianDocNode> SpaceNode = SelectedNode;
+	int32 Depth = 0;
+	while (SpaceNode.IsValid() && Depth++ < 32)
+	{
+		if (SpaceNode->Kind == FExtendedAtlassianDocNode::EKind::Space && !SpaceNode->bIsGroup && !SpaceNode->Id.IsEmpty())
+		{
+			break;
+		}
+		SpaceNode = SpaceNode->Parent.Pin();
+	}
+
+	if (!SpaceNode.IsValid() || SpaceNode->Id.IsEmpty())
+	{
+		SetStatus(LOCTEXT("PullNeedSpace", "Select a space, or a page inside one, before pulling."), true);
+		return;
+	}
+
+	bPulling = true;
+	SetStatus(LOCTEXT("PullListing", "Listing pages..."), false);
+
+	TSharedRef<FExtendedAtlassianSpacePull> Pull = MakeShared<FExtendedAtlassianSpacePull>();
+	Pull->Browser = SharedThis(this);
+	Pull->SpaceTitle = SpaceNode->Title;
+	Pull->SpaceKey = FindSpaceKeyForSelection();
+
+	if (Pull->SpaceKey.IsEmpty())
+	{
+		// Fall back to parsing the space node's own title, which carries "Name (KEY)".
+		int32 Open = INDEX_NONE;
+		if (SpaceNode->Title.FindLastChar(TEXT('('), Open) && SpaceNode->Title.EndsWith(TEXT(")")))
+		{
+			Pull->SpaceKey = SpaceNode->Title.Mid(Open + 1, SpaceNode->Title.Len() - Open - 2);
+		}
+	}
+
+	FExtendedAtlassianConfluence::ListPages(SpaceNode->Id, FExtendedAtlassianPagesDelegate::CreateLambda(
+		[Pull](bool bSuccess, const TArray<FExtendedAtlassianPage>& Pages, const FExtendedAtlassianError& Error)
+		{
+			const TSharedPtr<SExtendedAtlassianConfluenceBrowser> Browser = Pull->Browser.Pin();
+			if (!Browser.IsValid())
+			{
+				return;
+			}
+
+			if (!bSuccess)
+			{
+				Browser->bPulling = false;
+				Browser->SetStatus(FText::FromString(Error.Message), true);
+				return;
+			}
+
+			Pull->Pages = Pages;
+			Browser->PullNextPage(Pull);
+		}));
+}
+
+void SExtendedAtlassianConfluenceBrowser::PullNextPage(TSharedRef<FExtendedAtlassianSpacePull> Pull)
+{
+	if (Pull->Index >= Pull->Pages.Num())
+	{
+		bPulling = false;
+
+		SetStatus(Pull->FailedCount == 0
+			? FText::Format(
+				LOCTEXT("PullDone", "Wrote {0} page(s) to {1}"),
+				FText::AsNumber(Pull->SavedCount),
+				FText::FromString(FExtendedAtlassianDocumentStore::GetRootDirectory()))
+			: FText::Format(
+				LOCTEXT("PullDonePartial", "Wrote {0} page(s); {1} failed - see the Output Log."),
+				FText::AsNumber(Pull->SavedCount),
+				FText::AsNumber(Pull->FailedCount)),
+			Pull->FailedCount > 0);
+
+		RefreshTree();
+		return;
+	}
+
+	const FExtendedAtlassianPage& Summary = Pull->Pages[Pull->Index];
+
+	SetStatus(FText::Format(
+		LOCTEXT("PullProgress", "Pulling {0} of {1}: {2}"),
+		FText::AsNumber(Pull->Index + 1),
+		FText::AsNumber(Pull->Pages.Num()),
+		FText::FromString(Summary.Title)), false);
+
+	TWeakPtr<SExtendedAtlassianConfluenceBrowser> WeakBrowser = SharedThis(this);
+
+	// Strictly sequential. Firing a request per page in parallel is the fastest way to hit
+	// Atlassian's cost-based rate limit, and the retry backoff would then serialise it anyway.
+	FExtendedAtlassianConfluence::GetPageForEditing(Summary.Id, FExtendedAtlassianPageDelegate::CreateLambda(
+		[WeakBrowser, Pull](bool bSuccess, const FExtendedAtlassianPage& Page, const FExtendedAtlassianError& Error)
+		{
+			const TSharedPtr<SExtendedAtlassianConfluenceBrowser> Browser = WeakBrowser.Pin();
+			if (!Browser.IsValid())
+			{
+				return;
+			}
+
+			if (bSuccess)
+			{
+				FString Path;
+				if (FExtendedAtlassianDocumentStore::Save(Page, Pull->SpaceKey, Path))
+				{
+					Pull->SavedCount++;
+				}
+				else
+				{
+					Pull->FailedCount++;
+				}
+			}
+			else
+			{
+				// One bad page must not abandon the rest of the space.
+				Pull->FailedCount++;
+				UE_LOG(LogExtendedAtlassian, Warning, TEXT("Could not pull page %s: %s"),
+					*Pull->Pages[Pull->Index].Title, *Error.Message);
+			}
+
+			Pull->Index++;
+			Browser->PullNextPage(Pull);
+		}));
+}
+
+void SExtendedAtlassianConfluenceBrowser::StartWatchingDocuments()
+{
+	FDirectoryWatcherModule& Module = FModuleManager::LoadModuleChecked<FDirectoryWatcherModule>(TEXT("DirectoryWatcher"));
+	IDirectoryWatcher* Watcher = Module.Get();
+	if (!Watcher)
+	{
+		return;
+	}
+
+	const FString Root = FExtendedAtlassianDocumentStore::GetRootDirectory();
+	IFileManager::Get().MakeDirectory(*Root, true);
+
+	Watcher->RegisterDirectoryChangedCallback_Handle(
+		Root,
+		IDirectoryWatcher::FDirectoryChanged::CreateSP(this, &SExtendedAtlassianConfluenceBrowser::HandleDocumentsChanged),
+		DirectoryWatcherHandle,
+		IDirectoryWatcher::WatchOptions::IncludeDirectoryChanges);
+}
+
+void SExtendedAtlassianConfluenceBrowser::StopWatchingDocuments()
+{
+	if (!DirectoryWatcherHandle.IsValid())
+	{
+		return;
+	}
+
+	if (FDirectoryWatcherModule* Module = FModuleManager::GetModulePtr<FDirectoryWatcherModule>(TEXT("DirectoryWatcher")))
+	{
+		if (IDirectoryWatcher* Watcher = Module->Get())
+		{
+			Watcher->UnregisterDirectoryChangedCallback_Handle(
+				FExtendedAtlassianDocumentStore::GetRootDirectory(), DirectoryWatcherHandle);
+		}
+	}
+
+	DirectoryWatcherHandle.Reset();
+}
+
+void SExtendedAtlassianConfluenceBrowser::HandleDocumentsChanged(const TArray<FFileChangeData>& Changes)
+{
+	if (CurrentFilePath.IsEmpty() || !DocumentEditor.IsValid())
+	{
+		return;
+	}
+
+	const FString Watched = FPaths::ConvertRelativePathToFull(CurrentFilePath);
+
+	for (const FFileChangeData& Change : Changes)
+	{
+		if (Change.Action == FFileChangeData::FCA_Removed)
+		{
+			continue;
+		}
+
+		if (FPaths::ConvertRelativePathToFull(Change.Filename) != Watched)
+		{
+			continue;
+		}
+
+		// An external edit wins only when the editor has nothing unsaved; silently discarding a
+		// half-typed paragraph because a tool touched the file would be worse than being stale.
+		if (DocumentEditor->IsDirty())
+		{
+			SetStatus(LOCTEXT("ExternalChangeIgnored",
+				"The file changed on disk, but the editor has unsaved changes. Close the editor and reopen to load it."), true);
+			return;
+		}
+
+		FExtendedAtlassianDocumentFile File;
+		if (!FExtendedAtlassianDocumentStore::Load(Watched, File))
+		{
+			return;
+		}
+
+		DocumentEditor->SetMarkdown(File.Markdown);
+		ShowDocument(FExtendedAtlassianMarkdown::ToBlocks(File.Markdown), File.Markdown);
+
+		SetStatus(LOCTEXT("ReloadedFromDisk", "Reloaded after an external change."), false);
+		return;
+	}
+}
+
 void SExtendedAtlassianConfluenceBrowser::ShowDocument(const TArray<FExtendedAtlassianDocBlock>& Blocks, const FString& SourceText)
 {
 	CurrentBody = SourceText;
@@ -661,6 +1339,85 @@ void SExtendedAtlassianConfluenceBrowser::ShowDocument(const TArray<FExtendedAtl
 	{
 		DocumentView->SetBlocks(Blocks);
 	}
+
+	RefreshReferencedIssues(SourceText);
+}
+
+void SExtendedAtlassianConfluenceBrowser::RefreshReferencedIssues(const FString& SourceText)
+{
+	ReferencedIssues.Reset();
+
+	if (IssueChipsBox.IsValid())
+	{
+		IssueChipsBox->ClearChildren();
+	}
+
+	const UExtendedAtlassianSettings* Settings = UExtendedAtlassianSettings::Get();
+	const TSharedPtr<FExtendedAtlassianClient> Client = FUnrealExtendedAtlassianModule::GetClient();
+
+	if (!Settings || !Client.IsValid() || !Client->IsReady())
+	{
+		return;
+	}
+
+	// Restricted to real project keys so "UTF-8" and friends cannot become phantom issues.
+	const TArray<FString> Keys = FExtendedAtlassianJira::ExtractIssueKeys(SourceText, Settings->GetProjectKeyOptions());
+	if (Keys.Num() == 0)
+	{
+		return;
+	}
+
+	// One query for the whole document rather than a request per key.
+	const FString Jql = FString::Printf(TEXT("key in (%s)"), *FString::Join(Keys, TEXT(",")));
+
+	TWeakPtr<SExtendedAtlassianConfluenceBrowser> WeakBrowser = SharedThis(this);
+
+	FExtendedAtlassianJira::SearchIssues(Jql, Keys.Num(), FExtendedAtlassianIssuesDelegate::CreateLambda(
+		[WeakBrowser](const FExtendedAtlassianIssueQueryResult& Result)
+		{
+			const TSharedPtr<SExtendedAtlassianConfluenceBrowser> Browser = WeakBrowser.Pin();
+			if (!Browser.IsValid() || !Result.bSuccess || !Browser->IssueChipsBox.IsValid())
+			{
+				return;
+			}
+
+			Browser->IssueChipsBox->ClearChildren();
+
+			for (const FExtendedAtlassianIssue& Issue : Result.Issues)
+			{
+				Browser->ReferencedIssues.Add(MakeShared<FExtendedAtlassianIssue>(Issue));
+
+				const FString Key = Issue.Key;
+				const FLinearColor StatusColor =
+					Issue.StatusCategoryKey == TEXT("done") ? FLinearColor(0.30f, 0.78f, 0.40f) :
+					Issue.StatusCategoryKey == TEXT("indeterminate") ? FLinearColor(0.35f, 0.62f, 0.92f) :
+					FLinearColor(0.70f, 0.70f, 0.70f);
+
+				Browser->IssueChipsBox->AddSlot()
+					.Padding(0.0f, 0.0f, 6.0f, 4.0f)
+					[
+						SNew(SButton)
+						.ContentPadding(FMargin(6.0f, 2.0f))
+						.ToolTipText(FText::FromString(FString::Printf(
+							TEXT("%s\n%s - %s"), *Issue.Summary, *Issue.StatusName,
+							Issue.AssigneeDisplayName.IsEmpty() ? TEXT("Unassigned") : *Issue.AssigneeDisplayName)))
+						.OnClicked_Lambda([Key]()
+						{
+							const FString Url = FExtendedAtlassianJira::GetIssueBrowseUrl(Key);
+							if (!Url.IsEmpty())
+							{
+								FPlatformProcess::LaunchURL(*Url, nullptr, nullptr);
+							}
+							return FReply::Handled();
+						})
+						[
+							SNew(STextBlock)
+							.Text(FText::FromString(FString::Printf(TEXT("%s  %s"), *Issue.Key, *Issue.StatusName)))
+							.ColorAndOpacity(FSlateColor(StatusColor))
+						]
+					];
+			}
+		}));
 }
 
 void SExtendedAtlassianConfluenceBrowser::LoadLocalMarkdown(FNodePtr FileNode)

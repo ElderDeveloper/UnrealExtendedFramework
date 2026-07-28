@@ -384,6 +384,75 @@ bool FExtendedAtlassianJira::ParseJiraDateTime(const FString& In, FDateTime& Out
 	return FDateTime::ParseIso8601(*Normalized, Out);
 }
 
+TArray<FString> FExtendedAtlassianJira::ExtractIssueKeys(const FString& Text, const TArray<FString>& ProjectKeys)
+{
+	TArray<FString> Keys;
+
+	if (Text.IsEmpty())
+	{
+		return Keys;
+	}
+
+	for (const FString& RawProject : ProjectKeys)
+	{
+		const FString Project = RawProject.TrimStartAndEnd();
+		if (Project.IsEmpty())
+		{
+			continue;
+		}
+
+		const FString Needle = Project + TEXT("-");
+
+		int32 SearchStart = 0;
+		while (SearchStart < Text.Len())
+		{
+			const int32 Found = Text.Find(Needle, ESearchCase::CaseSensitive, ESearchDir::FromStart, SearchStart);
+			if (Found == INDEX_NONE)
+			{
+				break;
+			}
+
+			// The character before must not be alphanumeric, or "XTOT-1" would match "TOT-1".
+			const bool bBoundaryBefore = Found == 0 || !FChar::IsAlnum(Text[Found - 1]);
+
+			int32 DigitEnd = Found + Needle.Len();
+			while (DigitEnd < Text.Len() && FChar::IsDigit(Text[DigitEnd]))
+			{
+				++DigitEnd;
+			}
+
+			const int32 DigitCount = DigitEnd - (Found + Needle.Len());
+
+			if (bBoundaryBefore && DigitCount > 0)
+			{
+				const FString Key = Text.Mid(Found, DigitEnd - Found);
+				Keys.AddUnique(Key);
+			}
+
+			SearchStart = Found + Needle.Len();
+		}
+	}
+
+	return Keys;
+}
+
+TArray<FString> FExtendedAtlassianJira::ParseLabels(const FString& CommaSeparated)
+{
+	TArray<FString> Labels;
+	CommaSeparated.ParseIntoArray(Labels, TEXT(","), true);
+
+	for (FString& Label : Labels)
+	{
+		Label.TrimStartAndEndInline();
+		// Jira rejects labels containing spaces outright.
+		Label.ReplaceInline(TEXT(" "), TEXT("-"));
+	}
+
+	Labels.RemoveAll([](const FString& Label) { return Label.IsEmpty(); });
+
+	return Labels;
+}
+
 FString FExtendedAtlassianJira::GetIssueBrowseUrl(const FString& IssueKey)
 {
 	const UExtendedAtlassianSettings* Settings = UExtendedAtlassianSettings::Get();

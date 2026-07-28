@@ -5,6 +5,7 @@
 #include "ExtendedAtlassianClient.h"
 #include "ExtendedAtlassianConnectPrompt.h"
 #include "ExtendedAtlassianJira.h"
+#include "ExtendedAtlassianNewIssueDialog.h"
 #include "ExtendedAtlassianSettings.h"
 #include "UnrealExtendedAtlassian.h"
 
@@ -305,6 +306,21 @@ TSharedRef<SWidget> SExtendedAtlassianIssueBrowser::BuildQueryBar()
 				.OnClicked_Lambda([this]()
 				{
 					Refresh();
+					return FReply::Handled();
+				})
+			]
+
+			+ SHorizontalBox::Slot()
+			.AutoWidth()
+			.VAlign(VAlign_Center)
+			.Padding(6.0f, 0.0f, 0.0f, 0.0f)
+			[
+				SNew(SButton)
+				.Text(LOCTEXT("NewIssueButton", "New Issue"))
+				.ToolTipText(LOCTEXT("NewIssueTooltip", "Create a task, story or other work item in the configured Jira project."))
+				.OnClicked_Lambda([this]()
+				{
+					OpenNewIssueDialog();
 					return FReply::Handled();
 				})
 			]
@@ -646,6 +662,25 @@ void SExtendedAtlassianIssueBrowser::OnIssueSelectionChanged(FIssuePtr Item, ESe
 	}
 }
 
+void SExtendedAtlassianIssueBrowser::OpenNewIssueDialog()
+{
+	TWeakPtr<SExtendedAtlassianIssueBrowser> WeakBrowser = SharedThis(this);
+
+	SExtendedAtlassianNewIssueDialog::Open(
+		SExtendedAtlassianNewIssueDialog::FOnIssueCreated::CreateLambda(
+			[WeakBrowser](const FString& IssueKey)
+			{
+				const TSharedPtr<SExtendedAtlassianIssueBrowser> Browser = WeakBrowser.Pin();
+				if (!Browser.IsValid())
+				{
+					return;
+				}
+
+				Browser->PendingSelectKey = IssueKey;
+				Browser->Refresh();
+			}));
+}
+
 void SExtendedAtlassianIssueBrowser::Refresh()
 {
 	using namespace ExtendedAtlassianIssueBrowserPrivate;
@@ -700,6 +735,11 @@ void SExtendedAtlassianIssueBrowser::Refresh()
 						Browser->IssueListView->RequestListRefresh();
 					}
 
+					// The query failing says nothing about the created issue, and the dialog already
+					// confirmed it. Drop the pending selection rather than letting it surface against
+					// some later, unrelated refresh.
+					Browser->PendingSelectKey.Reset();
+
 					Browser->SetStatus(FText::FromString(Result.Error.Message), true);
 					return;
 				}
@@ -733,7 +773,40 @@ void SExtendedAtlassianIssueBrowser::Refresh()
 						LOCTEXT("ResultsCount", "{0} issue(s)."),
 						FText::AsNumber(Browser->Issues.Num())), false);
 				}
+
+				Browser->SelectPendingIssue();
 			}));
+}
+
+void SExtendedAtlassianIssueBrowser::SelectPendingIssue()
+{
+	if (PendingSelectKey.IsEmpty())
+	{
+		return;
+	}
+
+	const FString Key = MoveTemp(PendingSelectKey);
+	PendingSelectKey.Reset();
+
+	const FIssuePtr* Found = Issues.FindByPredicate(
+		[&Key](const FIssuePtr& Issue) { return Issue.IsValid() && Issue->Key == Key; });
+
+	if (!Found)
+	{
+		// Creating an unassigned task while "My open issues" is selected lands here, which is the
+		// ordinary case rather than a failure. Say where it went instead of leaving the list looking
+		// like nothing happened.
+		SetStatus(FText::Format(
+			LOCTEXT("CreatedOutsideQuery", "{0} created. It does not match the current query, so it is not listed."),
+			FText::FromString(Key)), false);
+		return;
+	}
+
+	if (IssueListView.IsValid())
+	{
+		IssueListView->SetSelection(*Found);
+		IssueListView->RequestScrollIntoView(*Found);
+	}
 }
 
 void SExtendedAtlassianIssueBrowser::LoadDetailsFor(FIssuePtr Issue)

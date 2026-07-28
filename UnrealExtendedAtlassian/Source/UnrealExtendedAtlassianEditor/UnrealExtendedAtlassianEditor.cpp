@@ -8,6 +8,7 @@
 #include "ExtendedAtlassianEditorMenu.h"
 #include "ExtendedAtlassianIssueBrowser.h"
 #include "ExtendedAtlassianLog.h"
+#include "ExtendedAtlassianNewIssueDialog.h"
 #include "ExtendedAtlassianSettingsCustomization.h"
 
 #include "Framework/Application/SlateApplication.h"
@@ -149,6 +150,23 @@ void FUnrealExtendedAtlassianEditorModule::RefreshIssueBrowser()
 	{
 		Browser->Refresh();
 	}
+}
+
+void FUnrealExtendedAtlassianEditorModule::OpenNewIssueDialog()
+{
+	OpenIssueBrowser();
+
+	if (Instance)
+	{
+		if (const TSharedPtr<SExtendedAtlassianIssueBrowser> Browser = Instance->IssueBrowserWidget.Pin())
+		{
+			Browser->OpenNewIssueDialog();
+			return;
+		}
+	}
+
+	// The tab could not be invoked — filing the issue still works, it just cannot be listed after.
+	SExtendedAtlassianNewIssueDialog::Open();
 }
 
 #undef LOCTEXT_NAMESPACE

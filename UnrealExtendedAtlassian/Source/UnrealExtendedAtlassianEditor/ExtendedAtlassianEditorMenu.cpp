@@ -42,6 +42,10 @@ void FExtendedAtlassianEditorMenu::BindCommands()
 		FExecuteAction::CreateRaw(this, &FExtendedAtlassianEditorMenu::RefreshIssues));
 
 	CommandList->MapAction(
+		Commands.NewIssue,
+		FExecuteAction::CreateStatic(&FUnrealExtendedAtlassianEditorModule::OpenNewIssueDialog));
+
+	CommandList->MapAction(
 		Commands.ReportBug,
 		FExecuteAction::CreateStatic(&SExtendedAtlassianBugReportDialog::Open));
 
@@ -83,6 +87,7 @@ void FExtendedAtlassianEditorMenu::RegisterMenus()
 
 			FToolMenuSection& JiraSection = InMenu->AddSection(TEXT("Jira"), LOCTEXT("JiraSection", "Jira"));
 			JiraSection.AddMenuEntryWithCommandList(Commands.ReportBug, CommandList);
+			JiraSection.AddMenuEntryWithCommandList(Commands.NewIssue, CommandList);
 			JiraSection.AddMenuEntryWithCommandList(Commands.OpenIssueBrowser, CommandList);
 			JiraSection.AddMenuEntryWithCommandList(Commands.RefreshIssues, CommandList);
 

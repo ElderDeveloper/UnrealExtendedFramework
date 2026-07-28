@@ -5,9 +5,12 @@
 #include "ExtendedAtlassianAdf.h"
 #include "ExtendedAtlassianCredentials.h"
 #include "ExtendedAtlassianDocBlock.h"
+#include "ExtendedAtlassianDocumentStore.h"
 #include "ExtendedAtlassianHtml.h"
+#include "ExtendedAtlassianJira.h"
 #include "ExtendedAtlassianMarkdown.h"
 #include "ExtendedAtlassianMultipart.h"
+#include "ExtendedAtlassianStorage.h"
 
 #include "Dom/JsonObject.h"
 #include "HAL/FileManager.h"
@@ -150,6 +153,51 @@ bool FExtendedAtlassianHtmlTest::RunTest(const FString& Parameters)
 		TestTrue(TEXT("Named entities decode"), Text.Contains(TEXT("a & b")));
 		TestTrue(TEXT("Escaped angle brackets decode"), Text.Contains(TEXT("<tag>")));
 		TestTrue(TEXT("Numeric entities decode"), Text.Contains(TEXT("A")));
+	}
+
+	{
+		// Confluence storage format escapes non-ASCII as named entities. Without the accented
+		// Latin-1 block these survive as literal "&uuml;" text and are escaped again on write,
+		// permanently corrupting every Turkish word in the document.
+		const FString Decoded = FExtendedAtlassianHtml::DecodeEntities(
+			TEXT("G&uuml;ncel &ccedil;er&ccedil;eve &Ouml;zet Ama&ccedil; d&ouml;k&uuml;m&uuml;"));
+
+		TestEqual(TEXT("Turkish named entities decode"), Decoded,
+			FString(TEXT("Güncel çerçeve Özet Amaç dökümü")));
+
+		// Entity names are case-sensitive: &Ouml; and &ouml; are different letters.
+		TestEqual(TEXT("Capital and lowercase umlauts differ"),
+			FExtendedAtlassianHtml::DecodeEntities(TEXT("&Ouml;&ouml;")), FString(TEXT("Öö")));
+
+		// Latin Extended-A has no named entities, so Confluence numbers them.
+		TestEqual(TEXT("Numeric entities cover the rest of Turkish"),
+			FExtendedAtlassianHtml::DecodeEntities(TEXT("&#287;&#305;&#351;&#304;")),
+			FString(TEXT("ğışİ")));
+	}
+
+	{
+		// The full path a Turkish page takes: entity-escaped storage through to Markdown.
+		const TArray<FExtendedAtlassianDocBlock> Blocks = FExtendedAtlassianHtml::ToBlocks(
+			TEXT("<h2>Ama&ccedil; / &Ouml;zet</h2><p>G&uuml;ncel</p>"));
+
+		bool bHeadingOk = false;
+		bool bBodyOk = false;
+
+		for (const FExtendedAtlassianDocBlock& Block : Blocks)
+		{
+			if (Block.Kind == EExtendedAtlassianBlockKind::Heading && Block.Markup.Contains(TEXT("Amaç")))
+			{
+				bHeadingOk = true;
+			}
+			if (Block.Markup.Contains(TEXT("Güncel")))
+			{
+				bBodyOk = true;
+			}
+			TestFalse(TEXT("No raw entity survives into a block"), Block.Markup.Contains(TEXT("uml;")));
+		}
+
+		TestTrue(TEXT("Accented heading survives"), bHeadingOk);
+		TestTrue(TEXT("Accented body survives"), bBodyOk);
 	}
 
 	{
@@ -484,6 +532,246 @@ bool FExtendedAtlassianHtmlBlocksTest::RunTest(const FString& Parameters)
 
 	TestEqual(TEXT("Empty input yields no blocks"), FExtendedAtlassianHtml::ToBlocks(FString()).Num(), 0);
 	TestEqual(TEXT("Whitespace-only input yields no blocks"), FExtendedAtlassianHtml::ToBlocks(TEXT("<p>   </p>")).Num(), 0);
+
+	return true;
+}
+
+// --- Editing round trip ------------------------------------------------------
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FExtendedAtlassianRoundTripTest,
+	"ExtendedAtlassian.Document.RoundTrip",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FExtendedAtlassianRoundTripTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+
+	{
+		// Inline conversion must be reversible, or every save churns the file and pollutes diffs.
+		const FString Source = TEXT("**bold** then *italic* then `code` then [text](https://x.com)");
+		const FString Recovered = FExtendedAtlassianMarkdown::MarkupToInline(
+			FExtendedAtlassianMarkdown::InlineToMarkup(Source));
+
+		TestEqual(TEXT("Inline Markdown survives a round trip"), Recovered, Source);
+	}
+
+	{
+		// Escaped characters must come back as themselves, not as entities.
+		const FString Source = TEXT("a < b & c > d");
+		const FString Recovered = FExtendedAtlassianMarkdown::MarkupToInline(
+			FExtendedAtlassianMarkdown::InlineToMarkup(Source));
+
+		TestEqual(TEXT("Escaped characters are restored"), Recovered, Source);
+	}
+
+	{
+		// The critical property: converting twice must equal converting once. Without it, every
+		// pull-edit-push cycle would slowly rewrite documents that nobody edited.
+		const FString Source =
+			TEXT("# Title\n\nA paragraph with **bold**.\n\n## Section\n\n- one\n- two\n\n```\ncode\n```\n\n> quoted\n");
+
+		const FString Once = FExtendedAtlassianMarkdown::FromBlocks(FExtendedAtlassianMarkdown::ToBlocks(Source));
+		const FString Twice = FExtendedAtlassianMarkdown::FromBlocks(FExtendedAtlassianMarkdown::ToBlocks(Once));
+
+		TestEqual(TEXT("Markdown serialisation is idempotent"), Twice, Once);
+		TestTrue(TEXT("Heading survives"), Once.Contains(TEXT("# Title")));
+		TestTrue(TEXT("Bold survives"), Once.Contains(TEXT("**bold**")));
+		TestTrue(TEXT("List survives"), Once.Contains(TEXT("- one")));
+		TestTrue(TEXT("Code fence survives"), Once.Contains(TEXT("```")));
+	}
+
+	{
+		// Markdown to storage and back must preserve the document.
+		const FString Source = TEXT("# Heading\n\nText with **bold** and a [link](https://x.com).\n\n- item one\n- item two\n");
+
+		const FString Storage = FExtendedAtlassianStorage::FromMarkdown(Source);
+		TestTrue(TEXT("Storage contains a heading element"), Storage.Contains(TEXT("<h1>")));
+		TestTrue(TEXT("Storage contains a list"), Storage.Contains(TEXT("<ul>")) && Storage.Contains(TEXT("<li>")));
+		TestTrue(TEXT("Storage contains strong"), Storage.Contains(TEXT("<strong>")));
+		TestTrue(TEXT("Storage contains an anchor"), Storage.Contains(TEXT("href=\"https://x.com\"")));
+
+		const FString Recovered = FExtendedAtlassianStorage::ToMarkdown(Storage);
+		TestTrue(TEXT("Heading returns"), Recovered.Contains(TEXT("# Heading")));
+		TestTrue(TEXT("Bold returns"), Recovered.Contains(TEXT("**bold**")));
+		TestTrue(TEXT("Both list items return"), Recovered.Contains(TEXT("- item one")) && Recovered.Contains(TEXT("- item two")));
+	}
+
+	{
+		// The safety gate. A page whose macros we cannot rebuild must never be editable, because a
+		// save would silently delete them.
+		TArray<FString> Reasons;
+
+		TestTrue(TEXT("Plain prose is safe to edit"),
+			FExtendedAtlassianStorage::CanRoundTrip(TEXT("<p>Just text</p>"), Reasons));
+		TestEqual(TEXT("No blockers reported for prose"), Reasons.Num(), 0);
+
+		TestFalse(TEXT("A macro blocks editing"),
+			FExtendedAtlassianStorage::CanRoundTrip(
+				TEXT("<p>text</p><ac:structured-macro ac:name=\"jira\"/>"), Reasons));
+		TestTrue(TEXT("The macro is named as the reason"), Reasons.Num() > 0);
+
+		TestFalse(TEXT("A layout blocks editing"),
+			FExtendedAtlassianStorage::CanRoundTrip(TEXT("<ac:layout><ac:layout-section/></ac:layout>"), Reasons));
+
+		TestFalse(TEXT("Unenumerated Confluence markup still blocks editing"),
+			FExtendedAtlassianStorage::CanRoundTrip(TEXT("<p><ac:something-new/></p>"), Reasons));
+	}
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FExtendedAtlassianDocumentStoreTest,
+	"ExtendedAtlassian.Document.Store",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FExtendedAtlassianDocumentStoreTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+
+	{
+		FExtendedAtlassianDocumentFile File;
+		File.PageId = TEXT("12345");
+		File.SpaceId = TEXT("98765");
+		File.SpaceKey = TEXT("TOT");
+		File.Title = TEXT("08 - UX / UI");
+		File.Version = 7;
+
+		const FString Contents = FExtendedAtlassianDocumentStore::MakeFrontMatter(File) + TEXT("# Body\n\nText.\n");
+
+		FExtendedAtlassianDocumentFile Parsed;
+		TestTrue(TEXT("Front matter is recognised"),
+			FExtendedAtlassianDocumentStore::ParseFrontMatter(Contents, Parsed));
+
+		TestEqual(TEXT("Page id round trips"), Parsed.PageId, File.PageId);
+		TestEqual(TEXT("Space key round trips"), Parsed.SpaceKey, File.SpaceKey);
+		TestEqual(TEXT("Version round trips"), Parsed.Version, File.Version);
+		TestEqual(TEXT("Title round trips"), Parsed.Title, File.Title);
+		TestTrue(TEXT("Body is separated from front matter"), Parsed.Markdown.StartsWith(TEXT("# Body")));
+		TestFalse(TEXT("Body excludes the delimiter"), Parsed.Markdown.Contains(TEXT("confluence-id")));
+	}
+
+	{
+		// A hand-written Markdown file with no front matter must load as an unlinked document
+		// rather than having its first lines eaten.
+		FExtendedAtlassianDocumentFile Parsed;
+		const bool bHadFrontMatter = FExtendedAtlassianDocumentStore::ParseFrontMatter(
+			TEXT("# Just Markdown\n\nNo front matter here.\n"), Parsed);
+
+		TestFalse(TEXT("No front matter reported"), bHadFrontMatter);
+		TestFalse(TEXT("Not linked to Confluence"), Parsed.IsLinkedToConfluence());
+		TestTrue(TEXT("Whole file is body"), Parsed.Markdown.StartsWith(TEXT("# Just Markdown")));
+	}
+
+	{
+		// An unterminated block is malformed; it must not swallow the document.
+		FExtendedAtlassianDocumentFile Parsed;
+		FExtendedAtlassianDocumentStore::ParseFrontMatter(TEXT("---\ntitle: x\n\n# Body\n"), Parsed);
+		TestTrue(TEXT("Malformed front matter keeps the content"), Parsed.Markdown.Contains(TEXT("# Body")));
+	}
+
+	{
+		// The id in the filename is what keeps a renamed page mapped to the same working copy.
+		const FString PathA = FExtendedAtlassianDocumentStore::MakeFilePath(TEXT("TOT"), TEXT("Old Title"), TEXT("999"));
+		const FString PathB = FExtendedAtlassianDocumentStore::MakeFilePath(TEXT("TOT"), TEXT("New Title"), TEXT("999"));
+
+		TestTrue(TEXT("Both paths carry the page id"), PathA.Contains(TEXT("999")) && PathB.Contains(TEXT("999")));
+
+		const FString Illegal = FExtendedAtlassianDocumentStore::MakeFilePath(TEXT("TOT"), TEXT("a/b:c*d?"), TEXT("1"));
+		TestFalse(TEXT("Illegal filename characters are replaced"),
+			FPaths::GetCleanFilename(Illegal).Contains(TEXT(":")));
+	}
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FExtendedAtlassianIssueKeyTest,
+	"ExtendedAtlassian.Jira.ExtractIssueKeys",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FExtendedAtlassianIssueKeyTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+
+	const TArray<FString> Projects = { TEXT("TOT"), TEXT("ART") };
+
+	{
+		const TArray<FString> Keys = FExtendedAtlassianJira::ExtractIssueKeys(
+			TEXT("See TOT-123 and ART-9 for details."), Projects);
+
+		TestEqual(TEXT("Both keys found"), Keys.Num(), 2);
+		TestTrue(TEXT("First key"), Keys.Contains(TEXT("TOT-123")));
+		TestTrue(TEXT("Second key"), Keys.Contains(TEXT("ART-9")));
+	}
+
+	{
+		// The reason keys are matched against known projects rather than a bare pattern.
+		const TArray<FString> Keys = FExtendedAtlassianJira::ExtractIssueKeys(
+			TEXT("Encoded as UTF-8 on UE-5 with ISO-9001."), Projects);
+
+		TestEqual(TEXT("Unknown prefixes are not issue keys"), Keys.Num(), 0);
+	}
+
+	{
+		// A key must not be matched inside a longer token.
+		const TArray<FString> Keys = FExtendedAtlassianJira::ExtractIssueKeys(TEXT("XTOT-5 and NOTTOT-7"), Projects);
+		TestEqual(TEXT("Embedded matches are rejected"), Keys.Num(), 0);
+	}
+
+	{
+		const TArray<FString> Keys = FExtendedAtlassianJira::ExtractIssueKeys(
+			TEXT("TOT-1 again TOT-1 and TOT-1"), Projects);
+
+		TestEqual(TEXT("Duplicates collapse"), Keys.Num(), 1);
+	}
+
+	{
+		const TArray<FString> Keys = FExtendedAtlassianJira::ExtractIssueKeys(TEXT("TOT- has no number"), Projects);
+		TestEqual(TEXT("A prefix without digits is not a key"), Keys.Num(), 0);
+	}
+
+	TestEqual(TEXT("Empty text yields nothing"),
+		FExtendedAtlassianJira::ExtractIssueKeys(FString(), Projects).Num(), 0);
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FExtendedAtlassianParseLabelsTest,
+	"ExtendedAtlassian.Jira.ParseLabels",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FExtendedAtlassianParseLabelsTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+
+	{
+		const TArray<FString> Labels = FExtendedAtlassianJira::ParseLabels(TEXT("ui, audio ,inventory"));
+
+		TestEqual(TEXT("Three labels"), Labels.Num(), 3);
+		TestEqual(TEXT("Surrounding whitespace trimmed"), Labels[1], FString(TEXT("audio")));
+	}
+
+	{
+		// The whole reason this is not a plain split: Jira rejects a label containing a space.
+		const TArray<FString> Labels = FExtendedAtlassianJira::ParseLabels(TEXT("needs art pass"));
+
+		TestEqual(TEXT("One label"), Labels.Num(), 1);
+		TestEqual(TEXT("Inner spaces become hyphens"), Labels[0], FString(TEXT("needs-art-pass")));
+	}
+
+	{
+		// A trailing comma is the most common way to send Jira an empty label and fail the create.
+		const TArray<FString> Labels = FExtendedAtlassianJira::ParseLabels(TEXT("ui,,audio,   ,"));
+
+		TestEqual(TEXT("Blank entries dropped"), Labels.Num(), 2);
+		TestFalse(TEXT("No empty label survives"), Labels.Contains(FString()));
+	}
+
+	TestEqual(TEXT("Empty input yields nothing"), FExtendedAtlassianJira::ParseLabels(FString()).Num(), 0);
+	TestEqual(TEXT("Whitespace-only input yields nothing"), FExtendedAtlassianJira::ParseLabels(TEXT("   ")).Num(), 0);
 
 	return true;
 }
