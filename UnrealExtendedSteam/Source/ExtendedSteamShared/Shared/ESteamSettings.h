@@ -16,8 +16,6 @@ class EXTENDEDSTEAMSHARED_API UESteamSettings : public UDeveloperSettings
 	GENERATED_BODY()
 
 public:
-	UESteamSettings();
-
 	//~ UDeveloperSettings
 	virtual FName GetCategoryName() const override;
 

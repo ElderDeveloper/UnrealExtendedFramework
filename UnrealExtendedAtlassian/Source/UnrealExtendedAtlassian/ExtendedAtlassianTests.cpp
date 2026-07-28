@@ -1,0 +1,539 @@
+// Copyright Kemal Erdem YILMAZ. All Rights Reserved.
+
+#if WITH_DEV_AUTOMATION_TESTS
+
+#include "ExtendedAtlassianAdf.h"
+#include "ExtendedAtlassianCredentials.h"
+#include "ExtendedAtlassianDocBlock.h"
+#include "ExtendedAtlassianHtml.h"
+#include "ExtendedAtlassianMarkdown.h"
+#include "ExtendedAtlassianMultipart.h"
+
+#include "Dom/JsonObject.h"
+#include "HAL/FileManager.h"
+#include "Misc/AutomationTest.h"
+#include "Misc/FileHelper.h"
+#include "Misc/Guid.h"
+#include "Misc/Paths.h"
+#include "Serialization/JsonReader.h"
+#include "Serialization/JsonSerializer.h"
+
+/**
+ * Coverage for the four pieces most likely to break silently: they are pure functions with exact
+ * output requirements, and a regression in any of them produces a server-side error that reads like
+ * something else entirely.
+ */
+
+namespace ExtendedAtlassianTestsPrivate
+{
+	FString BytesToString(const TArray<uint8>& Bytes)
+	{
+		const FUTF8ToTCHAR Converted(reinterpret_cast<const ANSICHAR*>(Bytes.GetData()), Bytes.Num());
+		return FString(Converted.Length(), Converted.Get());
+	}
+
+	TSharedPtr<FJsonObject> ParseJson(const FString& Json)
+	{
+		TSharedPtr<FJsonObject> Object;
+		const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(Json);
+		FJsonSerializer::Deserialize(Reader, Object);
+		return Object;
+	}
+}
+
+// --- ADF ---------------------------------------------------------------------
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FExtendedAtlassianAdfRoundTripTest,
+	"ExtendedAtlassian.Adf.RoundTrip",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FExtendedAtlassianAdfRoundTripTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	using namespace ExtendedAtlassianTestsPrivate;
+
+	{
+		const FString Source = TEXT("First paragraph.\n\nSecond paragraph.");
+		const FString Json = FExtendedAtlassianAdf::ToJsonString(FExtendedAtlassianAdf::MakeDoc(Source));
+
+		TestTrue(TEXT("Doc declares its type"), Json.Contains(TEXT("\"type\":\"doc\"")));
+		TestTrue(TEXT("Doc declares version 1"), Json.Contains(TEXT("\"version\":1")));
+
+		const FString RoundTripped = FExtendedAtlassianAdf::ToPlainText(ParseJson(Json));
+		TestEqual(TEXT("Paragraphs survive the round trip"), RoundTripped, Source);
+	}
+
+	{
+		// A single newline inside a paragraph must become a hardBreak, not a paragraph split.
+		const FString Json = FExtendedAtlassianAdf::ToJsonString(FExtendedAtlassianAdf::MakeDoc(TEXT("Line one\nLine two")));
+		TestTrue(TEXT("Single newline becomes a hard break"), Json.Contains(TEXT("hardBreak")));
+	}
+
+	{
+		// ADF rejects a text node holding an empty string, so an empty paragraph must carry no content.
+		const FString Json = FExtendedAtlassianAdf::ToJsonString(FExtendedAtlassianAdf::MakeDoc(FString()));
+		TestFalse(TEXT("Empty input produces no empty text node"), Json.Contains(TEXT("\"text\":\"\"")));
+		TestTrue(TEXT("Empty input still produces a valid doc"), Json.Contains(TEXT("\"type\":\"paragraph\"")));
+	}
+
+	{
+		const FString Json = FExtendedAtlassianAdf::ToJsonString(
+			FExtendedAtlassianAdf::MakeDocWithCodeBlock(TEXT("Description."), TEXT("Level: TestMap")));
+
+		TestTrue(TEXT("Context becomes a code block"), Json.Contains(TEXT("codeBlock")));
+
+		const FString Flattened = FExtendedAtlassianAdf::ToPlainText(ParseJson(Json));
+		TestTrue(TEXT("Description survives"), Flattened.Contains(TEXT("Description.")));
+		TestTrue(TEXT("Code block content survives"), Flattened.Contains(TEXT("Level: TestMap")));
+	}
+
+	{
+		// Reading must tolerate rubbish rather than crashing on an unexpected payload.
+		TestEqual(TEXT("Null node flattens to empty"), FExtendedAtlassianAdf::ToPlainText(nullptr), FString());
+		TestEqual(TEXT("Non-ADF object flattens to empty"),
+			FExtendedAtlassianAdf::ToPlainText(ParseJson(TEXT("{\"unexpected\":true}"))), FString());
+	}
+
+	return true;
+}
+
+// --- Confluence HTML ---------------------------------------------------------
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FExtendedAtlassianHtmlTest,
+	"ExtendedAtlassian.Html.ToPlainText",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FExtendedAtlassianHtmlTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+
+	{
+		const FString Text = FExtendedAtlassianHtml::ToPlainText(
+			TEXT("<h1>Title</h1><p>Hello <strong>world</strong>.</p>"));
+
+		TestTrue(TEXT("Heading level becomes hashes"), Text.Contains(TEXT("# Title")));
+		TestTrue(TEXT("Inline markup is unwrapped"), Text.Contains(TEXT("Hello world.")));
+	}
+
+	{
+		const FString Text = FExtendedAtlassianHtml::ToPlainText(
+			TEXT("<ul><li>One</li><li>Two<ul><li>Nested</li></ul></li></ul>"));
+
+		TestTrue(TEXT("List items become bullets"), Text.Contains(TEXT("- One")));
+		TestTrue(TEXT("Nested items are indented"), Text.Contains(TEXT("  - Nested")));
+	}
+
+	{
+		const FString Text = FExtendedAtlassianHtml::ToPlainText(
+			TEXT("<table><tr><th>A</th><th>B</th></tr><tr><td>1</td><td>2</td></tr></table>"));
+
+		TestTrue(TEXT("Header cells are separated"), Text.Contains(TEXT("A | B")));
+		TestTrue(TEXT("Body cells are separated"), Text.Contains(TEXT("1 | 2")));
+	}
+
+	{
+		// Script and style content must not leak into the readable text.
+		const FString Text = FExtendedAtlassianHtml::ToPlainText(
+			TEXT("<p>Visible</p><script>var secret = 1;</script><style>.x{color:red}</style>"));
+
+		TestTrue(TEXT("Body text survives"), Text.Contains(TEXT("Visible")));
+		TestFalse(TEXT("Script content is dropped"), Text.Contains(TEXT("secret")));
+		TestFalse(TEXT("Style content is dropped"), Text.Contains(TEXT("color:red")));
+	}
+
+	{
+		const FString Text = FExtendedAtlassianHtml::ToPlainText(
+			TEXT("<p>a &amp; b &lt;tag&gt; &#65; &nbsp;end</p>"));
+
+		TestTrue(TEXT("Named entities decode"), Text.Contains(TEXT("a & b")));
+		TestTrue(TEXT("Escaped angle brackets decode"), Text.Contains(TEXT("<tag>")));
+		TestTrue(TEXT("Numeric entities decode"), Text.Contains(TEXT("A")));
+	}
+
+	{
+		const FString Text = FExtendedAtlassianHtml::ToPlainText(
+			TEXT("<p>See <a href=\"https://example.com/doc\">the doc</a>.</p>"));
+
+		TestTrue(TEXT("Link text is kept"), Text.Contains(TEXT("the doc")));
+		TestTrue(TEXT("Absolute href is surfaced"), Text.Contains(TEXT("(https://example.com/doc)")));
+	}
+
+	{
+		// Relative Confluence links are noise in plain text and must not be appended.
+		const FString Text = FExtendedAtlassianHtml::ToPlainText(
+			TEXT("<p><a href=\"/wiki/spaces/X/pages/1\">internal</a></p>"));
+
+		TestTrue(TEXT("Relative link text is kept"), Text.Contains(TEXT("internal")));
+		TestFalse(TEXT("Relative href is not appended"), Text.Contains(TEXT("/wiki/spaces")));
+	}
+
+	{
+		// Malformed markup must degrade, never crash or hang.
+		TestEqual(TEXT("Empty input yields empty output"), FExtendedAtlassianHtml::ToPlainText(FString()), FString());
+
+		const FString Unterminated = FExtendedAtlassianHtml::ToPlainText(TEXT("<p>Text<div class=\"broken"));
+		TestTrue(TEXT("Text before an unterminated tag survives"), Unterminated.Contains(TEXT("Text")));
+
+		const FString Comment = FExtendedAtlassianHtml::ToPlainText(TEXT("<p>A<!-- hidden > still hidden -->B</p>"));
+		TestFalse(TEXT("Comment content is dropped"), Comment.Contains(TEXT("hidden")));
+		TestTrue(TEXT("Text around a comment survives"), Comment.Contains(TEXT("A")) && Comment.Contains(TEXT("B")));
+	}
+
+	return true;
+}
+
+// --- Multipart ---------------------------------------------------------------
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FExtendedAtlassianMultipartTest,
+	"ExtendedAtlassian.Multipart.Framing",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FExtendedAtlassianMultipartTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	using namespace ExtendedAtlassianTestsPrivate;
+
+	const FString Boundary = TEXT("TESTBOUNDARY");
+
+	FExtendedAtlassianMultipartFile File;
+	File.FieldName = TEXT("file");
+	File.FileName = TEXT("shot.png");
+	File.ContentType = TEXT("image/png");
+
+	// Deliberately includes a byte that is invalid UTF-8, to prove the body is assembled as bytes
+	// rather than round-tripped through a string.
+	const uint8 Payload[] = { 0x89, 'P', 'N', 'G', 0x00, 0xFF };
+	File.Data.Append(Payload, UE_ARRAY_COUNT(Payload));
+
+	TArray<FExtendedAtlassianMultipartFile> Files;
+	Files.Add(File);
+
+	const TArray<uint8> Body = FExtendedAtlassianMultipart::BuildBody(Files, Boundary);
+
+	// Header framing is CRLF-sensitive; a lone LF produces a 400 that reads like an auth failure.
+	const FString Expected =
+		TEXT("--TESTBOUNDARY\r\n")
+		TEXT("Content-Disposition: form-data; name=\"file\"; filename=\"shot.png\"\r\n")
+		TEXT("Content-Type: image/png\r\n")
+		TEXT("\r\n");
+
+	const FTCHARToUTF8 ExpectedUtf8(*Expected);
+	TestTrue(TEXT("Body is longer than its header"), Body.Num() > ExpectedUtf8.Length());
+
+	bool bHeaderMatches = Body.Num() >= ExpectedUtf8.Length();
+	for (int32 Index = 0; bHeaderMatches && Index < ExpectedUtf8.Length(); ++Index)
+	{
+		bHeaderMatches = Body[Index] == static_cast<uint8>(ExpectedUtf8.Get()[Index]);
+	}
+	TestTrue(TEXT("Header framing is byte-exact"), bHeaderMatches);
+
+	// Payload must appear verbatim, immediately after the blank line.
+	bool bPayloadIntact = true;
+	for (int32 Index = 0; Index < UE_ARRAY_COUNT(Payload); ++Index)
+	{
+		if (Body[ExpectedUtf8.Length() + Index] != Payload[Index])
+		{
+			bPayloadIntact = false;
+			break;
+		}
+	}
+	TestTrue(TEXT("Binary payload is preserved byte for byte"), bPayloadIntact);
+
+	const FString Trailer = TEXT("\r\n--TESTBOUNDARY--\r\n");
+	const FTCHARToUTF8 TrailerUtf8(*Trailer);
+
+	bool bTrailerMatches = Body.Num() >= TrailerUtf8.Length();
+	for (int32 Index = 0; bTrailerMatches && Index < TrailerUtf8.Length(); ++Index)
+	{
+		bTrailerMatches = Body[Body.Num() - TrailerUtf8.Length() + Index] == static_cast<uint8>(TrailerUtf8.Get()[Index]);
+	}
+	TestTrue(TEXT("Closing boundary is byte-exact"), bTrailerMatches);
+
+	TestEqual(TEXT("Content type header names the boundary"),
+		FExtendedAtlassianMultipart::MakeContentTypeHeader(Boundary),
+		FString(TEXT("multipart/form-data; boundary=TESTBOUNDARY")));
+
+	{
+		// A quote or newline in a filename would otherwise let a caller inject header lines.
+		FExtendedAtlassianMultipartFile Hostile;
+		Hostile.FileName = TEXT("a\"b\r\nX-Injected: 1");
+		Hostile.Data.Add(0x41);
+
+		TArray<FExtendedAtlassianMultipartFile> HostileFiles;
+		HostileFiles.Add(Hostile);
+
+		const FString Text = BytesToString(FExtendedAtlassianMultipart::BuildBody(HostileFiles, Boundary));
+		TestFalse(TEXT("Filename cannot inject a header"), Text.Contains(TEXT("X-Injected: 1\r\n")));
+	}
+
+	TestNotEqual(TEXT("Boundaries are unique per call"),
+		FExtendedAtlassianMultipart::MakeBoundary(),
+		FExtendedAtlassianMultipart::MakeBoundary());
+
+	return true;
+}
+
+// --- Document model ----------------------------------------------------------
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FExtendedAtlassianMarkupTest,
+	"ExtendedAtlassian.Document.Markup",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FExtendedAtlassianMarkupTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+
+	// A stray '<' in page content would otherwise be read as a markup tag and swallow text.
+	TestEqual(TEXT("Angle brackets are escaped"),
+		FExtendedAtlassianMarkup::Escape(TEXT("a < b > c")), FString(TEXT("a &lt; b &gt; c")));
+
+	// Ampersand must be escaped first or it corrupts the entities the others introduce.
+	TestEqual(TEXT("Ampersand escapes without double-encoding"),
+		FExtendedAtlassianMarkup::Escape(TEXT("Tom & Jerry")), FString(TEXT("Tom &amp; Jerry")));
+	TestEqual(TEXT("Already-escaped input is not re-corrupted into &amp;lt;"),
+		FExtendedAtlassianMarkup::Escape(TEXT("<")), FString(TEXT("&lt;")));
+
+	TestEqual(TEXT("Styled wraps in a tag"),
+		FExtendedAtlassianMarkup::Styled(TEXT("Bold"), TEXT("hi")), FString(TEXT("<Bold>hi</>")));
+
+	// A quote in an href would otherwise break out of the attribute.
+	const FString Link = FExtendedAtlassianMarkup::Link(TEXT("https://x.com/\"onerror=1"), TEXT("text"));
+	TestFalse(TEXT("Quotes cannot escape the href attribute"), Link.Contains(TEXT("\"onerror")));
+
+	TestTrue(TEXT("Empty content produces no tag"), FExtendedAtlassianMarkup::Styled(TEXT("Bold"), FString()).IsEmpty());
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FExtendedAtlassianMarkdownTest,
+	"ExtendedAtlassian.Document.Markdown",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FExtendedAtlassianMarkdownTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+
+	{
+		const FString Markup = FExtendedAtlassianMarkdown::InlineToMarkup(
+			TEXT("**bold** and *italic* and `code` and ~~gone~~"));
+
+		TestTrue(TEXT("Bold"), Markup.Contains(TEXT("<Bold>bold</>")));
+		TestTrue(TEXT("Italic"), Markup.Contains(TEXT("<Italic>italic</>")));
+		TestTrue(TEXT("Inline code"), Markup.Contains(TEXT("<Code>code</>")));
+		TestTrue(TEXT("Strikethrough"), Markup.Contains(TEXT("<Strike>gone</>")));
+	}
+
+	{
+		// Content inside backticks is literal and must not be re-scanned for other markers.
+		const FString Markup = FExtendedAtlassianMarkdown::InlineToMarkup(TEXT("`**not bold**`"));
+		TestTrue(TEXT("Code content stays literal"), Markup.Contains(TEXT("**not bold**")));
+		TestFalse(TEXT("Code content is not styled"), Markup.Contains(TEXT("<Bold>")));
+	}
+
+	{
+		const FString Markup = FExtendedAtlassianMarkdown::InlineToMarkup(TEXT("see [docs](https://example.com)"));
+		TestTrue(TEXT("Link href"), Markup.Contains(TEXT("href=\"https://example.com\"")));
+		TestTrue(TEXT("Link text"), Markup.Contains(TEXT("docs")));
+	}
+
+	{
+		// Text taken from a document must never reach the markup unescaped.
+		const FString Markup = FExtendedAtlassianMarkdown::InlineToMarkup(TEXT("a < b & c"));
+		TestTrue(TEXT("Inline text is escaped"), Markup.Contains(TEXT("&lt;")) && Markup.Contains(TEXT("&amp;")));
+	}
+
+	{
+		const TArray<FExtendedAtlassianDocBlock> Blocks = FExtendedAtlassianMarkdown::ToBlocks(
+			TEXT("# Title\n\nBody text.\n\n## Sub\n\n- one\n  - nested\n\n1. first\n\n- [x] done\n- [ ] todo\n\n---\n\n```cpp\nint x = 1;\n```\n"));
+
+		auto CountOf = [&Blocks](EExtendedAtlassianBlockKind Kind)
+		{
+			int32 Count = 0;
+			for (const FExtendedAtlassianDocBlock& Block : Blocks)
+			{
+				if (Block.Kind == Kind) { ++Count; }
+			}
+			return Count;
+		};
+
+		TestEqual(TEXT("Two headings"), CountOf(EExtendedAtlassianBlockKind::Heading), 2);
+		TestEqual(TEXT("Two bullets"), CountOf(EExtendedAtlassianBlockKind::BulletItem), 2);
+		TestEqual(TEXT("One ordered item"), CountOf(EExtendedAtlassianBlockKind::OrderedItem), 1);
+		TestEqual(TEXT("Two task items"), CountOf(EExtendedAtlassianBlockKind::TaskItem), 2);
+		TestEqual(TEXT("One rule"), CountOf(EExtendedAtlassianBlockKind::Rule), 1);
+		TestEqual(TEXT("One code block"), CountOf(EExtendedAtlassianBlockKind::CodeBlock), 1);
+
+		for (const FExtendedAtlassianDocBlock& Block : Blocks)
+		{
+			if (Block.Kind == EExtendedAtlassianBlockKind::Heading && Block.Markup.Contains(TEXT("Sub")))
+			{
+				TestEqual(TEXT("Heading level is read from the hash count"), Block.Level, 2);
+			}
+			if (Block.Kind == EExtendedAtlassianBlockKind::CodeBlock)
+			{
+				TestEqual(TEXT("Code fence language"), Block.CodeLanguage, FString(TEXT("cpp")));
+				TestEqual(TEXT("Code body is verbatim"), Block.RawText, FString(TEXT("int x = 1;")));
+			}
+			if (Block.Kind == EExtendedAtlassianBlockKind::TaskItem && Block.Markup.Contains(TEXT("done")))
+			{
+				TestTrue(TEXT("Checked task"), Block.bChecked);
+			}
+		}
+	}
+
+	{
+		// "#1 priority" is not a heading; requiring the space keeps ordinary text intact.
+		const TArray<FExtendedAtlassianDocBlock> Blocks = FExtendedAtlassianMarkdown::ToBlocks(TEXT("#1 priority"));
+		TestEqual(TEXT("Hash without a space stays a paragraph"), Blocks.Num(), 1);
+		TestTrue(TEXT("Not treated as a heading"), Blocks[0].Kind == EExtendedAtlassianBlockKind::Paragraph);
+	}
+
+	{
+		const TArray<FExtendedAtlassianDocBlock> Blocks = FExtendedAtlassianMarkdown::ToBlocks(
+			TEXT("| A | B |\n|---|---|\n| 1 | 2 |\n"));
+
+		TestEqual(TEXT("Header plus one body row"), Blocks.Num(), 2);
+		TestTrue(TEXT("First row is a header"), Blocks[0].bIsHeaderRow);
+		TestEqual(TEXT("Two columns"), Blocks[0].Cells.Num(), 2);
+		TestFalse(TEXT("Body row is not a header"), Blocks[1].bIsHeaderRow);
+	}
+
+	TestEqual(TEXT("Empty input yields no blocks"), FExtendedAtlassianMarkdown::ToBlocks(FString()).Num(), 0);
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FExtendedAtlassianHtmlBlocksTest,
+	"ExtendedAtlassian.Document.HtmlBlocks",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FExtendedAtlassianHtmlBlocksTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+
+	{
+		const TArray<FExtendedAtlassianDocBlock> Blocks = FExtendedAtlassianHtml::ToBlocks(
+			TEXT("<h2>Heading</h2><p>Body <strong>bold</strong>.</p><ul><li>one</li><li>two</li></ul>"));
+
+		bool bFoundHeading = false;
+		int32 BulletCount = 0;
+		bool bFoundBold = false;
+
+		for (const FExtendedAtlassianDocBlock& Block : Blocks)
+		{
+			if (Block.Kind == EExtendedAtlassianBlockKind::Heading && Block.Level == 2)
+			{
+				bFoundHeading = true;
+			}
+			if (Block.Kind == EExtendedAtlassianBlockKind::BulletItem)
+			{
+				++BulletCount;
+			}
+			if (Block.Markup.Contains(TEXT("<Bold>bold</>")))
+			{
+				bFoundBold = true;
+			}
+		}
+
+		TestTrue(TEXT("h2 becomes a level 2 heading"), bFoundHeading);
+		TestEqual(TEXT("Two list items"), BulletCount, 2);
+		TestTrue(TEXT("strong becomes a Bold run"), bFoundBold);
+	}
+
+	{
+		const TArray<FExtendedAtlassianDocBlock> Blocks = FExtendedAtlassianHtml::ToBlocks(
+			TEXT("<pre>line one\nline two</pre>"));
+
+		TestEqual(TEXT("One code block"), Blocks.Num(), 1);
+		TestTrue(TEXT("Code kind"), Blocks[0].Kind == EExtendedAtlassianBlockKind::CodeBlock);
+		TestTrue(TEXT("Newlines preserved verbatim"), Blocks[0].RawText.Contains(TEXT("\n")));
+	}
+
+	{
+		const TArray<FExtendedAtlassianDocBlock> Blocks = FExtendedAtlassianHtml::ToBlocks(
+			TEXT("<table><tr><th>A</th><th>B</th></tr><tr><td>1</td><td>2</td></tr></table>"));
+
+		TestEqual(TEXT("Two table rows"), Blocks.Num(), 2);
+		TestTrue(TEXT("Header row flagged"), Blocks[0].bIsHeaderRow);
+		TestEqual(TEXT("Two cells"), Blocks[0].Cells.Num(), 2);
+	}
+
+	{
+		// Content-derived text must be escaped before it becomes markup.
+		const TArray<FExtendedAtlassianDocBlock> Blocks = FExtendedAtlassianHtml::ToBlocks(
+			TEXT("<p>if a &lt; b &amp;&amp; c</p>"));
+
+		TestEqual(TEXT("One paragraph"), Blocks.Num(), 1);
+		TestTrue(TEXT("Decoded then re-escaped safely"), Blocks[0].Markup.Contains(TEXT("&lt;")));
+		TestFalse(TEXT("No raw angle bracket reaches the markup"), Blocks[0].Markup.Contains(TEXT("a < b")));
+	}
+
+	{
+		const TArray<FExtendedAtlassianDocBlock> Blocks = FExtendedAtlassianHtml::ToBlocks(
+			TEXT("<p><a href=\"https://example.com\">link</a></p>"));
+
+		TestEqual(TEXT("One paragraph"), Blocks.Num(), 1);
+		TestTrue(TEXT("Absolute link becomes a hyperlink run"), Blocks[0].Markup.Contains(TEXT("href=\"https://example.com\"")));
+	}
+
+	TestEqual(TEXT("Empty input yields no blocks"), FExtendedAtlassianHtml::ToBlocks(FString()).Num(), 0);
+	TestEqual(TEXT("Whitespace-only input yields no blocks"), FExtendedAtlassianHtml::ToBlocks(TEXT("<p>   </p>")).Num(), 0);
+
+	return true;
+}
+
+// --- Credential store --------------------------------------------------------
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FExtendedAtlassianCredentialStoreTest,
+	"ExtendedAtlassian.Credentials.RoundTrip",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FExtendedAtlassianCredentialStoreTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+
+	// Never the real store: running the suite must not clobber the user's stored token.
+	const FString TempPath = FPaths::Combine(
+		FPaths::ProjectIntermediateDir(),
+		TEXT("ExtendedAtlassianTests"),
+		FGuid::NewGuid().ToString(EGuidFormats::Digits) + TEXT(".ini"));
+
+	FExtendedAtlassianCredentials Written;
+	Written.Email = TEXT("tester@example.com");
+	Written.ApiToken = TEXT("token-with-symbols-!@#$%^&*()_+-=[]{}|;:,.<>?");
+
+	TestTrue(TEXT("Credentials save"), FExtendedAtlassianCredentialStore::SaveTo(TempPath, Written));
+
+	FExtendedAtlassianCredentials Read;
+	TestTrue(TEXT("Credentials load"), FExtendedAtlassianCredentialStore::LoadFrom(TempPath, Read));
+	TestEqual(TEXT("E-mail round trips"), Read.Email, Written.Email);
+	TestEqual(TEXT("Token round trips intact"), Read.ApiToken, Written.ApiToken);
+
+	if (FExtendedAtlassianCredentialStore::IsEncryptionAvailable())
+	{
+		// The point of the store is that the token is not sitting on disk in the clear.
+		FString RawFile;
+		FFileHelper::LoadFileToString(RawFile, *TempPath);
+		TestFalse(TEXT("Token is not stored in plain text"), RawFile.Contains(Written.ApiToken));
+	}
+
+	{
+		// An incomplete credential must be rejected rather than half-written.
+		FExtendedAtlassianCredentials Incomplete;
+		Incomplete.Email = TEXT("someone@example.com");
+		TestFalse(TEXT("Incomplete credentials are refused"),
+			FExtendedAtlassianCredentialStore::SaveTo(TempPath + TEXT(".partial"), Incomplete));
+	}
+
+	IFileManager::Get().Delete(*TempPath, false, true, true);
+	return true;
+}
+
+#endif // WITH_DEV_AUTOMATION_TESTS

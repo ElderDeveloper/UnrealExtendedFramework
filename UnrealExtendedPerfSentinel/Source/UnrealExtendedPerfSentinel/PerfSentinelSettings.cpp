@@ -30,7 +30,7 @@ UPerfSentinelSettings::UPerfSentinelSettings()
 
 FName UPerfSentinelSettings::GetCategoryName() const
 {
-	return FName(TEXT("Plugins"));
+	return FName(TEXT("Extended Framework"));
 }
 
 FName UPerfSentinelSettings::GetSectionName() const
@@ -41,7 +41,7 @@ FName UPerfSentinelSettings::GetSectionName() const
 #if WITH_EDITOR
 FText UPerfSentinelSettings::GetSectionText() const
 {
-	return LOCTEXT("SectionText", "PerfSentinel");
+	return LOCTEXT("SectionText", "Extended Perf Sentinel");
 }
 
 FText UPerfSentinelSettings::GetSectionDescription() const

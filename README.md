@@ -374,9 +374,10 @@ Provider settings are exposed through `UDeveloperSettings`:
 | Steam client | Extended Framework → Extended Steam | `UESteamSettings` |
 | Steam Web API | Extended Framework → Extended Steam Web | `UESteamWebSettings` |
 | Steam publishing | Extended Framework → Extended Steam Publish | `UESteamPublishSettings` |
-| Perf Sentinel | Plugins → PerfSentinel | `UPerfSentinelSettings` |
-| Quest editor | Editor → Quest System Settings | `UEGQuestPluginSettings` |
+| Perf Sentinel | Extended Framework → Extended Perf Sentinel | `UPerfSentinelSettings` |
+| Quest editor | Extended Framework → Extended Quest | `UEGQuestPluginSettings` |
 | Subtitles | Extended Framework → Extended Subtitle Settings | `UEFSubtitleProjectSettings` |
+| Atlassian | Extended Framework → Extended Atlassian | `UExtendedAtlassianSettings` |
 
 Configure only one provider at a time, verify its authentication flow in a development environment, and add the rest after the base path is stable.
 

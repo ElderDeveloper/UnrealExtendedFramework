@@ -16,8 +16,6 @@ class EXTENDEDSTEAMWEB_API UESteamWebSettings : public UDeveloperSettings
 	GENERATED_BODY()
 
 public:
-	UESteamWebSettings();
-
 	//~ UDeveloperSettings
 	virtual FName GetCategoryName() const override;
 

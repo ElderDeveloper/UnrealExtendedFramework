@@ -1,0 +1,466 @@
+// Copyright Kemal Erdem YILMAZ. All Rights Reserved.
+
+#include "ExtendedAtlassianMarkdown.h"
+
+namespace ExtendedAtlassianMarkdownPrivate
+{
+	/** Markdown nests lists by two spaces (or a tab) per level. */
+	constexpr int32 SpacesPerIndentLevel = 2;
+
+	bool IsHorizontalRule(const FString& Trimmed)
+	{
+		if (Trimmed.Len() < 3)
+		{
+			return false;
+		}
+
+		const TCHAR First = Trimmed[0];
+		if (First != TEXT('-') && First != TEXT('*') && First != TEXT('_'))
+		{
+			return false;
+		}
+
+		for (const TCHAR Char : Trimmed)
+		{
+			if (Char != First && Char != TEXT(' '))
+			{
+				return false;
+			}
+		}
+
+		return true;
+	}
+
+	/** Leading whitespace converted to a nesting depth, tabs counting as one level. */
+	int32 MeasureIndent(const FString& Line)
+	{
+		int32 Spaces = 0;
+		for (const TCHAR Char : Line)
+		{
+			if (Char == TEXT(' '))
+			{
+				++Spaces;
+			}
+			else if (Char == TEXT('\t'))
+			{
+				Spaces += SpacesPerIndentLevel;
+			}
+			else
+			{
+				break;
+			}
+		}
+
+		return Spaces / SpacesPerIndentLevel;
+	}
+
+	/** A pipe-table separator, e.g. |---|:--:|. */
+	bool IsTableSeparator(const FString& Trimmed)
+	{
+		if (!Trimmed.Contains(TEXT("|")) || !Trimmed.Contains(TEXT("-")))
+		{
+			return false;
+		}
+
+		for (const TCHAR Char : Trimmed)
+		{
+			if (Char != TEXT('|') && Char != TEXT('-') && Char != TEXT(':') && Char != TEXT(' '))
+			{
+				return false;
+			}
+		}
+
+		return true;
+	}
+
+	void SplitTableRow(const FString& Line, TArray<FString>& OutCells)
+	{
+		FString Working = Line.TrimStartAndEnd();
+
+		// Outer pipes are optional in GFM; strip them so they do not produce empty cells.
+		if (Working.StartsWith(TEXT("|")))
+		{
+			Working.RightChopInline(1);
+		}
+		if (Working.EndsWith(TEXT("|")))
+		{
+			Working.LeftChopInline(1);
+		}
+
+		Working.ParseIntoArray(OutCells, TEXT("|"), false);
+		for (FString& Cell : OutCells)
+		{
+			Cell.TrimStartAndEndInline();
+		}
+	}
+
+	/** True when the run of Marker starting at Index is a closing delimiter we can pair with. */
+	int32 FindClosingDelimiter(const FString& Text, int32 SearchStart, const FString& Delimiter)
+	{
+		return Text.Find(Delimiter, ESearchCase::CaseSensitive, ESearchDir::FromStart, SearchStart);
+	}
+}
+
+FString FExtendedAtlassianMarkdown::InlineToMarkup(const FString& Line)
+{
+	using namespace ExtendedAtlassianMarkdownPrivate;
+
+	FString Out;
+	Out.Reserve(Line.Len() + 32);
+
+	FString Pending;
+
+	// Plain text accumulates unescaped and is escaped in one go, so escaping never touches the tags
+	// emitted for formatting.
+	auto FlushPending = [&Out, &Pending]()
+	{
+		if (!Pending.IsEmpty())
+		{
+			Out += FExtendedAtlassianMarkup::Escape(Pending);
+			Pending.Reset();
+		}
+	};
+
+	const int32 Length = Line.Len();
+	int32 Index = 0;
+
+	while (Index < Length)
+	{
+		const TCHAR Char = Line[Index];
+
+		// Inline code first: its contents are literal and must not be scanned for other markers.
+		if (Char == TEXT('`'))
+		{
+			const int32 Close = FindClosingDelimiter(Line, Index + 1, TEXT("`"));
+			if (Close != INDEX_NONE)
+			{
+				FlushPending();
+				const FString Code = Line.Mid(Index + 1, Close - Index - 1);
+				Out += FExtendedAtlassianMarkup::Styled(TEXT("Code"), FExtendedAtlassianMarkup::Escape(Code));
+				Index = Close + 1;
+				continue;
+			}
+		}
+
+		// [text](url)
+		if (Char == TEXT('['))
+		{
+			const int32 CloseBracket = FindClosingDelimiter(Line, Index + 1, TEXT("]"));
+			if (CloseBracket != INDEX_NONE &&
+				CloseBracket + 1 < Length &&
+				Line[CloseBracket + 1] == TEXT('('))
+			{
+				const int32 CloseParen = FindClosingDelimiter(Line, CloseBracket + 2, TEXT(")"));
+				if (CloseParen != INDEX_NONE)
+				{
+					FlushPending();
+
+					const FString Text = Line.Mid(Index + 1, CloseBracket - Index - 1);
+					const FString Url = Line.Mid(CloseBracket + 2, CloseParen - CloseBracket - 2);
+
+					Out += FExtendedAtlassianMarkup::Link(Url, FExtendedAtlassianMarkup::Escape(Text));
+					Index = CloseParen + 1;
+					continue;
+				}
+			}
+		}
+
+		// ~~strike~~
+		if (Char == TEXT('~') && Index + 1 < Length && Line[Index + 1] == TEXT('~'))
+		{
+			const int32 Close = FindClosingDelimiter(Line, Index + 2, TEXT("~~"));
+			if (Close != INDEX_NONE)
+			{
+				FlushPending();
+				const FString Inner = Line.Mid(Index + 2, Close - Index - 2);
+				Out += FExtendedAtlassianMarkup::Styled(TEXT("Strike"), FExtendedAtlassianMarkup::Escape(Inner));
+				Index = Close + 2;
+				continue;
+			}
+		}
+
+		// **bold** / __bold__ before the single-character italic forms.
+		if ((Char == TEXT('*') || Char == TEXT('_')) && Index + 1 < Length && Line[Index + 1] == Char)
+		{
+			const FString Delimiter = FString::ChrN(2, Char);
+			const int32 Close = FindClosingDelimiter(Line, Index + 2, Delimiter);
+			if (Close != INDEX_NONE)
+			{
+				FlushPending();
+				const FString Inner = Line.Mid(Index + 2, Close - Index - 2);
+				Out += FExtendedAtlassianMarkup::Styled(TEXT("Bold"), FExtendedAtlassianMarkup::Escape(Inner));
+				Index = Close + 2;
+				continue;
+			}
+		}
+
+		// *italic* / _italic_
+		if (Char == TEXT('*') || Char == TEXT('_'))
+		{
+			const FString Delimiter = FString::Chr(Char);
+			const int32 Close = FindClosingDelimiter(Line, Index + 1, Delimiter);
+
+			// Require content: "a * b" should stay literal rather than swallowing the rest.
+			if (Close != INDEX_NONE && Close > Index + 1)
+			{
+				FlushPending();
+				const FString Inner = Line.Mid(Index + 1, Close - Index - 1);
+				Out += FExtendedAtlassianMarkup::Styled(TEXT("Italic"), FExtendedAtlassianMarkup::Escape(Inner));
+				Index = Close + 1;
+				continue;
+			}
+		}
+
+		// Bare URLs, so pasted links are still clickable.
+		if (Char == TEXT('h') && (Line.Mid(Index, 7) == TEXT("http://") || Line.Mid(Index, 8) == TEXT("https://")))
+		{
+			int32 End = Index;
+			while (End < Length && !FChar::IsWhitespace(Line[End]))
+			{
+				++End;
+			}
+
+			// Trailing punctuation is almost always sentence punctuation, not part of the URL.
+			while (End > Index && (Line[End - 1] == TEXT('.') || Line[End - 1] == TEXT(',') || Line[End - 1] == TEXT(')')))
+			{
+				--End;
+			}
+
+			FlushPending();
+			const FString Url = Line.Mid(Index, End - Index);
+			Out += FExtendedAtlassianMarkup::Link(Url, FExtendedAtlassianMarkup::Escape(Url));
+			Index = End;
+			continue;
+		}
+
+		Pending.AppendChar(Char);
+		++Index;
+	}
+
+	FlushPending();
+	return Out;
+}
+
+TArray<FExtendedAtlassianDocBlock> FExtendedAtlassianMarkdown::ToBlocks(const FString& Markdown)
+{
+	using namespace ExtendedAtlassianMarkdownPrivate;
+
+	TArray<FExtendedAtlassianDocBlock> Blocks;
+
+	if (Markdown.IsEmpty())
+	{
+		return Blocks;
+	}
+
+	FString Normalized = Markdown;
+	Normalized.ReplaceInline(TEXT("\r\n"), TEXT("\n"));
+	Normalized.ReplaceInline(TEXT("\r"), TEXT("\n"));
+
+	TArray<FString> Lines;
+	Normalized.ParseIntoArray(Lines, TEXT("\n"), false);
+
+	FString ParagraphBuffer;
+
+	auto FlushParagraph = [&Blocks, &ParagraphBuffer]()
+	{
+		if (ParagraphBuffer.IsEmpty())
+		{
+			return;
+		}
+
+		FExtendedAtlassianDocBlock Block;
+		Block.Kind = EExtendedAtlassianBlockKind::Paragraph;
+		Block.Markup = InlineToMarkup(ParagraphBuffer);
+		Blocks.Add(Block);
+
+		ParagraphBuffer.Reset();
+	};
+
+	for (int32 LineIndex = 0; LineIndex < Lines.Num(); ++LineIndex)
+	{
+		const FString& Line = Lines[LineIndex];
+		const FString Trimmed = Line.TrimStartAndEnd();
+
+		// --- Fenced code -----------------------------------------------
+		if (Trimmed.StartsWith(TEXT("```")))
+		{
+			FlushParagraph();
+
+			FExtendedAtlassianDocBlock Block;
+			Block.Kind = EExtendedAtlassianBlockKind::CodeBlock;
+			Block.CodeLanguage = Trimmed.RightChop(3).TrimStartAndEnd();
+
+			TArray<FString> CodeLines;
+			++LineIndex;
+			while (LineIndex < Lines.Num() && !Lines[LineIndex].TrimStartAndEnd().StartsWith(TEXT("```")))
+			{
+				CodeLines.Add(Lines[LineIndex]);
+				++LineIndex;
+			}
+
+			Block.RawText = FString::Join(CodeLines, TEXT("\n"));
+			Blocks.Add(Block);
+			continue;
+		}
+
+		// --- Blank line ------------------------------------------------
+		if (Trimmed.IsEmpty())
+		{
+			FlushParagraph();
+			continue;
+		}
+
+		// --- Horizontal rule -------------------------------------------
+		if (IsHorizontalRule(Trimmed))
+		{
+			FlushParagraph();
+
+			FExtendedAtlassianDocBlock Block;
+			Block.Kind = EExtendedAtlassianBlockKind::Rule;
+			Blocks.Add(Block);
+			continue;
+		}
+
+		// --- Heading ---------------------------------------------------
+		if (Trimmed.StartsWith(TEXT("#")))
+		{
+			int32 Level = 0;
+			while (Level < Trimmed.Len() && Trimmed[Level] == TEXT('#'))
+			{
+				++Level;
+			}
+
+			// "#Text" without a space is not a heading in Markdown, and treating it as one would
+			// mangle things like "#1 priority".
+			if (Level >= 1 && Level <= 6 && Level < Trimmed.Len() && Trimmed[Level] == TEXT(' '))
+			{
+				FlushParagraph();
+
+				FExtendedAtlassianDocBlock Block;
+				Block.Kind = EExtendedAtlassianBlockKind::Heading;
+				Block.Level = Level;
+				Block.Markup = InlineToMarkup(Trimmed.RightChop(Level).TrimStartAndEnd());
+				Blocks.Add(Block);
+				continue;
+			}
+		}
+
+		// --- Blockquote ------------------------------------------------
+		if (Trimmed.StartsWith(TEXT(">")))
+		{
+			FlushParagraph();
+
+			FExtendedAtlassianDocBlock Block;
+			Block.Kind = EExtendedAtlassianBlockKind::Quote;
+			Block.Markup = InlineToMarkup(Trimmed.RightChop(1).TrimStartAndEnd());
+			Blocks.Add(Block);
+			continue;
+		}
+
+		// --- Table -----------------------------------------------------
+		if (Trimmed.Contains(TEXT("|")) &&
+			LineIndex + 1 < Lines.Num() &&
+			IsTableSeparator(Lines[LineIndex + 1].TrimStartAndEnd()))
+		{
+			FlushParagraph();
+
+			// Header row, then the separator, then body rows until the pipes stop.
+			TArray<FString> HeaderCells;
+			SplitTableRow(Trimmed, HeaderCells);
+
+			FExtendedAtlassianDocBlock HeaderBlock;
+			HeaderBlock.Kind = EExtendedAtlassianBlockKind::TableRow;
+			HeaderBlock.bIsHeaderRow = true;
+			for (const FString& Cell : HeaderCells)
+			{
+				HeaderBlock.Cells.Add(InlineToMarkup(Cell));
+			}
+			Blocks.Add(HeaderBlock);
+
+			LineIndex += 2;
+			while (LineIndex < Lines.Num() && Lines[LineIndex].Contains(TEXT("|")))
+			{
+				TArray<FString> BodyCells;
+				SplitTableRow(Lines[LineIndex], BodyCells);
+
+				FExtendedAtlassianDocBlock RowBlock;
+				RowBlock.Kind = EExtendedAtlassianBlockKind::TableRow;
+				for (const FString& Cell : BodyCells)
+				{
+					RowBlock.Cells.Add(InlineToMarkup(Cell));
+				}
+				Blocks.Add(RowBlock);
+
+				++LineIndex;
+			}
+
+			--LineIndex; // The outer loop advances again.
+			continue;
+		}
+
+		// --- List items ------------------------------------------------
+		{
+			const int32 Indent = MeasureIndent(Line);
+
+			// Task list: "- [ ] text" or "- [x] text"
+			if ((Trimmed.StartsWith(TEXT("- [")) || Trimmed.StartsWith(TEXT("* [")) || Trimmed.StartsWith(TEXT("+ ["))) &&
+				Trimmed.Len() > 5 && Trimmed[4] == TEXT(']'))
+			{
+				FlushParagraph();
+
+				FExtendedAtlassianDocBlock Block;
+				Block.Kind = EExtendedAtlassianBlockKind::TaskItem;
+				Block.IndentDepth = Indent;
+				Block.bChecked = Trimmed[3] == TEXT('x') || Trimmed[3] == TEXT('X');
+				Block.Markup = InlineToMarkup(Trimmed.RightChop(5).TrimStartAndEnd());
+				Blocks.Add(Block);
+				continue;
+			}
+
+			if (Trimmed.StartsWith(TEXT("- ")) || Trimmed.StartsWith(TEXT("* ")) || Trimmed.StartsWith(TEXT("+ ")))
+			{
+				FlushParagraph();
+
+				FExtendedAtlassianDocBlock Block;
+				Block.Kind = EExtendedAtlassianBlockKind::BulletItem;
+				Block.IndentDepth = Indent;
+				Block.Markup = InlineToMarkup(Trimmed.RightChop(2).TrimStartAndEnd());
+				Blocks.Add(Block);
+				continue;
+			}
+
+			// Ordered: "1. text"
+			int32 DigitCount = 0;
+			while (DigitCount < Trimmed.Len() && FChar::IsDigit(Trimmed[DigitCount]))
+			{
+				++DigitCount;
+			}
+
+			if (DigitCount > 0 &&
+				DigitCount + 1 < Trimmed.Len() &&
+				Trimmed[DigitCount] == TEXT('.') &&
+				Trimmed[DigitCount + 1] == TEXT(' '))
+			{
+				FlushParagraph();
+
+				FExtendedAtlassianDocBlock Block;
+				Block.Kind = EExtendedAtlassianBlockKind::OrderedItem;
+				Block.IndentDepth = Indent;
+				Block.OrderedIndex = FCString::Atoi(*Trimmed.Left(DigitCount));
+				Block.Markup = InlineToMarkup(Trimmed.RightChop(DigitCount + 2).TrimStartAndEnd());
+				Blocks.Add(Block);
+				continue;
+			}
+		}
+
+		// --- Paragraph continuation ------------------------------------
+		if (!ParagraphBuffer.IsEmpty())
+		{
+			ParagraphBuffer += TEXT(" ");
+		}
+		ParagraphBuffer += Trimmed;
+	}
+
+	FlushParagraph();
+	return Blocks;
+}

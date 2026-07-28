@@ -7,11 +7,6 @@
 #include "Publish/ESteamPublishManager.h"
 #include "Misc/Paths.h"
 
-UESteamPublishSettings::UESteamPublishSettings()
-{
-	CategoryName = TEXT("Extended Framework");
-}
-
 FName UESteamPublishSettings::GetCategoryName() const
 {
 	return TEXT("Extended Framework");

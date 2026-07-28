@@ -20,7 +20,7 @@ UEGQuestPluginSettings::UEGQuestPluginSettings()
 #if WITH_EDITOR
 FText UEGQuestPluginSettings::GetSectionText() const
 {
-	return LOCTEXT("SectionText", "Quest");
+	return LOCTEXT("SectionText", "Extended Quest");
 }
 
 FText UEGQuestPluginSettings::GetSectionDescription() const

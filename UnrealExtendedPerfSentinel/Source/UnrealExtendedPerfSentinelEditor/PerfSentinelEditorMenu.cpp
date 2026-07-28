@@ -288,7 +288,7 @@ void FPerfSentinelEditorMenu::OpenPerfSentinelSettings()
 		return;
 	}
 
-	SettingsModule->ShowViewer(TEXT("Project"), TEXT("Plugins"), TEXT("PerfSentinel"));
+	SettingsModule->ShowViewer(TEXT("Project"), TEXT("Extended Framework"), TEXT("PerfSentinel"));
 }
 
 bool FPerfSentinelEditorMenu::CanStartTraceCapture() const

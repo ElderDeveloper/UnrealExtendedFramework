@@ -46,8 +46,6 @@ class EXTENDEDSTEAMEDITOR_API UESteamPublishSettings : public UDeveloperSettings
 	GENERATED_BODY()
 
 public:
-	UESteamPublishSettings();
-
 	//~ UDeveloperSettings
 	virtual FName GetCategoryName() const override;
 	virtual void PostInitProperties() override;

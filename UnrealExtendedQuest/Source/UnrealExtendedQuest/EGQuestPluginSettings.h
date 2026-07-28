@@ -83,7 +83,7 @@ enum class EEGQuestClassPickerDisplayMode : uint8
 };
 
 // UDeveloperSettings classes are auto discovered https://wiki.unrealengine.com/CustomSettings
-UCLASS(Config = Engine, DefaultConfig, meta = (DisplayName = "Quest System Settings"))
+UCLASS(Config = Engine, DefaultConfig, meta = (DisplayName = "Extended Quest"))
 class UNREALEXTENDEDQUEST_API UEGQuestPluginSettings : public UDeveloperSettings
 {
 	GENERATED_BODY()
@@ -95,7 +95,7 @@ public:
 	// Gets the settings container name for the settings, either Project or Editor
 	FName GetContainerName() const override { return TEXT("Project"); }
 	// Gets the category for the settings, some high level grouping like, Editor, Engine, Game...etc.
-	FName GetCategoryName() const override { return TEXT("Editor"); };
+	FName GetCategoryName() const override { return TEXT("Extended Framework"); };
 	// The unique name for your section of settings, uses the class's FName.
 	FName GetSectionName() const override { return Super::GetSectionName(); };
 

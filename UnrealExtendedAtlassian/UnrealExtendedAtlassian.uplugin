@@ -1,0 +1,29 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "0.1.0",
+	"FriendlyName": "Unreal Extended Atlassian",
+	"Description": "Extended Framework Jira and Confluence integration for the Unreal Editor: in-editor issue browsing, one-click bug reports with captured editor context, and Confluence documentation viewing.",
+	"Category": "Extended",
+	"CreatedBy": "Kemal Erdem YILMAZ",
+	"CreatedByURL": "",
+	"DocsURL": "",
+	"MarketplaceURL": "",
+	"SupportURL": "",
+	"CanContainContent": false,
+	"IsBetaVersion": true,
+	"IsExperimentalVersion": false,
+	"Installed": false,
+	"Modules": [
+		{
+			"Name": "UnrealExtendedAtlassian",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		},
+		{
+			"Name": "UnrealExtendedAtlassianEditor",
+			"Type": "Editor",
+			"LoadingPhase": "Default"
+		}
+	]
+}

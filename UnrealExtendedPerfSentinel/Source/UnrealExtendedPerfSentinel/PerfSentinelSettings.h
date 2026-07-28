@@ -9,7 +9,7 @@
 #include "PerfSentinelSettings.generated.h"
 
 /** Project settings shared by PerfSentinel runtime, console commands, and editor UI. */
-UCLASS(Config = Game, DefaultConfig, meta = (DisplayName = "PerfSentinel"))
+UCLASS(Config = Game, DefaultConfig, meta = (DisplayName = "Extended Perf Sentinel"))
 class UNREALEXTENDEDPERFSENTINEL_API UPerfSentinelSettings : public UDeveloperSettings
 {
 	GENERATED_BODY()

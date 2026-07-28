@@ -2,11 +2,6 @@
 
 #include "ESteamSettings.h"
 
-UESteamSettings::UESteamSettings()
-{
-	CategoryName = TEXT("Extended Framework");
-}
-
 FName UESteamSettings::GetCategoryName() const
 {
 	return TEXT("Extended Framework");
