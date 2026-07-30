@@ -41,6 +41,15 @@ namespace ExtendedAtlassianStylePrivate
 					FontPath,
 					EFontHinting::Default,
 					EFontLoadingPolicy::LazyLoad);
+				// Emoji and pictographic symbols first: IBM Plex carries none of them, and Confluence
+				// pages use them inline, so without this every one renders as a missing-glyph box.
+				// Ahead of the CJK fallback so a symbol both fonts happen to cover resolves from the
+				// font that is actually about symbols.
+				CompositeFont->FallbackTypeface.Typeface.AppendFont(
+					TEXT("NotoEmoji"),
+					Style->RootToContentDir(TEXT("Fonts/NotoEmoji-Regular.ttf")),
+					EFontHinting::Default,
+					EFontLoadingPolicy::LazyLoad);
 				CompositeFont->FallbackTypeface.Typeface.AppendFont(
 					TEXT("DroidSansFallback"),
 					FPaths::Combine(
@@ -173,7 +182,9 @@ void FExtendedAtlassianStyle::Register()
 		{ TEXT("Backlot.Icon.Dock"), TEXT("Icons/BacklotDock.svg"), FVector2f(12.0f, 12.0f) },
 		{ TEXT("Backlot.Icon.Rail"), TEXT("Icons/BacklotRail.svg"), FVector2f(13.0f, 13.0f) },
 		{ TEXT("Backlot.Icon.Comment"), TEXT("Icons/BacklotComment.svg"), FVector2f(10.0f, 10.0f) },
-		{ TEXT("Backlot.Icon.More"), TEXT("Icons/BacklotMore.svg"), FVector2f(13.0f, 3.0f) },
+		// Square, like every other icon here. As a 13x3 brush the three round dots were
+		// stretched to fill a 28x28 button and read as three vertical bars.
+		{ TEXT("Backlot.Icon.More"), TEXT("Icons/BacklotMore.svg"), FVector2f(13.0f, 13.0f) },
 		{ TEXT("Backlot.Icon.CaretDown"), TEXT("Icons/BacklotCaretDown.svg"), FVector2f(8.0f, 5.0f) },
 		{ TEXT("Backlot.Icon.CaretRight"), TEXT("Icons/BacklotCaretRight.svg"), FVector2f(5.0f, 8.0f) },
 		{ TEXT("Backlot.Icon.Command"), TEXT("Icons/BacklotCommand.svg"), FVector2f(10.0f, 10.0f) },
@@ -659,6 +670,17 @@ void FExtendedAtlassianStyle::Register()
 	Style->Set(
 		TEXT("Backlot.Brush.AnnotationRed"),
 		new FSlateRoundedBoxBrush(FromHex(TEXT("#f0665f")), 12.0f));
+
+	// A 5px round dot, drawn rather than typed. The reference draws its status and sidebar-view
+	// dots as shapes; as the glyph U+25CF they resolved from the engine's CJK fallback font, which
+	// carries a different weight, optical size and baseline than IBM Plex and so read as the wrong
+	// icon. White so the call site can tint it, which is also what lets one brush serve every dot.
+	Style->Set(
+		TEXT("Backlot.Brush.Dot"),
+		new FSlateRoundedBoxBrush(
+			FLinearColor::White,
+			2.5f,
+			FVector2f(5.0f, 5.0f)));
 
 	FEditableTextBoxStyle FieldStyle = FCoreStyle::Get().GetWidgetStyle<FEditableTextBoxStyle>(
 		TEXT("NormalEditableTextBox"));

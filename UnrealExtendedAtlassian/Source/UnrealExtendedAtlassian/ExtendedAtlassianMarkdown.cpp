@@ -82,12 +82,42 @@ namespace ExtendedAtlassianMarkdownPrivate
 		{
 			Working.RightChopInline(1);
 		}
-		if (Working.EndsWith(TEXT("|")))
+		// A trailing "\|" is escaped cell content, not the row's closing pipe.
+		if (Working.EndsWith(TEXT("|")) &&
+			!(Working.Len() >= 2 && Working[Working.Len() - 2] == TEXT('\\')))
 		{
 			Working.LeftChopInline(1);
 		}
 
-		Working.ParseIntoArray(OutCells, TEXT("|"), false);
+		if (Working.IsEmpty())
+		{
+			return;
+		}
+
+		// Split on unescaped pipes only, so a cell may carry a literal "|" written as "\|".
+		FString Current;
+		for (int32 Index = 0; Index < Working.Len(); ++Index)
+		{
+			if (Working[Index] == TEXT('\\') &&
+				Index + 1 < Working.Len() &&
+				Working[Index + 1] == TEXT('|'))
+			{
+				Current.AppendChar(TEXT('|'));
+				++Index;
+				continue;
+			}
+
+			if (Working[Index] == TEXT('|'))
+			{
+				OutCells.Add(Current);
+				Current.Reset();
+				continue;
+			}
+
+			Current.AppendChar(Working[Index]);
+		}
+		OutCells.Add(Current);
+
 		for (FString& Cell : OutCells)
 		{
 			Cell.TrimStartAndEndInline();
@@ -415,7 +445,18 @@ FString FExtendedAtlassianMarkdown::FromBlocks(const TArray<FExtendedAtlassianDo
 			TArray<FString> Cells;
 			for (const FString& Cell : Block.Cells)
 			{
-				Cells.Add(MarkupToInline(Cell));
+				// A Markdown table row is one line, so a cell holding more than one paragraph has to
+				// give up the break or it would split the row and corrupt the table on write. The
+				// document view renders the cell from storage and keeps the break; only the Markdown
+				// working copy flattens it.
+				FString Flattened = MarkupToInline(Cell);
+				Flattened.ReplaceInline(TEXT("\r\n"), TEXT(" "));
+				Flattened.ReplaceInline(TEXT("\n"), TEXT(" "));
+
+				// A pipe in cell text would otherwise read back as a column break, silently adding a
+				// column and shifting every later cell in the row.
+				Flattened.ReplaceInline(TEXT("|"), TEXT("\\|"));
+				Cells.Add(Flattened);
 			}
 			Lines.Add(TEXT("| ") + FString::Join(Cells, TEXT(" | ")) + TEXT(" |"));
 

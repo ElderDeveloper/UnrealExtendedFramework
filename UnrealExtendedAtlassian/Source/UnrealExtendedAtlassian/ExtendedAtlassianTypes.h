@@ -320,6 +320,15 @@ struct FExtendedAtlassianPage
 	FDateTime VersionCreatedAt = FDateTime::MinValue();
 	FString EditedByLabel;
 	FString EditedAtLabel;
+
+	/**
+	 * Account id of the author of the current version.
+	 *
+	 * Confluence v2 returns an id here rather than a name, and naming it needs the fetched user
+	 * list, which the providers do not hold. Carried so the workspace layer can resolve
+	 * EditedByLabel from it.
+	 */
+	FString EditedByAccountId;
 	TArray<FExtendedAtlassianUser> Contributors;
 	int32 CommentCount = 0;
 	FString ReviewState;

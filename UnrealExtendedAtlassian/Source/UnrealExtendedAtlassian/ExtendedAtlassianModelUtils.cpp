@@ -499,4 +499,32 @@ namespace ExtendedAtlassianModelUtils
 			Issue.CommentCount = Collection ? Collection->Comments.Num() : 0;
 		}
 	}
+
+	FString RelativeAge(const FDateTime& Timestamp)
+	{
+		if (Timestamp == FDateTime::MinValue())
+		{
+			return FString();
+		}
+		const FTimespan Age = FDateTime::UtcNow() - Timestamp;
+		if (Age.GetTotalMinutes() < 1.0)
+		{
+			return TEXT("now");
+		}
+		if (Age.GetTotalHours() < 1.0)
+		{
+			return FString::Printf(
+				TEXT("%dm"),
+				FMath::Max(1, FMath::FloorToInt(Age.GetTotalMinutes())));
+		}
+		if (Age.GetTotalDays() < 1.0)
+		{
+			return FString::Printf(
+				TEXT("%dh"),
+				FMath::Max(1, FMath::FloorToInt(Age.GetTotalHours())));
+		}
+		return FString::Printf(
+			TEXT("%dd"),
+			FMath::Max(1, FMath::FloorToInt(Age.GetTotalDays())));
+	}
 }

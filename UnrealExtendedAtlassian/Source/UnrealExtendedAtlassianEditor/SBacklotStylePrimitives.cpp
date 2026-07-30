@@ -253,6 +253,21 @@ int32 SBacklotDropShadow::OnPaint(
 	// box, so stack expanding rounded rectangles whose alpha decays over that radius.
 	const int32 Steps = FMath::Clamp(FMath::RoundToInt(Blur / 4.0f), 1, 12);
 	const FVector2D Size = AllottedGeometry.GetLocalSize();
+
+	// Size the storage before taking any element's address: MakeBox keeps the pointer and Slate
+	// reads it during the render pass, so growing the array mid-loop would leave earlier draw
+	// elements pointing into freed memory.
+	// Reset rather than SetNum*: the brush holds non-trivial members, and this both destroys the
+	// previous frame's entries and reserves the capacity the loop below fills.
+	ShadowBrushes.Reset(Steps);
+	for (int32 Step = 0; Step < Steps; ++Step)
+	{
+		ShadowBrushes.Emplace(
+			FLinearColor(ShadowColor.R, ShadowColor.G, ShadowColor.B, 1.0f),
+			CornerRadius + Blur * 0.5f
+				* (static_cast<float>(Steps - Step) / static_cast<float>(Steps)));
+	}
+
 	for (int32 Step = Steps; Step >= 1; --Step)
 	{
 		const float Fraction = static_cast<float>(Step) / static_cast<float>(Steps);
@@ -261,9 +276,6 @@ int32 SBacklotDropShadow::OnPaint(
 		const float Alpha =
 			ShadowColor.A * (1.0f - Fraction) * (1.0f - Fraction) / static_cast<float>(Steps)
 			* 2.0f;
-		const FSlateRoundedBoxBrush Brush(
-			FLinearColor(ShadowColor.R, ShadowColor.G, ShadowColor.B, 1.0f),
-			CornerRadius + Spread);
 		FSlateDrawElement::MakeBox(
 			OutDrawElements,
 			LayerId,
@@ -272,7 +284,7 @@ int32 SBacklotDropShadow::OnPaint(
 					static_cast<float>(Size.X) + Spread * 2.0f,
 					static_cast<float>(Size.Y) + Spread * 2.0f),
 				FSlateLayoutTransform(FVector2f(-Spread, -Spread + OffsetY))),
-			&Brush,
+			&ShadowBrushes[Steps - Step],
 			ESlateDrawEffect::None,
 			FLinearColor(
 				1.0f,
@@ -299,6 +311,11 @@ void SBacklotFocusRing::Construct(const FArguments& InArgs)
 	OutlineOffset = FMath::Max(0.0f, InArgs._OutlineOffset);
 	CornerRadius = FMath::Max(0.0f, InArgs._CornerRadius);
 	bAlwaysShow = InArgs._AlwaysShow;
+	RingBrush = FSlateRoundedBoxBrush(
+		FLinearColor::Transparent,
+		CornerRadius + OutlineOffset + OutlineWidth,
+		Color,
+		OutlineWidth);
 	SetCanTick(false);
 	SetClipping(EWidgetClipping::OnDemand);
 	ChildSlot
@@ -331,11 +348,6 @@ int32 SBacklotFocusRing::OnPaint(
 
 	const float Expansion = OutlineOffset + OutlineWidth;
 	const FVector2D Size = AllottedGeometry.GetLocalSize();
-	const FSlateRoundedBoxBrush Ring(
-		FLinearColor::Transparent,
-		CornerRadius + Expansion,
-		Color,
-		OutlineWidth);
 	FSlateDrawElement::MakeBox(
 		OutDrawElements,
 		ContentLayer + 1,
@@ -344,7 +356,9 @@ int32 SBacklotFocusRing::OnPaint(
 				static_cast<float>(Size.X) + Expansion * 2.0f,
 				static_cast<float>(Size.Y) + Expansion * 2.0f),
 			FSlateLayoutTransform(FVector2f(-Expansion, -Expansion))),
-		&Ring,
+		// Owned by the widget: see RingBrush. A stack brush here is freed before the
+		// render pass reads it, which painted a white box instead of an outline.
+		&RingBrush,
 		ESlateDrawEffect::None,
 		InWidgetStyle.GetColorAndOpacityTint());
 	return ContentLayer + 1;
@@ -571,7 +585,10 @@ int32 SBacklotSyncPulse::OnPaint(
 	if (Alpha > KINDA_SMALL_NUMBER)
 	{
 		const FVector2D Size = AllottedGeometry.GetLocalSize();
-		const FSlateRoundedBoxBrush Ring(
+
+		// Reassigned rather than built locally: the spread animates, but the brush still has to
+		// outlive OnPaint because MakeBox only records its address.
+		PulseBrush = FSlateRoundedBoxBrush(
 			FLinearColor::Transparent,
 			CornerRadius + Spread,
 			FLinearColor(PulseColor.R, PulseColor.G, PulseColor.B, 1.0f),
@@ -584,7 +601,7 @@ int32 SBacklotSyncPulse::OnPaint(
 					static_cast<float>(Size.X) + Spread * 2.0f,
 					static_cast<float>(Size.Y) + Spread * 2.0f),
 				FSlateLayoutTransform(FVector2f(-Spread, -Spread))),
-			&Ring,
+			&PulseBrush,
 			ESlateDrawEffect::None,
 			FLinearColor(1.0f, 1.0f, 1.0f, Alpha)
 				* InWidgetStyle.GetColorAndOpacityTint());

@@ -9,6 +9,7 @@
 #include "ExtendedAtlassianLog.h"
 #include "ExtendedAtlassianMarkdown.h"
 #include "ExtendedAtlassianSettings.h"
+#include "ExtendedAtlassianStyle.h"
 #include "SExtendedAtlassianDocumentEditor.h"
 #include "SExtendedAtlassianDocumentView.h"
 #include "UnrealExtendedAtlassian.h"
@@ -169,6 +170,8 @@ TSharedRef<SWidget> SExtendedAtlassianConfluenceBrowser::BuildToolbar()
 			.VAlign(VAlign_Center)
 			[
 				SAssignNew(SearchBox, SEditableTextBox)
+					.Style(&FExtendedAtlassianStyle::Get().GetWidgetStyle<FEditableTextBoxStyle>(
+						TEXT("Backlot.Field")))
 				.HintText(LOCTEXT("SearchHint", "Search pages, or type CQL directly"))
 				.OnTextCommitted_Lambda([this](const FText&, ETextCommit::Type CommitType)
 				{
@@ -433,6 +436,8 @@ TSharedRef<SWidget> SExtendedAtlassianConfluenceBrowser::BuildContentPane()
 				+ SWidgetSwitcher::Slot()
 				[
 					SNew(SMultiLineEditableTextBox)
+						.Style(&FExtendedAtlassianStyle::Get().GetWidgetStyle<FEditableTextBoxStyle>(
+							TEXT("Backlot.Field")))
 					.IsReadOnly(true)
 					.AllowMultiLine(true)
 					.AutoWrapText(true)
@@ -755,6 +760,8 @@ TSharedRef<SWidget> SExtendedAtlassianConfluenceBrowser::BuildEditActions()
 			.FillWidth(1.0f)
 			[
 				SNew(SEditableTextBox)
+					.Style(&FExtendedAtlassianStyle::Get().GetWidgetStyle<FEditableTextBoxStyle>(
+						TEXT("Backlot.Field")))
 				.Text_Lambda([this]() { return FText::FromString(EditingTitle); })
 				.OnTextChanged_Lambda([this](const FText& NewText) { EditingTitle = NewText.ToString(); })
 			]

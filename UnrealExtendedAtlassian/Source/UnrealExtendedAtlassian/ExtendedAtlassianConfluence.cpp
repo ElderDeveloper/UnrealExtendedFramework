@@ -6,6 +6,7 @@
 #include "ExtendedAtlassianHtml.h"
 #include "ExtendedAtlassianLog.h"
 #include "ExtendedAtlassianMarkdown.h"
+#include "ExtendedAtlassianModelUtils.h"
 #include "ExtendedAtlassianSettings.h"
 #include "ExtendedAtlassianStorage.h"
 #include "UnrealExtendedAtlassian.h"
@@ -374,6 +375,21 @@ void FExtendedAtlassianConfluence::GetPageForEditing(const FString& PageId, FExt
 			if (Response.Object->TryGetObjectField(TEXT("version"), Version) && Version->IsValid())
 			{
 				(*Version)->TryGetNumberField(TEXT("number"), Page.Version);
+
+				// The header renders "EDITED BY <who> <when>" but nothing populated either, so the
+				// strip read as a bare label. Both values are already in this response object.
+				FString VersionCreatedAt;
+				if ((*Version)->TryGetStringField(TEXT("createdAt"), VersionCreatedAt)
+					&& FDateTime::ParseIso8601(*VersionCreatedAt, Page.VersionCreatedAt))
+				{
+					Page.EditedAtLabel =
+						ExtendedAtlassianModelUtils::RelativeAge(Page.VersionCreatedAt).ToUpper();
+				}
+
+				// An account id, not a name: Confluence v2 does not expand the version author.
+				// Naming it needs the fetched user list, which lives in the workspace layer, so
+				// carry the id across and let that layer resolve it.
+				(*Version)->TryGetStringField(TEXT("authorId"), Page.EditedByAccountId);
 			}
 
 			FString Storage;
@@ -390,7 +406,12 @@ void FExtendedAtlassianConfluence::GetPageForEditing(const FString& PageId, FExt
 			// Decided before anything is editable: a page we cannot rebuild must never be savable.
 			Page.bCanRoundTrip = FExtendedAtlassianStorage::CanRoundTrip(Storage, Page.RoundTripBlockers);
 			Page.Markdown = FExtendedAtlassianStorage::ToMarkdown(Storage);
-			Page.Blocks = FExtendedAtlassianMarkdown::ToBlocks(Page.Markdown);
+
+			// Render from storage, not from the Markdown working copy. Markdown cannot express
+			// everything storage carries, so viewing through it converted down and re-parsed —
+			// capping display fidelity at Markdown's ceiling for content that is only ever read.
+			// Markdown stays the edit/write boundary, where a round trip is the point.
+			Page.Blocks = FExtendedAtlassianHtml::ToBlocks(Storage);
 			Page.Body = Page.Markdown;
 
 			if (!Page.bCanRoundTrip)

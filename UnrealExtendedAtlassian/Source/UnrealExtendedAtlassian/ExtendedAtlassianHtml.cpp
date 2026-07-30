@@ -159,6 +159,11 @@ namespace ExtendedAtlassianHtmlPrivate
 			{ TEXT("ldquo"), 8220 }, { TEXT("rdquo"), 8221 }, { TEXT("bdquo"), 8222 },
 			{ TEXT("dagger"), 8224 }, { TEXT("Dagger"), 8225 }, { TEXT("bull"), 8226 },
 			{ TEXT("prime"), 8242 }, { TEXT("Prime"), 8243 }, { TEXT("lsaquo"), 8249 }, { TEXT("rsaquo"), 8250 },
+
+			// Dashes and ellipsis are the punctuation Confluence pages use most, and the bundled
+			// IBM Plex faces carry all three. Folding them to ASCII "-" and "..." visibly retyped
+			// every heading and aside in a document the viewer is meant to reproduce.
+			{ TEXT("ndash"), 8211 }, { TEXT("mdash"), 8212 }, { TEXT("hellip"), 8230 },
 			{ TEXT("euro"), 8364 }, { TEXT("trade"), 8482 },
 			{ TEXT("larr"), 8592 }, { TEXT("uarr"), 8593 }, { TEXT("rarr"), 8594 }, { TEXT("darr"), 8595 },
 		};
@@ -299,6 +304,20 @@ TArray<FExtendedAtlassianDocBlock> FExtendedAtlassianHtml::ToBlocks(const FStrin
 	bool bInTableRow = false;
 	bool bRowIsHeader = false;
 
+	/**
+	 * How deep we are inside a table cell and a list item.
+	 *
+	 * Confluence storage wraps cell and list-item content in <p>, so a block tag seen in here opens a
+	 * paragraph *within* the container rather than a sibling block. Treating it as a sibling flushes
+	 * the cell text out as a loose paragraph — leaving the row holding empty cells — and resets the
+	 * pending kind, which silently turns every list item into an unbulleted paragraph.
+	 */
+	int32 CellDepth = 0;
+	int32 ListItemDepth = 0;
+
+	/** Ticked state of the Confluence inline task currently being read. */
+	bool bTaskChecked = false;
+
 	bool bInPre = false;
 	FString PreBuffer;
 
@@ -316,6 +335,7 @@ TArray<FExtendedAtlassianDocBlock> FExtendedAtlassianHtml::ToBlocks(const FStrin
 	auto FlushBlock = [&](EExtendedAtlassianBlockKind NextKind)
 	{
 		FlushPlainRun();
+		Inline.TrimEndInline();
 
 		if (!Inline.IsEmpty())
 		{
@@ -333,6 +353,22 @@ TArray<FExtendedAtlassianDocBlock> FExtendedAtlassianHtml::ToBlocks(const FStrin
 		PendingLevel = 0;
 		PendingIndent = 0;
 		PendingOrderedIndex = 0;
+	};
+
+	/**
+	 * A paragraph boundary inside a table cell or list item.
+	 *
+	 * Kept inline so the enclosing cell or bullet keeps accumulating, which is what makes a
+	 * multi-paragraph cell read as one cell instead of several stray blocks.
+	 */
+	auto AppendParagraphBreak = [&]()
+	{
+		FlushPlainRun();
+		Inline.TrimEndInline();
+		if (!Inline.IsEmpty())
+		{
+			Inline += TEXT("\n");
+		}
 	};
 
 	const int32 Length = Html.Len();
@@ -380,13 +416,81 @@ TArray<FExtendedAtlassianDocBlock> FExtendedAtlassianHtml::ToBlocks(const FStrin
 		const bool bClosing = TagBody.StartsWith(TEXT("/"));
 		const FString Name = ParseTagName(bClosing ? TagBody.RightChop(1) : TagBody);
 
-		if (Name == TEXT("script") || Name == TEXT("style"))
+		/**
+		 * Confluence keeps machine metadata in child *elements*, not attributes, so these carry
+		 * text that is never document content: a task's numeric id, its UUID, its status word, and
+		 * a macro's parameter values. Dropping the tag but keeping the text printed all of it into
+		 * the page — an inline task rendered as "3", the UUID, and "incomplete" on three lines
+		 * ahead of its actual wording. Suppressed the same way script and style are, which has to
+		 * happen before the skip guard below so the closing tag is still seen.
+		 *
+		 * ac:task-status is handled separately just after: its text is metadata too, but the value
+		 * is needed to decide whether the task is ticked.
+		 */
+		if (Name == TEXT("script") || Name == TEXT("style")
+			|| Name == TEXT("ac:task-id")
+			|| Name == TEXT("ac:task-uuid")
+			|| Name == TEXT("ac:parameter"))
 		{
 			SkipDepth = bClosing ? FMath::Max(0, SkipDepth - 1) : SkipDepth + 1;
 			continue;
 		}
 		if (SkipDepth > 0)
 		{
+			continue;
+		}
+
+		if (Name == TEXT("ac:task-status"))
+		{
+			if (bClosing)
+			{
+				bTaskChecked = PlainRun.TrimStartAndEnd().Equals(
+					TEXT("complete"),
+					ESearchCase::IgnoreCase);
+			}
+			else
+			{
+				// Commit real text that preceded the element, then take the run for the status.
+				FlushPlainRun();
+			}
+			PlainRun.Reset();
+			continue;
+		}
+
+		if (Name == TEXT("ac:task-list"))
+		{
+			FlushBlock(EExtendedAtlassianBlockKind::Paragraph);
+			continue;
+		}
+
+		if (Name == TEXT("ac:task"))
+		{
+			if (bClosing)
+			{
+				FlushPlainRun();
+				Inline.TrimEndInline();
+
+				if (!Inline.IsEmpty())
+				{
+					FExtendedAtlassianDocBlock Block;
+					Block.Kind = EExtendedAtlassianBlockKind::TaskItem;
+					Block.Markup = Inline;
+					Block.bChecked = bTaskChecked;
+					Blocks.Add(Block);
+				}
+
+				Inline.Reset();
+				PendingKind = EExtendedAtlassianBlockKind::Paragraph;
+				ListItemDepth = FMath::Max(0, ListItemDepth - 1);
+			}
+			else
+			{
+				FlushBlock(EExtendedAtlassianBlockKind::Paragraph);
+				// Counts as a list item so a <p> inside ac:task-body is a paragraph within the
+				// task rather than a sibling block that would tear the wording out of it.
+				++ListItemDepth;
+			}
+			bTaskChecked = false;
 			continue;
 		}
 
@@ -495,10 +599,12 @@ TArray<FExtendedAtlassianDocBlock> FExtendedAtlassianHtml::ToBlocks(const FStrin
 			if (bClosing)
 			{
 				FlushBlock(EExtendedAtlassianBlockKind::Paragraph);
+				ListItemDepth = FMath::Max(0, ListItemDepth - 1);
 				continue;
 			}
 
 			FlushBlock(EExtendedAtlassianBlockKind::BulletItem);
+			++ListItemDepth;
 
 			const bool bOrdered = ListIsOrdered.Num() > 0 && ListIsOrdered.Last();
 			PendingKind = bOrdered ? EExtendedAtlassianBlockKind::OrderedItem : EExtendedAtlassianBlockKind::BulletItem;
@@ -580,12 +686,15 @@ TArray<FExtendedAtlassianDocBlock> FExtendedAtlassianHtml::ToBlocks(const FStrin
 
 			if (bClosing)
 			{
+				Inline.TrimStartAndEndInline();
 				RowCells.Add(Inline);
 				Inline.Reset();
+				CellDepth = FMath::Max(0, CellDepth - 1);
 			}
 			else
 			{
 				Inline.Reset();
+				++CellDepth;
 				if (Name == TEXT("th"))
 				{
 					bRowIsHeader = true;
@@ -595,10 +704,18 @@ TArray<FExtendedAtlassianDocBlock> FExtendedAtlassianHtml::ToBlocks(const FStrin
 		}
 
 		// p, div, section and anything unrecognised: close the current block so text does not run
-		// together, but keep the content.
+		// together, but keep the content. Inside a table cell or list item the same tag is a
+		// paragraph within that container, so it must not end the container's block.
 		if (IsBlockTag(Name))
 		{
-			FlushBlock(EExtendedAtlassianBlockKind::Paragraph);
+			if (CellDepth > 0 || ListItemDepth > 0)
+			{
+				AppendParagraphBreak();
+			}
+			else
+			{
+				FlushBlock(EExtendedAtlassianBlockKind::Paragraph);
+			}
 		}
 	}
 
@@ -672,9 +789,28 @@ FString FExtendedAtlassianHtml::DecodeEntities(const FString& In)
 				? static_cast<uint32>(FCString::Strtoi(*Digits.RightChop(1), nullptr, 16))
 				: static_cast<uint32>(FCString::Atoi(*Digits));
 
-			if (Code > 0 && Code < 0x10000)
+			// Lone surrogates and out-of-range values cannot be encoded at all, so they are dropped.
+			if (Code == 0 || Code > 0x10FFFF || (Code >= 0xD800 && Code <= 0xDFFF))
+			{
+				continue;
+			}
+
+			if (Code < 0x10000)
 			{
 				Out.AppendChar(static_cast<TCHAR>(Code));
+			}
+			else if constexpr (sizeof(TCHAR) >= 4)
+			{
+				Out.AppendChar(static_cast<TCHAR>(Code));
+			}
+			else
+			{
+				// TCHAR is UTF-16 on this platform, so a code point above the BMP needs a surrogate
+				// pair. Truncating it into a single TCHAR silently deleted every emoji and symbol
+				// Confluence numeric-escapes, which is a content loss rather than a display issue.
+				const uint32 Adjusted = Code - 0x10000;
+				Out.AppendChar(static_cast<TCHAR>(0xD800 + (Adjusted >> 10)));
+				Out.AppendChar(static_cast<TCHAR>(0xDC00 + (Adjusted & 0x3FF)));
 			}
 			continue;
 		}
@@ -686,11 +822,8 @@ FString FExtendedAtlassianHtml::DecodeEntities(const FString& In)
 			continue;
 		}
 
-		// A handful expand to more than one character, or to an ASCII stand-in.
+		// A handful expand to more than one character, or to nothing at all.
 		static const TMap<FString, FString> MultiCharEntities = {
-			{ TEXT("hellip"), TEXT("...") },
-			{ TEXT("mdash"),  TEXT("-") },
-			{ TEXT("ndash"),  TEXT("-") },
 			{ TEXT("shy"),    TEXT("") },
 		};
 

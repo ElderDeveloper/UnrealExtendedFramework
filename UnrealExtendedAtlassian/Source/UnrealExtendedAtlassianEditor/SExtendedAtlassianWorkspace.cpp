@@ -404,12 +404,62 @@ namespace ExtendedAtlassianWorkspacePrivate
 		return Result.IsEmpty() ? FString(TEXT("D")) : Result;
 	}
 
-	FLinearColor StatusColor(const FString& Status)
+	/**
+	 * Initials for an issue's assignee, or empty when the issue is unassigned.
+	 *
+	 * Never the account id. An Atlassian account id is an opaque string like "557058:2a1f…", which
+	 * inside a 20px circle rendered as unreadable overflow, and is absent on unassigned work, which
+	 * rendered as nothing while still claiming to identify somebody. The display name is the field
+	 * that actually names a person, so derive from that when the snapshot lookup misses — which it
+	 * does for anyone not in the fetched user list.
+	 */
+	FString AssigneeInitials(
+		const FExtendedAtlassianUser* Resolved,
+		const FExtendedAtlassianIssue& Issue)
+	{
+		if (Resolved && !Resolved->Initials.IsEmpty())
+		{
+			return Resolved->Initials;
+		}
+		if (!Issue.AssigneeDisplayName.IsEmpty())
+		{
+			return LabelInitials(Issue.AssigneeDisplayName);
+		}
+		return FString();
+	}
+
+	/**
+	 * Colour for a workflow status.
+	 *
+	 * The display name is matched first, so the five presentation states the design was drawn
+	 * against keep their distinct colours where a workflow uses those names. Everything else falls
+	 * back to the Jira status category, which is the field that exists so colouring never depends on
+	 * workflow names: a Turkish, renamed, or custom workflow matched nothing here and rendered every
+	 * status in the default grey.
+	 *
+	 * Category carries three values against the palette's five, so Blocked and In review are only
+	 * reachable by name. That is the right trade: a category is always correct where it applies,
+	 * whereas guessing them from a localised name would be wrong in a new way.
+	 */
+	FLinearColor StatusColor(
+		const FString& Status,
+		const FString& StatusCategoryKey = FString())
 	{
 		if (Status == TEXT("In progress")) { return FExtendedAtlassianStyle::FromHex(TEXT("#58a6ff")); }
 		if (Status == TEXT("In review")) { return FExtendedAtlassianStyle::FromHex(TEXT("#c58fff")); }
 		if (Status == TEXT("Blocked")) { return FExtendedAtlassianStyle::FromHex(TEXT("#f0665f")); }
 		if (Status == TEXT("Done")) { return FExtendedAtlassianStyle::FromHex(TEXT("#57cc8a")); }
+
+		if (StatusCategoryKey.Equals(TEXT("done"), ESearchCase::IgnoreCase))
+		{
+			return FExtendedAtlassianStyle::FromHex(TEXT("#57cc8a"));
+		}
+		if (StatusCategoryKey.Equals(TEXT("indeterminate"), ESearchCase::IgnoreCase))
+		{
+			return FExtendedAtlassianStyle::FromHex(TEXT("#58a6ff"));
+		}
+
+		// "new" and an absent category both read as not-started.
 		return FExtendedAtlassianStyle::FromHex(TEXT("#a2a9b4"));
 	}
 
@@ -443,7 +493,7 @@ namespace ExtendedAtlassianWorkspacePrivate
 		{
 		case EExtendedAtlassianPinKind::Material: return TEXT("◈");
 		case EExtendedAtlassianPinKind::Level: return TEXT("▣");
-		case EExtendedAtlassianPinKind::Blueprint: return TEXT("⌘");
+		case EExtendedAtlassianPinKind::Blueprint: return TEXT("◆");
 		case EExtendedAtlassianPinKind::Page: return TEXT("≡");
 		default: return TEXT("◈");
 		}
@@ -2061,9 +2111,9 @@ TSharedRef<SWidget> SExtendedAtlassianWorkspace::BuildNavigationRail()
 						[this]()
 						{
 							return bSyncRefreshDeferred
-								? LOCTEXT("SyncDeferredDot", "◌")
+								? LOCTEXT("SyncDeferredDot", "·")
 								: (Controller->GetSnapshot().bRefreshing
-									? LOCTEXT("SyncRefreshingDot", "◌")
+									? LOCTEXT("SyncRefreshingDot", "·")
 									: LOCTEXT("SyncDot", "●"));
 						})
 					.TextStyle(&ExtendedAtlassianWorkspacePrivate::Text(TEXT("Backlot.Mono.10")))
@@ -2612,47 +2662,14 @@ TSharedRef<SWidget> SExtendedAtlassianWorkspace::BuildCommandHeader()
 						.VAlign(VAlign_Center)
 						.Padding(7.0f, 0.0f, 0.0f, 0.0f)
 							[
-								SNew(SHorizontalBox)
-									+ SHorizontalBox::Slot()
-									.AutoWidth()
-									.VAlign(VAlign_Center)
-									[
-										SNew(STextBlock)
-										.Text(LOCTEXT(
-											"CaptureShiftShortcut",
-											"⇧"))
-										.TextStyle(&Text(
-											TEXT("Backlot.Mono.9")))
-										.ColorAndOpacity(
-											FExtendedAtlassianStyle::FromHex(
-												TEXT("#7cbcff")))
-									]
-									+ SHorizontalBox::Slot()
-									.AutoWidth()
-									.VAlign(VAlign_Center)
-									.Padding(1.0f, 0.0f)
-									[
-										SNew(SImage)
-										.Image(Brush(
-											TEXT("Backlot.Icon.Command")))
-										.ColorAndOpacity(
-											FExtendedAtlassianStyle::FromHex(
-												TEXT("#7cbcff")))
-									]
-									+ SHorizontalBox::Slot()
-									.AutoWidth()
-									.VAlign(VAlign_Center)
-									[
-										SNew(STextBlock)
-										.Text(LOCTEXT(
-											"CaptureBShortcut",
-											"B"))
-										.TextStyle(&Text(
-											TEXT("Backlot.Mono.9")))
-										.ColorAndOpacity(
-											FExtendedAtlassianStyle::FromHex(
-												TEXT("#7cbcff")))
-									]
+								SNew(STextBlock)
+									// The real binding on this platform, not the macOS glyph chord the HTML
+									// reference shows. U+2318 has no glyph in any font this style chains, so
+									// the pictorial form rendered as a box next to a mis-metriced shift arrow.
+									.Text(LOCTEXT("CaptureShortcutHint", "CTRL+SHIFT+B"))
+									.TextStyle(&Text(TEXT("Backlot.Mono.9")))
+									.ColorAndOpacity(
+										FExtendedAtlassianStyle::FromHex(TEXT("#7cbcff")))
 							]
 					]
 				]
@@ -3137,10 +3154,15 @@ TSharedRef<SWidget> SExtendedAtlassianWorkspace::BuildIssuesSidebar()
 				.VAlign(VAlign_Center)
 				.Padding(0.0f, 0.0f, 7.0f, 0.0f)
 				[
-					SNew(STextBlock)
-						.Text(LOCTEXT("ViewDot", "●"))
-						.TextStyle(&Text(TEXT("Backlot.Mono.9")))
-						.ColorAndOpacity(FExtendedAtlassianStyle::FromHex(*View.DotColor))
+					SNew(SBox)
+						.WidthOverride(5.0f)
+						.HeightOverride(5.0f)
+						[
+							SNew(SImage)
+							.Image(Brush(TEXT("Backlot.Brush.Dot")))
+							.ColorAndOpacity(
+								FExtendedAtlassianStyle::FromHex(*View.DotColor))
+						]
 				]
 				+ SHorizontalBox::Slot()
 				.FillWidth(1.0f)
@@ -3299,7 +3321,7 @@ TSharedRef<SWidget> SExtendedAtlassianWorkspace::BuildIssuesSidebar()
 							[this]()
 							{
 								return bSyncRefreshDeferred
-									? LOCTEXT("QueuedSync", "◌  QUEUED")
+									? LOCTEXT("QueuedSync", "·  QUEUED")
 									: LOCTEXT("LiveSync", "●  LIVE");
 							})
 						.TextStyle(&Text(TEXT("Backlot.Mono.9")))
@@ -3786,7 +3808,7 @@ TSharedRef<SWidget> SExtendedAtlassianWorkspace::BuildWorkspaceState()
 							[
 								SNew(STextBlock)
 									.Text(bLoading
-										? LOCTEXT("BacklotLoadingGlyph", "◌")
+										? LOCTEXT("BacklotLoadingGlyph", "·")
 										: LOCTEXT("BacklotStateGlyph", "◆"))
 									.TextStyle(&Text(TEXT("Backlot.Mono.13")))
 									.ColorAndOpacity(Accent)
@@ -3954,17 +3976,14 @@ TSharedRef<SWidget> SExtendedAtlassianWorkspace::BuildDocsMain()
 		}
 	}
 	TSharedRef<SHorizontalBox> Contributors = SNew(SHorizontalBox);
+	// Only real contributors. This used to fall back to the first three people in the space
+	// whenever the page carried none, which is always on the live path — so the header claimed
+	// "3 contributors" and showed three arbitrary members who may never have touched the page.
+	// Invented attribution is worse than none: when the data is missing it must look missing.
 	const TArray<FExtendedAtlassianUser>& PageContributors = Page->Contributors;
-	const TArray<FExtendedAtlassianUser>& SnapshotPeople =
-		Controller->GetSnapshot().People;
-	const int32 ContributorCount = PageContributors.IsEmpty()
-		? FMath::Min(3, SnapshotPeople.Num())
-		: PageContributors.Num();
-	for (int32 Index = 0; Index < ContributorCount; ++Index)
+	for (int32 Index = 0; Index < PageContributors.Num(); ++Index)
 	{
-		const FString Initials = PageContributors.IsEmpty()
-			? SnapshotPeople[Index].Initials
-			: PageContributors[Index].Initials;
+		const FString Initials = PageContributors[Index].Initials;
 		Contributors->AddSlot()
 		.AutoWidth()
 		.Padding(Index == 0 ? 0.0f : -7.0f, 0.0f)
@@ -4014,7 +4033,10 @@ TSharedRef<SWidget> SExtendedAtlassianWorkspace::BuildDocsMain()
 	{
 		TSharedRef<SExtendedAtlassianDocumentView> Reader =
 			SNew(SExtendedAtlassianDocumentView)
-			.MaxReadingWidth(710.4f)
+			// A reading width, not a font size: the 0.75 CSS-pixel-to-point factor this
+			// style applies to type must not be applied here. Scaling it left the text
+			// column a quarter narrower than the measure the layout was designed around.
+			.MaxReadingWidth(920.0f)
 			.OnTaskToggled(
 				SExtendedAtlassianDocumentView::FOnTaskToggled::CreateSP(
 					this,
@@ -4219,11 +4241,17 @@ TSharedRef<SWidget> SExtendedAtlassianWorkspace::BuildDocsMain()
 				.Padding(18.0f, 0.0f)
 				[
 					SNew(STextBlock)
+					// Collapsed rather than showing "0 contributors": a count of nobody is noise,
+					// and the row it sits in carries other page metadata that still reads fine.
+					.Visibility(
+						PageContributors.IsEmpty()
+							? EVisibility::Collapsed
+							: EVisibility::Visible)
 					.Text(FText::Format(
 						LOCTEXT(
 							"DocumentContributorCount",
 							"{0} contributors"),
-						FText::AsNumber(ContributorCount)))
+						FText::AsNumber(PageContributors.Num())))
 					.TextStyle(&Text(TEXT("Backlot.Sans.11")))
 					.ColorAndOpacity(
 						FExtendedAtlassianStyle::FromHex(TEXT("#8a919c")))
@@ -4464,13 +4492,17 @@ TSharedRef<SWidget> SExtendedAtlassianWorkspace::BuildIssuesMain()
 											.VAlign(VAlign_Center)
 											.Padding(0.0f, 0.0f, 6.0f, 0.0f)
 											[
-												SNew(STextBlock)
-												.Text(LOCTEXT("StatusDot", "●"))
-												.TextStyle(&Text(
-													TEXT("Backlot.Mono.8")))
-												.ColorAndOpacity(
-													StatusColor(
-														Issue.StatusName))
+												SNew(SBox)
+												.WidthOverride(5.0f)
+												.HeightOverride(5.0f)
+												[
+													SNew(SImage)
+													.Image(Brush(TEXT("Backlot.Brush.Dot")))
+													.ColorAndOpacity(
+														StatusColor(
+															Issue.StatusName,
+															Issue.StatusCategoryKey))
+												]
 											]
 											+ SHorizontalBox::Slot()
 											.AutoWidth()
@@ -4484,7 +4516,8 @@ TSharedRef<SWidget> SExtendedAtlassianWorkspace::BuildIssuesMain()
 														"Backlot.Sans.10.Medium")))
 												.ColorAndOpacity(
 													StatusColor(
-														Issue.StatusName))
+														Issue.StatusName,
+														Issue.StatusCategoryKey))
 											]
 											+ SHorizontalBox::Slot()
 											.AutoWidth()
@@ -4497,7 +4530,8 @@ TSharedRef<SWidget> SExtendedAtlassianWorkspace::BuildIssuesMain()
 														"Backlot.Icon.CaretDown")))
 												.ColorAndOpacity(
 													StatusColor(
-														Issue.StatusName))
+														Issue.StatusName,
+														Issue.StatusCategoryKey))
 											]
 									]
 								]
@@ -4575,16 +4609,16 @@ TSharedRef<SWidget> SExtendedAtlassianWorkspace::BuildIssuesMain()
 									[
 										SNew(SBorder)
 										.BorderImage(AvatarBrush(
-											Issue.AssigneeAccountId))
+											// Hash the initials, not the account id: the palette should be
+											// stable per person, not per opaque string.
+											AssigneeInitials(Assignee, Issue)))
 										.Padding(0.0f)
 										.HAlign(HAlign_Center)
 										.VAlign(VAlign_Center)
 										[
 											SNew(STextBlock)
 											.Text(FText::FromString(
-												Assignee
-													? Assignee->Initials
-													: Issue.AssigneeAccountId))
+												AssigneeInitials(Assignee, Issue)))
 											.TextStyle(&Text(TEXT("Backlot.Mono.8")))
 										]
 									]
@@ -4936,7 +4970,7 @@ TSharedRef<SWidget> SExtendedAtlassianWorkspace::BuildIssueDetailMain()
 				]
 				+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 18.0f, 0.0f, 8.0f)
 				[
-					SNew(STextBlock).Text(FText::FromString(Issue->Key + TEXT("     ") + Issue->IssueTypeName + TEXT("     ") + Issue->PriorityName)).TextStyle(&Text(TEXT("Backlot.Mono.11"))).ColorAndOpacity(StatusColor(Issue->StatusName))
+					SNew(STextBlock).Text(FText::FromString(Issue->Key + TEXT("     ") + Issue->IssueTypeName + TEXT("     ") + Issue->PriorityName)).TextStyle(&Text(TEXT("Backlot.Mono.11"))).ColorAndOpacity(StatusColor(Issue->StatusName, Issue->StatusCategoryKey))
 				]
 				+ SVerticalBox::Slot().AutoHeight()
 				[
@@ -5423,6 +5457,8 @@ TSharedRef<SWidget> SExtendedAtlassianWorkspace::BuildIssueDetailMainDynamic()
 		.Padding(0.0f, 12.0f, 0.0f, 0.0f)
 		[
 			SNew(SMultiLineEditableTextBox)
+				.Style(&FExtendedAtlassianStyle::Get().GetWidgetStyle<FEditableTextBoxStyle>(
+					TEXT("Backlot.Field")))
 				.Text(FText::FromString(IssueDraftDescription))
 				.HintText(LOCTEXT(
 					"IssueDescriptionEditHint",
@@ -5626,6 +5662,8 @@ TSharedRef<SWidget> SExtendedAtlassianWorkspace::BuildIssueDetailMainDynamic()
 				.AutoHeight()
 				[
 					SNew(SMultiLineEditableTextBox)
+						.Style(&FExtendedAtlassianStyle::Get().GetWidgetStyle<FEditableTextBoxStyle>(
+							TEXT("Backlot.Field")))
 						.IsEnabled(Controller->CanExecuteMutation(
 							EExtendedAtlassianWorkspaceMutation::CreateIssueComment))
 						.ToolTipText(MutationTooltip(
@@ -5750,9 +5788,10 @@ TSharedRef<SWidget> SExtendedAtlassianWorkspace::BuildBoardMain()
 							|| User.Initials == Issue.AssigneeAccountId;
 					});
 			const FString AssigneeInitials =
-				Assignee && !Assignee->Initials.IsEmpty()
-					? Assignee->Initials
-					: Issue.AssigneeAccountId.Left(2).ToUpper();
+				// Qualified: the local shadows the helper inside its own initialiser.
+				// The old fallback took the first two characters of an account id,
+				// so an unresolved assignee showed digits from an opaque string.
+				ExtendedAtlassianWorkspacePrivate::AssigneeInitials(Assignee, Issue);
 			const FString TypeGlyph = Issue.IssueTypeName == TEXT("Bug")
 				? TEXT("B")
 				: (Issue.IssueTypeName == TEXT("Doc") ? TEXT("D") : TEXT("T"));
@@ -6888,6 +6927,8 @@ TSharedRef<SWidget> SExtendedAtlassianWorkspace::BuildCommentCard(
 		.Padding(0.0f, 5.0f, 0.0f, 0.0f)
 		[
 			SNew(SMultiLineEditableTextBox)
+				.Style(&FExtendedAtlassianStyle::Get().GetWidgetStyle<FEditableTextBoxStyle>(
+					TEXT("Backlot.Field")))
 				.Text(FText::FromString(CommentEditDraft))
 				.OnTextChanged_Lambda(
 					[this](const FText& Value)
@@ -7342,7 +7383,7 @@ TSharedRef<SWidget> SExtendedAtlassianWorkspace::BuildDocsRailDynamic()
 							SNew(STextBlock)
 								.Text(LOCTEXT("LinkedWorkStatusDot", "●"))
 								.TextStyle(&Text(TEXT("Backlot.Mono.8")))
-								.ColorAndOpacity(StatusColor(Issue->StatusName))
+								.ColorAndOpacity(StatusColor(Issue->StatusName, Issue->StatusCategoryKey))
 						]
 					]
 			]
@@ -8777,6 +8818,10 @@ TSharedRef<SWidget> SExtendedAtlassianWorkspace::BuildCreateCardPopover()
 				ExtendedAtlassianWorkspacePrivate::Metric(TEXT("Backlot.Metric.CreateCard.Width")),
 				Height))
 			.Anchors(FAnchors(0.0f, 0.0f))
+			// PopupPosition returns a top-left already clamped inside the visible bounds. A canvas
+			// slot's alignment is the widget's pivot and defaults to centred, which would re-centre
+			// the panel on that point and push half of it back out past the edge it was clamped to.
+			.Alignment(FVector2D::ZeroVector)
 			[
 				AnimatedPanel(
 					SNew(SBorder)
@@ -8987,6 +9032,7 @@ TSharedRef<SWidget> SExtendedAtlassianWorkspace::BuildPagePopover()
 				ExtendedAtlassianWorkspacePrivate::Metric(TEXT("Backlot.Metric.PagePopover.Width")),
 				Height))
 			.Anchors(FAnchors(0.0f, 0.0f))
+			.Alignment(FVector2D::ZeroVector)
 			[
 				AnimatedPanel(
 					SNew(SBorder)
@@ -9165,6 +9211,7 @@ TSharedRef<SWidget> SExtendedAtlassianWorkspace::BuildPinPopover()
 				ExtendedAtlassianWorkspacePrivate::Metric(TEXT("Backlot.Metric.PinPopover.Width")),
 				Height))
 			.Anchors(FAnchors(0.0f, 0.0f))
+			.Alignment(FVector2D::ZeroVector)
 			[
 				AnimatedPanel(
 					SNew(SBorder)
@@ -9272,6 +9319,7 @@ TSharedRef<SWidget> SExtendedAtlassianWorkspace::BuildGenericMenu()
 			+ SConstraintCanvas::Slot()
 			.Offset(FMargin(MenuPosition.X, MenuPosition.Y, MenuWidth, Height))
 			.Anchors(FAnchors(0.0f, 0.0f))
+			.Alignment(FVector2D::ZeroVector)
 			[
 				AnimatedPanel(
 					SNew(SBorder)

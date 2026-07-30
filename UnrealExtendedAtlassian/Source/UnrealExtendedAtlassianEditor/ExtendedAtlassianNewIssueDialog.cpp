@@ -5,6 +5,7 @@
 #include "ExtendedAtlassianClient.h"
 #include "ExtendedAtlassianJira.h"
 #include "ExtendedAtlassianSettings.h"
+#include "ExtendedAtlassianStyle.h"
 #include "UnrealExtendedAtlassian.h"
 
 #include "Framework/Application/SlateApplication.h"
@@ -127,6 +128,8 @@ void SExtendedAtlassianNewIssueDialog::Construct(const FArguments& InArgs)
 			.Padding(0.0f, 2.0f, 0.0f, 8.0f)
 			[
 				SAssignNew(SummaryBox, SEditableTextBox)
+					.Style(&FExtendedAtlassianStyle::Get().GetWidgetStyle<FEditableTextBoxStyle>(
+						TEXT("Backlot.Field")))
 				.HintText(LOCTEXT("SummaryHint", "One line describing the work"))
 				.OnTextCommitted_Lambda([this](const FText&, ETextCommit::Type CommitType)
 				{
@@ -151,6 +154,8 @@ void SExtendedAtlassianNewIssueDialog::Construct(const FArguments& InArgs)
 				.MinDesiredHeight(140.0f)
 				[
 					SAssignNew(DescriptionBox, SMultiLineEditableTextBox)
+						.Style(&FExtendedAtlassianStyle::Get().GetWidgetStyle<FEditableTextBoxStyle>(
+							TEXT("Backlot.Field")))
 					.HintText(LOCTEXT("DescriptionHint", "What needs doing, and what done looks like"))
 					.AllowMultiLine(true)
 					.AutoWrapText(true)
@@ -225,6 +230,8 @@ void SExtendedAtlassianNewIssueDialog::Construct(const FArguments& InArgs)
 			.Padding(0.0f, 2.0f, 0.0f, 0.0f)
 			[
 				SAssignNew(LabelsBox, SEditableTextBox)
+					.Style(&FExtendedAtlassianStyle::Get().GetWidgetStyle<FEditableTextBoxStyle>(
+						TEXT("Backlot.Field")))
 				.HintText(LOCTEXT("LabelsHint", "Comma separated; spaces become hyphens"))
 			]
 		]

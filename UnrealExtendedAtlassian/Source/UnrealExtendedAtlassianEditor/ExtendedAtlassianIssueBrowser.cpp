@@ -7,6 +7,7 @@
 #include "ExtendedAtlassianJira.h"
 #include "ExtendedAtlassianNewIssueDialog.h"
 #include "ExtendedAtlassianSettings.h"
+#include "ExtendedAtlassianStyle.h"
 #include "UnrealExtendedAtlassian.h"
 
 #include "Framework/Notifications/NotificationManager.h"
@@ -283,6 +284,8 @@ TSharedRef<SWidget> SExtendedAtlassianIssueBrowser::BuildQueryBar()
 			.VAlign(VAlign_Center)
 			[
 				SAssignNew(JqlBox, SEditableTextBox)
+					.Style(&FExtendedAtlassianStyle::Get().GetWidgetStyle<FEditableTextBoxStyle>(
+						TEXT("Backlot.Field")))
 				.Text_Lambda([this]() { return FText::FromString(CurrentJql); })
 				.HintText(LOCTEXT("JqlHint", "JQL query"))
 				.OnTextChanged_Lambda([this](const FText& NewText) { CurrentJql = NewText.ToString(); })
@@ -509,6 +512,8 @@ TSharedRef<SWidget> SExtendedAtlassianIssueBrowser::BuildDetailPane()
 			.Padding(0.0f, 4.0f)
 			[
 				SNew(SMultiLineEditableTextBox)
+					.Style(&FExtendedAtlassianStyle::Get().GetWidgetStyle<FEditableTextBoxStyle>(
+						TEXT("Backlot.Field")))
 				.IsReadOnly(true)
 				.AllowMultiLine(true)
 				.AutoWrapText(true)
@@ -554,6 +559,8 @@ TSharedRef<SWidget> SExtendedAtlassianIssueBrowser::BuildDetailPane()
 					.HeightOverride(60.0f)
 					[
 						SAssignNew(CommentBox, SMultiLineEditableTextBox)
+							.Style(&FExtendedAtlassianStyle::Get().GetWidgetStyle<FEditableTextBoxStyle>(
+								TEXT("Backlot.Field")))
 						.HintText(LOCTEXT("CommentHint", "Add a comment"))
 						.AllowMultiLine(true)
 						.AutoWrapText(true)

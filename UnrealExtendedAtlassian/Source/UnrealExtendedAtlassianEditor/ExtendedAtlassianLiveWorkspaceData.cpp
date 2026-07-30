@@ -170,6 +170,37 @@ namespace ExtendedAtlassianLiveWorkspacePrivate
 		return DisplayName.Left(2).ToUpper();
 	}
 
+	/**
+	 * Name the author of a page's current version.
+	 *
+	 * Confluence v2 returns an account id, not a name, so the provider carries the id and this
+	 * resolves it against the fetched user list. Left blank when the author is not in that list:
+	 * an opaque id in a "last edited by" slot is worse than an empty one.
+	 */
+	void ResolvePageEditor(FExtendedAtlassianWorkspaceSnapshot& Snapshot, const FString& PageId)
+	{
+		FExtendedAtlassianPage* Page = Snapshot.Pages.FindByPredicate(
+			[&PageId](const FExtendedAtlassianPage& Candidate)
+			{
+				return Candidate.Id == PageId;
+			});
+		if (!Page || !Page->EditedByLabel.IsEmpty() || Page->EditedByAccountId.IsEmpty())
+		{
+			return;
+		}
+		const FString AccountId = Page->EditedByAccountId;
+		if (const FExtendedAtlassianUser* Author = Snapshot.People.FindByPredicate(
+			[&AccountId](const FExtendedAtlassianUser& User)
+			{
+				return User.AccountId == AccountId;
+			}))
+		{
+			Page->EditedByLabel = Author->Initials.IsEmpty()
+				? InitialsForName(Author->DisplayName)
+				: Author->Initials;
+		}
+	}
+
 	void NormalizeBoardColumns(
 		FExtendedAtlassianWorkspaceSnapshot& Snapshot,
 		const UExtendedAtlassianSettings* Settings)
@@ -954,6 +985,9 @@ void FExtendedAtlassianLiveWorkspaceData::Load(
 												{
 													Pending->Snapshot.Pages.Add(Page);
 												}
+												ExtendedAtlassianLiveWorkspacePrivate::ResolvePageEditor(
+													Pending->Snapshot,
+													Page.Id);
 											}
 											FinalSelf->FinishLoadBranch(
 												Pending,

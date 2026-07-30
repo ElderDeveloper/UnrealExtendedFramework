@@ -173,6 +173,25 @@ bool FExtendedAtlassianHtmlTest::RunTest(const FString& Parameters)
 		TestEqual(TEXT("Numeric entities cover the rest of Turkish"),
 			FExtendedAtlassianHtml::DecodeEntities(TEXT("&#287;&#305;&#351;&#304;")),
 			FString(TEXT("ğışİ")));
+
+		// Emoji live above the BMP. Truncating them into one TCHAR deleted the character outright,
+		// so a status marker in a page body vanished instead of merely rendering as a placeholder.
+		const FString Astral = FExtendedAtlassianHtml::DecodeEntities(TEXT("a&#x1F7E9;b"));
+		TestEqual(TEXT("Astral code point survives as a surrogate pair"), Astral.Len(), sizeof(TCHAR) >= 4 ? 3 : 4);
+		TestTrue(TEXT("Text around an astral code point is intact"),
+			Astral.StartsWith(TEXT("a")) && Astral.EndsWith(TEXT("b")));
+
+		// Confluence pages lean on dashes heavily, and the viewer reproduces the page rather than an
+		// ASCII transliteration of it.
+		TestEqual(TEXT("Dashes and ellipsis keep their real characters"),
+			FExtendedAtlassianHtml::DecodeEntities(TEXT("a&ndash;b &mdash; c&hellip;")),
+			FString(TEXT("a–b — c…")));
+
+		// Unencodable inputs must not leak a broken character into the document.
+		TestEqual(TEXT("Lone surrogate dropped"),
+			FExtendedAtlassianHtml::DecodeEntities(TEXT("a&#xD800;b")), FString(TEXT("ab")));
+		TestEqual(TEXT("Out-of-range code point dropped"),
+			FExtendedAtlassianHtml::DecodeEntities(TEXT("a&#x110000;b")), FString(TEXT("ab")));
 	}
 
 	{
@@ -510,6 +529,172 @@ bool FExtendedAtlassianHtmlBlocksTest::RunTest(const FString& Parameters)
 		TestEqual(TEXT("Two table rows"), Blocks.Num(), 2);
 		TestTrue(TEXT("Header row flagged"), Blocks[0].bIsHeaderRow);
 		TestEqual(TEXT("Two cells"), Blocks[0].Cells.Num(), 2);
+	}
+
+	{
+		// The shape Confluence storage actually emits: every cell's content is wrapped in <p>.
+		// Treating that <p> as a sibling block used to flush the text out as a loose paragraph and
+		// leave the row holding empty cells, so a table rendered as a column of stray lines
+		// separated by empty pipe rows.
+		const TArray<FExtendedAtlassianDocBlock> Blocks = FExtendedAtlassianHtml::ToBlocks(
+			TEXT("<table data-layout=\"default\"><colgroup><col /></colgroup><tbody>")
+			TEXT("<tr><th><p>Hafta</p></th><th><p>Hedef</p></th></tr>")
+			TEXT("<tr><td><p>5</p></td><td><p><strong>Kapi</strong>: kat-1</p></td></tr>")
+			TEXT("</tbody></table>"));
+
+		TestEqual(TEXT("Paragraph-wrapped cells produce only rows, no loose paragraphs"), Blocks.Num(), 2);
+
+		if (Blocks.Num() == 2)
+		{
+			TestTrue(TEXT("Header row flagged"), Blocks[0].bIsHeaderRow);
+			TestEqual(TEXT("Header keeps both cells"), Blocks[0].Cells.Num(), 2);
+			TestEqual(TEXT("Header cell text stays in the cell"), Blocks[0].Cells[0], FString(TEXT("Hafta")));
+			TestEqual(TEXT("Second header cell text stays in the cell"), Blocks[0].Cells[1], FString(TEXT("Hedef")));
+
+			TestFalse(TEXT("Body row not flagged as header"), Blocks[1].bIsHeaderRow);
+			TestEqual(TEXT("Body keeps both cells"), Blocks[1].Cells.Num(), 2);
+			TestEqual(TEXT("Body cell text stays in the cell"), Blocks[1].Cells[0], FString(TEXT("5")));
+			TestTrue(TEXT("Inline styling survives inside a cell"),
+				Blocks[1].Cells[1].Contains(TEXT("<Bold>Kapi</>")));
+		}
+	}
+
+	{
+		// A cell holding more than one paragraph stays one cell.
+		const TArray<FExtendedAtlassianDocBlock> Blocks = FExtendedAtlassianHtml::ToBlocks(
+			TEXT("<table><tbody><tr><td><p>first</p><p>second</p></td></tr></tbody></table>"));
+
+		TestEqual(TEXT("One row"), Blocks.Num(), 1);
+		if (Blocks.Num() == 1)
+		{
+			TestEqual(TEXT("Still one cell"), Blocks[0].Cells.Num(), 1);
+			TestEqual(TEXT("Both paragraphs kept, separated by a break"),
+				Blocks[0].Cells[0], FString(TEXT("first\nsecond")));
+		}
+	}
+
+	{
+		// Storage wraps list-item content in <p> too, which used to reset the pending kind and turn
+		// every bullet into an unmarked paragraph.
+		const TArray<FExtendedAtlassianDocBlock> Blocks = FExtendedAtlassianHtml::ToBlocks(
+			TEXT("<ul><li><p><strong>Host-authoritative:</strong> yalniz host.</p></li>")
+			TEXT("<li><p>EOS akisi.</p></li></ul>"));
+
+		TestEqual(TEXT("Two blocks for two items"), Blocks.Num(), 2);
+
+		int32 BulletCount = 0;
+		for (const FExtendedAtlassianDocBlock& Block : Blocks)
+		{
+			if (Block.Kind == EExtendedAtlassianBlockKind::BulletItem)
+			{
+				++BulletCount;
+			}
+		}
+
+		TestEqual(TEXT("Paragraph-wrapped items stay bullets"), BulletCount, 2);
+		if (Blocks.Num() == 2)
+		{
+			TestTrue(TEXT("Bold survives inside a bulleted item"),
+				Blocks[0].Markup.Contains(TEXT("<Bold>Host-authoritative:</>")));
+			TestTrue(TEXT("Item text follows its styled run"),
+				Blocks[0].Markup.Contains(TEXT("yalniz host.")));
+		}
+	}
+
+	{
+		// Ordered items and nesting keep their numbering and depth through the same wrapper.
+		const TArray<FExtendedAtlassianDocBlock> Blocks = FExtendedAtlassianHtml::ToBlocks(
+			TEXT("<ol><li><p>one</p></li><li><p>two</p>")
+			TEXT("<ul><li><p>nested</p></li></ul></li></ol>"));
+
+		int32 OrderedCount = 0;
+		int32 NestedBullets = 0;
+		for (const FExtendedAtlassianDocBlock& Block : Blocks)
+		{
+			if (Block.Kind == EExtendedAtlassianBlockKind::OrderedItem)
+			{
+				++OrderedCount;
+			}
+			if (Block.Kind == EExtendedAtlassianBlockKind::BulletItem && Block.IndentDepth == 1)
+			{
+				++NestedBullets;
+			}
+		}
+
+		TestEqual(TEXT("Two ordered items"), OrderedCount, 2);
+		TestEqual(TEXT("Nested bullet keeps its depth"), NestedBullets, 1);
+	}
+
+	{
+		// A Confluence inline task. Its id, UUID and status live in child elements, so dropping the
+		// tag while keeping the text printed all three into the document ahead of the real wording.
+		const TArray<FExtendedAtlassianDocBlock> Blocks = FExtendedAtlassianHtml::ToBlocks(
+			TEXT("<ac:task-list><ac:task>")
+			TEXT("<ac:task-id>3</ac:task-id>")
+			TEXT("<ac:task-uuid>12a64e22-1989-460a-b968-b0fb5290e5a0</ac:task-uuid>")
+			TEXT("<ac:task-status>incomplete</ac:task-status>")
+			TEXT("<ac:task-body>Enchantment geri doner mi</ac:task-body>")
+			TEXT("</ac:task></ac:task-list>"));
+
+		TestEqual(TEXT("One block for one task"), Blocks.Num(), 1);
+		if (Blocks.Num() == 1)
+		{
+			TestTrue(TEXT("Task becomes a task item"),
+				Blocks[0].Kind == EExtendedAtlassianBlockKind::TaskItem);
+			TestFalse(TEXT("incomplete is unchecked"), Blocks[0].bChecked);
+			TestTrue(TEXT("Task body survives"),
+				Blocks[0].Markup.Contains(TEXT("Enchantment geri doner mi")));
+
+			// The three that used to leak.
+			TestFalse(TEXT("Task id does not reach the document"),
+				Blocks[0].Markup.Contains(TEXT("3")));
+			TestFalse(TEXT("Task UUID does not reach the document"),
+				Blocks[0].Markup.Contains(TEXT("12a64e22")));
+			TestFalse(TEXT("Task status word does not reach the document"),
+				Blocks[0].Markup.Contains(TEXT("incomplete")));
+		}
+	}
+
+	{
+		// A completed task, with the body wrapped in <p> as Confluence often emits it.
+		const TArray<FExtendedAtlassianDocBlock> Blocks = FExtendedAtlassianHtml::ToBlocks(
+			TEXT("<ac:task-list><ac:task>")
+			TEXT("<ac:task-id>1</ac:task-id>")
+			TEXT("<ac:task-status>complete</ac:task-status>")
+			TEXT("<ac:task-body><p>Scope <strong>dolduruldu</strong></p></ac:task-body>")
+			TEXT("</ac:task></ac:task-list>"));
+
+		TestEqual(TEXT("One block for one completed task"), Blocks.Num(), 1);
+		if (Blocks.Num() == 1)
+		{
+			TestTrue(TEXT("Completed task is a task item"),
+				Blocks[0].Kind == EExtendedAtlassianBlockKind::TaskItem);
+			TestTrue(TEXT("complete is checked"), Blocks[0].bChecked);
+			TestTrue(TEXT("Paragraph-wrapped body stays with its task"),
+				Blocks[0].Markup.Contains(TEXT("Scope")));
+			TestTrue(TEXT("Inline styling inside a task body survives"),
+				Blocks[0].Markup.Contains(TEXT("<Bold>dolduruldu</>")));
+		}
+	}
+
+	{
+		// Macro parameter values are configuration, not prose.
+		const TArray<FExtendedAtlassianDocBlock> Blocks = FExtendedAtlassianHtml::ToBlocks(
+			TEXT("<ac:structured-macro ac:name=\"info\">")
+			TEXT("<ac:parameter ac:name=\"icon\">false</ac:parameter>")
+			TEXT("<ac:rich-text-body><p>Kept</p></ac:rich-text-body>")
+			TEXT("</ac:structured-macro>"));
+
+		bool bLeaked = false;
+		bool bKept = false;
+		for (const FExtendedAtlassianDocBlock& Block : Blocks)
+		{
+			if (Block.Markup.Contains(TEXT("false"))) { bLeaked = true; }
+			if (Block.Markup.Contains(TEXT("Kept"))) { bKept = true; }
+		}
+
+		TestFalse(TEXT("Macro parameter value does not reach the document"), bLeaked);
+		TestTrue(TEXT("Macro rich text body is kept"), bKept);
 	}
 
 	{

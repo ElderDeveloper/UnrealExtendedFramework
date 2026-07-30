@@ -3,6 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Brushes/SlateRoundedBoxBrush.h"
 #include "Widgets/SCompoundWidget.h"
 #include "Widgets/SLeafWidget.h"
 #include "Widgets/Views/SListView.h"
@@ -146,6 +147,15 @@ private:
 	float Blur = 34.0f;
 	FLinearColor ShadowColor = FLinearColor(0.0f, 0.0f, 0.0f, 0.5f);
 	float CornerRadius = 12.0f;
+
+	/**
+	 * One brush per falloff step, owned by the widget for the life of the frame.
+	 *
+	 * MakeBox keeps the brush pointer and Slate reads it during the render pass, so brushes
+	 * built as locals in OnPaint are freed before they are used. Sized once per paint and
+	 * only then addressed, so no element ever points into reallocated storage.
+	 */
+	mutable TArray<FSlateRoundedBoxBrush> ShadowBrushes;
 };
 
 /**
@@ -187,6 +197,22 @@ private:
 	float OutlineOffset = 1.0f;
 	float CornerRadius = 4.0f;
 	bool bAlwaysShow = false;
+
+	/**
+	 * The ring brush, owned by the widget rather than built on the stack in OnPaint.
+	 *
+	 * FSlateDrawElement::MakeBox stores the brush *pointer* and Slate dereferences it later, when
+	 * the batch is rendered. A brush built as a local dies the moment OnPaint returns, so the
+	 * render pass read freed memory and painted a plain white box over the focused widget. Every
+	 * other brush in this file is `static` for exactly this reason.
+	 *
+	 * All four inputs are fixed per instance, so this is built once in Construct.
+	 */
+	FSlateRoundedBoxBrush RingBrush{
+		FLinearColor::Transparent,
+		0.0f,
+		FLinearColor::Transparent,
+		0.0f};
 };
 
 /**
@@ -356,6 +382,17 @@ public:
 		bool bParentEnabled) const override;
 
 private:
+	/**
+	 * The pulse ring, owned by the widget. Its spread animates, so it is reassigned each
+	 * paint rather than built once — but it must outlive OnPaint, because MakeBox only
+	 * stores the pointer and Slate dereferences it later when the batch is rendered.
+	 */
+	mutable FSlateRoundedBoxBrush PulseBrush{
+		FLinearColor::Transparent,
+		0.0f,
+		FLinearColor::Transparent,
+		0.0f};
+
 	EActiveTimerReturnType Advance(double InCurrentTime, float InDeltaTime);
 
 	FLinearColor PulseColor = FLinearColor(0.345f, 0.651f, 1.0f, 1.0f);

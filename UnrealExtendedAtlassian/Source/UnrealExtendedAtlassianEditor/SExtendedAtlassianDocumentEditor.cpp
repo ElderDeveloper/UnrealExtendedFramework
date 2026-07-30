@@ -302,6 +302,8 @@ TSharedRef<SWidget> SExtendedAtlassianDocumentEditor::BuildBlockEditor(
 		.Padding(0.0f, 6.0f, 0.0f, 0.0f)
 		[
 			SNew(SMultiLineEditableTextBox)
+				.Style(&FExtendedAtlassianStyle::Get().GetWidgetStyle<FEditableTextBoxStyle>(
+					TEXT("Backlot.Field")))
 				.Text(FText::FromString(Block.RawText))
 				.IsReadOnly_Lambda([this]() { return bReadOnly; })
 				.Font(Text(TEXT("Backlot.Mono.12")).Font)
@@ -437,6 +439,8 @@ TSharedRef<SWidget> SExtendedAtlassianDocumentEditor::BuildBlockEditor(
 		.AutoHeight()
 		[
 			SNew(SMultiLineEditableTextBox)
+				.Style(&FExtendedAtlassianStyle::Get().GetWidgetStyle<FEditableTextBoxStyle>(
+					TEXT("Backlot.Field")))
 				.Text(FText::FromString(PlainMarkup(Block.Markup)))
 				.IsReadOnly_Lambda([this]() { return bReadOnly; })
 				.Font(

@@ -877,15 +877,15 @@ void FExtendedAtlassianFixtureWorkspaceData::ApplyMutation(
 				TArray<FString> Parts;
 				if (PinCount > 0)
 				{
-					Parts.Add(FString::Printf(TEXT("%d Ã— pin"), PinCount));
+					Parts.Add(FString::Printf(TEXT("%d × pin"), PinCount));
 				}
 				if (BoxCount > 0)
 				{
-					Parts.Add(FString::Printf(TEXT("%d Ã— box"), BoxCount));
+					Parts.Add(FString::Printf(TEXT("%d × box"), BoxCount));
 				}
 				if (BlurCount > 0)
 				{
-					Parts.Add(FString::Printf(TEXT("%d Ã— blur"), BlurCount));
+					Parts.Add(FString::Printf(TEXT("%d × blur"), BlurCount));
 				}
 				if (!Parts.IsEmpty())
 				{

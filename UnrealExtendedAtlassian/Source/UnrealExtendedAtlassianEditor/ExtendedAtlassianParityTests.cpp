@@ -1440,7 +1440,7 @@ bool FExtendedAtlassianDocumentMutationContractTest::RunTest(const FString& Para
 		TEXT("| Tide | 0..1 | 0.5 | AK |\n\n")
 		TEXT("```cpp TideController.cpp\nfloat Tide = 0.5f;\n```\n\n")
 		TEXT("- [ ] Validate the harbour\n\n")
-		TEXT("![M_WetStone](/Game/Art/M_WetStone \"MATERIAL THUMB|2048Â² Â· 4 INST\")\n");
+		TEXT("![M_WetStone](/Game/Art/M_WetStone \"MATERIAL THUMB|2048² · 4 INST\")\n");
 	FExtendedAtlassianWorkspaceMutation Publish;
 	Publish.Type = EExtendedAtlassianWorkspaceMutation::UpdatePage;
 	Publish.TargetId = TEXT("new-test");
@@ -1516,7 +1516,7 @@ bool FExtendedAtlassianDocumentMutationContractTest::RunTest(const FString& Para
 			TestEqual(TEXT("Asset slot round-trips"), AssetBlock->EmbedSlot,
 				FString(TEXT("MATERIAL THUMB")));
 			TestEqual(TEXT("Asset display metadata round-trips"), AssetBlock->ImageMeta,
-				FString(TEXT("2048Â² Â· 4 INST")));
+				FString(TEXT("2048² · 4 INST")));
 		}
 		const FString RoundTripped = FExtendedAtlassianMarkdown::FromBlocks(
 			FExtendedAtlassianMarkdown::ToBlocks(Published->Markdown));

@@ -5,6 +5,7 @@
 #include "ExtendedAtlassianClient.h"
 #include "ExtendedAtlassianJira.h"
 #include "ExtendedAtlassianScreenshot.h"
+#include "ExtendedAtlassianStyle.h"
 #include "ExtendedAtlassianSettings.h"
 #include "UnrealExtendedAtlassian.h"
 
@@ -220,6 +221,8 @@ void SExtendedAtlassianBugReportDialog::Construct(const FArguments& InArgs)
 				.Padding(0.0f, 2.0f, 0.0f, 8.0f)
 				[
 					SAssignNew(SummaryBox, SEditableTextBox)
+						.Style(&FExtendedAtlassianStyle::Get().GetWidgetStyle<FEditableTextBoxStyle>(
+							TEXT("Backlot.Field")))
 					.HintText(LOCTEXT("SummaryHint", "One line describing what went wrong"))
 				]
 
@@ -237,6 +240,8 @@ void SExtendedAtlassianBugReportDialog::Construct(const FArguments& InArgs)
 					.HeightOverride(120.0f)
 					[
 						SAssignNew(DescriptionBox, SMultiLineEditableTextBox)
+							.Style(&FExtendedAtlassianStyle::Get().GetWidgetStyle<FEditableTextBoxStyle>(
+								TEXT("Backlot.Field")))
 						.HintText(LOCTEXT("DescriptionHint", "Steps to reproduce, expected vs actual"))
 						.AllowMultiLine(true)
 						.AutoWrapText(true)
@@ -311,6 +316,8 @@ void SExtendedAtlassianBugReportDialog::Construct(const FArguments& InArgs)
 				.Padding(0.0f, 2.0f, 0.0f, 8.0f)
 				[
 					SAssignNew(LabelsBox, SEditableTextBox)
+						.Style(&FExtendedAtlassianStyle::Get().GetWidgetStyle<FEditableTextBoxStyle>(
+							TEXT("Backlot.Field")))
 					.HintText(LOCTEXT("LabelsHint", "Comma separated; spaces become hyphens"))
 				]
 
@@ -392,6 +399,8 @@ void SExtendedAtlassianBugReportDialog::Construct(const FArguments& InArgs)
 					.HeightOverride(140.0f)
 					[
 						SNew(SMultiLineEditableTextBox)
+							.Style(&FExtendedAtlassianStyle::Get().GetWidgetStyle<FEditableTextBoxStyle>(
+								TEXT("Backlot.Field")))
 						.IsReadOnly(true)
 						.AllowMultiLine(true)
 						.Text(FText::FromString(CapturedContext.ToContextBlock()))

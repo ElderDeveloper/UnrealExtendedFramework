@@ -5,6 +5,7 @@
 #include "ExtendedAtlassianAdf.h"
 #include "ExtendedAtlassianClient.h"
 #include "ExtendedAtlassianLog.h"
+#include "ExtendedAtlassianModelUtils.h"
 #include "ExtendedAtlassianMultipart.h"
 #include "ExtendedAtlassianSettings.h"
 #include "UnrealExtendedAtlassian.h"
@@ -329,30 +330,8 @@ namespace ExtendedAtlassianJiraPrivate
 
 	FString RelativeAge(const FDateTime& Created)
 	{
-		if (Created == FDateTime::MinValue())
-		{
-			return FString();
-		}
-		const FTimespan Age = FDateTime::UtcNow() - Created;
-		if (Age.GetTotalMinutes() < 1.0)
-		{
-			return TEXT("now");
-		}
-		if (Age.GetTotalHours() < 1.0)
-		{
-			return FString::Printf(
-				TEXT("%dm"),
-				FMath::Max(1, FMath::FloorToInt(Age.GetTotalMinutes())));
-		}
-		if (Age.GetTotalDays() < 1.0)
-		{
-			return FString::Printf(
-				TEXT("%dh"),
-				FMath::Max(1, FMath::FloorToInt(Age.GetTotalHours())));
-		}
-		return FString::Printf(
-			TEXT("%dd"),
-			FMath::Max(1, FMath::FloorToInt(Age.GetTotalDays())));
+		// One implementation, shared with the Confluence provider.
+		return ExtendedAtlassianModelUtils::RelativeAge(Created);
 	}
 
 	FString ChangelogDetail(
@@ -677,6 +656,21 @@ FExtendedAtlassianIssue FExtendedAtlassianJira::ParseIssue(const TSharedPtr<FJso
 	if (Fields->TryGetObjectField(TEXT("comment"), CommentContainer) && CommentContainer->IsValid())
 	{
 		(*CommentContainer)->TryGetNumberField(TEXT("total"), Issue.CommentCount);
+	}
+
+	// "created" and "updated" are already in IssueFieldNames, so every response has carried these
+	// all along and nothing read them: the UPDATED column rendered an empty string on live data
+	// while the fixture assigned RelativeUpdated directly, which is why no test caught it.
+	FString Timestamp;
+	if (Fields->TryGetStringField(TEXT("updated"), Timestamp)
+		&& ParseJiraDateTime(Timestamp, Issue.Updated))
+	{
+		Issue.RelativeUpdated = RelativeAge(Issue.Updated);
+	}
+	if (Fields->TryGetStringField(TEXT("created"), Timestamp)
+		&& ParseJiraDateTime(Timestamp, Issue.Created))
+	{
+		Issue.RelativeCreated = RelativeAge(Issue.Created);
 	}
 
 	if (const UExtendedAtlassianSettings* Settings =
