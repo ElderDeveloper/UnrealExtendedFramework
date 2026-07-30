@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include "ExtendedAtlassianTypes.h"
 #include "Modules/ModuleManager.h"
 
 class FExtendedAtlassianEditorMenu;
@@ -9,12 +10,16 @@ class FSpawnTabArgs;
 class SDockTab;
 class SExtendedAtlassianConfluenceBrowser;
 class SExtendedAtlassianIssueBrowser;
+class SExtendedAtlassianWorkspace;
 
 /** Tab id of the Jira issue browser. */
 extern const FName ExtendedAtlassianIssueBrowserTabName;
 
 /** Tab id of the Confluence documentation browser. */
 extern const FName ExtendedAtlassianConfluenceBrowserTabName;
+
+/** Tab id of the unified Backlot workspace. */
+extern const FName ExtendedAtlassianWorkspaceTabName;
 
 /**
  * Editor module for the Extended Atlassian integration.
@@ -47,13 +52,20 @@ public:
 	/** Invokes the Confluence documentation tab, creating it if it is not already open. */
 	static void OpenConfluenceBrowser();
 
+	/** Invokes the unified Backlot tab at the requested route. */
+	static void OpenWorkspace(EExtendedAtlassianWorkspaceRoute Route);
+
 private:
+	TSharedRef<SDockTab> SpawnWorkspaceTab(const FSpawnTabArgs& Args);
 	TSharedRef<SDockTab> SpawnIssueBrowserTab(const FSpawnTabArgs& Args);
 	TSharedRef<SDockTab> SpawnConfluenceBrowserTab(const FSpawnTabArgs& Args);
 
 	TUniquePtr<FExtendedAtlassianEditorMenu> EditorMenu;
 	TWeakPtr<SExtendedAtlassianIssueBrowser> IssueBrowserWidget;
 	TWeakPtr<SExtendedAtlassianConfluenceBrowser> ConfluenceBrowserWidget;
+	TWeakPtr<SExtendedAtlassianWorkspace> WorkspaceWidget;
+	EExtendedAtlassianWorkspaceRoute PendingWorkspaceRoute =
+		EExtendedAtlassianWorkspaceRoute::Docs;
 
 	static FUnrealExtendedAtlassianEditorModule* Instance;
 };

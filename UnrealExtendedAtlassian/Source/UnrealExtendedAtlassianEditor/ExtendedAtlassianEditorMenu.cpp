@@ -48,6 +48,9 @@ void FExtendedAtlassianEditorMenu::BindCommands()
 	CommandList->MapAction(
 		Commands.ReportBug,
 		FExecuteAction::CreateStatic(&SExtendedAtlassianBugReportDialog::Open));
+	CommandList->MapAction(
+		Commands.ReportBugLegacy,
+		FExecuteAction::CreateStatic(&SExtendedAtlassianBugReportDialog::Open));
 
 	CommandList->MapAction(
 		Commands.OpenConfluenceBrowser,
@@ -70,6 +73,9 @@ void FExtendedAtlassianEditorMenu::RegisterMenus()
 		{
 			GlobalActions->MapAction(
 				FExtendedAtlassianEditorCommands::Get().ReportBug,
+				FExecuteAction::CreateStatic(&SExtendedAtlassianBugReportDialog::Open));
+			GlobalActions->MapAction(
+				FExtendedAtlassianEditorCommands::Get().ReportBugLegacy,
 				FExecuteAction::CreateStatic(&SExtendedAtlassianBugReportDialog::Open));
 		}
 	}

@@ -367,7 +367,12 @@ FString FExtendedAtlassianMarkdown::FromBlocks(const TArray<FExtendedAtlassianDo
 			break;
 
 		case EExtendedAtlassianBlockKind::CodeBlock:
-			Lines.Add(TEXT("```") + Block.CodeLanguage);
+			Lines.Add(
+				TEXT("```")
+				+ Block.CodeLanguage
+				+ (Block.ImageAlt.IsEmpty()
+					? FString()
+					: TEXT(" ") + Block.ImageAlt));
 			Lines.Add(Block.RawText);
 			Lines.Add(TEXT("```"));
 			Lines.Add(FString());
@@ -379,9 +384,31 @@ FString FExtendedAtlassianMarkdown::FromBlocks(const TArray<FExtendedAtlassianDo
 			break;
 
 		case EExtendedAtlassianBlockKind::Image:
-			Lines.Add(FString::Printf(TEXT("![%s](%s)"), *Block.ImageAlt, *Block.ImageUrl));
+		{
+			const FString Target = Block.ImageUrl.IsEmpty()
+				? FString(TEXT("backlot-embed"))
+				: Block.ImageUrl;
+			FString CardData = Block.EmbedSlot;
+			if (!Block.ImageMeta.IsEmpty())
+			{
+				CardData += (CardData.IsEmpty() ? FString() : TEXT("|"))
+					+ Block.ImageMeta;
+			}
+			CardData.ReplaceInline(TEXT("\""), TEXT("&quot;"));
+			Lines.Add(
+				CardData.IsEmpty()
+					? FString::Printf(
+						TEXT("![%s](%s)"),
+						*Block.ImageAlt,
+						*Target)
+					: FString::Printf(
+						TEXT("![%s](%s \"%s\")"),
+						*Block.ImageAlt,
+						*Target,
+						*CardData));
 			Lines.Add(FString());
 			break;
+		}
 
 		case EExtendedAtlassianBlockKind::TableRow:
 		{
@@ -485,7 +512,17 @@ TArray<FExtendedAtlassianDocBlock> FExtendedAtlassianMarkdown::ToBlocks(const FS
 
 			FExtendedAtlassianDocBlock Block;
 			Block.Kind = EExtendedAtlassianBlockKind::CodeBlock;
-			Block.CodeLanguage = Trimmed.RightChop(3).TrimStartAndEnd();
+			const FString FenceInfo = Trimmed.RightChop(3).TrimStartAndEnd();
+			int32 FirstSpace = INDEX_NONE;
+			if (FenceInfo.FindChar(TEXT(' '), FirstSpace))
+			{
+				Block.CodeLanguage = FenceInfo.Left(FirstSpace);
+				Block.ImageAlt = FenceInfo.Mid(FirstSpace + 1).TrimStartAndEnd();
+			}
+			else
+			{
+				Block.CodeLanguage = FenceInfo;
+			}
 
 			TArray<FString> CodeLines;
 			++LineIndex;
@@ -593,6 +630,63 @@ TArray<FExtendedAtlassianDocBlock> FExtendedAtlassianMarkdown::ToBlocks(const FS
 
 			--LineIndex; // The outer loop advances again.
 			continue;
+		}
+
+		// --- Image / Backlot asset embed -------------------------------
+		if (Trimmed.StartsWith(TEXT("![")))
+		{
+			const int32 AltEnd = Trimmed.Find(
+				TEXT("]("),
+				ESearchCase::CaseSensitive,
+				ESearchDir::FromStart,
+				2);
+			const int32 UrlEnd = Trimmed.EndsWith(TEXT(")"))
+				? Trimmed.Len() - 1
+				: INDEX_NONE;
+			if (AltEnd != INDEX_NONE && UrlEnd > AltEnd + 2)
+			{
+				FlushParagraph();
+
+				FExtendedAtlassianDocBlock Block;
+				Block.Kind = EExtendedAtlassianBlockKind::Image;
+				Block.ImageAlt = Trimmed.Mid(2, AltEnd - 2);
+				FString TargetAndTitle = Trimmed.Mid(
+					AltEnd + 2,
+					UrlEnd - AltEnd - 2);
+				int32 LastQuote = INDEX_NONE;
+				if (TargetAndTitle.FindLastChar(TEXT('"'), LastQuote)
+					&& LastQuote == TargetAndTitle.Len() - 1)
+				{
+					const int32 OpeningQuote = TargetAndTitle.Find(
+						TEXT(" \""),
+						ESearchCase::CaseSensitive,
+						ESearchDir::FromStart);
+					if (OpeningQuote != INDEX_NONE)
+					{
+						FString CardData = TargetAndTitle.Mid(
+							OpeningQuote + 2,
+							TargetAndTitle.Len() - OpeningQuote - 3);
+						CardData.ReplaceInline(TEXT("&quot;"), TEXT("\""));
+						int32 Separator = INDEX_NONE;
+						if (CardData.FindChar(TEXT('|'), Separator))
+						{
+							Block.EmbedSlot = CardData.Left(Separator);
+							Block.ImageMeta = CardData.Mid(Separator + 1);
+						}
+						else
+						{
+							Block.ImageMeta = CardData;
+						}
+						TargetAndTitle.LeftInline(OpeningQuote);
+					}
+				}
+				Block.ImageUrl =
+					TargetAndTitle == TEXT("backlot-embed")
+						? FString()
+						: TargetAndTitle;
+				Blocks.Add(MoveTemp(Block));
+				continue;
+			}
 		}
 
 		// --- List items ------------------------------------------------

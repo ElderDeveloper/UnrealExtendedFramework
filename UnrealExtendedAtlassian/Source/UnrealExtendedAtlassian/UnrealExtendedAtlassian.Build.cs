@@ -26,6 +26,7 @@ public class UnrealExtendedAtlassian : ModuleRules
 			"JsonUtilities",
 			"Projects",
 		});
+		AddEngineThirdPartyPrivateStaticDependencies(Target, "OpenSSL");
 
 		// Settings actions (Save Credentials / Test Connection) report their outcome through an
 		// editor notification. Editor-only, guarded by WITH_EDITOR in the settings implementation.

@@ -6,6 +6,7 @@
 #include "ExtendedAtlassianConfluence.h"
 #include "ExtendedAtlassianCredentials.h"
 #include "ExtendedAtlassianJira.h"
+#include "ExtendedAtlassianJiraSoftware.h"
 #include "ExtendedAtlassianLog.h"
 #include "UnrealExtendedAtlassian.h"
 
@@ -66,6 +67,8 @@ namespace ExtendedAtlassianSettingsPrivate
 
 UExtendedAtlassianSettings::UExtendedAtlassianSettings()
 	: DefaultIssueTypeName(TEXT("Bug"))
+	, SprintSelection(TEXT("active"))
+	, InProgressWipLimit(3)
 	, bIncludePersonalSpaces(true)
 	, bEnablePolling(false)
 	, PollIntervalSeconds(300)
@@ -78,6 +81,14 @@ UExtendedAtlassianSettings::UExtendedAtlassianSettings()
 	, RequestTimeoutSeconds(30)
 	, MaxRetries(3)
 {
+	BoardCapabilityStatus = TEXT("Not discovered yet.");
+	SprintCapabilityStatus = TEXT("Not discovered yet.");
+	FieldCapabilityStatus = TEXT("Not discovered yet.");
+	BoardColumns.Add({ TEXT("Triage"), { TEXT("Triage"), TEXT("Blocked") } });
+	BoardColumns.Add({ TEXT("In progress"), { TEXT("In Progress") } });
+	BoardColumns.Add({ TEXT("In review"), { TEXT("In Review") } });
+	BoardColumns.Add({ TEXT("Done"), { TEXT("Done") } });
+
 	JqlPresets.Add({ TEXT("My open issues"), TEXT("assignee = currentUser() AND resolution = Unresolved ORDER BY updated DESC") });
 	JqlPresets.Add({ TEXT("Reported by me"), TEXT("reporter = currentUser() ORDER BY created DESC") });
 	JqlPresets.Add({ TEXT("Updated this week"), TEXT("updated >= -7d ORDER BY updated DESC") });
@@ -272,6 +283,11 @@ void UExtendedAtlassianSettings::RefreshAtlassianLists()
 	}
 
 	UE_LOG(LogExtendedAtlassian, Log, TEXT("Refreshing Atlassian dropdown lists..."));
+	BoardCapabilityStatus = TEXT("Discovering Jira Software boards...");
+	SprintCapabilityStatus = TEXT("Waiting for board discovery...");
+	FieldCapabilityStatus = TEXT("Waiting for board configuration...");
+	DiscoveredEstimateFieldId.Reset();
+	DiscoveredRankFieldId.Reset();
 
 	FExtendedAtlassianJira::GetProjects(FExtendedAtlassianProjectsDelegate::CreateLambda(
 		[](bool bSuccess, const TArray<FExtendedAtlassianProject>& Projects, const FExtendedAtlassianError& Error)
@@ -339,6 +355,150 @@ void UExtendedAtlassianSettings::RefreshAtlassianLists()
 				Settings->CachedPriorityNames.Add(Priority.Name);
 			}
 		}));
+
+	FExtendedAtlassianJiraSoftware::ListBoards(
+		ProjectKey,
+		FExtendedAtlassianBoardsDelegate::CreateLambda(
+			[](bool bSuccess,
+				const TArray<FExtendedAtlassianBoard>& Boards,
+				const FExtendedAtlassianError& Error)
+			{
+				UExtendedAtlassianSettings* Settings =
+					UExtendedAtlassianSettings::GetMutable();
+				if (!Settings)
+				{
+					return;
+				}
+				if (!bSuccess)
+				{
+					Settings->BoardCapabilityStatus = FString::Printf(
+						TEXT("Board discovery failed: %s Check Jira Software access and the project key."),
+						*Error.Message);
+					Settings->SprintCapabilityStatus =
+						TEXT("Sprint discovery skipped because boards could not be read.");
+					Settings->FieldCapabilityStatus =
+						TEXT("Rank/story-point discovery skipped because boards could not be read.");
+					return;
+				}
+				Settings->CachedBoardIds.Reset();
+				for (const FExtendedAtlassianBoard& Board : Boards)
+				{
+					Settings->CachedBoardIds.Add(Board.Id);
+				}
+				const FString EffectiveBoard = Settings->BoardId.IsEmpty()
+					? (Boards.IsEmpty() ? FString() : Boards[0].Id)
+					: Settings->BoardId;
+				if (EffectiveBoard.IsEmpty())
+				{
+					Settings->BoardCapabilityStatus =
+						TEXT("No Jira Software board is visible for this project. Check the project key and Browse Projects permission.");
+					Settings->SprintCapabilityStatus =
+						TEXT("No board selected; active/future sprints cannot be discovered.");
+					Settings->FieldCapabilityStatus =
+						TEXT("No board selected; rank and story-point fields cannot be discovered.");
+					return;
+				}
+				Settings->BoardCapabilityStatus = FString::Printf(
+					TEXT("Found %d board(s); validating board %s..."),
+					Boards.Num(),
+					*EffectiveBoard);
+				FExtendedAtlassianJiraSoftware::GetBoardConfiguration(
+					EffectiveBoard,
+					FExtendedAtlassianBoardConfigurationDelegate::CreateLambda(
+						[EffectiveBoard](
+							bool bConfigurationSuccess,
+							const FExtendedAtlassianBoardConfiguration& Configuration,
+							const FExtendedAtlassianError& ConfigurationError)
+						{
+							UExtendedAtlassianSettings* Inner =
+								UExtendedAtlassianSettings::GetMutable();
+							if (!Inner)
+							{
+								return;
+							}
+							if (!bConfigurationSuccess)
+							{
+								Inner->BoardCapabilityStatus = FString::Printf(
+									TEXT("Board %s configuration failed: %s"),
+									*EffectiveBoard,
+									*ConfigurationError.Message);
+								Inner->FieldCapabilityStatus =
+									TEXT("Rank/story-point fields are unavailable until board configuration succeeds.");
+								return;
+							}
+							Inner->DiscoveredEstimateFieldId =
+								Configuration.EstimateFieldId;
+							Inner->DiscoveredRankFieldId =
+								Configuration.RankFieldId;
+							Inner->BoardCapabilityStatus = FString::Printf(
+								TEXT("Board %s exposes %d workflow column(s)."),
+								*EffectiveBoard,
+								Configuration.Columns.Num());
+							const FString Estimate = Configuration.CanEstimate()
+								? FString::Printf(
+									TEXT("%s (%s)"),
+									Configuration.EstimateFieldName.IsEmpty()
+										? TEXT("Estimate")
+										: *Configuration.EstimateFieldName,
+									*Configuration.EstimateFieldId)
+								: FString(TEXT("no estimation field"));
+							const FString Rank = Configuration.CanRank()
+								? Configuration.RankFieldId
+								: FString(TEXT("no rank field"));
+							Inner->FieldCapabilityStatus = FString::Printf(
+								TEXT("Board fields: %s; rank: %s.%s"),
+								*Estimate,
+								*Rank,
+								Configuration.CanRank()
+									? TEXT("")
+									: TEXT(" Card ranking will be disabled."));
+						}));
+				FExtendedAtlassianJiraSoftware::ListSprints(
+					EffectiveBoard,
+					FExtendedAtlassianSprintsDelegate::CreateLambda(
+						[](bool bSprintsSuccess,
+							const TArray<FExtendedAtlassianSprint>& Sprints,
+							const FExtendedAtlassianError& SprintError)
+						{
+							UExtendedAtlassianSettings* Inner =
+								UExtendedAtlassianSettings::GetMutable();
+							if (!Inner)
+							{
+								return;
+							}
+							if (!bSprintsSuccess)
+							{
+								Inner->SprintCapabilityStatus = FString::Printf(
+									TEXT("Sprint discovery failed: %s Check board permissions and board type."),
+									*SprintError.Message);
+								return;
+							}
+							Inner->CachedSprintIds = {TEXT("active")};
+							int32 ActiveCount = 0;
+							int32 FutureCount = 0;
+							for (const FExtendedAtlassianSprint& Sprint : Sprints)
+							{
+								Inner->CachedSprintIds.Add(Sprint.Id);
+								ActiveCount += Sprint.State.Equals(
+									TEXT("active"),
+									ESearchCase::IgnoreCase)
+										? 1
+										: 0;
+								FutureCount += Sprint.State.Equals(
+									TEXT("future"),
+									ESearchCase::IgnoreCase)
+										? 1
+										: 0;
+							}
+							Inner->SprintCapabilityStatus = FString::Printf(
+								TEXT("Found %d active and %d future sprint(s).%s"),
+								ActiveCount,
+								FutureCount,
+								ActiveCount > 0
+									? TEXT("")
+									: TEXT(" Select an explicit sprint or start one in Jira."));
+						}));
+			}));
 
 	FExtendedAtlassianConfluence::ListSpaces(FExtendedAtlassianSpacesDelegate::CreateLambda(
 		[](bool bSuccess, const TArray<FExtendedAtlassianSpace>& Spaces, const FExtendedAtlassianError&)
@@ -430,6 +590,16 @@ TArray<FString> UExtendedAtlassianSettings::GetSpaceKeyOptions() const
 	return Options;
 }
 
+TArray<FString> UExtendedAtlassianSettings::GetBoardOptions() const
+{
+	return ExtendedAtlassianOptionsPrivate::WithCurrentValue(CachedBoardIds, BoardId);
+}
+
+TArray<FString> UExtendedAtlassianSettings::GetSprintOptions() const
+{
+	return ExtendedAtlassianOptionsPrivate::WithCurrentValue(CachedSprintIds, SprintSelection);
+}
+
 FString UExtendedAtlassianSettings::GetNormalizedSiteUrl() const
 {
 	FString Url = SiteUrl.TrimStartAndEnd();
@@ -455,6 +625,12 @@ FString UExtendedAtlassianSettings::GetJiraApiBaseUrl() const
 {
 	const FString Base = GetNormalizedSiteUrl();
 	return Base.IsEmpty() ? FString() : Base + TEXT("/rest/api/3");
+}
+
+FString UExtendedAtlassianSettings::GetJiraSoftwareApiBaseUrl() const
+{
+	const FString Base = GetNormalizedSiteUrl();
+	return Base.IsEmpty() ? FString() : Base + TEXT("/rest/agile/1.0");
 }
 
 FString UExtendedAtlassianSettings::GetConfluenceApiBaseUrl() const

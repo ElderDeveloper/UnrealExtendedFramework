@@ -13,6 +13,7 @@
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
 #include "GenericPlatform/GenericPlatformHttp.h"
+#include "Policies/CondensedJsonPrintPolicy.h"
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
 
@@ -335,103 +336,10 @@ void FExtendedAtlassianConfluence::ListPages(const FString& SpaceId, FExtendedAt
 
 void FExtendedAtlassianConfluence::GetPage(const FString& PageId, FExtendedAtlassianPageDelegate OnComplete)
 {
-	using namespace ExtendedAtlassianConfluencePrivate;
-
-	TSharedPtr<FExtendedAtlassianClient> Client;
-	const UExtendedAtlassianSettings* Settings = nullptr;
-	FExtendedAtlassianError Error;
-
-	if (!GetClientAndSettings(Client, Settings, Error))
-	{
-		OnComplete.ExecuteIfBound(false, FExtendedAtlassianPage(), Error);
-		return;
-	}
-
-	const FString BaseUrl = Settings->GetConfluenceApiBaseUrl();
-
-	// Parses a page response, pulling the body out of whichever representation came back.
-	auto ParseFullPage = [](const TSharedPtr<FJsonObject>& Object, FString& OutRawHtml) -> FExtendedAtlassianPage
-	{
-		FExtendedAtlassianPage Page = ParsePageSummary(Object);
-		OutRawHtml.Reset();
-
-		if (!Object.IsValid())
-		{
-			return Page;
-		}
-
-		const TSharedPtr<FJsonObject>* Body = nullptr;
-		if (!Object->TryGetObjectField(TEXT("body"), Body) || !Body->IsValid())
-		{
-			return Page;
-		}
-
-		for (const TCHAR* Representation : { TEXT("view"), TEXT("export_view"), TEXT("storage") })
-		{
-			const TSharedPtr<FJsonObject>* Rendered = nullptr;
-			if ((*Body)->TryGetObjectField(Representation, Rendered) && Rendered->IsValid())
-			{
-				FString Value;
-				if ((*Rendered)->TryGetStringField(TEXT("value"), Value) && !Value.IsEmpty())
-				{
-					OutRawHtml = Value;
-					break;
-				}
-			}
-		}
-
-		return Page;
-	};
-
-	const FString ViewUrl = FString::Printf(TEXT("%s/pages/%s?body-format=view"), *BaseUrl, *PageId);
-	const FString StorageUrl = FString::Printf(TEXT("%s/pages/%s?body-format=storage"), *BaseUrl, *PageId);
-
-	Client->Get(ViewUrl, FExtendedAtlassianResponseDelegate::CreateLambda(
-		[OnComplete, ParseFullPage, StorageUrl](const FExtendedAtlassianResponse& Response)
-		{
-			if (!Response.IsSuccess())
-			{
-				OnComplete.ExecuteIfBound(false, FExtendedAtlassianPage(), Response.Error);
-				return;
-			}
-
-			FString RawHtml;
-			FExtendedAtlassianPage Page = ParseFullPage(Response.Object, RawHtml);
-
-			if (!RawHtml.IsEmpty())
-			{
-				Page.Body = FExtendedAtlassianHtml::ToPlainText(RawHtml);
-				Page.Blocks = FExtendedAtlassianHtml::ToBlocks(RawHtml);
-				OnComplete.ExecuteIfBound(true, Page, FExtendedAtlassianError());
-				return;
-			}
-
-			// No view rendering for this page; retry once asking for storage format.
-			const TSharedPtr<FExtendedAtlassianClient> RetryClient = FUnrealExtendedAtlassianModule::GetClient();
-			if (!RetryClient.IsValid())
-			{
-				OnComplete.ExecuteIfBound(true, Page, FExtendedAtlassianError());
-				return;
-			}
-
-			UE_LOG(LogExtendedAtlassian, Verbose, TEXT("Page %s returned no view body; retrying as storage format."), *Page.Id);
-
-			RetryClient->Get(StorageUrl, FExtendedAtlassianResponseDelegate::CreateLambda(
-				[OnComplete, ParseFullPage](const FExtendedAtlassianResponse& RetryResponse)
-				{
-					if (!RetryResponse.IsSuccess())
-					{
-						OnComplete.ExecuteIfBound(false, FExtendedAtlassianPage(), RetryResponse.Error);
-						return;
-					}
-
-					FString RetryHtml;
-					FExtendedAtlassianPage RetryPage = ParseFullPage(RetryResponse.Object, RetryHtml);
-					RetryPage.Body = FExtendedAtlassianHtml::ToPlainText(RetryHtml);
-
-					OnComplete.ExecuteIfBound(true, RetryPage, FExtendedAtlassianError());
-				}));
-		}));
+	// Confluence v2 only accepts STORAGE, ATLAS_DOC_FORMAT, or MARKDOWN here.
+	// Hydrate the same storage-backed, versioned model used by editing so selecting a
+	// page cannot display one representation and hand a different/empty one to edit.
+	GetPageForEditing(PageId, OnComplete);
 }
 
 void FExtendedAtlassianConfluence::GetPageForEditing(const FString& PageId, FExtendedAtlassianPageDelegate OnComplete)

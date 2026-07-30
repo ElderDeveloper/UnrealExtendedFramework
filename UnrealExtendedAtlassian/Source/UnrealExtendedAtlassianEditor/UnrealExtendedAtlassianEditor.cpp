@@ -10,6 +10,7 @@
 #include "ExtendedAtlassianLog.h"
 #include "ExtendedAtlassianNewIssueDialog.h"
 #include "ExtendedAtlassianSettingsCustomization.h"
+#include "SExtendedAtlassianWorkspace.h"
 
 #include "Framework/Application/SlateApplication.h"
 #include "Framework/Docking/TabManager.h"
@@ -24,6 +25,7 @@
 
 const FName ExtendedAtlassianIssueBrowserTabName(TEXT("ExtendedAtlassianIssueBrowser"));
 const FName ExtendedAtlassianConfluenceBrowserTabName(TEXT("ExtendedAtlassianConfluenceBrowser"));
+const FName ExtendedAtlassianWorkspaceTabName(TEXT("ExtendedAtlassianBacklot"));
 
 FUnrealExtendedAtlassianEditorModule* FUnrealExtendedAtlassianEditorModule::Instance = nullptr;
 
@@ -49,6 +51,13 @@ void FUnrealExtendedAtlassianEditorModule::StartupModule()
 
 	FExtendedAtlassianDocumentStyle::Register();
 	FExtendedAtlassianEditorCommands::Register();
+
+	FGlobalTabmanager::Get()->RegisterNomadTabSpawner(
+		ExtendedAtlassianWorkspaceTabName,
+		FOnSpawnTab::CreateRaw(this, &FUnrealExtendedAtlassianEditorModule::SpawnWorkspaceTab))
+		.SetDisplayName(LOCTEXT("WorkspaceTabName", "Backlot"))
+		.SetTooltipText(LOCTEXT("WorkspaceTabTooltip", "Unified Jira, Confluence, Board, Pins, Inbox, and Capture workspace."))
+		.SetGroup(WorkspaceMenu::GetMenuStructure().GetToolsCategory());
 
 	FGlobalTabmanager::Get()->RegisterNomadTabSpawner(
 		ExtendedAtlassianIssueBrowserTabName,
@@ -89,6 +98,7 @@ void FUnrealExtendedAtlassianEditorModule::ShutdownModule()
 	{
 		FGlobalTabmanager::Get()->UnregisterNomadTabSpawner(ExtendedAtlassianIssueBrowserTabName);
 		FGlobalTabmanager::Get()->UnregisterNomadTabSpawner(ExtendedAtlassianConfluenceBrowserTabName);
+		FGlobalTabmanager::Get()->UnregisterNomadTabSpawner(ExtendedAtlassianWorkspaceTabName);
 	}
 
 	FExtendedAtlassianEditorCommands::Unregister();
@@ -103,6 +113,19 @@ void FUnrealExtendedAtlassianEditorModule::ShutdownModule()
 	}
 
 	Instance = nullptr;
+}
+
+TSharedRef<SDockTab> FUnrealExtendedAtlassianEditorModule::SpawnWorkspaceTab(const FSpawnTabArgs& Args)
+{
+	TSharedRef<SExtendedAtlassianWorkspace> Workspace =
+		SNew(SExtendedAtlassianWorkspace).StartRoute(PendingWorkspaceRoute);
+	WorkspaceWidget = Workspace;
+
+	return SNew(SDockTab)
+		.TabRole(ETabRole::NomadTab)
+		[
+			Workspace
+		];
 }
 
 TSharedRef<SDockTab> FUnrealExtendedAtlassianEditorModule::SpawnIssueBrowserTab(const FSpawnTabArgs& Args)
@@ -131,12 +154,27 @@ TSharedRef<SDockTab> FUnrealExtendedAtlassianEditorModule::SpawnConfluenceBrowse
 
 void FUnrealExtendedAtlassianEditorModule::OpenIssueBrowser()
 {
-	FGlobalTabmanager::Get()->TryInvokeTab(ExtendedAtlassianIssueBrowserTabName);
+	OpenWorkspace(EExtendedAtlassianWorkspaceRoute::Issues);
 }
 
 void FUnrealExtendedAtlassianEditorModule::OpenConfluenceBrowser()
 {
-	FGlobalTabmanager::Get()->TryInvokeTab(ExtendedAtlassianConfluenceBrowserTabName);
+	OpenWorkspace(EExtendedAtlassianWorkspaceRoute::Docs);
+}
+
+void FUnrealExtendedAtlassianEditorModule::OpenWorkspace(EExtendedAtlassianWorkspaceRoute Route)
+{
+	if (!Instance)
+	{
+		return;
+	}
+
+	Instance->PendingWorkspaceRoute = Route;
+	FGlobalTabmanager::Get()->TryInvokeTab(ExtendedAtlassianWorkspaceTabName);
+	if (const TSharedPtr<SExtendedAtlassianWorkspace> Workspace = Instance->WorkspaceWidget.Pin())
+	{
+		Workspace->Navigate(Route);
+	}
 }
 
 void FUnrealExtendedAtlassianEditorModule::RefreshIssueBrowser()
@@ -149,6 +187,10 @@ void FUnrealExtendedAtlassianEditorModule::RefreshIssueBrowser()
 	if (const TSharedPtr<SExtendedAtlassianIssueBrowser> Browser = Instance->IssueBrowserWidget.Pin())
 	{
 		Browser->Refresh();
+	}
+	if (const TSharedPtr<SExtendedAtlassianWorkspace> Workspace = Instance->WorkspaceWidget.Pin())
+	{
+		Workspace->Refresh();
 	}
 }
 

@@ -91,3 +91,5 @@ DerivedDataCache/*
 /UnrealExtendedPerfSentinel/Intermediate
 /UnrealExtendedAtlassian/Intermediate
 /UnrealExtendedAtlassian/Binaries
+/UnrealExtendedAtlassian/Tests
+/UnrealExtendedAtlassian/Tools/Parity/__pycache__

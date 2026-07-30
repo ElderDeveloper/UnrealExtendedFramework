@@ -22,11 +22,14 @@ DECLARE_DELEGATE_OneParam(FExtendedAtlassianIssuesDelegate, const FExtendedAtlas
 DECLARE_DELEGATE_ThreeParams(FExtendedAtlassianIssueDelegate, bool /*bSuccess*/, const FExtendedAtlassianIssue&, const FExtendedAtlassianError&);
 DECLARE_DELEGATE_ThreeParams(FExtendedAtlassianTransitionsDelegate, bool /*bSuccess*/, const TArray<FExtendedAtlassianTransition>&, const FExtendedAtlassianError&);
 DECLARE_DELEGATE_ThreeParams(FExtendedAtlassianCommentsDelegate, bool /*bSuccess*/, const TArray<FExtendedAtlassianComment>&, const FExtendedAtlassianError&);
+DECLARE_DELEGATE_ThreeParams(FExtendedAtlassianActivitiesDelegate, bool /*bSuccess*/, const TArray<FExtendedAtlassianActivity>&, const FExtendedAtlassianError&);
 DECLARE_DELEGATE_TwoParams(FExtendedAtlassianActionDelegate, bool /*bSuccess*/, const FExtendedAtlassianError&);
 DECLARE_DELEGATE_ThreeParams(FExtendedAtlassianCreateIssueDelegate, bool /*bSuccess*/, const FString& /*IssueKey*/, const FExtendedAtlassianError&);
+DECLARE_DELEGATE_ThreeParams(FExtendedAtlassianCreateCommentDelegate, bool /*bSuccess*/, const FString& /*CommentId*/, const FExtendedAtlassianError&);
 DECLARE_DELEGATE_ThreeParams(FExtendedAtlassianIssueTypesDelegate, bool /*bSuccess*/, const TArray<FExtendedAtlassianIssueType>&, const FExtendedAtlassianError&);
 DECLARE_DELEGATE_ThreeParams(FExtendedAtlassianPrioritiesDelegate, bool /*bSuccess*/, const TArray<FExtendedAtlassianPriority>&, const FExtendedAtlassianError&);
 DECLARE_DELEGATE_ThreeParams(FExtendedAtlassianProjectsDelegate, bool /*bSuccess*/, const TArray<FExtendedAtlassianProject>&, const FExtendedAtlassianError&);
+DECLARE_DELEGATE_ThreeParams(FExtendedAtlassianUsersDelegate, bool /*bSuccess*/, const TArray<FExtendedAtlassianUser>&, const FExtendedAtlassianError&);
 
 /**
  * Jira Cloud REST v3 operations, layered over FExtendedAtlassianClient.
@@ -44,10 +47,42 @@ public:
 	static void SearchIssues(const FString& Jql, int32 MaxResults, FExtendedAtlassianIssuesDelegate OnComplete);
 
 	static void GetIssue(const FString& IssueKey, FExtendedAtlassianIssueDelegate OnComplete);
+	static void UpdateIssue(
+		const FString& IssueKey,
+		const FExtendedAtlassianIssueUpdate& Update,
+		FExtendedAtlassianActionDelegate OnComplete);
+	static void DeleteIssue(const FString& IssueKey, FExtendedAtlassianActionDelegate OnComplete);
 	static void GetTransitions(const FString& IssueKey, FExtendedAtlassianTransitionsDelegate OnComplete);
 	static void TransitionIssue(const FString& IssueKey, const FString& TransitionId, FExtendedAtlassianActionDelegate OnComplete);
+	static void TransitionIssueToStatus(
+		const FString& IssueKey,
+		const FString& StatusName,
+		FExtendedAtlassianActionDelegate OnComplete);
+	/** Resolves an available transition by stable destination status id, with name fallback. */
+	static void TransitionIssueToStatusIdOrName(
+		const FString& IssueKey,
+		const FString& StatusId,
+		const FString& StatusName,
+		FExtendedAtlassianActionDelegate OnComplete);
 	static void GetComments(const FString& IssueKey, FExtendedAtlassianCommentsDelegate OnComplete);
+	/** Reads every Jira changelog page for an issue, normalized newest-first. */
+	static void GetChangelog(
+		const FString& IssueKey,
+		FExtendedAtlassianActivitiesDelegate OnComplete);
 	static void AddComment(const FString& IssueKey, const FString& CommentText, FExtendedAtlassianActionDelegate OnComplete);
+	static void AddCommentWithId(
+		const FString& IssueKey,
+		const FString& CommentText,
+		FExtendedAtlassianCreateCommentDelegate OnComplete);
+	static void UpdateComment(
+		const FString& IssueKey,
+		const FString& CommentId,
+		const FString& CommentText,
+		FExtendedAtlassianActionDelegate OnComplete);
+	static void DeleteComment(
+		const FString& IssueKey,
+		const FString& CommentId,
+		FExtendedAtlassianActionDelegate OnComplete);
 
 	/** Creates an issue and returns its key. */
 	static void CreateIssue(const FExtendedAtlassianNewIssue& NewIssue, FExtendedAtlassianCreateIssueDelegate OnComplete);
@@ -70,6 +105,11 @@ public:
 
 	/** Priorities configured on the site. */
 	static void GetPriorities(FExtendedAtlassianPrioritiesDelegate OnComplete);
+
+	/** Users Jira says are assignable in the selected project. */
+	static void GetAssignableUsers(
+		const FString& ProjectKey,
+		FExtendedAtlassianUsersDelegate OnComplete);
 
 	/** Projects the account can browse, for the project-key dropdowns in settings. */
 	static void GetProjects(FExtendedAtlassianProjectsDelegate OnComplete);
@@ -95,6 +135,14 @@ public:
 	static FString GetIssueBrowseUrl(const FString& IssueKey);
 
 	static FExtendedAtlassianIssue ParseIssue(const TSharedPtr<FJsonObject>& IssueJson);
+	static FExtendedAtlassianUser ParseUser(const TSharedPtr<FJsonObject>& UserJson);
+	static bool ParseChangelogPage(
+		const TSharedPtr<FJsonObject>& Object,
+		const FString& IssueKey,
+		TArray<FExtendedAtlassianActivity>& OutActivities,
+		int32& OutHistoryCount,
+		int32& OutTotal,
+		FExtendedAtlassianError& OutError);
 
 	/** Jira emits +0000 offsets, which FDateTime::ParseIso8601 rejects without a colon. */
 	static bool ParseJiraDateTime(const FString& In, FDateTime& Out);

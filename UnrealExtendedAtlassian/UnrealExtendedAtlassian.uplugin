@@ -3,7 +3,7 @@
 	"Version": 1,
 	"VersionName": "0.1.0",
 	"FriendlyName": "Unreal Extended Atlassian",
-	"Description": "Extended Framework Jira and Confluence integration for the Unreal Editor: in-editor issue browsing, one-click bug reports with captured editor context, and Confluence documentation viewing.",
+	"Description": "Native Backlot workspace for Jira, Confluence, sprint boards, Unreal asset pins, synthesized inbox notifications, and annotated editor/PIE capture.",
 	"Category": "Extended",
 	"CreatedBy": "Kemal Erdem YILMAZ",
 	"CreatedByURL": "",

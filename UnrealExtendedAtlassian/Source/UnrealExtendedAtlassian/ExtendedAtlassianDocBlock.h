@@ -68,7 +68,12 @@ struct FExtendedAtlassianDocBlock
 	bool bIsHeaderRow = false;
 
 	FString ImageAlt;
+	/** Stable target: an Unreal FSoftObjectPath, page URI, file URI, or web URL. */
 	FString ImageUrl;
+	/** Authored display copy below an asset card; never used as an identity. */
+	FString ImageMeta;
+	/** Authored placeholder label such as MATERIAL THUMB or CAPTURE. */
+	FString EmbedSlot;
 };
 
 /**

@@ -21,6 +21,19 @@ struct FExtendedAtlassianJqlPreset
 	FString Jql;
 };
 
+/** Maps a Backlot board presentation column to one or more Jira status names. */
+USTRUCT()
+struct FExtendedAtlassianBoardColumnMapping
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, Config, Category = "Board")
+	FString Column;
+
+	UPROPERTY(EditAnywhere, Config, Category = "Board")
+	TArray<FString> StatusNames;
+};
+
 /**
  * Project-level Atlassian configuration, shared by the whole team through Config/DefaultGame.ini.
  *
@@ -66,6 +79,26 @@ public:
 	/** Result of the last save or connection test. */
 	UPROPERTY(VisibleAnywhere, Transient, Category = "Credentials")
 	FString ConnectionStatus;
+
+	/** Result of the latest Jira Software board/configuration discovery. */
+	UPROPERTY(VisibleAnywhere, Transient, Category = "Discovery")
+	FString BoardCapabilityStatus;
+
+	/** Result of the latest active/future sprint discovery. */
+	UPROPERTY(VisibleAnywhere, Transient, Category = "Discovery")
+	FString SprintCapabilityStatus;
+
+	/** Result of issue-create and board estimation/rank field discovery. */
+	UPROPERTY(VisibleAnywhere, Transient, Category = "Discovery")
+	FString FieldCapabilityStatus;
+
+	/** Stable Jira field id selected by the configured board for story-point estimation. */
+	UPROPERTY(VisibleAnywhere, Transient, Category = "Discovery")
+	FString DiscoveredEstimateFieldId;
+
+	/** Stable Jira custom-field id selected by the configured board for ranking. */
+	UPROPERTY(VisibleAnywhere, Transient, Category = "Discovery")
+	FString DiscoveredRankFieldId;
 
 #if WITH_EDITOR
 	// ---------------------------------------------------------------------------------------------
@@ -116,6 +149,12 @@ public:
 	UFUNCTION()
 	TArray<FString> GetSpaceKeyOptions() const;
 
+	UFUNCTION()
+	TArray<FString> GetBoardOptions() const;
+
+	UFUNCTION()
+	TArray<FString> GetSprintOptions() const;
+
 	/** Jira project used for issue browsing and as the default for new issues. Picked from your projects after connecting. */
 	UPROPERTY(EditAnywhere, Config, Category = "Jira", meta = (GetOptions = "GetProjectKeyOptions"))
 	FString ProjectKey;
@@ -135,6 +174,30 @@ public:
 	/** Queries offered in the issue browser. The first entry is selected on open. */
 	UPROPERTY(EditAnywhere, Config, Category = "Jira")
 	TArray<FExtendedAtlassianJqlPreset> JqlPresets;
+
+	/** Jira Software board id used by the Backlot Sprint Board. */
+	UPROPERTY(EditAnywhere, Config, Category = "Board", meta = (GetOptions = "GetBoardOptions"))
+	FString BoardId;
+
+	/** `active` or an explicit Jira Software sprint id. */
+	UPROPERTY(EditAnywhere, Config, Category = "Board", meta = (GetOptions = "GetSprintOptions"))
+	FString SprintSelection;
+
+	/** Presentation-column mappings discovered from the Jira Software board configuration. */
+	UPROPERTY(EditAnywhere, Config, Category = "Board")
+	TArray<FExtendedAtlassianBoardColumnMapping> BoardColumns;
+
+	/** Visual WIP warning threshold for the In progress Backlot column. */
+	UPROPERTY(EditAnywhere, Config, Category = "Board", meta = (ClampMin = "1", ClampMax = "100"))
+	int32 InProgressWipLimit;
+
+	/** Main Confluence space shown as Production Bible. Empty uses the first configured SpaceKeys entry. */
+	UPROPERTY(EditAnywhere, Config, Category = "Confluence", meta = (GetOptions = "GetSpaceKeyOptions"))
+	FString PrimarySpaceKey;
+
+	/** Confluence page whose versioned properties hold shared Pins and Inbox cursors. */
+	UPROPERTY(EditAnywhere, Config, Category = "Confluence")
+	FString BacklotMetadataPageId;
 
 	/** Confluence space keys shown in the documentation browser. Empty means all spaces you can read. */
 	UPROPERTY(EditAnywhere, Config, Category = "Confluence", meta = (GetOptions = "GetSpaceKeyOptions"))
@@ -199,6 +262,9 @@ public:
 	/** <site>/rest/api/3 — empty when SiteUrl is not set. */
 	FString GetJiraApiBaseUrl() const;
 
+	/** <site>/rest/agile/1.0 — empty when SiteUrl is not set. */
+	FString GetJiraSoftwareApiBaseUrl() const;
+
 	/** <site>/wiki/api/v2 — empty when SiteUrl is not set. */
 	FString GetConfluenceApiBaseUrl() const;
 
@@ -223,4 +289,10 @@ private:
 
 	UPROPERTY(Transient)
 	TArray<FString> CachedSpaceKeys;
+
+	UPROPERTY(Transient)
+	TArray<FString> CachedBoardIds;
+
+	UPROPERTY(Transient)
+	TArray<FString> CachedSprintIds;
 };

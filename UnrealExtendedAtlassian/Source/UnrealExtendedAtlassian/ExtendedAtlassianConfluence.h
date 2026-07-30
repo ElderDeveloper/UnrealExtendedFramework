@@ -18,8 +18,8 @@ DECLARE_DELEGATE_ThreeParams(FExtendedAtlassianPageDelegate, bool /*bSuccess*/, 
  * Uses the v2 API for spaces and pages, following the cursor in _links.next. Search is still only
  * available on v1, so Search() targets /wiki/rest/api/search.
  *
- * Page bodies are requested as body-format=view — server-rendered HTML with macros already
- * expanded — falling back to storage format when a page does not offer a view rendering.
+ * Page bodies are requested as body-format=storage, the representation supported by the
+ * Confluence v2 page endpoint, then converted into the shared Markdown/block read model.
  */
 class UNREALEXTENDEDATLASSIAN_API FExtendedAtlassianConfluence
 {

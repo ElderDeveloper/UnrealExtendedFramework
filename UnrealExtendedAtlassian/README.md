@@ -1,145 +1,192 @@
 # Unreal Extended Atlassian
 
-Jira and Confluence inside the Unreal Editor. Part of the Extended Framework plugin family.
+Native Jira and Confluence collaboration inside Unreal Engine 5.6 Editor. The unified **Backlot**
+workspace provides Docs, Issues, Issue Detail, Sprint Board, Pins, Inbox, and annotated viewport
+Capture without embedding a browser.
 
-- **Engine:** UE 5.6
-- **Atlassian:** Cloud only (`https://<site>.atlassian.net`). Data Center / Server is not supported.
-- **Scope:** editor only — the plugin is gated to editor targets and ships nothing.
+- **Engine:** Unreal Engine 5.6
+- **Atlassian:** Cloud (`https://<site>.atlassian.net`) only
+- **UI:** native Slate; the HTML parity reference is test input, never shipped UI
+- **Scope:** editor targets only
 
-## What it does
+## Backlot workflow
 
-**Report a bug without leaving the editor.** `Ctrl+Alt+B` captures the viewport and the surrounding
-editor state, then files a Jira issue with a screenshot and log tail attached. The capture happens
-before the dialog appears, so the screenshot shows what you were looking at.
+Open **Window → Atlassian → Jira Issues** or **Confluence Docs**. Both commands are compatibility
+deep links into one Backlot tab; use its left navigation rail to switch between:
 
-Captured automatically: level name, world context (Editor / PIE / Simulate), camera transform — the
-*player* camera during play — selected actors, engine version, platform, RHI, GPU, and the git branch
-and short SHA of the project repository.
+| Route | What it provides |
+|---|---|
+| **Docs** | Confluence page tree/search, eight document block presentations, structured editing, page operations, comments, and linked Jira work |
+| **Issues** | Jira filters and views, inline status transitions, preview rail, create, edit, delete/Undo, activity, and comments |
+| **Issue Detail** | Full description, editable properties, capture threads, activity, comments, and destructive operations |
+| **Board** | Active-sprint columns, card CRUD, estimates, WIP state, transitions, ranking, and team load |
+| **Pins** | Shared Unreal asset/level/Blueprint/page pins and collaborative threads |
+| **Inbox** | Synthesized per-user Backlot notifications with read, dismiss, archive, and destination actions |
+| **Capture** | Editor/PIE screenshot, PIN/BOX/BLUR annotations, Jira issue creation, attachment, context, and log upload |
 
-**Browse Jira issues.** A docked tab driven by JQL, with saved presets. Change status, post comments,
-jump to the browser.
-
-**File ordinary work.** **New Issue** in the same tab creates a task, story or whatever else the
-project offers — the plain form, with none of the bug report's capture. It files into the browsing
-project rather than the bug project, and the list refreshes onto the new issue afterwards.
-
-**Read Confluence docs.** A docked tab with a space/page tree and CQL search, so design docs sit
-beside the level instead of in another window.
+The right rail is contextual. **Narrow Dock** hides the contextual sidebar and right rail and keeps
+Backlot at a 560-pixel dock width beside the real Unreal viewport.
 
 ## Setup
 
 1. Enable the plugin and restart the editor.
-2. **Project Settings → Extended Framework → Extended Atlassian.**
-3. Set **Atlassian Site URL** to `https://yourcompany.atlassian.net`. Shared with the team through
-   `Config/DefaultGame.ini`.
-4. Under **Credentials**: enter your account e-mail, click **Get an API Token**, paste the token in,
-   then **1. Save Credentials** → **2. Test Connection**.
-5. A successful test loads your projects, issue types, priorities and Confluence spaces. The Jira and
-   Confluence fields below are **dropdowns** — pick from the lists rather than typing keys.
+2. Open **Project Settings → Extended Framework → Extended Atlassian**.
+3. Enter the **Atlassian Site URL**, for example `https://yourcompany.atlassian.net`.
+4. Enter your Atlassian account e-mail and API token.
+5. Click **Save Credentials**, then **Test Connection**.
+6. Click **Refresh Lists from Atlassian**, then select the Jira project, board/sprint, and
+   Confluence space from the discovered options.
+7. For shared Pins, threaded presentation metadata, and Inbox cursors, set
+   **Backlot Metadata Page ID** to a dedicated Confluence page that collaborators can edit.
 
-Only the site URL and your credentials are ever typed. Everything else comes from Atlassian. Use
-**3. Refresh Lists from Atlassian** if projects or spaces change later.
+The site/project/space/board configuration is project-owned and may be shared through
+`Config/DefaultGame.ini`. Account e-mail and token are transient settings and are never written to
+project configuration.
 
-Each person does step 4 once on their own machine. The e-mail and token fields are `Transient` — they
-are never written to project config, only to your per-user credential file.
+### Credentials
 
-> The dropdowns are empty until the first successful connection, and every field always offers its
-> currently configured value — so an offline editor or a project you lose access to never silently
-> erases a setting. Watch the **Output Log** (`LogExtendedAtlassian`) if a button seems not to
-> respond; every action reports what it decided.
+Per-user credentials are stored at:
 
-### Where your token is stored
+```text
+%LOCALAPPDATA%\UnrealExtendedAtlassian\credentials.ini
+```
 
-`%LOCALAPPDATA%\UnrealExtendedAtlassian\credentials.ini` — deliberately outside the repository, so no
-`.gitignore` mistake can commit it. On Windows the token is wrapped with DPAPI and bound to your user
-account; copying the file to another machine yields nothing usable.
+On Windows the token is protected with DPAPI and bound to the current Windows user. Copying that
+file to another user or machine does not make the token usable. Treat the API token like a password:
+software running as the same user can ask Windows to decrypt it.
 
-This is obfuscation at rest, not a secret manager. Anything running as you can unwrap it, and an
-Atlassian API token grants full access to your account. Treat it like a password.
+Use **Clear Stored Credentials** to delete the local credential file. No token, e-mail, or site
+credential is stored in the repository, fixture, screenshot baseline, or shared Backlot metadata.
 
-## Using it
+## Data ownership and permissions
 
-| | |
+| Data | Authority |
 |---|---|
-| **Report a bug** | `Ctrl+Alt+B`, or *Window → Atlassian → Report Bug* |
-| **New issue** | **New Issue** in the Jira tab, or *Window → Atlassian → New Issue...* |
-| **Jira issues** | *Window → Atlassian → Jira Issues* |
-| **Confluence docs** | *Window → Atlassian → Confluence Docs* |
+| Issues, workflow, assignees, priorities, epics/parents, estimates, sprint, ranking | Jira / Jira Software |
+| Issue descriptions, comments, and activity | Jira |
+| Pages, hierarchy, versions, bodies, and comments | Confluence |
+| Page ordering/review metadata, Pins, thread metadata, shared event cursors | Versioned Confluence content properties on the configured metadata page |
+| Inbox read/archive state, route, rail, and compact preferences | Per-user Local App Data |
+| Working Markdown | Existing project `Saved/Documents` working-copy store |
+| API token and account e-mail | Per-user DPAPI credential store |
 
-**Issue browser.** Pick a JQL preset or type your own and press Enter. Columns all sort. Selecting an
-issue loads its description, comments and available transitions. Changing status applies immediately
-and rolls back with a notification if Jira rejects it. Results cap at 200 per query; the status line
-says so when the cap truncated the set.
+Backlot discovers capabilities and operation permissions from Atlassian. A missing permission
+disables only the affected action and explains why; it does not hide cached readable content.
+Conflicting versioned shared-metadata writes are reloaded and reconciled rather than silently
+overwriting another collaborator.
 
-**New issue.** Summary and issue type are required; everything else is optional. The type defaults to
-**Task** when the project offers one, and the priority defaults to *(project default)*, which leaves
-the field out of the request — projects without a priority field reject a create that carries one.
-A failed create keeps the dialog open with what you typed. After a successful one the query re-runs:
-the new issue is selected if it matches, and the status line says so plainly when it does not, which
-is the normal outcome for an unassigned task under a preset like *My open issues*.
+## Capture
 
-**Bug report.** Everything is optional except the summary. If the issue is created but an attachment
-upload fails, the issue still stands and the notification names which attachment did not make it. If
-the *create* fails, the dialog stays open so nothing you typed is lost.
+Press **Ctrl+Shift+B** on Windows/Linux or **Cmd+Shift+B** on macOS. The temporary compatibility
+chord **Ctrl+Alt+B** is also registered for one migration release.
 
-**Confluence.** Spaces expand lazily. Page bodies are cached for the session — use **Reload Page** to
-refetch. Search accepts plain text (wrapped into CQL and scoped to your configured spaces) or raw CQL.
+Capture prefers the PIE viewport, then the active editor viewport. The screenshot is taken before
+the composer appears. It can include:
 
-## Known limits
+- level, world mode, camera transform, and selected actors;
+- Unreal version, platform, RHI, GPU, and source-control revision;
+- configured editor-log tail;
+- full-resolution PIN, BOX, and BLUR annotations.
 
-- **Rich text is flattened.** Jira descriptions and Confluence pages are converted to plain text with
-  Markdown-style markers. Prose, headings, lists and code read well. Complex macros, embedded Jira
-  tables and images degrade to text or placeholders. Every page and issue has an **Open in Browser**
-  button for exactly this reason.
-- **Writing is plain too.** Comments and bug descriptions are sent as paragraphs, hard breaks and code
-  blocks. Anything richer should be edited in Jira.
-- **No live notifications.** The editor has no public endpoint, so there are no webhooks. Polling is
-  available in settings but **off by default** — Atlassian's rate limits are cost-based, and a team
-  polling in parallel will get throttled.
-- **Priority** is only sent when you explicitly pick one; projects without a priority field reject the
-  create otherwise.
-- **Labels** have spaces replaced with hyphens, because Jira rejects labels containing spaces.
+**Create & keep working** creates the Jira issue, uploads the annotated PNG and configured context,
+routes Backlot to Issues, and selects the new issue. If issue creation fails, entered text and
+annotations remain. If the issue succeeds but an attachment fails, the issue remains valid and the
+result names the failed attachment.
+
+## Interaction and recovery guarantees
+
+- Network, validation, permission, rate-limit, conflict, and server errors preserve typed drafts.
+- Optimistic mutations roll back ordering, counts, selection, and values if the remote commit fails.
+- Destructive operations require confirmation. Operations that advertise Undo use a delayed commit;
+  closing the editor safely resolves or cancels the pending operation according to its policy.
+- Cached data remains visible during refresh/offline periods and is marked stale.
+- Loading/error states do not replace the entire workspace or clear selections.
+- Routine polling and Inbox refreshes remain non-interrupting during PIE/build work.
+- Atlassian rate-limit `Retry-After` is honored; transient retries use the configured retry limit.
 
 ## Configuration reference
 
-Everything is under *Project Settings → Extended Framework → Extended Atlassian*.
+Everything is under **Project Settings → Extended Framework → Extended Atlassian**.
 
-| Section | Notes |
+| Section | Important settings |
 |---|---|
-| Connection | Site URL. |
-| Jira | Project key, separate bug project (optional), default issue type and priority, JQL presets. |
-| Confluence | Space keys to show. Empty means every space you can read. |
-| Polling | Off by default. Minimum 60s when enabled. |
-| Bug Report | Which context to capture, and how much log tail to attach. |
-| Network | Request timeout and retry count. Retries apply to rate limits and transient server errors only. |
+| **Connection / Credentials** | Site URL, per-user e-mail/token, save/test/clear actions |
+| **Discovery** | Board, sprint, editable-field, estimation, and rank capability results |
+| **Jira** | Project, bug project, default issue type/priority, JQL presets |
+| **Board** | Board ID, active/explicit sprint, presentation-column mappings, WIP limit |
+| **Confluence** | Primary space, visible spaces, personal-space inclusion, shared metadata page ID |
+| **Polling** | Optional polling; minimum interval is 60 seconds |
+| **Bug Report** | Screenshot, log tail, selection, camera, and source-control context |
+| **Network** | Request timeout and retry count |
 
-## Reusing it in another project
+## Limits and expected degradation
 
-Nothing in the plugin is specific to the project it was written in. Copy the `UnrealExtendedAtlassian`
-folder into another project's `Plugins`, add it to the `.uproject` with
-`"TargetAllowList": ["Editor"]`, and configure the site and project key in Project Settings.
+- Atlassian Cloud only; Jira/Confluence Server and Data Center are unsupported.
+- No inbound webhooks are hosted by the editor. Updates use refresh/polling and versioned cursors.
+- Confluence/Jira rich bodies are normalized through the plugin document conversion layer. Unknown
+  macros remain safe placeholders so round trips do not silently discard their source.
+- The Issues query result and document caches have bounded limits. Backlot reports a truncated result
+  rather than implying the list is complete.
+- Priority is omitted when no priority is selected, supporting projects where the field is absent.
+- Jira labels replace spaces with hyphens because Jira rejects labels containing spaces.
+- Pins and shared thread features require an editable Backlot metadata page.
+- Existing browser-opening actions remain available for Atlassian content that cannot be represented
+  losslessly in the parity surface.
 
-## Development
+## Troubleshooting
 
-Source layout follows the Extended Framework convention: a flat `Source/<Module>/` with
-`ExtendedAtlassian<Thing>.h/.cpp` naming.
+| Symptom | Check |
+|---|---|
+| Unconfigured/connect screen | Save credentials, test the connection, and verify the HTTPS site URL |
+| Empty project/space/board lists | Run **Refresh Lists from Atlassian** and inspect `LogExtendedAtlassian` |
+| Board unavailable | Select a Jira Software board and active/explicit sprint; review Discovery status |
+| Pins are read-only | Set a metadata page ID and grant the current account edit permission |
+| `401` / token expired | Create a new API token, save credentials, and test again |
+| `403` / disabled action | Confirm Jira/Confluence operation permissions for the selected object |
+| `409` conflict | Refresh; Backlot preserves the draft and retries only after current state is known |
+| `429` rate limit | Wait for the displayed retry window; increase polling interval or disable polling |
+| Offline/server error | Keep working with cached content, then use Retry after connectivity returns |
+| Missing captured image | Ensure an editor or PIE viewport is available and screenshot capture is enabled |
+| Unexpected document formatting | Open the source page in Atlassian and inspect unsupported macros/placeholders |
 
-| Module | Type | Responsibility |
-|---|---|---|
-| `UnrealExtendedAtlassian` | Runtime | REST client, credential store, ADF and HTML conversion, Jira and Confluence APIs. No `UnrealEd` dependency. |
-| `UnrealExtendedAtlassianEditor` | Editor | Slate tabs, menus, bug report dialog, screenshot and context capture. |
+The Output Log category is `LogExtendedAtlassian`. It reports connection, capability, retry,
+permission, conversion, and operation results without logging credentials.
 
-The runtime module avoids `UnrealEd` on purpose, so an in-game bug reporter for playtest builds can
-reuse the transport later without restructuring.
+## Development and validation
 
-### Tests
+Source layout:
 
-```bash
-UnrealEditor-Cmd.exe <Project>.uproject -ExecCmds="Automation RunTests ExtendedAtlassian" -TestExit="Automation Test Queue Empty" -unattended -nullrhi -nosplash
+| Module | Responsibility |
+|---|---|
+| `UnrealExtendedAtlassian` | Runtime-safe transport, settings, credentials, Jira/Confluence APIs, models, conversion, metadata codecs |
+| `UnrealExtendedAtlassianEditor` | Backlot controller/providers, native Slate UI, editor target services, capture, and automation |
+
+The deterministic fixture exactly mirrors `HTML/Backlot for UE5.dc.html` and lets interaction and
+visual tests run without Atlassian or network access. The HTML and `support.js` are reference/test
+inputs only.
+
+Run the headless functional suite:
+
+```powershell
+UnrealEditor-Cmd.exe <Project>.uproject -unattended -nop4 -nosplash -nullrhi -NoSound `
+  -ExecCmds="Automation RunTests ExtendedAtlassian.Parity;Quit" `
+  -TestExit="Automation Test Queue Empty" -log
 ```
 
-Covers the four pieces that fail silently or misleadingly: ADF round-trip, Confluence HTML
-conversion, multipart byte framing, and credential encrypt/decrypt. The credential test writes to a
-temporary file and never touches the real per-user store.
+Run the real-render visual capture suite without `-nullrhi`:
 
-See `IMPLEMENTATION_PLAN.md` for the phase-by-phase status and the open risks.
+```powershell
+UnrealEditor-Cmd.exe <Project>.uproject -unattended -nop4 -nosplash -RenderOffscreen -NoSound `
+  -ExecCmds="Automation RunTests ExtendedAtlassian.Visual.GoldenCapture;Quit" `
+  -TestExit="Automation Test Queue Empty" -log
+```
+
+Then compare the lossless reference and Slate captures:
+
+```powershell
+python Tools/Parity/compare_backlot_visuals.py
+```
+
+See `HTML_PARITY_IMPLEMENTATION_PLAN.md` for the parity ledger and
+`Tests/Parity/ReferenceBaselines/ReferenceEnvironment.json` for the pinned golden-capture
+environment.

@@ -24,6 +24,7 @@ public class UnrealExtendedAtlassianEditor : ModuleRules
 		{
 			"InputCore",
 			"ApplicationCore",
+			"ContentBrowser",
 			"LevelEditor",
 			"RHI",
 			"Slate",
@@ -31,6 +32,7 @@ public class UnrealExtendedAtlassianEditor : ModuleRules
 			"EditorStyle",
 			"EditorFramework",
 			"ToolMenus",
+			"UMG",
 			"WorkspaceMenuStructure",
 			"PropertyEditor",
 			"Settings",

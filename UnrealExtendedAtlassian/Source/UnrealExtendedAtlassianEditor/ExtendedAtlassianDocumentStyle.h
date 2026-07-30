@@ -4,15 +4,10 @@
 
 #include "CoreMinimal.h"
 
-class FSlateStyleSet;
 class ISlateStyle;
 
 /**
- * Text styles for the document viewer.
- *
- * Built from the engine's default typefaces rather than font assets, so the plugin needs no
- * content and drops into any project. Style names here are the tag names used in rich-text markup
- * ("Bold", "Italic", "Code", "Strike"), so they must stay in sync with FExtendedAtlassianMarkup.
+ * Compatibility facade for document widgets that predate the unified Backlot style.
  */
 class FExtendedAtlassianDocumentStyle
 {
@@ -22,7 +17,4 @@ public:
 
 	static const ISlateStyle& Get();
 	static FName GetStyleSetName();
-
-private:
-	static TSharedPtr<FSlateStyleSet> StyleInstance;
 };

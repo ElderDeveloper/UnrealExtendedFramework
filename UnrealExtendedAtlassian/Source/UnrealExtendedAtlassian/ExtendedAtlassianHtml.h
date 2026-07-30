@@ -8,9 +8,6 @@
 /**
  * Converts Confluence's rendered HTML into readable plain text.
  *
- * Pages are fetched with body-format=view, which returns server-rendered HTML with macros already
- * expanded — far more faithful, and far less work, than parsing raw storage format ourselves.
- *
  * The conversion is deliberately tolerant: it never fails, and unknown tags are dropped while their
  * text is kept. Structure is preserved with light Markdown-style markers (# headings, - bullets,
  * ``` code fences, | table cells) to match how Jira descriptions are flattened elsewhere in the
