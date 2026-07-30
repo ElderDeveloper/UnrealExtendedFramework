@@ -276,6 +276,16 @@ private:
 	bool PerformAuthLogin(const FOnlineAccountCredentials& Credentials, EEOSLoginType LoginType);
 
 	/**
+	 * Log in through the engine's AutoLogin, which implements the SDK's documented standalone
+	 * sequence: EOS_LCT_PersistentAuth first (silent, using the refresh token the SDK keeps in
+	 * the OS keychain), automatically falling back to Account Portal when no valid token exists.
+	 * A direct Login("accountportal") always prompts, and a direct Login("persistentauth") gets
+	 * no fallback — the engine only auto-falls-back on its internal bIsAutoLogin path.
+	 * Same guard/broadcast contract as PerformAuthLogin.
+	 */
+	bool PerformEngineAutoLogin();
+
+	/**
 	 * Broadcast a pre-flight login failure only when no login is in flight — a rejection
 	 * echo on the shared OnLoginComplete would be indistinguishable from the in-flight
 	 * login's completion and would poison its waiters.

@@ -4,6 +4,7 @@
 #include "Auth/EEOSConnectSubsystem.h"
 #include "Shared/EEOSSettings.h"
 #include "Shared/EEOSBlueprintLibrary.h"
+#include "EOSSettings.h"
 #include "OnlineSubsystemUtils.h"
 #include "Interfaces/OnlineIdentityInterface.h"
 #include "UnrealExtendedEOS.h"
@@ -202,6 +203,74 @@ bool UEEOSAuthSubsystem::PerformAuthLogin(const FOnlineAccountCredentials& Crede
 	return true;
 }
 
+bool UEEOSAuthSubsystem::PerformEngineAutoLogin()
+{
+	// Same guard order/contract as PerformAuthLogin (R1).
+	if (LoginDelegateHandle.IsValid())
+	{
+		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSAuthSubsystem::LoginWithDefaults — A login is already in progress, rejecting this call (no delegate will fire for it)"));
+		return false;
+	}
+	if (IsLoggedIn())
+	{
+		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSAuthSubsystem::LoginWithDefaults — Already logged in, rejecting this call (no delegate will fire for it)"));
+		return false;
+	}
+	if (!IsEOSAvailable())
+	{
+		LogEOSUnavailable(TEXT("LoginWithDefaults"));
+		OnLoginComplete.Broadcast(false, TEXT("EOS is not available"));
+		return false;
+	}
+
+	IOnlineSubsystem* EOSSub = GetEOSOnlineSubsystem();
+	IOnlineIdentityPtr IdentityInterface = EOSSub->GetIdentityInterface();
+	if (!IdentityInterface.IsValid())
+	{
+		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSAuthSubsystem::LoginWithDefaults — Identity interface is not available"));
+		OnLoginComplete.Broadcast(false, TEXT("Identity interface not available"));
+		return false;
+	}
+
+	// Without bPreferPersistentAuth the engine's AutoLogin skips the persistent-auth branch
+	// entirely — and in an EAS + EOS-platform configuration that leaves it with no valid branch
+	// at all, so it refuses without ever firing a completion. Warn precisely instead of leaving
+	// the caller to decode "No valid configuration for AutoLogin".
+	if (!UEOSSettings::GetSettings().bPreferPersistentAuth)
+	{
+		UE_LOG(LogExtendedEOS, Warning,
+			TEXT("EEOSAuthSubsystem: bPreferPersistentAuth is false in [/Script/OnlineSubsystemEOS.EOSSettings] — ")
+			TEXT("silent re-login is disabled and AutoLogin may refuse outright. Set bPreferPersistentAuth=true in DefaultEngine.ini."));
+	}
+
+	CurrentLoginStatus = EEOSLoginStatus::LoggingIn;
+	// First attempt of the engine chain; it may fall back to Account Portal internally.
+	UsedLoginType = EEOSLoginType::PersistentAuth;
+	OnLoginStatusChanged.Broadcast(CurrentLoginStatus);
+
+	LoginDelegateHandle = IdentityInterface->AddOnLoginCompleteDelegate_Handle(0, FOnLoginCompleteDelegate::CreateUObject(this, &UEEOSAuthSubsystem::HandleLoginComplete));
+
+	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSAuthSubsystem::LoginWithDefaults — Auto-login (persistent auth first, Account Portal fallback)"));
+
+	if (!IdentityInterface->AutoLogin(0))
+	{
+		// AutoLogin has a path that returns false WITHOUT firing the completion delegate
+		// ("No valid configuration for AutoLogin"). Its other early-outs DO fire it, possibly
+		// synchronously — so only clean up when our handle is still armed, or we would clear a
+		// completion that already ran and double-broadcast.
+		if (LoginDelegateHandle.IsValid())
+		{
+			IdentityInterface->ClearOnLoginCompleteDelegate_Handle(0, LoginDelegateHandle);
+			LoginDelegateHandle.Reset();
+			CurrentLoginStatus = EEOSLoginStatus::Failed;
+			OnLoginStatusChanged.Broadcast(CurrentLoginStatus);
+			OnLoginComplete.Broadcast(false, TEXT("AutoLogin refused — check bUseEAS / bUseEOSConnect / bPreferPersistentAuth in [/Script/OnlineSubsystemEOS.EOSSettings]"));
+		}
+		return false;
+	}
+	return true;
+}
+
 FString UEEOSAuthSubsystem::ExternalCredentialTypeToTokenTypeString(EEOSExternalCredentialType CredentialType)
 {
 	// These strings must match the EOSShared LexFromString(EOS_EExternalCredentialType&)
@@ -227,6 +296,16 @@ bool UEEOSAuthSubsystem::LoginWithDefaults()
 	const UEEOSSettings* Settings = GetEOSSettings();
 	if (Settings)
 	{
+		// AccountPortal and PersistentAuth are the two halves of the SDK's standalone auto-login
+		// sequence (eos_auth_types.h: persistent token first, manual prompt as fallback), so both
+		// route through the engine's AutoLogin — that is what actually consumes the keychain
+		// token. Calling Login(AccountPortal) directly would prompt the browser on every launch.
+		// Other types (Developer, ExternalAuth, Password, ExchangeCode) stay explicit.
+		if (Settings->DefaultLoginType == EEOSLoginType::AccountPortal ||
+			Settings->DefaultLoginType == EEOSLoginType::PersistentAuth)
+		{
+			return PerformEngineAutoLogin();
+		}
 		return Login(Settings->DefaultLoginType);
 	}
 
