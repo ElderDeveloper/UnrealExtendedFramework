@@ -15,6 +15,53 @@ namespace
 		return Entity;
 	}
 
+	/**
+	 * Pulls the friendly id out of an Economy v2 AlternateIds array.
+	 *
+	 * Economy v2 puts the catalog GUID in "Id" and the human-authored id in
+	 * AlternateIds as [{ "Type":"FriendlyId", "Value":"Potion_Health" }]. Without this,
+	 * every cached item is keyed by GUID and any lookup by friendly id silently misses —
+	 * which reads as "the inventory refresh did nothing".
+	 */
+	FString ExtractFriendlyId(const TSharedPtr<FJsonObject>& Object)
+	{
+		const TArray<TSharedPtr<FJsonValue>>* AlternateIds = nullptr;
+		if (!Object.IsValid() || !Object->TryGetArrayField(TEXT("AlternateIds"), AlternateIds) || !AlternateIds)
+		{
+			return FString();
+		}
+
+		FString FirstAnyValue;
+		for (const TSharedPtr<FJsonValue>& AltValue : *AlternateIds)
+		{
+			const TSharedPtr<FJsonObject>* AltObject = nullptr;
+			if (!AltValue.IsValid() || !AltValue->TryGetObject(AltObject) || !AltObject)
+			{
+				continue;
+			}
+
+			FString AltType, AltId;
+			(*AltObject)->TryGetStringField(TEXT("Type"), AltType);
+			(*AltObject)->TryGetStringField(TEXT("Value"), AltId);
+			if (AltId.IsEmpty())
+			{
+				continue;
+			}
+
+			if (AltType.Equals(TEXT("FriendlyId"), ESearchCase::IgnoreCase))
+			{
+				return AltId;
+			}
+			if (FirstAnyValue.IsEmpty())
+			{
+				FirstAnyValue = AltId;
+			}
+		}
+
+		// Some titles use a custom alternate-id type; any alternate is better than none.
+		return FirstAnyValue;
+	}
+
 	FString GetLocalizedField(const TSharedPtr<FJsonObject>& Object, const FString& FieldName)
 	{
 		const TSharedPtr<FJsonObject>* LocalizedObject = nullptr;
@@ -137,19 +184,29 @@ void UEPFInventorySubsystem::Deinitialize()
 
 void UEPFInventorySubsystem::GetInventory()
 {
+	// Cleared once here, not per page — FetchInventoryPage appends.
+	CachedInventory.Empty();
+	FetchInventoryPage(FString(), 0);
+}
+
+void UEPFInventorySubsystem::FetchInventoryPage(const FString& ContinuationToken, int32 PageIndex)
+{
 	TSharedRef<FJsonObject> Body = MakeShared<FJsonObject>();
 	Body->SetObjectField(TEXT("Entity"), MakeEntityKeyObject(GetEntityId(), GetEntityType()));
 	Body->SetNumberField(TEXT("Count"), 50);
+	if (!ContinuationToken.IsEmpty())
+	{
+		Body->SetStringField(TEXT("ContinuationToken"), ContinuationToken);
+	}
 
 	SendPlayFabRequestDetailed(
 		TEXT("/Inventory/GetInventoryItems"),
 		Body,
 		EEPFAuthMode::EntityToken,
-		FOnPlayFabResponseDetailed::CreateLambda([this](const FEPFResult& Result, TSharedPtr<FJsonObject> Response)
+		FOnPlayFabResponseDetailed::CreateLambda([this, PageIndex](const FEPFResult& Result, TSharedPtr<FJsonObject> Response)
 		{
 			if (Result.bSuccess && Response.IsValid())
 			{
-				CachedInventory.Empty();
 				const TArray<TSharedPtr<FJsonValue>>* ItemsArr = nullptr;
 				if (Response->TryGetArrayField(TEXT("Items"), ItemsArr) && ItemsArr)
 				{
@@ -163,12 +220,19 @@ void UEPFInventorySubsystem::GetInventory()
 							Item.ItemInstanceId = Item.StackId;
 							(*ItemObj)->TryGetStringField(TEXT("Id"), Item.ItemId);
 							(*ItemObj)->TryGetStringField(TEXT("Type"), Item.ItemClass);
-							Item.DisplayName = Item.ItemId;
+							Item.FriendlyId = ExtractFriendlyId(*ItemObj);
+							Item.DisplayName = !Item.FriendlyId.IsEmpty() ? Item.FriendlyId : Item.ItemId;
 
 							for (const FEPFCatalogItem& CatalogItem : CachedCatalog)
 							{
 								if (CatalogItem.ItemId == Item.ItemId)
 								{
+									// The inventory payload often omits AlternateIds; the
+									// catalog is the better source for the friendly id.
+									if (Item.FriendlyId.IsEmpty() && !CatalogItem.FriendlyId.IsEmpty())
+									{
+										Item.FriendlyId = CatalogItem.FriendlyId;
+									}
 									if (!CatalogItem.DisplayName.IsEmpty())
 									{
 										Item.DisplayName = CatalogItem.DisplayName;
@@ -201,6 +265,23 @@ void UEPFInventorySubsystem::GetInventory()
 						}
 					}
 				}
+				// More pages? Keep going before telling anyone we are done. Without this the
+				// inventory silently truncates at the first 50 stacks.
+				FString NextToken;
+				Response->TryGetStringField(TEXT("ContinuationToken"), NextToken);
+				if (!NextToken.IsEmpty() && PageIndex + 1 < MaxInventoryPages)
+				{
+					FetchInventoryPage(NextToken, PageIndex + 1);
+					return;
+				}
+
+				if (!NextToken.IsEmpty())
+				{
+					UE_LOG(LogExtendedPlayFab, Warning,
+						TEXT("EPFInventorySubsystem — Stopped paging inventory at %d pages; results are truncated."),
+						MaxInventoryPages);
+				}
+
 				UE_LOG(LogExtendedPlayFab, Log, TEXT("EPFInventorySubsystem — Fetched %d inventory items"), CachedInventory.Num());
 				OnInventoryReceived.Broadcast(Result, CachedInventory);
 			}
@@ -220,9 +301,20 @@ void UEPFInventorySubsystem::GetInventory()
 
 void UEPFInventorySubsystem::GetCatalog(const FString& StoreId)
 {
+	// Cleared once here, not per page — FetchCatalogPage appends.
+	CachedCatalog.Empty();
+	FetchCatalogPage(StoreId, FString(), 0);
+}
+
+void UEPFInventorySubsystem::FetchCatalogPage(const FString& StoreId, const FString& ContinuationToken, int32 PageIndex)
+{
 	TSharedRef<FJsonObject> Body = MakeShared<FJsonObject>();
 	Body->SetObjectField(TEXT("Entity"), MakeEntityKeyObject(GetEntityId(), GetEntityType()));
 	Body->SetNumberField(TEXT("Count"), 50);
+	if (!ContinuationToken.IsEmpty())
+	{
+		Body->SetStringField(TEXT("ContinuationToken"), ContinuationToken);
+	}
 	if (!StoreId.IsEmpty())
 	{
 		TSharedRef<FJsonObject> StoreObject = MakeShared<FJsonObject>();
@@ -234,11 +326,10 @@ void UEPFInventorySubsystem::GetCatalog(const FString& StoreId)
 		TEXT("/Catalog/SearchItems"),
 		Body,
 		EEPFAuthMode::EntityToken,
-		FOnPlayFabResponseDetailed::CreateLambda([this](const FEPFResult& Result, TSharedPtr<FJsonObject> Response)
+		FOnPlayFabResponseDetailed::CreateLambda([this, StoreId, PageIndex](const FEPFResult& Result, TSharedPtr<FJsonObject> Response)
 		{
 			if (Result.bSuccess && Response.IsValid())
 			{
-				CachedCatalog.Empty();
 				const TArray<TSharedPtr<FJsonValue>>* CatalogArr = nullptr;
 				if (Response->TryGetArrayField(TEXT("Items"), CatalogArr) && CatalogArr)
 				{
@@ -249,6 +340,7 @@ void UEPFInventorySubsystem::GetCatalog(const FString& StoreId)
 						{
 							FEPFCatalogItem Item;
 							(*CatObj)->TryGetStringField(TEXT("Id"), Item.ItemId);
+							Item.FriendlyId = ExtractFriendlyId(*CatObj);
 							Item.DisplayName = GetLocalizedField(*CatObj, TEXT("Title"));
 							Item.Description = GetLocalizedField(*CatObj, TEXT("Description"));
 							(*CatObj)->TryGetStringField(TEXT("Type"), Item.ItemType);
@@ -259,6 +351,21 @@ void UEPFInventorySubsystem::GetCatalog(const FString& StoreId)
 						}
 					}
 				}
+				FString NextToken;
+				Response->TryGetStringField(TEXT("ContinuationToken"), NextToken);
+				if (!NextToken.IsEmpty() && PageIndex + 1 < MaxInventoryPages)
+				{
+					FetchCatalogPage(StoreId, NextToken, PageIndex + 1);
+					return;
+				}
+
+				if (!NextToken.IsEmpty())
+				{
+					UE_LOG(LogExtendedPlayFab, Warning,
+						TEXT("EPFInventorySubsystem — Stopped paging catalog at %d pages; results are truncated."),
+						MaxInventoryPages);
+				}
+
 				UE_LOG(LogExtendedPlayFab, Log, TEXT("EPFInventorySubsystem — Fetched %d catalog definitions"), CachedCatalog.Num());
 				OnCatalogReceived.Broadcast(Result, CachedCatalog);
 			}
@@ -416,11 +523,20 @@ TArray<FEPFCatalogItem> UEPFInventorySubsystem::GetCachedCatalog() const
 	return CachedCatalog;
 }
 
+bool UEPFInventorySubsystem::ItemMatchesId(const FEPFInventoryItem& Item, const FString& ItemId)
+{
+	// Accept either identifier. Economy v2 keys the cache by catalog GUID, but callers
+	// naturally pass the friendly id they authored in Game Manager. Requiring the GUID is
+	// what made every ownership check silently fail after a successful refresh.
+	return Item.ItemId.Equals(ItemId, ESearchCase::IgnoreCase)
+		|| (!Item.FriendlyId.IsEmpty() && Item.FriendlyId.Equals(ItemId, ESearchCase::IgnoreCase));
+}
+
 bool UEPFInventorySubsystem::OwnsItem(const FString& ItemId) const
 {
 	for (const auto& Item : CachedInventory)
 	{
-		if (Item.ItemId == ItemId && Item.Amount > 0) return true;
+		if (ItemMatchesId(Item, ItemId) && Item.Amount > 0) return true;
 	}
 	return false;
 }
@@ -430,7 +546,7 @@ int32 UEPFInventorySubsystem::GetItemCount(const FString& ItemId) const
 	int32 Count = 0;
 	for (const auto& Item : CachedInventory)
 	{
-		if (Item.ItemId == ItemId) Count += FMath::Max(Item.Amount, 1);
+		if (ItemMatchesId(Item, ItemId)) Count += FMath::Max(Item.Amount, 1);
 	}
 	return Count;
 }
@@ -439,7 +555,7 @@ FEPFInventoryItem UEPFInventorySubsystem::FindItem(const FString& ItemId, bool& 
 {
 	for (const auto& Item : CachedInventory)
 	{
-		if (Item.ItemId == ItemId)
+		if (ItemMatchesId(Item, ItemId))
 		{
 			bFound = true;
 			return Item;

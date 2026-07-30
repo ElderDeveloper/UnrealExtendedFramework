@@ -19,9 +19,16 @@ struct UNREALEXTENDEDPLAYFAB_API FEPFInventoryItem
 	UPROPERTY(BlueprintReadOnly, Category = "PlayFab|Inventory")
 	FString StackId;
 
-	/** Catalog item ID (matches the catalog definition) */
+	/** Catalog item id. Economy v2 returns the catalog GUID here, not the friendly id. */
 	UPROPERTY(BlueprintReadOnly, Category = "PlayFab|Inventory")
 	FString ItemId;
+
+	/**
+	 * Friendly catalog id from AlternateIds (e.g. "Potion_Health"), empty if the item has none.
+	 * Lookups accept this or ItemId, so callers need not know the GUID.
+	 */
+	UPROPERTY(BlueprintReadOnly, Category = "PlayFab|Inventory")
+	FString FriendlyId;
 
 	/** Display name of the item */
 	UPROPERTY(BlueprintReadOnly, Category = "PlayFab|Inventory")
@@ -49,8 +56,13 @@ struct UNREALEXTENDEDPLAYFAB_API FEPFCatalogItem
 {
 	GENERATED_BODY()
 
+	/** Catalog item id. Economy v2 returns the catalog GUID here, not the friendly id. */
 	UPROPERTY(BlueprintReadOnly, Category = "PlayFab|Inventory")
 	FString ItemId;
+
+	/** Friendly catalog id from AlternateIds, empty if the item has none. */
+	UPROPERTY(BlueprintReadOnly, Category = "PlayFab|Inventory")
+	FString FriendlyId;
 
 	UPROPERTY(BlueprintReadOnly, Category = "PlayFab|Inventory")
 	FString DisplayName;
@@ -146,4 +158,18 @@ private:
 
 	TArray<FEPFInventoryItem> CachedInventory;
 	TArray<FEPFCatalogItem> CachedCatalog;
+
+	/** True when the cached item's GUID or its friendly id matches, case-insensitively. */
+	static bool ItemMatchesId(const FEPFInventoryItem& Item, const FString& ItemId);
+
+	/**
+	 * Economy v2 pages these endpoints with a ContinuationToken. Each page appends to the
+	 * cache; the caller-facing GetInventory/GetCatalog clear it once up front and the
+	 * received delegate fires only after the last page.
+	 */
+	void FetchInventoryPage(const FString& ContinuationToken, int32 PageIndex);
+	void FetchCatalogPage(const FString& StoreId, const FString& ContinuationToken, int32 PageIndex);
+
+	/** Runaway guard: 50 per page, so this is 1000 entries. */
+	static constexpr int32 MaxInventoryPages = 20;
 };
