@@ -41,6 +41,10 @@ namespace ExtendedAtlassianModelUtils
 	UNREALEXTENDEDATLASSIAN_API void RefreshCommentPresentation(
 		FExtendedAtlassianWorkspaceSnapshot& Snapshot);
 
+	/** Recompute Board team counts from current non-done issues after optimistic/provider mutations. */
+	UNREALEXTENDEDATLASSIAN_API void RefreshTeamLoadIssueCounts(
+		FExtendedAtlassianWorkspaceSnapshot& Snapshot);
+
 	/**
 	 * Compact age of a timestamp: "now", "12m", "5h", "2d". Empty for an unset time.
 	 *

@@ -6,6 +6,7 @@
 #include "ExtendedAtlassianStyle.h"
 #include "SBacklotStylePrimitives.h"
 
+#include "Framework/Text/RichTextLayoutMarshaller.h"
 #include "Framework/Text/SlateHyperlinkRun.h"
 #include "HAL/PlatformApplicationMisc.h"
 #include "HAL/PlatformProcess.h"
@@ -19,6 +20,7 @@
 #include "Widgets/Layout/SSeparator.h"
 #include "Widgets/Layout/SWrapBox.h"
 #include "Widgets/SBoxPanel.h"
+#include "Widgets/Text/SMultiLineEditableText.h"
 #include "Widgets/Text/SRichTextBlock.h"
 #include "Widgets/Text/STextBlock.h"
 
@@ -112,8 +114,47 @@ namespace ExtendedAtlassianDocumentViewPrivate
 		}
 	}
 
-	/** A rich text block wired to the document style set, with clickable links. */
-	TSharedRef<SRichTextBlock> MakeRichText(const FString& Markup, const FName& TextStyle)
+	/** Read-only editable text keeps the rich layout while enabling selection and native copy. */
+	TSharedRef<SMultiLineEditableText> MakeSelectableRichText(
+		const FString& Markup,
+		const FTextBlockStyle& TextStyle,
+		bool bAutoWrap,
+		float LineHeight,
+		TArray<TSharedRef<ITextDecorator>> Decorators = {})
+	{
+		const TSharedRef<FRichTextLayoutMarshaller> Marshaller =
+			FRichTextLayoutMarshaller::Create(
+				MoveTemp(Decorators),
+				&FExtendedAtlassianDocumentStyle::Get());
+		return SNew(SMultiLineEditableText)
+			.Text(FText::FromString(Markup))
+			.Marshaller(Marshaller)
+			.TextStyle(&TextStyle)
+			.LineHeightPercentage(LineHeight)
+			.AutoWrapText(bAutoWrap)
+			.IsReadOnly(true)
+			.AllowContextMenu(true);
+	}
+
+	TSharedRef<SMultiLineEditableText> MakeSelectableText(
+		const FText& Value,
+		const FTextBlockStyle& TextStyle,
+		bool bAutoWrap = false,
+		TOptional<ETextOverflowPolicy> OverflowPolicy = {})
+	{
+		return SNew(SMultiLineEditableText)
+			.Text(Value)
+			.TextStyle(&TextStyle)
+			.AutoWrapText(bAutoWrap)
+			.IsReadOnly(true)
+			.AllowContextMenu(true)
+			.OverflowPolicy(OverflowPolicy);
+	}
+
+	/** Selectable rich text wired to the document style set, with clickable links. */
+	TSharedRef<SMultiLineEditableText> MakeRichText(
+		const FString& Markup,
+		const FName& TextStyle)
 	{
 		const float LineHeight =
 			TextStyle == TEXT("Doc.Body")
@@ -121,13 +162,17 @@ namespace ExtendedAtlassianDocumentViewPrivate
 				: TextStyle == TEXT("Doc.Quote")
 					? 1.29f
 					: 1.0f;
-		return SNew(SRichTextBlock)
-			.Text(FText::FromString(Markup))
-			.TextStyle(&FExtendedAtlassianDocumentStyle::Get().GetWidgetStyle<FTextBlockStyle>(TextStyle))
-			.DecoratorStyleSet(&FExtendedAtlassianDocumentStyle::Get())
-			.LineHeightPercentage(LineHeight)
-			.AutoWrapText(true)
-			+ SRichTextBlock::HyperlinkDecorator(TEXT("a"), FSlateHyperlinkRun::FOnClick::CreateStatic(&OpenLink));
+		TArray<TSharedRef<ITextDecorator>> Decorators;
+		Decorators.Add(SRichTextBlock::HyperlinkDecorator(
+			TEXT("a"),
+			FSlateHyperlinkRun::FOnClick::CreateStatic(&OpenLink)));
+		return MakeSelectableRichText(
+			Markup,
+			FExtendedAtlassianDocumentStyle::Get()
+				.GetWidgetStyle<FTextBlockStyle>(TextStyle),
+			true,
+			LineHeight,
+			MoveTemp(Decorators));
 	}
 }
 
@@ -349,6 +394,12 @@ TSharedRef<SWidget> SExtendedAtlassianDocumentView::BuildBlockWidget(
 				TEXT("<SyntaxKeyword>float</>  rough  = lerp(DryRoughness, <SyntaxNumber>0.08</>, wet * PorosityScale);\n")
 				TEXT("<SyntaxKeyword>return</> MakeSurface(albedo, rough, PuddleNormal(wet));"))
 			: FExtendedAtlassianMarkup::Escape(Block.RawText);
+		FTextBlockStyle CodeLanguageStyle = Text(TEXT("Backlot.Mono.9"));
+		CodeLanguageStyle.SetColorAndOpacity(
+			FSlateColor(FExtendedAtlassianStyle::FromHex(TEXT("#58a6ff"))));
+		FTextBlockStyle CodeFileStyle = Text(TEXT("Backlot.Mono.10"));
+		CodeFileStyle.SetColorAndOpacity(
+			FSlateColor(FExtendedAtlassianStyle::FromHex(TEXT("#5c636d"))));
 		return SNew(SBorder)
 			.BorderImage(Brush(TEXT("Backlot.Brush.DocumentCode")))
 			.Padding(0.0f)
@@ -365,24 +416,20 @@ TSharedRef<SWidget> SExtendedAtlassianDocumentView::BuildBlockWidget(
 						+ SHorizontalBox::Slot()
 						.AutoWidth()
 						[
-							SNew(STextBlock)
-							.Text(FText::FromString(
-								Block.CodeLanguage.IsEmpty()
-									? FString(TEXT("TEXT"))
-									: Block.CodeLanguage.ToUpper()))
-							.TextStyle(&Text(TEXT("Backlot.Mono.9")))
-							.ColorAndOpacity(
-								FExtendedAtlassianStyle::FromHex(TEXT("#58a6ff")))
+							MakeSelectableText(
+								FText::FromString(
+									Block.CodeLanguage.IsEmpty()
+										? FString(TEXT("TEXT"))
+										: Block.CodeLanguage.ToUpper()),
+								CodeLanguageStyle)
 						]
 						+ SHorizontalBox::Slot()
 						.FillWidth(1.0f)
 						.Padding(12.0f, 0.0f)
 						[
-							SNew(STextBlock)
-							.Text(FText::FromString(Block.ImageAlt))
-							.TextStyle(&Text(TEXT("Backlot.Mono.10")))
-							.ColorAndOpacity(
-								FExtendedAtlassianStyle::FromHex(TEXT("#5c636d")))
+							MakeSelectableText(
+								FText::FromString(Block.ImageAlt),
+								CodeFileStyle)
 						]
 						+ SHorizontalBox::Slot()
 						.AutoWidth()
@@ -438,14 +485,13 @@ TSharedRef<SWidget> SExtendedAtlassianDocumentView::BuildBlockWidget(
 					.Orientation(Orient_Horizontal)
 					+ SScrollBox::Slot()
 					[
-						SNew(SRichTextBlock)
-						.Text(FText::FromString(CodeMarkup))
-						.TextStyle(
-							&FExtendedAtlassianDocumentStyle::Get()
+						MakeSelectableRichText(
+							CodeMarkup,
+							FExtendedAtlassianDocumentStyle::Get()
 								.GetWidgetStyle<FTextBlockStyle>(
-									TEXT("Doc.CodeBlock")))
-						.DecoratorStyleSet(
-							&FExtendedAtlassianDocumentStyle::Get())
+									TEXT("Doc.CodeBlock")),
+							false,
+							1.0f)
 					]
 				]
 			];
@@ -561,6 +607,17 @@ TSharedRef<SWidget> SExtendedAtlassianDocumentView::BuildOrderedRules(
 					*IssueKey,
 					*IssueKey,
 					*Status));
+		TArray<TSharedRef<ITextDecorator>> Decorators;
+		Decorators.Add(SRichTextBlock::HyperlinkDecorator(
+			IssueDecorator.ToString(),
+			FSlateHyperlinkRun::FOnClick::CreateLambda(
+				[this](const FSlateHyperlinkRun::FMetadata& Metadata)
+				{
+					if (const FString* Href = Metadata.Find(TEXT("href")))
+					{
+						OnIssueClicked.ExecuteIfBound(*Href);
+					}
+				})));
 		Rules->AddSlot()
 		.AutoHeight()
 		.Padding(0.0f, Index == FirstIndex ? 0.0f : 11.0f, 0.0f, 0.0f)
@@ -586,23 +643,12 @@ TSharedRef<SWidget> SExtendedAtlassianDocumentView::BuildOrderedRules(
 			.FillWidth(1.0f)
 			.VAlign(VAlign_Center)
 			[
-				SNew(SRichTextBlock)
-				.Text(FText::FromString(RuleMarkup))
-				.TextStyle(&Text(TEXT("Backlot.Sans.14.5")))
-				.DecoratorStyleSet(&FExtendedAtlassianDocumentStyle::Get())
-				.LineHeightPercentage(1.297f)
-				.AutoWrapText(true)
-				+ SRichTextBlock::HyperlinkDecorator(
-					IssueDecorator.ToString(),
-					FSlateHyperlinkRun::FOnClick::CreateLambda(
-						[this](const FSlateHyperlinkRun::FMetadata& Metadata)
-						{
-							if (const FString* Href =
-								Metadata.Find(TEXT("href")))
-							{
-								OnIssueClicked.ExecuteIfBound(*Href);
-							}
-						}))
+				MakeSelectableRichText(
+					RuleMarkup,
+					Text(TEXT("Backlot.Sans.14.5")),
+					true,
+					1.297f,
+					MoveTemp(Decorators))
 			]
 		];
 	}
@@ -642,6 +688,11 @@ TSharedRef<SWidget> SExtendedAtlassianDocumentView::BuildTasks(
 	for (int32 Index = FirstIndex; Index <= LastIndex; ++Index)
 	{
 		const FExtendedAtlassianDocBlock& Block = InBlocks[Index];
+		FTextBlockStyle TaskTextStyle = Text(TEXT("Backlot.Sans.14"));
+		TaskTextStyle.SetColorAndOpacity(
+			FSlateColor(Block.bChecked
+				? FExtendedAtlassianStyle::FromHex(TEXT("#6f7783"))
+				: FExtendedAtlassianStyle::FromHex(TEXT("#c9cfd8"))));
 		Tasks->AddSlot()
 		.AutoHeight()
 		.Padding(0.0f, Index == FirstIndex ? 0.0f : 9.0f, 0.0f, 0.0f)
@@ -683,14 +734,10 @@ TSharedRef<SWidget> SExtendedAtlassianDocumentView::BuildTasks(
 			+ SHorizontalBox::Slot()
 			.FillWidth(1.0f)
 			[
-				SNew(STextBlock)
-				.Text(FText::FromString(PlainMarkup(Block.Markup)))
-				.TextStyle(&Text(TEXT("Backlot.Sans.14")))
-				.ColorAndOpacity(
-					Block.bChecked
-						? FExtendedAtlassianStyle::FromHex(TEXT("#6f7783"))
-						: FExtendedAtlassianStyle::FromHex(TEXT("#c9cfd8")))
-				.AutoWrapText(true)
+				MakeSelectableText(
+					FText::FromString(PlainMarkup(Block.Markup)),
+					TaskTextStyle,
+					true)
 			]
 		];
 	}
@@ -707,6 +754,10 @@ TSharedRef<SWidget> SExtendedAtlassianDocumentView::BuildAssets(
 		SNew(SWrapBox)
 		.UseAllottedSize(true)
 		.InnerSlotPadding(FVector2D(12.0f, 12.0f));
+	const FTextBlockStyle& AssetNameStyle = Text(TEXT("Backlot.Mono.11"));
+	FTextBlockStyle AssetMetaStyle = Text(TEXT("Backlot.Mono.10"));
+	AssetMetaStyle.SetColorAndOpacity(
+		FSlateColor(FExtendedAtlassianStyle::FromHex(TEXT("#5c636d"))));
 	for (int32 Index = FirstIndex; Index <= LastIndex; ++Index)
 	{
 		const FExtendedAtlassianDocBlock& Block = InBlocks[Index];
@@ -770,24 +821,24 @@ TSharedRef<SWidget> SExtendedAtlassianDocumentView::BuildAssets(
 						+ SVerticalBox::Slot()
 						.AutoHeight()
 						[
-							SNew(STextBlock)
-							.Text(FText::FromString(Block.ImageAlt))
-							.TextStyle(&Text(TEXT("Backlot.Mono.11")))
-							.OverflowPolicy(ETextOverflowPolicy::Ellipsis)
+							MakeSelectableText(
+								FText::FromString(Block.ImageAlt),
+								AssetNameStyle,
+								false,
+								ETextOverflowPolicy::Ellipsis)
 						]
 						+ SVerticalBox::Slot()
 						.AutoHeight()
 						.Padding(0.0f, 3.0f, 0.0f, 0.0f)
 						[
-							SNew(STextBlock)
-							.Text(FText::FromString(
-								Block.ImageMeta.IsEmpty()
-									? Block.ImageUrl
-									: Block.ImageMeta))
-							.TextStyle(&Text(TEXT("Backlot.Mono.10")))
-							.ColorAndOpacity(
-								FExtendedAtlassianStyle::FromHex(TEXT("#5c636d")))
-							.OverflowPolicy(ETextOverflowPolicy::Ellipsis)
+							MakeSelectableText(
+								FText::FromString(
+									Block.ImageMeta.IsEmpty()
+										? Block.ImageUrl
+										: Block.ImageMeta),
+								AssetMetaStyle,
+								false,
+								ETextOverflowPolicy::Ellipsis)
 						]
 					]
 				]

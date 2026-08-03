@@ -359,6 +359,7 @@ namespace ExtendedAtlassianModelUtils
 			}
 			return true;
 
+		case EExtendedAtlassianWorkspaceMutation::ArchivePage:
 		case EExtendedAtlassianWorkspaceMutation::DeletePage:
 			Snapshot.Pages.RemoveAll(
 				[&Mutation](const FExtendedAtlassianPage& Page)
@@ -497,6 +498,40 @@ namespace ExtendedAtlassianModelUtils
 						return Candidate.TargetId == Scope;
 					});
 			Issue.CommentCount = Collection ? Collection->Comments.Num() : 0;
+		}
+	}
+
+	void RefreshTeamLoadIssueCounts(FExtendedAtlassianWorkspaceSnapshot& Snapshot)
+	{
+		const FExtendedAtlassianBoardColumn* DoneColumn =
+			Snapshot.BoardColumns.FindByPredicate(
+				[](const FExtendedAtlassianBoardColumn& Column)
+				{
+					return Column.DisplayName.Equals(
+						TEXT("Done"),
+						ESearchCase::IgnoreCase);
+				});
+		for (FExtendedAtlassianTeamLoad& Load : Snapshot.TeamLoad)
+		{
+			Load.OpenIssueCount = 0;
+			for (const FExtendedAtlassianIssue& Issue : Snapshot.Issues)
+			{
+				const bool bDone = DoneColumn
+					? DoneColumn->StatusNames.ContainsByPredicate(
+						[&Issue](const FString& StatusName)
+						{
+							return StatusName.Equals(
+								Issue.StatusName,
+								ESearchCase::IgnoreCase);
+						})
+					: Issue.StatusCategoryKey.Equals(
+						TEXT("done"),
+						ESearchCase::IgnoreCase);
+				if (Issue.AssigneeAccountId == Load.User.AccountId && !bDone)
+				{
+					++Load.OpenIssueCount;
+				}
+			}
 		}
 	}
 

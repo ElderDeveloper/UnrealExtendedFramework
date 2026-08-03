@@ -9,8 +9,11 @@
 #include "ExtendedAtlassianHtml.h"
 #include "ExtendedAtlassianJira.h"
 #include "ExtendedAtlassianMarkdown.h"
+#include "ExtendedAtlassianModelUtils.h"
 #include "ExtendedAtlassianMultipart.h"
 #include "ExtendedAtlassianStorage.h"
+#include "ExtendedAtlassianUserCache.h"
+#include "ExtendedAtlassianWorkspaceData.h"
 
 #include "Dom/JsonObject.h"
 #include "HAL/FileManager.h"
@@ -89,6 +92,53 @@ bool FExtendedAtlassianAdfRoundTripTest::RunTest(const FString& Parameters)
 		const FString Flattened = FExtendedAtlassianAdf::ToPlainText(ParseJson(Json));
 		TestTrue(TEXT("Description survives"), Flattened.Contains(TEXT("Description.")));
 		TestTrue(TEXT("Code block content survives"), Flattened.Contains(TEXT("Level: TestMap")));
+	}
+
+	{
+		const FString Json = TEXT(
+			"{\"version\":1,\"type\":\"doc\",\"content\":["
+			"{\"type\":\"heading\",\"attrs\":{\"level\":2},\"content\":[{\"type\":\"text\",\"text\":\"Work\"}]},"
+			"{\"type\":\"paragraph\",\"content\":[{\"type\":\"text\",\"text\":\"Important\",\"marks\":[{\"type\":\"strong\"}]}]},"
+			"{\"type\":\"taskList\",\"attrs\":{\"localId\":\"list-1\"},\"content\":["
+			"{\"type\":\"taskItem\",\"attrs\":{\"localId\":\"task-1\",\"state\":\"TODO\"},\"content\":[{\"type\":\"text\",\"text\":\"Open item\"}]},"
+			"{\"type\":\"taskItem\",\"attrs\":{\"localId\":\"task-2\",\"state\":\"DONE\"},\"content\":[{\"type\":\"text\",\"text\":\"Finished item\"}]}"
+			"]}]}"
+		);
+		const TSharedPtr<FJsonObject> Adf = ParseJson(Json);
+		const TArray<FExtendedAtlassianDocBlock> Blocks =
+			FExtendedAtlassianAdf::ToBlocks(Adf);
+
+		TestEqual(TEXT("ADF preserves four structured blocks"), Blocks.Num(), 4);
+		if (Blocks.Num() == 4)
+		{
+			TestTrue(TEXT("Heading kind survives"),
+				Blocks[0].Kind == EExtendedAtlassianBlockKind::Heading
+				&& Blocks[0].Level == 2);
+			TestEqual(TEXT("Strong mark becomes shared rich-text markup"),
+				Blocks[1].Markup, FString(TEXT("<Bold>Important</>")));
+			TestTrue(TEXT("Open task remains unchecked"),
+				Blocks[2].Kind == EExtendedAtlassianBlockKind::TaskItem
+				&& !Blocks[2].bChecked
+				&& Blocks[2].Markup.Contains(TEXT("Open item")));
+			TestTrue(TEXT("Done task remains checked"),
+				Blocks[3].Kind == EExtendedAtlassianBlockKind::TaskItem
+				&& Blocks[3].bChecked
+				&& Blocks[3].Markup.Contains(TEXT("Finished item")));
+		}
+
+		const FString Flattened = FExtendedAtlassianAdf::ToPlainText(Adf);
+		TestTrue(TEXT("Plain edit fallback keeps unchecked task syntax"),
+			Flattened.Contains(TEXT("- [ ] Open item")));
+		TestTrue(TEXT("Plain edit fallback keeps checked task syntax"),
+			Flattened.Contains(TEXT("- [x] Finished item")));
+
+		const FString IssueJson = FString::Printf(
+			TEXT("{\"id\":\"133\",\"key\":\"TOT-133\",\"fields\":{\"summary\":\"Inventory Bugfix Tasklist\",\"description\":%s}}"),
+			*Json);
+		const FExtendedAtlassianIssue Issue =
+			FExtendedAtlassianJira::ParseIssue(ParseJson(IssueJson));
+		TestEqual(TEXT("Jira issue keeps the ADF document blocks"),
+			Issue.DescriptionBlocks.Num(), 4);
 	}
 
 	{
@@ -961,6 +1011,24 @@ bool FExtendedAtlassianParseLabelsTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FExtendedAtlassianClearParentPayloadTest,
+	"ExtendedAtlassian.Jira.ClearParentPayload",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FExtendedAtlassianClearParentPayloadTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+
+	FExtendedAtlassianIssueUpdate Update;
+	Update.bClearParent = true;
+	TestEqual(
+		TEXT("Clearing an epic emits Jira's documented parent-none update"),
+		FExtendedAtlassianJira::BuildIssueUpdateBody(Update),
+		FString(TEXT("{\"fields\":{},\"update\":{\"parent\":[{\"set\":{\"none\":true}}]}}")));
+	return true;
+}
+
 // --- Credential store --------------------------------------------------------
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
@@ -1006,6 +1074,108 @@ bool FExtendedAtlassianCredentialStoreTest::RunTest(const FString& Parameters)
 	}
 
 	IFileManager::Get().Delete(*TempPath, false, true, true);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FExtendedAtlassianUserCacheTest,
+	"ExtendedAtlassian.Credentials.VerifiedUserCache",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FExtendedAtlassianUserCacheTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+
+	const FString TempPath = FPaths::Combine(
+		FPaths::ProjectIntermediateDir(),
+		TEXT("ExtendedAtlassianTests"),
+		FGuid::NewGuid().ToString(EGuidFormats::Digits) + TEXT(".user.ini"));
+	const FString SiteUrl = TEXT("https://example.atlassian.net");
+	const FString CredentialEmail = TEXT("tester@example.com");
+
+	FExtendedAtlassianUser Written;
+	Written.AccountId = TEXT("account-123");
+	Written.DisplayName = TEXT("Test User");
+	Written.EmailAddress = CredentialEmail;
+	Written.AvatarUrl = TEXT("https://avatar.example/user.png");
+	Written.Initials = TEXT("TU");
+	Written.AvatarBackground = TEXT("#123456");
+	Written.AvatarForeground = TEXT("#ffffff");
+
+	TestTrue(
+		TEXT("Verified user saves"),
+		FExtendedAtlassianUserCache::SaveTo(
+			TempPath,
+			SiteUrl,
+			CredentialEmail,
+			Written));
+
+	FExtendedAtlassianUser Read;
+	TestTrue(
+		TEXT("Matching site and credential hydrate the cached user"),
+		FExtendedAtlassianUserCache::LoadFrom(
+			TempPath,
+			SiteUrl,
+			CredentialEmail,
+			Read));
+	TestEqual(TEXT("Account id round trips"), Read.AccountId, Written.AccountId);
+	TestEqual(TEXT("Display name round trips"), Read.DisplayName, Written.DisplayName);
+	TestEqual(TEXT("Avatar round trips"), Read.AvatarUrl, Written.AvatarUrl);
+
+	FExtendedAtlassianUser Mismatch;
+	TestFalse(
+		TEXT("A different site cannot reuse the profile"),
+		FExtendedAtlassianUserCache::LoadFrom(
+			TempPath,
+			TEXT("https://other.atlassian.net"),
+			CredentialEmail,
+			Mismatch));
+	TestFalse(
+		TEXT("A different credential cannot reuse the profile"),
+		FExtendedAtlassianUserCache::LoadFrom(
+			TempPath,
+			SiteUrl,
+			TEXT("other@example.com"),
+			Mismatch));
+
+	IFileManager::Get().Delete(*TempPath, false, true, true);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FExtendedAtlassianArchivePageModelTest,
+	"ExtendedAtlassian.Workspace.ArchivePageModel",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FExtendedAtlassianArchivePageModelTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+
+	FExtendedAtlassianWorkspaceSnapshot Snapshot;
+	FExtendedAtlassianPage Page;
+	Page.Id = TEXT("12345");
+	Page.Title = TEXT("Archive me");
+	Snapshot.Pages.Add(Page);
+
+	FExtendedAtlassianDocumentTreeNode Node;
+	Node.Id = Page.Id;
+	Node.Label = Page.Title;
+	Snapshot.DocumentTree.Add(Node);
+
+	FExtendedAtlassianCommentCollection Comments;
+	Comments.TargetId = TEXT("page:") + Page.Id;
+	Snapshot.CommentCollections.Add(Comments);
+
+	FExtendedAtlassianWorkspaceMutation Mutation;
+	Mutation.Type = EExtendedAtlassianWorkspaceMutation::ArchivePage;
+	Mutation.TargetId = Page.Id;
+
+	TestTrue(
+		TEXT("Archive is handled as a document mutation"),
+		ExtendedAtlassianModelUtils::ApplyDocumentMutation(Snapshot, Mutation));
+	TestEqual(TEXT("Archived page leaves the page model"), Snapshot.Pages.Num(), 0);
+	TestEqual(TEXT("Archived page leaves the document tree"), Snapshot.DocumentTree.Num(), 0);
+	TestEqual(TEXT("Archived page comments leave the model"), Snapshot.CommentCollections.Num(), 0);
 	return true;
 }
 

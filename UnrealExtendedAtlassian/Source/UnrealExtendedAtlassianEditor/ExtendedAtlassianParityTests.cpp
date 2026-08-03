@@ -103,7 +103,11 @@ namespace ExtendedAtlassianParityTestsPrivate
 			Error.HttpStatus = 409;
 			Error.Code = TEXT("Conflict");
 			Error.Message = TEXT("Fixture conflict");
-			Completion.ExecuteIfBound(Mutation.ClientMutationId, false, Error);
+			Completion.ExecuteIfBound(
+				Mutation.ClientMutationId,
+				false,
+				FString(),
+				Error);
 		}
 
 		virtual void CancelGeneration(uint64 Generation) override { (void)Generation; }
@@ -151,7 +155,11 @@ namespace ExtendedAtlassianParityTestsPrivate
 			Warning.Code = TEXT("IssueCreatedAttachmentFailed");
 			Warning.Message =
 				TEXT("NFB-2 was created, but backlot-capture.png failed to upload.");
-			Completion.ExecuteIfBound(Mutation.ClientMutationId, true, Warning);
+			Completion.ExecuteIfBound(
+				Mutation.ClientMutationId,
+				true,
+				Mutation.TargetId,
+				Warning);
 		}
 
 		virtual void CancelGeneration(uint64 Generation) override { (void)Generation; }
@@ -210,12 +218,14 @@ namespace ExtendedAtlassianParityTestsPrivate
 				Completion.ExecuteIfBound(
 					Mutation.ClientMutationId,
 					true,
+					Mutation.TargetId,
 					Warning);
 				return;
 			}
 			Completion.ExecuteIfBound(
 				Mutation.ClientMutationId,
 				true,
+				Mutation.TargetId,
 				FExtendedAtlassianError());
 		}
 
@@ -291,6 +301,7 @@ namespace ExtendedAtlassianParityTestsPrivate
 				Completion.ExecuteIfBound(
 					Mutation.ClientMutationId,
 					true,
+					Mutation.TargetId,
 					FExtendedAtlassianError());
 			}
 			else
@@ -335,7 +346,8 @@ namespace ExtendedAtlassianParityTestsPrivate
 			int32 Index,
 			bool bSuccess,
 			const FExtendedAtlassianError& Error =
-				FExtendedAtlassianError())
+				FExtendedAtlassianError(),
+			const FString& ResultId = FString())
 		{
 			check(PendingMutations.IsValidIndex(Index));
 			FPendingMutation Pending = MoveTemp(PendingMutations[Index]);
@@ -347,6 +359,9 @@ namespace ExtendedAtlassianParityTestsPrivate
 			Pending.Completion.ExecuteIfBound(
 				Pending.Mutation.ClientMutationId,
 				bSuccess,
+				ResultId.IsEmpty()
+					? Pending.Mutation.TargetId
+					: ResultId,
 				Error);
 		}
 
@@ -1058,6 +1073,16 @@ bool FExtendedAtlassianIssueFilterContractTest::RunTest(
 			Controller->GetAssigneeFilter(),
 			Expected);
 	}
+	Controller->SetAssigneeFilter(TEXT("MR"));
+	TestEqual(
+		TEXT("Assignee can be selected directly from the board team list"),
+		Controller->GetAssigneeFilter(),
+		FString(TEXT("MR")));
+	Controller->SetAssigneeFilter(FString());
+	TestEqual(
+		TEXT("Empty direct assignee selection restores anyone"),
+		Controller->GetAssigneeFilter(),
+		FString(TEXT("anyone")));
 
 	Controller->SelectIssueView(TEXT("blocked"));
 	TestEqual(TEXT("View selection is retained"), Controller->GetSelectedIssueViewId(),
@@ -1268,6 +1293,52 @@ bool FExtendedAtlassianBoardOperationContractTest::RunTest(
 	TestEqual(TEXT("Fixture team threshold follows HTML at 100 percent"),
 		Controller->GetSnapshot().TeamLoad[1].ThresholdColor,
 		FString(TEXT("#f0665f")));
+	TestTrue(
+		TEXT("Logged-in user is present at the top of team load"),
+		!Controller->GetSnapshot().TeamLoad.IsEmpty()
+			&& Controller->GetSnapshot().TeamLoad[0].User.AccountId
+				== Controller->GetSnapshot().CurrentUser.AccountId);
+	for (const FExtendedAtlassianTeamLoad& Load :
+		Controller->GetSnapshot().TeamLoad)
+	{
+		int32 ExpectedOpenIssueCount = 0;
+		for (const FExtendedAtlassianIssue& Issue :
+			Controller->GetSnapshot().Issues)
+		{
+			ExpectedOpenIssueCount +=
+				Issue.AssigneeAccountId == Load.User.AccountId
+				&& !Issue.StatusCategoryKey.Equals(
+					TEXT("done"),
+					ESearchCase::IgnoreCase)
+					? 1
+					: 0;
+		}
+		TestEqual(
+			*FString::Printf(
+				TEXT("Team load for %s reports open issue count"),
+				*Load.User.AccountId),
+			Load.OpenIssueCount,
+			ExpectedOpenIssueCount);
+	}
+	FExtendedAtlassianTeamLoad CountOnlyLoad;
+	CountOnlyLoad.OpenIssueCount = 2;
+	CountOnlyLoad.OpenPoints = 0.0;
+	TestEqual(
+		TEXT("Open issue count is independent of hydrated story points"),
+		CountOnlyLoad.OpenIssueCount,
+		2);
+	const auto OpenCountFor = [Controller](const FString& AccountId)
+	{
+		const FExtendedAtlassianTeamLoad* Load =
+			Controller->GetSnapshot().TeamLoad.FindByPredicate(
+				[&AccountId](const FExtendedAtlassianTeamLoad& Candidate)
+				{
+					return Candidate.User.AccountId == AccountId;
+				});
+		return Load ? Load->OpenIssueCount : INDEX_NONE;
+	};
+	const int32 InitialAkCount = OpenCountFor(TEXT("AK"));
+	const int32 InitialMrCount = OpenCountFor(TEXT("MR"));
 
 	FExtendedAtlassianWorkspaceMutation Move;
 	Move.Type = EExtendedAtlassianWorkspaceMutation::MoveIssue;
@@ -1314,16 +1385,72 @@ bool FExtendedAtlassianBoardOperationContractTest::RunTest(
 	Create.Fields.Add(TEXT("assignee"), TEXT("AK"));
 	Create.Fields.Add(TEXT("epic"), TEXT("Systems"));
 	Create.Fields.Add(TEXT("points"), TEXT("3"));
+	Create.bOpenResultOnSuccess = true;
 	Controller->ExecuteMutation(Create);
 	TestEqual(TEXT("Board card creates"), Controller->GetSnapshot().Issues.Num(), 13);
+	TestEqual(
+		TEXT("Board create refreshes assignee issue count"),
+		OpenCountFor(TEXT("AK")),
+		InitialAkCount + 1);
+	TestEqual(
+		TEXT("Created board card opens in Issues"),
+		static_cast<int32>(Controller->GetRoute()),
+		static_cast<int32>(EExtendedAtlassianWorkspaceRoute::IssueDetail));
+	TestEqual(
+		TEXT("Created board card becomes the selected issue"),
+		Controller->GetSelectedIssueKey(),
+		Create.TargetId);
 
 	FExtendedAtlassianWorkspaceMutation Update;
 	Update.Type = EExtendedAtlassianWorkspaceMutation::UpdateIssue;
 	Update.TargetId = TEXT("NFB-1065");
 	Update.Fields.Add(TEXT("summary"), TEXT("Edited board card"));
+	Update.Fields.Add(TEXT("assignee"), TEXT("MR"));
 	Controller->ExecuteMutation(Update);
 	TestEqual(TEXT("Board card edits"), Controller->GetSnapshot().Issues[0].Summary,
 		FString(TEXT("Edited board card")));
+	TestEqual(
+		TEXT("Reassign removes issue from previous person's count"),
+		OpenCountFor(TEXT("AK")),
+		InitialAkCount);
+	TestEqual(
+		TEXT("Reassign adds issue to new person's count"),
+		OpenCountFor(TEXT("MR")),
+		InitialMrCount + 1);
+
+	FExtendedAtlassianWorkspaceMutation Complete;
+	Complete.Type = EExtendedAtlassianWorkspaceMutation::TransitionIssue;
+	Complete.TargetId = TEXT("NFB-1065");
+	Complete.Fields.Add(TEXT("status"), TEXT("Done"));
+	Controller->ExecuteMutation(Complete);
+	TestEqual(
+		TEXT("Done transition removes issue from open count"),
+		OpenCountFor(TEXT("MR")),
+		InitialMrCount);
+	Complete.Fields.Add(TEXT("status"), TEXT("Triage"));
+	Controller->ExecuteMutation(Complete);
+	TestEqual(
+		TEXT("Open transition restores issue to open count"),
+		OpenCountFor(TEXT("MR")),
+		InitialMrCount + 1);
+
+	FExtendedAtlassianWorkspaceMutation Archive;
+	Archive.Type = EExtendedAtlassianWorkspaceMutation::ArchiveIssue;
+	Archive.TargetId = TEXT("NFB-1065");
+	Controller->ExecuteDestructiveMutation(
+		Archive,
+		FText::FromString(TEXT("Card archived")));
+	TestEqual(
+		TEXT("Archive removes issue from open count optimistically"),
+		OpenCountFor(TEXT("MR")),
+		InitialMrCount);
+	TestTrue(
+		TEXT("Archive count can be restored during undo window"),
+		Controller->UndoLastDestructiveMutation());
+	TestEqual(
+		TEXT("Archive undo restores issue count"),
+		OpenCountFor(TEXT("MR")),
+		InitialMrCount + 1);
 
 	FExtendedAtlassianWorkspaceMutation Delete;
 	Delete.Type = EExtendedAtlassianWorkspaceMutation::DeleteIssue;
@@ -1331,9 +1458,65 @@ bool FExtendedAtlassianBoardOperationContractTest::RunTest(
 	Controller->ExecuteDestructiveMutation(Delete, FText::FromString(TEXT("Card deleted")));
 	TestEqual(TEXT("Board card delete is optimistic"),
 		Controller->GetSnapshot().Issues.Num(), 12);
+	TestEqual(
+		TEXT("Delete removes issue from open count optimistically"),
+		OpenCountFor(TEXT("MR")),
+		InitialMrCount);
 	TestTrue(TEXT("Board card delete offers undo"), Controller->UndoLastDestructiveMutation());
 	TestEqual(TEXT("Board card undo restores card"),
 		Controller->GetSnapshot().Issues.Num(), 13);
+	TestEqual(
+		TEXT("Delete undo restores issue count"),
+		OpenCountFor(TEXT("MR")),
+		InitialMrCount + 1);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FExtendedAtlassianBoardCreateResultContractTest,
+	"ExtendedAtlassian.Parity.BoardCreateResult",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FExtendedAtlassianBoardCreateResultContractTest::RunTest(
+	const FString& Parameters)
+{
+	(void)Parameters;
+	const TSharedRef<ExtendedAtlassianParityTestsPrivate::FScriptedWorkspaceData> Data =
+		MakeShared<ExtendedAtlassianParityTestsPrivate::FScriptedWorkspaceData>();
+	Data->bAutoCompleteMutations = false;
+	const TSharedRef<FExtendedAtlassianWorkspaceController> Controller =
+		MakeShared<FExtendedAtlassianWorkspaceController>(Data);
+	Controller->Refresh();
+	FExtendedAtlassianWorkspaceSnapshot Snapshot;
+	Snapshot.State = EExtendedAtlassianLoadState::Ready;
+	Data->CompleteLoad(0, Snapshot);
+	Controller->Navigate(EExtendedAtlassianWorkspaceRoute::Board);
+
+	FExtendedAtlassianWorkspaceMutation Create;
+	Create.Type = EExtendedAtlassianWorkspaceMutation::CreateIssue;
+	Create.TargetId = TEXT("NFB-1065");
+	Create.Fields.Add(TEXT("summary"), TEXT("Server-key contract"));
+	Create.Fields.Add(TEXT("type"), TEXT("Task"));
+	Create.bOpenResultOnSuccess = true;
+	Controller->ExecuteMutation(Create);
+	TestEqual(
+		TEXT("Create waits for provider result before leaving Board"),
+		static_cast<int32>(Controller->GetRoute()),
+		static_cast<int32>(EExtendedAtlassianWorkspaceRoute::Board));
+
+	Data->CompleteMutation(
+		0,
+		true,
+		FExtendedAtlassianError(),
+		TEXT("NFB-2401"));
+	TestEqual(
+		TEXT("Create opens the provider-returned Jira key"),
+		Controller->GetSelectedIssueKey(),
+		FString(TEXT("NFB-2401")));
+	TestEqual(
+		TEXT("Provider-returned Jira key opens in issue detail"),
+		static_cast<int32>(Controller->GetRoute()),
+		static_cast<int32>(EExtendedAtlassianWorkspaceRoute::IssueDetail));
 	return true;
 }
 
@@ -2119,7 +2302,9 @@ bool FExtendedAtlassianWorkspaceFaultStatesContractTest::RunTest(
 	FExtendedAtlassianWorkspaceMutation DeniedCreate;
 	DeniedCreate.Type = EExtendedAtlassianWorkspaceMutation::CreateIssue;
 	DeniedCreate.Fields.Add(TEXT("summary"), TEXT("Must not reach provider"));
-	PermissionController->ExecuteMutation(DeniedCreate);
+	TestFalse(
+		TEXT("Denied operation reports that no mutation started"),
+		PermissionController->ExecuteMutation(DeniedCreate));
 	TestEqual(
 		TEXT("Denied operation never reaches provider"),
 		PermissionData->RecordedMutations.Num(),
@@ -2132,7 +2317,9 @@ bool FExtendedAtlassianWorkspaceFaultStatesContractTest::RunTest(
 	AllowedEdit.Type = EExtendedAtlassianWorkspaceMutation::UpdateIssue;
 	AllowedEdit.TargetId = TEXT("NFB-42");
 	AllowedEdit.Fields.Add(TEXT("summary"), TEXT("Allowed edit"));
-	PermissionController->ExecuteMutation(AllowedEdit);
+	TestTrue(
+		TEXT("Allowed operation reports that its mutation started"),
+		PermissionController->ExecuteMutation(AllowedEdit));
 	TestEqual(
 		TEXT("Allowed operation reaches provider"),
 		PermissionData->RecordedMutations.Num(),

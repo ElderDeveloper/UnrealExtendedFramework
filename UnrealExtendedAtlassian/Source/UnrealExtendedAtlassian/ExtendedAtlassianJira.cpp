@@ -19,6 +19,35 @@
 
 namespace ExtendedAtlassianJiraPrivate
 {
+	FString ArchiveErrors(const TSharedPtr<FJsonObject>& Response)
+	{
+		if (!Response.IsValid())
+		{
+			return FString();
+		}
+		const TSharedPtr<FJsonObject>* Errors = nullptr;
+		if (!Response->TryGetObjectField(TEXT("errors"), Errors)
+			|| !Errors->IsValid())
+		{
+			return FString();
+		}
+		TArray<FString> Messages;
+		for (const TPair<FString, TSharedPtr<FJsonValue>>& Pair : (*Errors)->Values)
+		{
+			const TSharedPtr<FJsonObject>* Detail = nullptr;
+			FString Message;
+			if (Pair.Value.IsValid()
+				&& Pair.Value->TryGetObject(Detail)
+				&& Detail->IsValid()
+				&& (*Detail)->TryGetStringField(TEXT("message"), Message)
+				&& !Message.IsEmpty())
+			{
+				Messages.Add(MoveTemp(Message));
+			}
+		}
+		return FString::Join(Messages, TEXT("; "));
+	}
+
 	/** Which search endpoint this site accepts. Resolved once per session on first use. */
 	enum class ESearchEndpoint : uint8
 	{
@@ -734,6 +763,13 @@ FExtendedAtlassianIssue FExtendedAtlassianJira::ParseIssue(const TSharedPtr<FJso
 	if (Fields->TryGetObjectField(TEXT("description"), Description) && Description->IsValid())
 	{
 		Issue.Description = FExtendedAtlassianAdf::ToPlainText(*Description);
+		Issue.DescriptionBlocks = FExtendedAtlassianAdf::ToBlocks(*Description);
+	}
+	else
+	{
+		// Older Jira deployments and test doubles may still expose a string. Keep it usable; the
+		// shared reader will adapt this fallback through the Markdown/plain-text block parser.
+		Fields->TryGetStringField(TEXT("description"), Issue.Description);
 	}
 
 	return Issue;
@@ -999,22 +1035,9 @@ void FExtendedAtlassianJira::GetIssue(const FString& IssueKey, FExtendedAtlassia
 		}));
 }
 
-void FExtendedAtlassianJira::UpdateIssue(
-	const FString& IssueKey,
-	const FExtendedAtlassianIssueUpdate& Update,
-	FExtendedAtlassianActionDelegate OnComplete)
+FString FExtendedAtlassianJira::BuildIssueUpdateBody(
+	const FExtendedAtlassianIssueUpdate& Update)
 {
-	const TSharedPtr<FExtendedAtlassianClient> Client = FUnrealExtendedAtlassianModule::GetClient();
-	const UExtendedAtlassianSettings* Settings = UExtendedAtlassianSettings::Get();
-	if (!Client.IsValid() || !Settings)
-	{
-		FExtendedAtlassianError Error;
-		Error.Code = TEXT("NotReady");
-		Error.Message = TEXT("The Atlassian transport module is not available.");
-		OnComplete.ExecuteIfBound(false, Error);
-		return;
-	}
-
 	FString Body;
 	const TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> Writer =
 		TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&Body);
@@ -1064,7 +1087,8 @@ void FExtendedAtlassianJira::UpdateIssue(
 		Writer->WriteValue(TEXT("accountId"), Update.AssigneeAccountId.GetValue());
 		Writer->WriteObjectEnd();
 	}
-	if (Update.ParentId.IsSet() || Update.ParentKey.IsSet())
+	if (!Update.bClearParent
+		&& (Update.ParentId.IsSet() || Update.ParentKey.IsSet()))
 	{
 		Writer->WriteObjectStart(TEXT("parent"));
 		if (Update.ParentId.IsSet())
@@ -1082,8 +1106,40 @@ void FExtendedAtlassianJira::UpdateIssue(
 		Writer->WriteValue(Update.EstimateFieldId, Update.Estimate.GetValue());
 	}
 	Writer->WriteObjectEnd();
+	if (Update.bClearParent)
+	{
+		Writer->WriteObjectStart(TEXT("update"));
+		Writer->WriteArrayStart(TEXT("parent"));
+		Writer->WriteObjectStart();
+		Writer->WriteObjectStart(TEXT("set"));
+		Writer->WriteValue(TEXT("none"), true);
+		Writer->WriteObjectEnd();
+		Writer->WriteObjectEnd();
+		Writer->WriteArrayEnd();
+		Writer->WriteObjectEnd();
+	}
 	Writer->WriteObjectEnd();
 	Writer->Close();
+	return Body;
+}
+
+void FExtendedAtlassianJira::UpdateIssue(
+	const FString& IssueKey,
+	const FExtendedAtlassianIssueUpdate& Update,
+	FExtendedAtlassianActionDelegate OnComplete)
+{
+	const TSharedPtr<FExtendedAtlassianClient> Client = FUnrealExtendedAtlassianModule::GetClient();
+	const UExtendedAtlassianSettings* Settings = UExtendedAtlassianSettings::Get();
+	if (!Client.IsValid() || !Settings)
+	{
+		FExtendedAtlassianError Error;
+		Error.Code = TEXT("NotReady");
+		Error.Message = TEXT("The Atlassian transport module is not available.");
+		OnComplete.ExecuteIfBound(false, Error);
+		return;
+	}
+
+	const FString Body = BuildIssueUpdateBody(Update);
 
 	const FString Url = FString::Printf(
 		TEXT("%s/issue/%s"),
@@ -1119,6 +1175,67 @@ void FExtendedAtlassianJira::DeleteIssue(
 			[OnComplete](const FExtendedAtlassianResponse& Response)
 			{
 				OnComplete.ExecuteIfBound(Response.IsSuccess(), Response.Error);
+			}));
+}
+
+void FExtendedAtlassianJira::ArchiveIssue(
+	const FString& IssueKey,
+	FExtendedAtlassianActionDelegate OnComplete)
+{
+	const TSharedPtr<FExtendedAtlassianClient> Client =
+		FUnrealExtendedAtlassianModule::GetClient();
+	const UExtendedAtlassianSettings* Settings = UExtendedAtlassianSettings::Get();
+	if (!Client.IsValid() || !Settings || IssueKey.TrimStartAndEnd().IsEmpty())
+	{
+		FExtendedAtlassianError Error;
+		Error.Code = TEXT("NotReady");
+		Error.Message = TEXT("An issue key and the Atlassian transport module are required to archive an issue.");
+		OnComplete.ExecuteIfBound(false, Error);
+		return;
+	}
+
+	FString Body;
+	const TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> Writer =
+		TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&Body);
+	Writer->WriteObjectStart();
+	Writer->WriteArrayStart(TEXT("issueIdsOrKeys"));
+	Writer->WriteValue(IssueKey);
+	Writer->WriteArrayEnd();
+	Writer->WriteObjectEnd();
+	Writer->Close();
+
+	Client->PutJson(
+		Settings->GetJiraApiBaseUrl() + TEXT("/issue/archive"),
+		Body,
+		FExtendedAtlassianResponseDelegate::CreateLambda(
+			[OnComplete](const FExtendedAtlassianResponse& Response)
+			{
+				if (!Response.IsSuccess())
+				{
+					OnComplete.ExecuteIfBound(false, Response.Error);
+					return;
+				}
+
+				double NumberOfIssuesUpdated = 0.0;
+				if (Response.Object.IsValid()
+					&& Response.Object->TryGetNumberField(
+						TEXT("numberOfIssuesUpdated"),
+						NumberOfIssuesUpdated)
+					&& NumberOfIssuesUpdated >= 1.0)
+				{
+					OnComplete.ExecuteIfBound(true, FExtendedAtlassianError());
+					return;
+				}
+
+				FExtendedAtlassianError Error;
+				Error.HttpStatus = Response.HttpStatus;
+				Error.Code = TEXT("ArchiveRejected");
+				Error.Message = ExtendedAtlassianJiraPrivate::ArchiveErrors(Response.Object);
+				if (Error.Message.IsEmpty())
+				{
+					Error.Message = TEXT("Jira returned success but did not archive the requested issue.");
+				}
+				OnComplete.ExecuteIfBound(false, Error);
 			}));
 }
 

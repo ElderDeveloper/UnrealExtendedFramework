@@ -104,6 +104,7 @@ private:
 
 	void SaveWorkingCopy();
 	void PushToConfluence();
+	void ArchiveCurrentPage();
 	void DeleteCurrentPage();
 
 	/** The space key of whichever space contains the current selection. */

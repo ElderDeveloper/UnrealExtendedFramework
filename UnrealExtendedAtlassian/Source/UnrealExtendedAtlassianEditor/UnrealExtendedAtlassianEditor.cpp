@@ -3,6 +3,7 @@
 #include "UnrealExtendedAtlassianEditor.h"
 
 #include "ExtendedAtlassianConfluenceBrowser.h"
+#include "ExtendedAtlassianClient.h"
 #include "ExtendedAtlassianDocumentStyle.h"
 #include "ExtendedAtlassianEditorCommands.h"
 #include "ExtendedAtlassianEditorMenu.h"
@@ -11,6 +12,7 @@
 #include "ExtendedAtlassianNewIssueDialog.h"
 #include "ExtendedAtlassianSettingsCustomization.h"
 #include "SExtendedAtlassianWorkspace.h"
+#include "UnrealExtendedAtlassian.h"
 
 #include "Framework/Application/SlateApplication.h"
 #include "Framework/Docking/TabManager.h"
@@ -40,6 +42,14 @@ void FUnrealExtendedAtlassianEditorModule::StartupModule()
 	}
 
 	Instance = this;
+
+	// ReloadCredentials already hydrated any cached verified profile. Refresh it in the
+	// background so the account is immediately present without trusting stale data forever.
+	if (const TSharedPtr<FExtendedAtlassianClient> Client =
+		FUnrealExtendedAtlassianModule::GetClient())
+	{
+		Client->EnsureUserInfo();
+	}
 
 	// UFUNCTION(CallInEditor) buttons do not render or fire in the Project Settings viewer in this
 	// engine build, so the Connection panel is built with Slate instead.

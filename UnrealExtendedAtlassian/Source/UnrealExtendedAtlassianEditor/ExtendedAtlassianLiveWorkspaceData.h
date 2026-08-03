@@ -42,7 +42,8 @@ private:
 		uint64 MutationId,
 		const FExtendedAtlassianWorkspaceMutationDelegate& Completion,
 		bool bSuccess,
-		const FExtendedAtlassianError& Error) const;
+		const FExtendedAtlassianError& Error,
+		const FString& ResultId = FString()) const;
 
 	FExtendedAtlassianCapabilities Capabilities;
 	TSet<uint64> CancelledGenerations;

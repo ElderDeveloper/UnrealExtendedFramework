@@ -51,6 +51,14 @@ public:
 		const FString& IssueKey,
 		const FExtendedAtlassianIssueUpdate& Update,
 		FExtendedAtlassianActionDelegate OnComplete);
+	/** Builds the Jira v3 update payload used by UpdateIssue. Exposed for contract tests. */
+	static FString BuildIssueUpdateBody(
+		const FExtendedAtlassianIssueUpdate& Update);
+	/**
+	 * Archives an issue through Jira Cloud's experimental archive endpoint.
+	 * Jira restricts this to supported plans and Jira/site administrators.
+	 */
+	static void ArchiveIssue(const FString& IssueKey, FExtendedAtlassianActionDelegate OnComplete);
 	static void DeleteIssue(const FString& IssueKey, FExtendedAtlassianActionDelegate OnComplete);
 	static void GetTransitions(const FString& IssueKey, FExtendedAtlassianTransitionsDelegate OnComplete);
 	static void TransitionIssue(const FString& IssueKey, const FString& TransitionId, FExtendedAtlassianActionDelegate OnComplete);

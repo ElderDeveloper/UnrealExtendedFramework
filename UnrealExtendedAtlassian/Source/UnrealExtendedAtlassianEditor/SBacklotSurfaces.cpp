@@ -5,6 +5,7 @@
 #include "ExtendedAtlassianStyle.h"
 #include "Framework/Application/SlateApplication.h"
 #include "Rendering/DrawElements.h"
+#include "SBacklotStylePrimitives.h"
 
 void SBacklotSurfaceBase::ConstructSurface(const TSharedRef<SWidget>& Content)
 {
@@ -50,22 +51,17 @@ int32 SBacklotSurfaceBase::OnPaint(
 	const FVector2D BottomRight = AllottedGeometry.AbsoluteToLocal(
 		FocusedGeometry.LocalToAbsolute(FocusedGeometry.GetLocalSize()));
 	const FVector2D FocusedSize = BottomRight - TopLeft;
-	const float Expansion =
-		FExtendedAtlassianStyle::Metric(TEXT("Backlot.Metric.Focus.OutlineWidth"))
-		+ FExtendedAtlassianStyle::Metric(TEXT("Backlot.Metric.Focus.OutlineOffset"));
-	FSlateDrawElement::MakeBox(
+	BacklotStylePrimitives::PaintFocusRing(
 		OutDrawElements,
 		ContentLayer + 1,
-		AllottedGeometry.ToPaintGeometry(
-			FVector2f(
-				static_cast<float>(FocusedSize.X) + Expansion * 2.0f,
-				static_cast<float>(FocusedSize.Y) + Expansion * 2.0f),
-			FSlateLayoutTransform(FVector2f(
-				static_cast<float>(TopLeft.X) - Expansion,
-				static_cast<float>(TopLeft.Y) - Expansion))),
-		FExtendedAtlassianStyle::Get().GetBrush(TEXT("Backlot.Brush.FocusRing")),
-		ESlateDrawEffect::None,
-		InWidgetStyle.GetColorAndOpacityTint());
+		AllottedGeometry,
+		TopLeft,
+		FocusedSize,
+		FExtendedAtlassianStyle::Metric(TEXT("Backlot.Metric.Focus.OutlineWidth")),
+		FExtendedAtlassianStyle::Metric(TEXT("Backlot.Metric.Focus.OutlineOffset")),
+		FExtendedAtlassianStyle::Metric(TEXT("Backlot.Metric.Focus.OutlineRadius")),
+		FExtendedAtlassianStyle::FromHex(TEXT("#58a6ff"))
+			* InWidgetStyle.GetColorAndOpacityTint());
 	return ContentLayer + 1;
 }
 

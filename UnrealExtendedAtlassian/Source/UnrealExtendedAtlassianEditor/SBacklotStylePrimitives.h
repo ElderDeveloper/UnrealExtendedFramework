@@ -58,6 +58,21 @@ namespace BacklotEasing
 	float EaseInOut(float T);
 }
 
+/** Shared brush-free focus outline painter used by explicit controls and route surfaces. */
+namespace BacklotStylePrimitives
+{
+	void PaintFocusRing(
+		FSlateWindowElementList& OutDrawElements,
+		int32 LayerId,
+		const FGeometry& OwnerGeometry,
+		const FVector2D& TopLeft,
+		const FVector2D& Size,
+		float OutlineWidth,
+		float OutlineOffset,
+		float CornerRadius,
+		const FLinearColor& Color);
+}
+
 /**
  * Reproduces the authored `bl-in` and `bl-toast` keyframes: opacity 0 -> 1 with a
  * translateY rise and an optional 0.99 -> 1 scale. The animation is advanced by a
@@ -197,22 +212,6 @@ private:
 	float OutlineOffset = 1.0f;
 	float CornerRadius = 4.0f;
 	bool bAlwaysShow = false;
-
-	/**
-	 * The ring brush, owned by the widget rather than built on the stack in OnPaint.
-	 *
-	 * FSlateDrawElement::MakeBox stores the brush *pointer* and Slate dereferences it later, when
-	 * the batch is rendered. A brush built as a local dies the moment OnPaint returns, so the
-	 * render pass read freed memory and painted a plain white box over the focused widget. Every
-	 * other brush in this file is `static` for exactly this reason.
-	 *
-	 * All four inputs are fixed per instance, so this is built once in Construct.
-	 */
-	FSlateRoundedBoxBrush RingBrush{
-		FLinearColor::Transparent,
-		0.0f,
-		FLinearColor::Transparent,
-		0.0f};
 };
 
 /**

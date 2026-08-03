@@ -74,6 +74,12 @@ public:
 	bool IsReady() const;
 
 	/**
+	 * Starts one guarded background refresh of the cached account identity.
+	 * A previously verified user remains available immediately while the request is in flight.
+	 */
+	void EnsureUserInfo();
+
+	/**
 	 * Verifies the cached credentials against GET /rest/api/3/myself and updates the auth state.
 	 * OnDone runs on the game thread.
 	 */
@@ -109,4 +115,8 @@ private:
 	FExtendedAtlassianError LastAuthError;
 	EExtendedAtlassianAuthState AuthState = EExtendedAtlassianAuthState::NotConfigured;
 	FOnAuthStateChanged AuthStateChanged;
+	bool bAutomaticUserRefreshStarted = false;
+	bool bAutomaticUserRefreshInFlight = false;
+	/** Invalidates callbacks started for credentials that have since changed. */
+	uint64 CredentialGeneration = 0;
 };

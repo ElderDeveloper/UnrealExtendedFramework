@@ -22,6 +22,7 @@ enum class EExtendedAtlassianWorkspaceMutation : uint8
 {
 	CreateIssue,
 	UpdateIssue,
+	ArchiveIssue,
 	DeleteIssue,
 	TransitionIssue,
 	RankIssue,
@@ -34,6 +35,7 @@ enum class EExtendedAtlassianWorkspaceMutation : uint8
 	ReopenIssueComment,
 	CreatePage,
 	UpdatePage,
+	ArchivePage,
 	DeletePage,
 	MovePage,
 	DuplicatePage,
@@ -72,6 +74,8 @@ struct FExtendedAtlassianWorkspaceMutation
 	TArray<FString> OrderedIds;
 	TArray<uint8> AttachmentBytes;
 	uint64 ClientMutationId = 0;
+	/** Navigate to the provider-returned result id after this mutation succeeds. */
+	bool bOpenResultOnSuccess = false;
 };
 
 DECLARE_DELEGATE_TwoParams(
@@ -79,10 +83,11 @@ DECLARE_DELEGATE_TwoParams(
 	const FExtendedAtlassianWorkspaceRequest&,
 	const FExtendedAtlassianWorkspaceSnapshot&);
 
-DECLARE_DELEGATE_ThreeParams(
+DECLARE_DELEGATE_FourParams(
 	FExtendedAtlassianWorkspaceMutationDelegate,
 	uint64,
 	bool,
+	const FString&,
 	const FExtendedAtlassianError&);
 
 /**

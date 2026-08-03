@@ -10,6 +10,7 @@
 class FActiveTimerHandle;
 class ITableRow;
 class SEditableTextBox;
+class SExtendedAtlassianDocumentView;
 class SMultiLineEditableTextBox;
 class STableViewBase;
 class SWidget;
@@ -63,11 +64,13 @@ private:
 	void ApplySort();
 
 	void LoadDetailsFor(FIssuePtr Issue);
+	void RefreshDescription();
 
 	/** Consumes PendingSelectKey against the freshly loaded results. */
 	void SelectPendingIssue();
 	void PostComment();
 	void ApplyTransition(FTransitionPtr Transition);
+	void ArchiveSelectedIssue();
 
 	EActiveTimerReturnType HandlePollTimer(double InCurrentTime, float InDeltaTime);
 
@@ -89,6 +92,7 @@ private:
 	TArray<FIssuePtr> Issues;
 	TSharedPtr<SListView<FIssuePtr>> IssueListView;
 	FIssuePtr SelectedIssue;
+	TSharedPtr<SExtendedAtlassianDocumentView> DescriptionView;
 
 	/** Key to select after the next query returns, set when an issue is created from this tab. */
 	FString PendingSelectKey;

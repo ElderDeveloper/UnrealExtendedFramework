@@ -129,8 +129,10 @@ struct FExtendedAtlassianIssue
 	FString Key;
 	FString Summary;
 
-	/** Description with ADF flattened to plain text. */
+	/** Plain-text edit/search representation of the Jira ADF description. */
 	FString Description;
+	/** Structured description consumed by the same document viewer as Confluence pages. */
+	TArray<FExtendedAtlassianDocBlock> DescriptionBlocks;
 
 	FString StatusName;
 	FString StatusId;
@@ -252,6 +254,8 @@ struct FExtendedAtlassianIssueUpdate
 	TOptional<FString> AssigneeAccountId;
 	TOptional<FString> ParentId;
 	TOptional<FString> ParentKey;
+	/** Emits Jira's update.parent set-null operation instead of an empty parent key. */
+	bool bClearParent = false;
 
 	/** Jira Software estimate field discovered/configured for this project. */
 	FString EstimateFieldId;
@@ -493,6 +497,8 @@ struct FExtendedAtlassianIssueThread
 struct FExtendedAtlassianTeamLoad
 {
 	FExtendedAtlassianUser User;
+	/** Open, non-done issues assigned to this person; independent of story-point hydration. */
+	int32 OpenIssueCount = 0;
 	double OpenPoints = 0.0;
 	double Fraction = 0.0;
 	FString ThresholdColor;
@@ -584,6 +590,8 @@ struct FExtendedAtlassianCapabilities
 	bool bCanCreateIssues = false;
 	bool bCanEditIssues = false;
 	bool bCanDeleteIssues = false;
+	/** UI exposure only; Jira still authoritatively checks plan and administrator eligibility. */
+	bool bCanArchiveIssues = false;
 	bool bCanAssignIssues = false;
 	bool bCanTransitionIssues = false;
 	bool bCanRankIssues = false;
@@ -591,6 +599,8 @@ struct FExtendedAtlassianCapabilities
 	bool bCanReadPages = false;
 	bool bCanEditPages = false;
 	bool bCanDeletePages = false;
+	/** UI exposure only; Confluence still authoritatively checks Archive permission per page. */
+	bool bCanArchivePages = false;
 	bool bCanComment = false;
 	bool bCanUseSharedMetadata = false;
 };

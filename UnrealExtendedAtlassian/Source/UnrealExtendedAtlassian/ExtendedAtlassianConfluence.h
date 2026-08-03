@@ -62,6 +62,9 @@ public:
 		int32 ExpectedVersion,
 		FExtendedAtlassianPageDelegate OnComplete);
 
+	/** Sends a page to Confluence's archive queue. The endpoint normally accepts with HTTP 202. */
+	static void ArchivePage(const FString& PageId, FExtendedAtlassianActionDelegate OnComplete);
+
 	/** Moves a page to the trash. */
 	static void DeletePage(const FString& PageId, FExtendedAtlassianActionDelegate OnComplete);
 

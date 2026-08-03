@@ -170,15 +170,24 @@ void FExtendedAtlassianFixtureWorkspaceData::Mutate(
 	{
 		if (Completion.IsBound())
 		{
-			Completion.Execute(Mutation.ClientMutationId, false, Snapshot.Error);
+			Completion.Execute(
+				Mutation.ClientMutationId,
+				false,
+				FString(),
+				Snapshot.Error);
 		}
 		return;
 	}
 
 	ApplyMutation(Mutation);
+	ExtendedAtlassianModelUtils::RefreshTeamLoadIssueCounts(Snapshot);
 	if (Completion.IsBound())
 	{
-		Completion.Execute(Mutation.ClientMutationId, true, FExtendedAtlassianError());
+		Completion.Execute(
+			Mutation.ClientMutationId,
+			true,
+			Mutation.TargetId,
+			FExtendedAtlassianError());
 	}
 }
 
@@ -223,6 +232,7 @@ bool FExtendedAtlassianFixtureWorkspaceData::LoadFixture()
 	}
 
 	ParseFixture(Root.ToSharedRef());
+	ExtendedAtlassianModelUtils::RefreshTeamLoadIssueCounts(Snapshot);
 	return true;
 }
 
@@ -242,6 +252,7 @@ void FExtendedAtlassianFixtureWorkspaceData::ParseFixture(const TSharedRef<FJson
 	Snapshot.Capabilities.bCanCreateIssues = true;
 	Snapshot.Capabilities.bCanEditIssues = true;
 	Snapshot.Capabilities.bCanDeleteIssues = true;
+	Snapshot.Capabilities.bCanArchiveIssues = true;
 	Snapshot.Capabilities.bCanAssignIssues = true;
 	Snapshot.Capabilities.bCanTransitionIssues = true;
 	Snapshot.Capabilities.bCanRankIssues = true;
@@ -249,6 +260,7 @@ void FExtendedAtlassianFixtureWorkspaceData::ParseFixture(const TSharedRef<FJson
 	Snapshot.Capabilities.bCanReadPages = true;
 	Snapshot.Capabilities.bCanEditPages = true;
 	Snapshot.Capabilities.bCanDeletePages = true;
+	Snapshot.Capabilities.bCanArchivePages = true;
 	Snapshot.Capabilities.bCanComment = true;
 	Snapshot.Capabilities.bCanUseSharedMetadata = true;
 
@@ -680,6 +692,16 @@ void FExtendedAtlassianFixtureWorkspaceData::ParseFixture(const TSharedRef<FJson
 	{
 		FExtendedAtlassianTeamLoad Load;
 		Load.User = Snapshot.People[PersonIndex];
+		for (const FExtendedAtlassianIssue& Issue : Snapshot.Issues)
+		{
+			if (Issue.AssigneeAccountId == Load.User.AccountId
+				&& !Issue.StatusCategoryKey.Equals(
+					TEXT("done"),
+					ESearchCase::IgnoreCase))
+			{
+				++Load.OpenIssueCount;
+			}
+		}
 		const int32 ContractIndex = FMath::Min(
 			PersonIndex,
 			static_cast<int32>(UE_ARRAY_COUNT(TeamPoints)) - 1);
@@ -924,6 +946,7 @@ void FExtendedAtlassianFixtureWorkspaceData::ApplyMutation(
 		}
 		break;
 
+	case EExtendedAtlassianWorkspaceMutation::ArchiveIssue:
 	case EExtendedAtlassianWorkspaceMutation::DeleteIssue:
 		Snapshot.Issues.RemoveAll(
 			[&Mutation](const FExtendedAtlassianIssue& Issue) { return Issue.Key == Mutation.TargetId; });

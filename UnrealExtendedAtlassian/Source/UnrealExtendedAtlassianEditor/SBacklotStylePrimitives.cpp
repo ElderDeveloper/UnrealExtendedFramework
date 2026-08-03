@@ -7,6 +7,87 @@
 #include "Rendering/DrawElements.h"
 #include "Widgets/Views/STableRow.h"
 
+namespace BacklotStylePrimitives
+{
+	void PaintFocusRing(
+		FSlateWindowElementList& OutDrawElements,
+		int32 LayerId,
+		const FGeometry& OwnerGeometry,
+		const FVector2D& TopLeft,
+		const FVector2D& Size,
+		float OutlineWidth,
+		float OutlineOffset,
+		float CornerRadius,
+		const FLinearColor& Color)
+	{
+		if (OutlineWidth <= KINDA_SMALL_NUMBER
+			|| Size.X <= KINDA_SMALL_NUMBER
+			|| Size.Y <= KINDA_SMALL_NUMBER)
+		{
+			return;
+		}
+
+		const float HalfWidth = OutlineWidth * 0.5f;
+		const float Expansion = FMath::Max(0.0f, OutlineOffset) + HalfWidth;
+		const FVector2D Min = TopLeft - FVector2D(Expansion);
+		const FVector2D Max = TopLeft + Size + FVector2D(Expansion);
+		const float Radius = FMath::Clamp(
+			FMath::Max(0.0f, CornerRadius) + Expansion,
+			0.0f,
+			FMath::Min(Max.X - Min.X, Max.Y - Min.Y) * 0.5f);
+
+		TArray<FVector2D> Points;
+		if (Radius <= KINDA_SMALL_NUMBER)
+		{
+			Points = {
+				FVector2D(Min.X, Min.Y),
+				FVector2D(Max.X, Min.Y),
+				FVector2D(Max.X, Max.Y),
+				FVector2D(Min.X, Max.Y),
+				FVector2D(Min.X, Min.Y)};
+		}
+		else
+		{
+			constexpr int32 SegmentsPerCorner = 4;
+			Points.Reserve((SegmentsPerCorner + 1) * 4 + 1);
+			const auto AddCorner =
+				[&Points, Radius](const FVector2D& Center, float StartAngle)
+				{
+					for (int32 Segment = 0; Segment <= SegmentsPerCorner; ++Segment)
+					{
+						const float Angle = StartAngle
+							+ HALF_PI * static_cast<float>(Segment)
+								/ static_cast<float>(SegmentsPerCorner);
+						Points.Emplace(
+							Center.X + FMath::Cos(Angle) * Radius,
+							Center.Y + FMath::Sin(Angle) * Radius);
+					}
+				};
+
+			AddCorner(FVector2D(Max.X - Radius, Min.Y + Radius), -HALF_PI);
+			AddCorner(FVector2D(Max.X - Radius, Max.Y - Radius), 0.0f);
+			AddCorner(FVector2D(Min.X + Radius, Max.Y - Radius), HALF_PI);
+			AddCorner(FVector2D(Min.X + Radius, Min.Y + Radius), PI);
+			// TArray rejects Add() arguments that alias one of its own elements. Copy the
+			// first point before closing the loop so a capacity change cannot invalidate it.
+			const FVector2D FirstPoint = Points[0];
+			Points.Add(FirstPoint);
+		}
+
+		// MakeLines records geometry rather than a brush pointer. It therefore cannot fall back to
+		// the renderer's opaque white default, which previously covered focused controls.
+		FSlateDrawElement::MakeLines(
+			OutDrawElements,
+			LayerId,
+			OwnerGeometry.ToPaintGeometry(),
+			Points,
+			ESlateDrawEffect::None,
+			Color,
+			true,
+			OutlineWidth);
+	}
+}
+
 void SBacklotDiagonalPattern::Construct(const FArguments& InArgs)
 {
 	ColorA = InArgs._ColorA;
@@ -311,11 +392,6 @@ void SBacklotFocusRing::Construct(const FArguments& InArgs)
 	OutlineOffset = FMath::Max(0.0f, InArgs._OutlineOffset);
 	CornerRadius = FMath::Max(0.0f, InArgs._CornerRadius);
 	bAlwaysShow = InArgs._AlwaysShow;
-	RingBrush = FSlateRoundedBoxBrush(
-		FLinearColor::Transparent,
-		CornerRadius + OutlineOffset + OutlineWidth,
-		Color,
-		OutlineWidth);
 	SetCanTick(false);
 	SetClipping(EWidgetClipping::OnDemand);
 	ChildSlot
@@ -346,21 +422,17 @@ int32 SBacklotFocusRing::OnPaint(
 		return ContentLayer;
 	}
 
-	const float Expansion = OutlineOffset + OutlineWidth;
 	const FVector2D Size = AllottedGeometry.GetLocalSize();
-	FSlateDrawElement::MakeBox(
+	BacklotStylePrimitives::PaintFocusRing(
 		OutDrawElements,
 		ContentLayer + 1,
-		AllottedGeometry.ToPaintGeometry(
-			FVector2f(
-				static_cast<float>(Size.X) + Expansion * 2.0f,
-				static_cast<float>(Size.Y) + Expansion * 2.0f),
-			FSlateLayoutTransform(FVector2f(-Expansion, -Expansion))),
-		// Owned by the widget: see RingBrush. A stack brush here is freed before the
-		// render pass reads it, which painted a white box instead of an outline.
-		&RingBrush,
-		ESlateDrawEffect::None,
-		InWidgetStyle.GetColorAndOpacityTint());
+		AllottedGeometry,
+		FVector2D::ZeroVector,
+		Size,
+		OutlineWidth,
+		OutlineOffset,
+		CornerRadius,
+		Color * InWidgetStyle.GetColorAndOpacityTint());
 	return ContentLayer + 1;
 }
 

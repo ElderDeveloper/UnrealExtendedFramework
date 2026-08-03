@@ -13,6 +13,7 @@
 
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
+#include "Containers/Ticker.h"
 #include "GenericPlatform/GenericPlatformHttp.h"
 #include "Policies/CondensedJsonPrintPolicy.h"
 #include "Serialization/JsonSerializer.h"
@@ -25,6 +26,140 @@ namespace ExtendedAtlassianConfluencePrivate
 
 	/** Backstop so a huge space cannot page indefinitely. */
 	constexpr int32 MaxPagesFetched = 2000;
+
+	/** Archive is asynchronous. Poll longtask for at most one minute before reporting a timeout. */
+	constexpr int32 MaxArchiveTaskPolls = 60;
+	constexpr float ArchiveTaskPollSeconds = 1.0f;
+
+	struct FArchiveTaskPoll
+	{
+		TWeakPtr<FExtendedAtlassianClient> Client;
+		FString StatusUrl;
+		FExtendedAtlassianActionDelegate Completion;
+		int32 Attempts = 0;
+	};
+
+	FString LongTaskErrorMessage(const TSharedPtr<FJsonObject>& Object)
+	{
+		if (!Object.IsValid())
+		{
+			return FString();
+		}
+		TArray<FString> Messages;
+		const TArray<TSharedPtr<FJsonValue>>* Errors = nullptr;
+		if (Object->TryGetArrayField(TEXT("errors"), Errors))
+		{
+			for (const TSharedPtr<FJsonValue>& Value : *Errors)
+			{
+				const TSharedPtr<FJsonObject>* ErrorObject = nullptr;
+				FString Message;
+				if (Value.IsValid()
+					&& Value->TryGetObject(ErrorObject)
+					&& ErrorObject->IsValid()
+					&& (*ErrorObject)->TryGetStringField(TEXT("translation"), Message)
+					&& !Message.IsEmpty())
+				{
+					Messages.Add(MoveTemp(Message));
+				}
+			}
+		}
+		if (Messages.Num() == 0)
+		{
+			FString Status;
+			Object->TryGetStringField(TEXT("status"), Status);
+			if (!Status.IsEmpty())
+			{
+				Messages.Add(Status);
+			}
+		}
+		return FString::Join(Messages, TEXT("; "));
+	}
+
+	void PollArchiveTask(const TSharedRef<FArchiveTaskPoll>& Poll);
+
+	void ScheduleArchiveTaskPoll(const TSharedRef<FArchiveTaskPoll>& Poll)
+	{
+		FTSTicker::GetCoreTicker().AddTicker(
+			FTickerDelegate::CreateLambda(
+				[Poll](float)
+				{
+					PollArchiveTask(Poll);
+					return false;
+				}),
+			ArchiveTaskPollSeconds);
+	}
+
+	void PollArchiveTask(const TSharedRef<FArchiveTaskPoll>& Poll)
+	{
+		const TSharedPtr<FExtendedAtlassianClient> Client = Poll->Client.Pin();
+		if (!Client.IsValid())
+		{
+			FExtendedAtlassianError Error;
+			Error.Code = TEXT("NotReady");
+			Error.Message = TEXT("The Atlassian transport module stopped while Confluence was archiving the page.");
+			Poll->Completion.ExecuteIfBound(false, Error);
+			Poll->Completion.Unbind();
+			return;
+		}
+		if (++Poll->Attempts > MaxArchiveTaskPolls)
+		{
+			FExtendedAtlassianError Error;
+			Error.Code = TEXT("ArchiveTimeout");
+			Error.Message = TEXT("Confluence did not finish archiving the page within one minute. Refresh the space before trying again.");
+			Error.bRetryable = true;
+			Poll->Completion.ExecuteIfBound(false, Error);
+			Poll->Completion.Unbind();
+			return;
+		}
+
+		Client->Get(
+			Poll->StatusUrl,
+			FExtendedAtlassianResponseDelegate::CreateLambda(
+				[Poll](const FExtendedAtlassianResponse& Response)
+				{
+					if (!Response.IsSuccess() || !Response.Object.IsValid())
+					{
+						Poll->Completion.ExecuteIfBound(false, Response.Error);
+						Poll->Completion.Unbind();
+						return;
+					}
+					bool bFinished = false;
+					if (!Response.Object->TryGetBoolField(TEXT("finished"), bFinished))
+					{
+						FExtendedAtlassianError Error;
+						Error.Code = TEXT("UnexpectedResponse");
+						Error.Message = TEXT("Confluence returned an archive task without completion state.");
+						Poll->Completion.ExecuteIfBound(false, Error);
+						Poll->Completion.Unbind();
+						return;
+					}
+					if (!bFinished)
+					{
+						ScheduleArchiveTaskPoll(Poll);
+						return;
+					}
+
+					bool bSuccessful = false;
+					Response.Object->TryGetBoolField(TEXT("successful"), bSuccessful);
+					if (bSuccessful)
+					{
+						Poll->Completion.ExecuteIfBound(true, FExtendedAtlassianError());
+						Poll->Completion.Unbind();
+						return;
+					}
+
+					FExtendedAtlassianError Error;
+					Error.HttpStatus = Response.HttpStatus;
+					Error.Code = TEXT("ArchiveFailed");
+					Error.Message = LongTaskErrorMessage(Response.Object);
+					if (Error.Message.IsEmpty())
+					{
+						Error.Message = TEXT("Confluence could not archive the page.");
+					}
+					Poll->Completion.ExecuteIfBound(false, Error);
+					Poll->Completion.Unbind();
+				}));
+	}
 
 	bool GetClientAndSettings(TSharedPtr<FExtendedAtlassianClient>& OutClient, const UExtendedAtlassianSettings*& OutSettings, FExtendedAtlassianError& OutError)
 	{
@@ -594,6 +729,104 @@ void FExtendedAtlassianConfluence::DeletePage(const FString& PageId, FExtendedAt
 		{
 			OnComplete.ExecuteIfBound(Response.IsSuccess(), Response.Error);
 		}));
+}
+
+void FExtendedAtlassianConfluence::ArchivePage(
+	const FString& PageId,
+	FExtendedAtlassianActionDelegate OnComplete)
+{
+	using namespace ExtendedAtlassianConfluencePrivate;
+
+	TSharedPtr<FExtendedAtlassianClient> Client;
+	const UExtendedAtlassianSettings* Settings = nullptr;
+	FExtendedAtlassianError Error;
+	int64 NumericPageId = 0;
+
+	if (!GetClientAndSettings(Client, Settings, Error))
+	{
+		OnComplete.ExecuteIfBound(false, Error);
+		return;
+	}
+	if (!LexTryParseString(NumericPageId, *PageId) || NumericPageId <= 0)
+	{
+		Error.Code = TEXT("BadRequest");
+		Error.Message = TEXT("Confluence page archive requires a numeric page id.");
+		OnComplete.ExecuteIfBound(false, Error);
+		return;
+	}
+
+	FString Body;
+	const TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> Writer =
+		TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&Body);
+	Writer->WriteObjectStart();
+	Writer->WriteArrayStart(TEXT("pages"));
+	Writer->WriteObjectStart();
+	Writer->WriteValue(TEXT("id"), NumericPageId);
+	Writer->WriteObjectEnd();
+	Writer->WriteArrayEnd();
+	Writer->WriteObjectEnd();
+	Writer->Close();
+
+	Client->PostJson(
+		Settings->GetConfluenceV1ApiBaseUrl() + TEXT("/content/archive"),
+		Body,
+		FExtendedAtlassianResponseDelegate::CreateLambda(
+			[Client, Settings, OnComplete](const FExtendedAtlassianResponse& Response)
+			{
+				if (!Response.IsSuccess())
+				{
+					OnComplete.ExecuteIfBound(false, Response.Error);
+					return;
+				}
+				if (!Response.Object.IsValid())
+				{
+					FExtendedAtlassianError Failure;
+					Failure.HttpStatus = Response.HttpStatus;
+					Failure.Code = TEXT("UnexpectedResponse");
+					Failure.Message = TEXT("Confluence accepted the archive request but did not return task details.");
+					OnComplete.ExecuteIfBound(false, Failure);
+					return;
+				}
+
+				FString TaskId;
+				Response.Object->TryGetStringField(TEXT("id"), TaskId);
+				if (TaskId.IsEmpty())
+				{
+					FExtendedAtlassianError Failure;
+					Failure.HttpStatus = Response.HttpStatus;
+					Failure.Code = TEXT("UnexpectedResponse");
+					Failure.Message = TEXT("Confluence accepted the archive request but did not return a task id.");
+					OnComplete.ExecuteIfBound(false, Failure);
+					return;
+				}
+
+				FString StatusUrl;
+				const TSharedPtr<FJsonObject>* Links = nullptr;
+				if (Response.Object->TryGetObjectField(TEXT("links"), Links)
+					&& Links->IsValid())
+				{
+					(*Links)->TryGetStringField(TEXT("status"), StatusUrl);
+				}
+				if (StatusUrl.StartsWith(TEXT("/")))
+				{
+					StatusUrl = Settings->GetNormalizedSiteUrl() + StatusUrl;
+				}
+				else if (!StatusUrl.StartsWith(TEXT("http://"))
+					&& !StatusUrl.StartsWith(TEXT("https://")))
+				{
+					StatusUrl = FString::Printf(
+						TEXT("%s/longtask/%s"),
+						*Settings->GetConfluenceV1ApiBaseUrl(),
+						*FGenericPlatformHttp::UrlEncode(TaskId));
+				}
+
+				const TSharedRef<FArchiveTaskPoll> Poll =
+					MakeShared<FArchiveTaskPoll>();
+				Poll->Client = Client;
+				Poll->StatusUrl = MoveTemp(StatusUrl);
+				Poll->Completion = OnComplete;
+				PollArchiveTask(Poll);
+			}));
 }
 
 void FExtendedAtlassianConfluence::Search(const FString& Cql, FExtendedAtlassianPagesDelegate OnComplete)

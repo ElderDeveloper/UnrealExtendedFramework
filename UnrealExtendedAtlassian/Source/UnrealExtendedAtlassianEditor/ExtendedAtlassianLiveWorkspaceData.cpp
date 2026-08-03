@@ -431,6 +431,25 @@ namespace ExtendedAtlassianLiveWorkspacePrivate
 			TEXT("#bce5d9"), TEXT("#ddd5e8")
 		};
 		TArray<FExtendedAtlassianUser> TeamPeople = Snapshot.People;
+		if (Snapshot.CurrentUser.IsValid())
+		{
+			const int32 CurrentUserIndex = TeamPeople.IndexOfByPredicate(
+				[&Snapshot](const FExtendedAtlassianUser& Person)
+				{
+					return Person.AccountId == Snapshot.CurrentUser.AccountId;
+				});
+			if (CurrentUserIndex == INDEX_NONE)
+			{
+				TeamPeople.Insert(Snapshot.CurrentUser, 0);
+			}
+			else if (CurrentUserIndex > 0)
+			{
+				FExtendedAtlassianUser CurrentUser =
+					MoveTemp(TeamPeople[CurrentUserIndex]);
+				TeamPeople.RemoveAt(CurrentUserIndex);
+				TeamPeople.Insert(MoveTemp(CurrentUser), 0);
+			}
+		}
 		for (const FExtendedAtlassianIssue& Issue : Snapshot.Issues)
 		{
 			if (Issue.AssigneeAccountId.IsEmpty()
@@ -458,7 +477,10 @@ namespace ExtendedAtlassianLiveWorkspacePrivate
 					{
 						return Issue.AssigneeAccountId == Person.AccountId;
 					});
-			if (!bHasSprintWork)
+			const bool bIsCurrentUser =
+				!Snapshot.CurrentUser.AccountId.IsEmpty()
+				&& Person.AccountId == Snapshot.CurrentUser.AccountId;
+			if (!bHasSprintWork && !bIsCurrentUser)
 			{
 				continue;
 			}
@@ -489,6 +511,7 @@ namespace ExtendedAtlassianLiveWorkspacePrivate
 						TEXT("done"),
 						ESearchCase::IgnoreCase))
 				{
+					++Load.OpenIssueCount;
 					Load.OpenPoints += Issue.Estimate;
 				}
 			}
@@ -510,6 +533,7 @@ FExtendedAtlassianLiveWorkspaceData::FExtendedAtlassianLiveWorkspaceData()
 	Capabilities.bCanCreateIssues = true;
 	Capabilities.bCanEditIssues = true;
 	Capabilities.bCanDeleteIssues = true;
+	Capabilities.bCanArchiveIssues = true;
 	Capabilities.bCanAssignIssues = true;
 	Capabilities.bCanTransitionIssues = true;
 	Capabilities.bCanRankIssues = true;
@@ -517,6 +541,7 @@ FExtendedAtlassianLiveWorkspaceData::FExtendedAtlassianLiveWorkspaceData()
 	Capabilities.bCanReadPages = true;
 	Capabilities.bCanEditPages = true;
 	Capabilities.bCanDeletePages = true;
+	Capabilities.bCanArchivePages = true;
 	Capabilities.bCanComment = true;
 }
 
@@ -1475,6 +1500,22 @@ void FExtendedAtlassianLiveWorkspaceData::Mutate(
 	{
 		CompleteMutation(MutationId, Completion, bSuccess, Error);
 	};
+	const auto FinishWithResult = [
+		this,
+		MutationId = Mutation.ClientMutationId,
+		Completion
+	](
+		const FString& ResultId,
+		bool bSuccess,
+		const FExtendedAtlassianError& Error)
+	{
+		CompleteMutation(
+			MutationId,
+			Completion,
+			bSuccess,
+			Error,
+			ResultId);
+	};
 	auto PinKind = [](const FString& Value)
 	{
 		if (Value == TEXT("LEVEL"))
@@ -1574,6 +1615,7 @@ void FExtendedAtlassianLiveWorkspaceData::Mutate(
 				FExtendedAtlassianCreateIssueDelegate::CreateLambda(
 					[
 						Finish,
+						FinishWithResult,
 						Attachment = Mutation.AttachmentBytes,
 						RequestedStatusId = Field(TEXT("statusId")),
 						RequestedStatus = Field(TEXT("status")),
@@ -1589,7 +1631,16 @@ void FExtendedAtlassianLiveWorkspaceData::Mutate(
 							Finish(false, Error);
 							return;
 						}
-						const auto AfterTransition = [Finish, IssueKey, Attachment](
+						const auto FinishCreated = [FinishWithResult, IssueKey](
+							bool bCreatedSuccess,
+							const FExtendedAtlassianError& CreatedError)
+						{
+							FinishWithResult(
+								IssueKey,
+								bCreatedSuccess,
+								CreatedError);
+						};
+						const auto AfterTransition = [FinishCreated, IssueKey, Attachment](
 							bool bTransitionSuccess,
 							const FExtendedAtlassianError& TransitionError)
 						{
@@ -1601,12 +1652,12 @@ void FExtendedAtlassianLiveWorkspaceData::Mutate(
 									TEXT("%s was created, but its requested status could not be applied: %s"),
 									*IssueKey,
 									*TransitionError.Message);
-								Finish(true, Warning);
+								FinishCreated(true, Warning);
 								return;
 							}
 							if (Attachment.IsEmpty())
 							{
-								Finish(true, FExtendedAtlassianError());
+								FinishCreated(true, FExtendedAtlassianError());
 								return;
 							}
 							FExtendedAtlassianJira::AddAttachment(
@@ -1615,13 +1666,13 @@ void FExtendedAtlassianLiveWorkspaceData::Mutate(
 								TEXT("image/png"),
 								Attachment,
 								FExtendedAtlassianActionDelegate::CreateLambda(
-									[Finish, IssueKey](
+									[FinishCreated, IssueKey](
 										bool bAttachmentSuccess,
 										const FExtendedAtlassianError& AttachmentError)
 									{
 										if (bAttachmentSuccess)
 										{
-											Finish(true, FExtendedAtlassianError());
+											FinishCreated(true, FExtendedAtlassianError());
 											return;
 										}
 										FExtendedAtlassianError Warning = AttachmentError;
@@ -1630,12 +1681,12 @@ void FExtendedAtlassianLiveWorkspaceData::Mutate(
 											TEXT("%s was created, but backlot-capture.png failed to upload: %s"),
 											*IssueKey,
 											*AttachmentError.Message);
-										Finish(true, Warning);
+										FinishCreated(true, Warning);
 									}));
 						};
 						const auto AfterEstimate =
 							[
-								Finish,
+								FinishCreated,
 								IssueKey,
 								RequestedStatusId,
 								RequestedStatus,
@@ -1652,7 +1703,7 @@ void FExtendedAtlassianLiveWorkspaceData::Mutate(
 									TEXT("%s was created, but the estimate could not be applied: %s"),
 									*IssueKey,
 									*EstimateError.Message);
-								Finish(true, Warning);
+								FinishCreated(true, Warning);
 								return;
 							}
 							if (RequestedStatusId.IsEmpty()
@@ -1720,11 +1771,26 @@ void FExtendedAtlassianLiveWorkspaceData::Mutate(
 			}
 			if (Mutation.Fields.Contains(TEXT("epic")))
 			{
-				Update.ParentKey = ResolveParentKey(Field(TEXT("epic")));
+				const FString Epic = Field(TEXT("epic"));
+				if (Epic.IsEmpty())
+				{
+					Update.bClearParent = true;
+					Update.ParentId.Reset();
+					Update.ParentKey.Reset();
+				}
+				else
+				{
+					Update.ParentKey = ResolveParentKey(Epic);
+				}
 			}
 			if (Mutation.Fields.Contains(TEXT("epicId")))
 			{
-				Update.ParentId = Field(TEXT("epicId"));
+				const FString EpicId = Field(TEXT("epicId"));
+				Update.bClearParent = EpicId.IsEmpty();
+				if (!Update.bClearParent)
+				{
+					Update.ParentId = EpicId;
+				}
 				Update.ParentKey.Reset();
 			}
 			const FString RequestedStatusId = Field(TEXT("statusId"));
@@ -1845,6 +1911,12 @@ void FExtendedAtlassianLiveWorkspaceData::Mutate(
 
 	case EExtendedAtlassianWorkspaceMutation::DeleteIssue:
 		FExtendedAtlassianJira::DeleteIssue(
+			Mutation.TargetId,
+			FExtendedAtlassianActionDelegate::CreateLambda(Finish));
+		return;
+
+	case EExtendedAtlassianWorkspaceMutation::ArchiveIssue:
+		FExtendedAtlassianJira::ArchiveIssue(
 			Mutation.TargetId,
 			FExtendedAtlassianActionDelegate::CreateLambda(Finish));
 		return;
@@ -2312,6 +2384,12 @@ void FExtendedAtlassianLiveWorkspaceData::Mutate(
 			FExtendedAtlassianActionDelegate::CreateLambda(Finish));
 		return;
 
+	case EExtendedAtlassianWorkspaceMutation::ArchivePage:
+		FExtendedAtlassianConfluence::ArchivePage(
+			Mutation.TargetId,
+			FExtendedAtlassianActionDelegate::CreateLambda(Finish));
+		return;
+
 	case EExtendedAtlassianWorkspaceMutation::CreatePin:
 	case EExtendedAtlassianWorkspaceMutation::UpdatePin:
 	case EExtendedAtlassianWorkspaceMutation::DeletePin:
@@ -2431,9 +2509,10 @@ void FExtendedAtlassianLiveWorkspaceData::CompleteMutation(
 	uint64 MutationId,
 	const FExtendedAtlassianWorkspaceMutationDelegate& Completion,
 	bool bSuccess,
-	const FExtendedAtlassianError& Error) const
+	const FExtendedAtlassianError& Error,
+	const FString& ResultId) const
 {
-	Completion.ExecuteIfBound(MutationId, bSuccess, Error);
+	Completion.ExecuteIfBound(MutationId, bSuccess, ResultId, Error);
 }
 
 void FExtendedAtlassianLiveWorkspaceData::CancelGeneration(uint64 Generation)

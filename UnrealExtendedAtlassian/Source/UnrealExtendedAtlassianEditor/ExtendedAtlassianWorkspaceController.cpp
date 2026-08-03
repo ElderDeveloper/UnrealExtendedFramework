@@ -273,6 +273,23 @@ void FExtendedAtlassianWorkspaceController::CycleAssigneeFilter()
 	BroadcastChanged();
 }
 
+void FExtendedAtlassianWorkspaceController::SetAssigneeFilter(
+	const FString& AccountId)
+{
+	const FString Trimmed = AccountId.TrimStartAndEnd();
+	const FString Normalized =
+		Trimmed.IsEmpty()
+		|| Trimmed.Equals(TEXT("anyone"), ESearchCase::IgnoreCase)
+			? FString(TEXT("anyone"))
+			: Trimmed;
+	if (AssigneeFilter == Normalized)
+	{
+		return;
+	}
+	AssigneeFilter = Normalized;
+	BroadcastChanged();
+}
+
 void FExtendedAtlassianWorkspaceController::ToggleEpicFilter(const FString& EpicId)
 {
 	EpicFilter = EpicFilter == EpicId ? FString() : EpicId;
@@ -356,6 +373,10 @@ bool FExtendedAtlassianWorkspaceController::CanExecuteMutation(
 		bAllowed = Capabilities.bCanDeleteIssues;
 		RequiredPermission = TEXT("Delete Issues");
 		break;
+	case EExtendedAtlassianWorkspaceMutation::ArchiveIssue:
+		bAllowed = Capabilities.bCanArchiveIssues;
+		RequiredPermission = TEXT("Jira issue archive access");
+		break;
 	case EExtendedAtlassianWorkspaceMutation::TransitionIssue:
 		bAllowed = Capabilities.bCanTransitionIssues;
 		RequiredPermission = TEXT("Transition Issues");
@@ -399,6 +420,10 @@ bool FExtendedAtlassianWorkspaceController::CanExecuteMutation(
 		bAllowed = Capabilities.bCanDeletePages;
 		RequiredPermission = TEXT("Confluence page delete");
 		break;
+	case EExtendedAtlassianWorkspaceMutation::ArchivePage:
+		bAllowed = Capabilities.bCanArchivePages;
+		RequiredPermission = TEXT("Confluence page archive");
+		break;
 	case EExtendedAtlassianWorkspaceMutation::CreatePin:
 	case EExtendedAtlassianWorkspaceMutation::UpdatePin:
 	case EExtendedAtlassianWorkspaceMutation::DeletePin:
@@ -425,7 +450,7 @@ bool FExtendedAtlassianWorkspaceController::CanExecuteMutation(
 	return bAllowed;
 }
 
-void FExtendedAtlassianWorkspaceController::ExecuteMutation(
+bool FExtendedAtlassianWorkspaceController::ExecuteMutation(
 	const FExtendedAtlassianWorkspaceMutation& Mutation)
 {
 	FText PermissionReason;
@@ -436,12 +461,13 @@ void FExtendedAtlassianWorkspaceController::ExecuteMutation(
 		LastMutationError.Message = PermissionReason.ToString();
 		LastMutationError.bRetryable = false;
 		ShowToast(PermissionReason);
-		return;
+		return false;
 	}
 	FExtendedAtlassianWorkspaceMutation Pending = Mutation;
 	EnrichMutationWithStableIds(Pending);
 	Pending.ClientMutationId = NextMutationId++;
 	BeginProviderMutation(Pending, Snapshot, true);
+	return true;
 }
 
 void FExtendedAtlassianWorkspaceController::EnrichMutationWithStableIds(
@@ -549,6 +575,7 @@ void FExtendedAtlassianWorkspaceController::ExecuteDestructiveMutation(
 	PendingDestructive.BeforeSelectedNotificationId = SelectedNotificationId;
 	PendingDestructive.CommitAtSeconds = Clock->NowSeconds() + 7.0;
 	ApplyOptimisticMutation(PendingDestructive.Mutation);
+	ExtendedAtlassianModelUtils::RefreshTeamLoadIssueCounts(Snapshot);
 	EnsureSelections();
 
 	Toast.Key = NextToastKey++;
@@ -623,12 +650,24 @@ void FExtendedAtlassianWorkspaceController::BeginProviderMutation(
 	bool bApplyOptimistically)
 {
 	PendingMutations.Add(Mutation.ClientMutationId);
-	MutationRollbacks.Add(Mutation.ClientMutationId, RollbackSnapshot);
+	if (Mutation.bOpenResultOnSuccess)
+	{
+		PendingOpenResultMutations.Add(Mutation.ClientMutationId);
+	}
+	FMutationRollbackState Rollback;
+	Rollback.Snapshot = RollbackSnapshot;
+	Rollback.Route = Route;
+	Rollback.SelectedPageId = SelectedPageId;
+	Rollback.SelectedIssueKey = SelectedIssueKey;
+	Rollback.SelectedPinId = SelectedPinId;
+	Rollback.SelectedNotificationId = SelectedNotificationId;
+	MutationRollbacks.Add(Mutation.ClientMutationId, MoveTemp(Rollback));
 	LastMutationError.Reset();
 	LastMutationWarning.Reset();
 	if (bApplyOptimistically)
 	{
 		ApplyOptimisticMutation(Mutation);
+		ExtendedAtlassianModelUtils::RefreshTeamLoadIssueCounts(Snapshot);
 		EnsureSelections();
 	}
 	BroadcastChanged();
@@ -804,6 +843,7 @@ void FExtendedAtlassianWorkspaceController::HandleLoad(
 	{
 		PendingDestructive.Before = Snapshot;
 		ApplyOptimisticMutation(PendingDestructive.Mutation);
+		ExtendedAtlassianModelUtils::RefreshTeamLoadIssueCounts(Snapshot);
 	}
 	EnsureSelections();
 	if (bLoadedPreferencesThisResponse && !SelectedPageId.IsEmpty())
@@ -886,16 +926,23 @@ void FExtendedAtlassianWorkspaceController::SaveUserPreferences() const
 void FExtendedAtlassianWorkspaceController::HandleMutation(
 	uint64 MutationId,
 	bool bSuccess,
+	const FString& ResultId,
 	const FExtendedAtlassianError& Error)
 {
 	PendingMutations.Remove(MutationId);
-	FExtendedAtlassianWorkspaceSnapshot Rollback;
+	const bool bOpenResult = PendingOpenResultMutations.Remove(MutationId) > 0;
+	FMutationRollbackState Rollback;
 	const bool bHadRollback = MutationRollbacks.RemoveAndCopyValue(MutationId, Rollback);
 	if (!bSuccess)
 	{
 		if (bHadRollback)
 		{
-			Snapshot = MoveTemp(Rollback);
+			Snapshot = MoveTemp(Rollback.Snapshot);
+			Route = Rollback.Route;
+			SelectedPageId = MoveTemp(Rollback.SelectedPageId);
+			SelectedIssueKey = MoveTemp(Rollback.SelectedIssueKey);
+			SelectedPinId = MoveTemp(Rollback.SelectedPinId);
+			SelectedNotificationId = MoveTemp(Rollback.SelectedNotificationId);
 		}
 		LastMutationError = Error;
 		Toast.Key = NextToastKey++;
@@ -913,6 +960,12 @@ void FExtendedAtlassianWorkspaceController::HandleMutation(
 		Toast.Message = FText::FromString(Error.Message);
 		Toast.ExpiresAtSeconds = Clock->NowSeconds() + 2.6;
 		Toast.bOffersUndo = false;
+	}
+	if (bOpenResult && !ResultId.IsEmpty())
+	{
+		SelectedIssueKey = ResultId;
+		Route = EExtendedAtlassianWorkspaceRoute::IssueDetail;
+		SaveUserPreferences();
 	}
 
 	// Fixture mutations complete synchronously; live providers may need a reconciliatory refresh.
@@ -1076,6 +1129,7 @@ void FExtendedAtlassianWorkspaceController::ApplyOptimisticMutation(
 		}
 		break;
 
+	case EExtendedAtlassianWorkspaceMutation::ArchiveIssue:
 	case EExtendedAtlassianWorkspaceMutation::DeleteIssue:
 		Snapshot.Issues.RemoveAll(
 			[&Mutation](const FExtendedAtlassianIssue& Issue)

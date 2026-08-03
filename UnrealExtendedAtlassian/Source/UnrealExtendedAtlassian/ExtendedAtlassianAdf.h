@@ -3,6 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "ExtendedAtlassianDocBlock.h"
 
 class FJsonObject;
 
@@ -22,6 +23,10 @@ class FJsonObject;
 class UNREALEXTENDEDATLASSIAN_API FExtendedAtlassianAdf
 {
 public:
+	/** Converts ADF directly into the shared structured document model used by every reader. */
+	static TArray<FExtendedAtlassianDocBlock> ToBlocks(
+		const TSharedPtr<FJsonObject>& DocumentNode);
+
 	/** Flattens an ADF node tree to plain text. Safe to call with a null or non-ADF node. */
 	static FString ToPlainText(const TSharedPtr<FJsonObject>& DocumentNode);
 

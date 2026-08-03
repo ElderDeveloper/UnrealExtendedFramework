@@ -46,6 +46,7 @@
 #include "UObject/UnrealType.h"
 #include "Widgets/Images/SImage.h"
 #include "Widgets/Input/SButton.h"
+#include "Widgets/Input/SComboButton.h"
 #include "Widgets/Input/SEditableTextBox.h"
 #include "Widgets/Input/SMultiLineEditableTextBox.h"
 #include "Widgets/Layout/SBorder.h"
@@ -55,13 +56,16 @@
 #include "Widgets/SOverlay.h"
 #include "Widgets/Layout/SScrollBox.h"
 #include "Widgets/Layout/SSeparator.h"
+#include "Widgets/Layout/SSplitter.h"
 #include "Widgets/Layout/SUniformGridPanel.h"
 #include "Widgets/Layout/SWidgetSwitcher.h"
 #include "Widgets/Layout/SWrapBox.h"
 #include "Widgets/SLeafWidget.h"
+#include "Widgets/Text/SMultiLineEditableText.h"
 #include "Widgets/Text/STextBlock.h"
 #include "Brushes/SlateColorBrush.h"
 #include "Brushes/SlateDynamicImageBrush.h"
+#include "Brushes/SlateRoundedBoxBrush.h"
 #include "Styling/SlateTypes.h"
 #include "Types/ISlateMetaData.h"
 
@@ -150,6 +154,27 @@ namespace ExtendedAtlassianWorkspacePrivate
 		return FExtendedAtlassianStyle::Get().GetWidgetStyle<FTextBlockStyle>(Name);
 	}
 
+	TSharedRef<SMultiLineEditableText> SelectableText(
+		const FText& Value,
+		const TCHAR* StyleName,
+		bool bAutoWrap = false,
+		float LineHeight = 1.0f,
+		TOptional<FLinearColor> Color = {})
+	{
+		FTextBlockStyle SelectableStyle = Text(StyleName);
+		if (Color.IsSet())
+		{
+			SelectableStyle.SetColorAndOpacity(FSlateColor(Color.GetValue()));
+		}
+		return SNew(SMultiLineEditableText)
+			.Text(Value)
+			.TextStyle(&SelectableStyle)
+			.AutoWrapText(bAutoWrap)
+			.LineHeightPercentage(LineHeight)
+			.IsReadOnly(true)
+			.AllowContextMenu(true);
+	}
+
 	const FSlateBrush* Brush(const TCHAR* Name)
 	{
 		return FExtendedAtlassianStyle::Get().GetBrush(Name);
@@ -189,6 +214,36 @@ namespace ExtendedAtlassianWorkspacePrivate
 			TEXT("Backlot.Brush.Avatar.Red")
 		};
 		return Brush(Palette[PaletteIndex]);
+	}
+
+	const FSlateBrush* AvatarBrush(
+		const FExtendedAtlassianUser* User,
+		const FString& FallbackInitials)
+	{
+		if (!User || User->AvatarBackground.IsEmpty())
+		{
+			return AvatarBrush(FallbackInitials);
+		}
+
+		static TMap<FString, TSharedPtr<FSlateRoundedBoxBrush>> AvatarBrushes;
+		const FString PaletteKey = User->AvatarBackground.ToLower();
+		TSharedPtr<FSlateRoundedBoxBrush>& Avatar =
+			AvatarBrushes.FindOrAdd(PaletteKey);
+		if (!Avatar.IsValid())
+		{
+			Avatar = MakeShared<FSlateRoundedBoxBrush>(
+				FExtendedAtlassianStyle::FromHex(*User->AvatarBackground),
+				13.0f);
+		}
+		return Avatar.Get();
+	}
+
+	FLinearColor AvatarForeground(const FExtendedAtlassianUser* User)
+	{
+		return FExtendedAtlassianStyle::FromHex(
+			User && !User->AvatarForeground.IsEmpty()
+				? *User->AvatarForeground
+				: TEXT("#cfe0ff"));
 	}
 
 	FString AuthConfigurationSignature()
@@ -1321,6 +1376,13 @@ void SExtendedAtlassianWorkspace::Construct(const FArguments& InArgs)
 	ChangedHandle = Controller->OnChanged().AddSP(
 		this,
 		&SExtendedAtlassianWorkspace::HandleControllerChanged);
+	if (const TSharedPtr<FExtendedAtlassianClient> Client =
+		FUnrealExtendedAtlassianModule::GetClient())
+	{
+		AuthChangedHandle = Client->OnAuthStateChanged().AddSP(
+			this,
+			&SExtendedAtlassianWorkspace::HandleAuthStateChanged);
+	}
 
 	SAssignNew(RootOverlay, SOverlay);
 	ChildSlot
@@ -1353,6 +1415,11 @@ void SExtendedAtlassianWorkspace::Construct(const FArguments& InArgs)
 
 SExtendedAtlassianWorkspace::~SExtendedAtlassianWorkspace()
 {
+	if (const TSharedPtr<FExtendedAtlassianClient> Client =
+		FUnrealExtendedAtlassianModule::GetClient())
+	{
+		Client->OnAuthStateChanged().Remove(AuthChangedHandle);
+	}
 	FCoreUObjectDelegates::OnObjectPropertyChanged.Remove(
 		SettingsObjectChangedHandle);
 	StopWatchingDocuments();
@@ -1828,27 +1895,37 @@ TSharedRef<SWidget> SExtendedAtlassianWorkspace::BuildShell()
 		BuildWorkspaceStatusBanner()
 	];
 
-	const TSharedRef<SHorizontalBox> MainBody = SNew(SHorizontalBox);
+	const TSharedRef<SSplitter> MainBody = SNew(SSplitter)
+		.Orientation(Orient_Horizontal);
 	MainBody->AddSlot()
-	.FillWidth(1.0f)
+	.Value_Lambda([this]() { return 1.0f - RightRailFraction; })
+	.MinSize(420.0f)
+	.OnSlotResized_Lambda(
+		[this](float NewValue)
+		{
+			RightRailFraction = FMath::Clamp(1.0f - NewValue, 0.12f, 0.50f);
+		})
 	[
 		BuildMainView()
 	];
 	if (!Controller->IsCompact() && Controller->IsRailOpen())
 	{
 		MainBody->AddSlot()
-		.AutoWidth()
+		.Value_Lambda([this]() { return RightRailFraction; })
+		.MinSize(
+			ExtendedAtlassianWorkspacePrivate::Metric(
+				TEXT("Backlot.Metric.RightRail.MinWidth")) + 1.0f)
+		.OnSlotResized_Lambda(
+			[this](float NewValue)
+			{
+				RightRailFraction = FMath::Clamp(NewValue, 0.12f, 0.50f);
+			})
 		[
-			SNew(SBox)
-			.WidthOverride(ExtendedAtlassianWorkspacePrivate::Metric(TEXT("Backlot.Metric.RightRail.Width")) + 1.0f)
-			.MinDesiredWidth(ExtendedAtlassianWorkspacePrivate::Metric(TEXT("Backlot.Metric.RightRail.MinWidth")) + 1.0f)
+			SNew(SBorder)
+			.BorderImage(Brush(TEXT("Backlot.Brush.BorderSubtle")))
+			.Padding(FMargin(1.0f, 0.0f, 0.0f, 0.0f))
 			[
-				SNew(SBorder)
-				.BorderImage(Brush(TEXT("Backlot.Brush.BorderSubtle")))
-				.Padding(FMargin(1.0f, 0.0f, 0.0f, 0.0f))
-				[
-					BuildRightRail()
-				]
+				BuildRightRail()
 			]
 		];
 	}
@@ -1875,33 +1952,42 @@ TSharedRef<SWidget> SExtendedAtlassianWorkspace::BuildShell()
 	}
 	else
 	{
-		Dock->AddSlot()
-		.AutoWidth()
+		const TSharedRef<SSplitter> WorkspaceSplitter = SNew(SSplitter)
+			.Orientation(Orient_Horizontal);
+		WorkspaceSplitter->AddSlot()
+		.Value_Lambda([this]() { return ContextSidebarFraction; })
+		.MinSize(
+			ExtendedAtlassianWorkspacePrivate::Metric(
+				TEXT("Backlot.Metric.Sidebar.MinWidth")) + 1.0f)
+		.OnSlotResized_Lambda(
+			[this](float NewValue)
+			{
+				ContextSidebarFraction = FMath::Clamp(NewValue, 0.10f, 0.45f);
+			})
 		[
-			SNew(SBox)
-			.WidthOverride_Lambda(
-				[this]()
-				{
-					const float WorkspaceWidth =
-						GetCachedGeometry().GetLocalSize().X;
-					return FMath::Clamp(
-						WorkspaceWidth * 0.17f,
-						ExtendedAtlassianWorkspacePrivate::Metric(TEXT("Backlot.Metric.Sidebar.MinWidth")),
-						ExtendedAtlassianWorkspacePrivate::Metric(TEXT("Backlot.Metric.Sidebar.MaxWidth"))) + 1.0f;
-				})
+			SNew(SBorder)
+			.BorderImage(Brush(TEXT("Backlot.Brush.BorderSubtle")))
+			.Padding(FMargin(0.0f, 0.0f, 1.0f, 0.0f))
 			[
-				SNew(SBorder)
-				.BorderImage(Brush(TEXT("Backlot.Brush.BorderSubtle")))
-				.Padding(FMargin(0.0f, 0.0f, 1.0f, 0.0f))
-				[
-					BuildContextSidebar()
-				]
+				BuildContextSidebar()
 			]
 		];
+		WorkspaceSplitter->AddSlot()
+		.Value_Lambda([this]() { return 1.0f - ContextSidebarFraction; })
+		.MinSize(480.0f)
+		.OnSlotResized_Lambda(
+			[this](float NewValue)
+			{
+				ContextSidebarFraction = FMath::Clamp(1.0f - NewValue, 0.10f, 0.45f);
+			})
+		[
+			MainClient
+		];
+
 		Dock->AddSlot()
 		.FillWidth(1.0f)
 		[
-			MainClient
+			WorkspaceSplitter
 		];
 	}
 
@@ -2162,8 +2248,11 @@ TSharedRef<SWidget> SExtendedAtlassianWorkspace::BuildNavigationRail()
 						.BorderImage_Lambda(
 							[this]()
 							{
+								const FExtendedAtlassianUser& User =
+									Controller->GetSnapshot().CurrentUser;
 								return ExtendedAtlassianWorkspacePrivate::AvatarBrush(
-									Controller->GetSnapshot().CurrentUser.Initials);
+									&User,
+									User.Initials);
 							})
 						.HAlign(HAlign_Center)
 						.VAlign(VAlign_Center)
@@ -2190,10 +2279,8 @@ TSharedRef<SWidget> SExtendedAtlassianWorkspace::BuildNavigationRail()
 							.ColorAndOpacity_Lambda(
 								[this]()
 								{
-									const FString& Color =
-										Controller->GetSnapshot().CurrentUser.AvatarForeground;
-									return FExtendedAtlassianStyle::FromHex(
-										Color.IsEmpty() ? TEXT("#cfe0ff") : *Color);
+									return ExtendedAtlassianWorkspacePrivate::AvatarForeground(
+										&Controller->GetSnapshot().CurrentUser);
 								})
 						]
 					]
@@ -3350,8 +3437,29 @@ TSharedRef<SWidget> SExtendedAtlassianWorkspace::BuildBoardSidebar()
 				return Sprint.Id == Snapshot.SelectedSprintId;
 			});
 	TSharedRef<SVerticalBox> TeamRows = SNew(SVerticalBox);
+	TArray<const FExtendedAtlassianTeamLoad*> OrderedTeamLoad;
+	const FExtendedAtlassianTeamLoad* CurrentUserLoad =
+		Snapshot.TeamLoad.FindByPredicate(
+			[&Snapshot](const FExtendedAtlassianTeamLoad& Load)
+			{
+				return Load.User.AccountId == Snapshot.CurrentUser.AccountId;
+			});
+	if (CurrentUserLoad)
+	{
+		OrderedTeamLoad.Add(CurrentUserLoad);
+	}
 	for (const FExtendedAtlassianTeamLoad& Load : Snapshot.TeamLoad)
 	{
+		if (&Load != CurrentUserLoad)
+		{
+			OrderedTeamLoad.Add(&Load);
+		}
+	}
+	for (const FExtendedAtlassianTeamLoad* LoadPtr : OrderedTeamLoad)
+	{
+		const FExtendedAtlassianTeamLoad& Load = *LoadPtr;
+		const bool bSelected =
+			Controller->GetAssigneeFilter() == Load.User.AccountId;
 		const TCHAR* LoadBrush =
 			Load.ThresholdColor == TEXT("#f0665f")
 				? TEXT("Backlot.Brush.RedSolid")
@@ -3365,64 +3473,100 @@ TSharedRef<SWidget> SExtendedAtlassianWorkspace::BuildBoardSidebar()
 				SNew(SBox)
 				.HeightOverride(ExtendedAtlassianWorkspacePrivate::Metric(TEXT("Backlot.Metric.TeamLoadRow.Height")))
 				[
-					SNew(SVerticalBox)
-					+ SVerticalBox::Slot()
-					.FillHeight(1.0f)
+					SNew(SBorder)
+					.BorderImage(
+						bSelected
+							? Brush(TEXT("Backlot.Brush.CardSelected"))
+							: FStyleDefaults::GetNoBrush())
+					.Padding(FMargin(3.0f, 1.0f))
 					[
-						SNew(SHorizontalBox)
-						+ SHorizontalBox::Slot()
-						.AutoWidth()
-						.VAlign(VAlign_Center)
+						SNew(SButton)
+						.ButtonStyle(&Button(TEXT("Backlot.Button.Clear")))
+						.ContentPadding(0.0f)
+						.ToolTipText(FText::Format(
+							LOCTEXT(
+								"FilterBoardByPerson",
+								"Show {0}'s {1} open issues ({2} story points)"),
+							FText::FromString(Load.User.DisplayName),
+							FText::AsNumber(Load.OpenIssueCount),
+							FText::AsNumber(Load.OpenPoints)))
+						.OnClicked_Lambda(
+							[this, AccountId = Load.User.AccountId]()
+							{
+								Controller->SetAssigneeFilter(
+									Controller->GetAssigneeFilter() == AccountId
+										? TEXT("anyone")
+										: AccountId);
+								return FReply::Handled();
+							})
 						[
-							SNew(SBorder)
-								.BorderImage(Brush(TEXT("Backlot.Brush.CardSelected")))
-								.Padding(FMargin(6.0f, 4.0f))
-								[
-									SNew(STextBlock)
-										.Text(FText::FromString(Load.User.Initials))
-										.TextStyle(&Text(TEXT("Backlot.Mono.9")))
-										.ColorAndOpacity(FExtendedAtlassianStyle::FromHex(*Load.User.AvatarForeground))
-								]
-						]
-						+ SHorizontalBox::Slot()
-						.FillWidth(1.0f)
-						.Padding(7.0f, 0.0f)
-						.VAlign(VAlign_Center)
-						[
-							SNew(STextBlock)
-								.Text(FText::FromString(Load.User.DisplayName))
-								.TextStyle(&Text(TEXT("Backlot.Sans.11")))
-						]
-						+ SHorizontalBox::Slot()
-						.AutoWidth()
-						.VAlign(VAlign_Center)
-						[
-							SNew(STextBlock)
-								.Text(FText::AsNumber(Load.OpenPoints))
-								.TextStyle(&Text(TEXT("Backlot.Mono.10.Medium")))
-						]
-					]
-					+ SVerticalBox::Slot()
-					.AutoHeight()
-					[
-						SNew(SBox)
-							.HeightOverride(3.0f)
+							SNew(SVerticalBox)
+							+ SVerticalBox::Slot()
+							.FillHeight(1.0f)
 							[
 								SNew(SHorizontalBox)
 								+ SHorizontalBox::Slot()
-								.FillWidth(FMath::Clamp(Load.Fraction, 0.01, 1.0))
+								.AutoWidth()
+								.VAlign(VAlign_Center)
 								[
-									SNew(SBorder).BorderImage(Brush(LoadBrush))
+									SNew(SBox)
+									.WidthOverride(22.0f)
+									.HeightOverride(22.0f)
+									[
+										SNew(SBorder)
+										.BorderImage(AvatarBrush(&Load.User, Load.User.Initials))
+										.Padding(0.0f)
+										.HAlign(HAlign_Center)
+										.VAlign(VAlign_Center)
+										[
+											SNew(STextBlock)
+											.Text(FText::FromString(Load.User.Initials))
+											.TextStyle(&Text(TEXT("Backlot.Mono.9")))
+											.ColorAndOpacity(AvatarForeground(&Load.User))
+										]
+									]
 								]
 								+ SHorizontalBox::Slot()
-								.FillWidth(FMath::Clamp(1.0 - Load.Fraction, 0.0, 1.0))
+								.FillWidth(1.0f)
+								.Padding(7.0f, 0.0f)
+								.VAlign(VAlign_Center)
 								[
+									SNew(STextBlock)
+									.Text(FText::FromString(Load.User.DisplayName))
+									.TextStyle(&Text(TEXT("Backlot.Sans.11")))
+								]
+								+ SHorizontalBox::Slot()
+								.AutoWidth()
+								.VAlign(VAlign_Center)
+								[
+									SNew(STextBlock)
+									.Text(FText::AsNumber(Load.OpenIssueCount))
+									.TextStyle(&Text(TEXT("Backlot.Mono.10.Medium")))
+								]
+							]
+							+ SVerticalBox::Slot()
+							.AutoHeight()
+							[
+								SNew(SBox)
+								.HeightOverride(3.0f)
+								[
+									SNew(SHorizontalBox)
+									+ SHorizontalBox::Slot()
+									.FillWidth(FMath::Clamp(Load.Fraction, 0.01, 1.0))
+									[
+										SNew(SBorder).BorderImage(Brush(LoadBrush))
+									]
+									+ SHorizontalBox::Slot()
+									.FillWidth(FMath::Clamp(1.0 - Load.Fraction, 0.0, 1.0))
+									[
 									SNew(SBorder).BorderImage(Brush(TEXT("Backlot.Brush.Card")))
 								]
 							]
+						]
 					]
 				]
-			];
+			]
+		];
 	}
 
 	return SNew(SBorder)
@@ -3983,7 +4127,8 @@ TSharedRef<SWidget> SExtendedAtlassianWorkspace::BuildDocsMain()
 	const TArray<FExtendedAtlassianUser>& PageContributors = Page->Contributors;
 	for (int32 Index = 0; Index < PageContributors.Num(); ++Index)
 	{
-		const FString Initials = PageContributors[Index].Initials;
+		const FExtendedAtlassianUser& Contributor = PageContributors[Index];
+		const FString Initials = Contributor.Initials;
 		Contributors->AddSlot()
 		.AutoWidth()
 		.Padding(Index == 0 ? 0.0f : -7.0f, 0.0f)
@@ -3993,7 +4138,7 @@ TSharedRef<SWidget> SExtendedAtlassianWorkspace::BuildDocsMain()
 			.HeightOverride(22.0f)
 			[
 				SNew(SBorder)
-				.BorderImage(AvatarBrush(Initials))
+				.BorderImage(AvatarBrush(&Contributor, Initials))
 				.Padding(0.0f)
 				.HAlign(HAlign_Center)
 				.VAlign(VAlign_Center)
@@ -4001,8 +4146,135 @@ TSharedRef<SWidget> SExtendedAtlassianWorkspace::BuildDocsMain()
 					SNew(STextBlock)
 					.Text(FText::FromString(Initials))
 					.TextStyle(&Text(TEXT("Backlot.Mono.9")))
+					.ColorAndOpacity(AvatarForeground(&Contributor))
 				]
 			]
+		];
+	}
+
+	TArray<const FExtendedAtlassianPage*> ChildPages;
+	for (const FExtendedAtlassianPage& Candidate : Controller->GetSnapshot().Pages)
+	{
+		if (Candidate.ParentId == Page->Id)
+		{
+			ChildPages.Add(&Candidate);
+		}
+	}
+	TSharedRef<SVerticalBox> RelatedContent = SNew(SVerticalBox);
+	if (!ChildPages.IsEmpty())
+	{
+		TSharedRef<SWrapBox> RelatedGrid =
+			SNew(SWrapBox)
+			.UseAllottedSize(true)
+			.InnerSlotPadding(FVector2D(12.0f, 12.0f));
+		for (const FExtendedAtlassianPage* ChildPage : ChildPages)
+		{
+			const FText VersionText = ChildPage->Version > 0
+				? FText::Format(
+					LOCTEXT("RelatedPageVersion", "VERSION {0}"),
+					FText::AsNumber(ChildPage->Version))
+				: FText::GetEmpty();
+			RelatedGrid->AddSlot()
+			[
+				SNew(SBox)
+				.WidthOverride(286.0f)
+				.MinDesiredHeight(126.0f)
+				[
+					SNew(SBorder)
+					.BorderImage(Brush(TEXT("Backlot.Brush.Card")))
+					.Padding(FMargin(16.0f, 14.0f))
+					[
+						SNew(SVerticalBox)
+							+ SVerticalBox::Slot()
+							.AutoHeight()
+							[
+								SelectableText(
+									LOCTEXT("RelatedChildPageType", "CHILD PAGE"),
+									TEXT("Backlot.Mono.9"),
+									false,
+									1.0f,
+									FExtendedAtlassianStyle::FromHex(TEXT("#58a6ff")))
+							]
+							+ SVerticalBox::Slot()
+							.AutoHeight()
+							.Padding(0.0f, 7.0f, 0.0f, 9.0f)
+							[
+								SelectableText(
+									FText::FromString(ChildPage->Title),
+									TEXT("Backlot.Sans.13.Medium"),
+									true)
+							]
+							+ SVerticalBox::Slot()
+							.FillHeight(1.0f)
+							.VAlign(VAlign_Bottom)
+							[
+								SNew(SHorizontalBox)
+								+ SHorizontalBox::Slot()
+								.FillWidth(1.0f)
+								.VAlign(VAlign_Center)
+								[
+									SelectableText(
+										VersionText,
+										TEXT("Backlot.Mono.9"),
+										false,
+										1.0f,
+										FExtendedAtlassianStyle::FromHex(TEXT("#6f7783")))
+								]
+								+ SHorizontalBox::Slot()
+								.AutoWidth()
+								.VAlign(VAlign_Center)
+								[
+									SNew(SButton)
+									.ButtonStyle(&Button(TEXT("Backlot.Button.Clear")))
+									.ContentPadding(FMargin(5.0f, 2.0f))
+									.OnClicked_Lambda(
+										[this, PageId = ChildPage->Id]()
+										{
+											Controller->SelectPage(PageId);
+											return FReply::Handled();
+										})
+									[
+										SNew(STextBlock)
+										.Text(LOCTEXT("OpenRelatedPage", "OPEN"))
+										.TextStyle(&Text(TEXT("Backlot.Mono.9")))
+										.ColorAndOpacity(
+											FExtendedAtlassianStyle::FromHex(TEXT("#58a6ff")))
+									]
+								]
+							]
+					]
+				]
+			];
+		}
+		RelatedContent->AddSlot()
+		.AutoHeight()
+		[
+			SelectableText(
+				LOCTEXT("RelatedContentTitle", "RELATED CONTENT"),
+				TEXT("Backlot.Mono.11"),
+				false,
+				1.0f,
+				FExtendedAtlassianStyle::FromHex(TEXT("#8a919c")))
+		];
+		RelatedContent->AddSlot()
+		.AutoHeight()
+		.Padding(0.0f, 7.0f, 0.0f, 11.0f)
+		[
+			SelectableText(
+				FText::Format(
+					ChildPages.Num() == 1
+						? LOCTEXT("OneRelatedChildPage", "{0} child page")
+						: LOCTEXT("ManyRelatedChildPages", "{0} child pages"),
+					FText::AsNumber(ChildPages.Num())),
+				TEXT("Backlot.Sans.11"),
+				false,
+				1.0f,
+				FExtendedAtlassianStyle::FromHex(TEXT("#6f7783")))
+		];
+		RelatedContent->AddSlot()
+		.AutoHeight()
+		[
+			RelatedGrid
 		];
 	}
 
@@ -4116,13 +4388,13 @@ TSharedRef<SWidget> SExtendedAtlassianWorkspace::BuildDocsMain()
 							: TEXT("Backlot.Brush.DocumentLiveTag")))
 					.Padding(FMargin(8.0f, 3.0f))
 					[
-						SNew(STextBlock)
-						.Text(
+						SelectableText(
 							bDocumentEditing
 								? LOCTEXT("DocumentDraftState", "DRAFT")
-								: LOCTEXT("DocumentLiveState", "LIVE DOC"))
-						.TextStyle(&Text(TEXT("Backlot.Mono.9")))
-						.ColorAndOpacity(
+								: LOCTEXT("DocumentLiveState", "LIVE DOC"),
+							TEXT("Backlot.Mono.9"),
+							false,
+							1.0f,
 							bDocumentEditing
 								? FExtendedAtlassianStyle::FromHex(TEXT("#e3a54a"))
 								: FExtendedAtlassianStyle::FromHex(TEXT("#57cc8a")))
@@ -4133,8 +4405,7 @@ TSharedRef<SWidget> SExtendedAtlassianWorkspace::BuildDocsMain()
 				.VAlign(VAlign_Center)
 				.Padding(10.0f, 0.0f)
 				[
-					SNew(STextBlock)
-					.Text(
+					SelectableText(
 						bDocumentEditing
 							? FText::Format(
 								LOCTEXT(
@@ -4146,17 +4417,18 @@ TSharedRef<SWidget> SExtendedAtlassianWorkspace::BuildDocsMain()
 									"DocumentLiveVersion",
 									"{0} · v{1}"),
 								FText::FromString(SectionName.ToUpper()),
-								FText::AsNumber(Page->Version)))
-					.TextStyle(&Text(TEXT("Backlot.Mono.10")))
-					.ColorAndOpacity(FExtendedAtlassianStyle::FromHex(TEXT("#6f7783")))
+								FText::AsNumber(Page->Version)),
+						TEXT("Backlot.Mono.10"),
+						false,
+						1.0f,
+						FExtendedAtlassianStyle::FromHex(TEXT("#6f7783")))
 				]
 				+ SHorizontalBox::Slot()
 				.AutoWidth()
 				.VAlign(VAlign_Center)
 				.Padding(10.0f, 0.0f)
 				[
-					SNew(STextBlock)
-					.Text(
+					SelectableText(
 						bDocumentEditing
 							? LOCTEXT(
 								"DocumentNotPublished",
@@ -4166,9 +4438,11 @@ TSharedRef<SWidget> SExtendedAtlassianWorkspace::BuildDocsMain()
 									"DocumentEditedBy",
 									"·  EDITED {0} BY {1}"),
 								FText::FromString(Page->EditedAtLabel),
-								FText::FromString(Page->EditedByLabel)))
-					.TextStyle(&Text(TEXT("Backlot.Mono.10")))
-					.ColorAndOpacity(FExtendedAtlassianStyle::FromHex(TEXT("#6f7783")))
+								FText::FromString(Page->EditedByLabel)),
+						TEXT("Backlot.Mono.10"),
+						false,
+						1.0f,
+						FExtendedAtlassianStyle::FromHex(TEXT("#6f7783")))
 				]
 			]
 			+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 14.7f, 0.0f, 13.2f)
@@ -4177,10 +4451,11 @@ TSharedRef<SWidget> SExtendedAtlassianWorkspace::BuildDocsMain()
 				.WidgetIndex(bDocumentEditing ? 1 : 0)
 				+ SWidgetSwitcher::Slot()
 				[
-					SNew(STextBlock)
-					.Text(FText::FromString(Page->Title))
-					.TextStyle(&Text(TEXT("Backlot.Sans.34.Semibold")))
-					.LineHeightPercentage(0.91f)
+					SelectableText(
+						FText::FromString(Page->Title),
+						TEXT("Backlot.Sans.34.Semibold"),
+						true,
+						0.91f)
 				]
 				+ SWidgetSwitcher::Slot()
 				[
@@ -4317,6 +4592,19 @@ TSharedRef<SWidget> SExtendedAtlassianWorkspace::BuildDocsMain()
 			[
 				Document
 			]
+			+ SVerticalBox::Slot()
+			.AutoHeight()
+			.Padding(0.0f, 42.0f, 0.0f, 0.0f)
+			[
+				SNew(SBox)
+				.Visibility(
+					!bDocumentEditing && !ChildPages.IsEmpty()
+						? EVisibility::Visible
+						: EVisibility::Collapsed)
+				[
+					RelatedContent
+				]
+			]
 			]
 			]
 		];
@@ -4327,7 +4615,8 @@ TSharedRef<SWidget> SExtendedAtlassianWorkspace::BuildIssuesMain()
 	using namespace ExtendedAtlassianWorkspacePrivate;
 	TArray<TSharedRef<SWidget>> RowWidgets;
 	int32 VisibleCount = 0;
-	for (const FExtendedAtlassianIssue& Issue : Controller->GetSnapshot().Issues)
+	const FExtendedAtlassianWorkspaceSnapshot& Snapshot = Controller->GetSnapshot();
+	for (const FExtendedAtlassianIssue& Issue : Snapshot.Issues)
 	{
 		if (!IssueMatchesCurrentFilters(Issue))
 		{
@@ -4336,12 +4625,24 @@ TSharedRef<SWidget> SExtendedAtlassianWorkspace::BuildIssuesMain()
 		++VisibleCount;
 		const bool bSelected = Issue.Key == Controller->GetSelectedIssueKey();
 		const bool bCompact = Controller->IsCompact();
+		const FExtendedAtlassianTeamLoad* AssigneeLoad =
+			Snapshot.TeamLoad.FindByPredicate(
+				[&Issue](const FExtendedAtlassianTeamLoad& Load)
+				{
+					return Load.User.AccountId == Issue.AssigneeAccountId;
+				});
 		const FExtendedAtlassianUser* Assignee =
-			Controller->GetSnapshot().People.FindByPredicate(
+			AssigneeLoad ? &AssigneeLoad->User : nullptr;
+		if (!Assignee)
+		{
+			Assignee = Snapshot.People.FindByPredicate(
 				[&Issue](const FExtendedAtlassianUser& User)
 				{
-					return User.AccountId == Issue.AssigneeAccountId;
+					return User.AccountId == Issue.AssigneeAccountId
+						|| User.Initials == Issue.AssigneeAccountId;
 				});
+		}
+		const FString AssigneeInitialsText = AssigneeInitials(Assignee, Issue);
 		const FString TypeGlyph = Issue.IssueTypeName == TEXT("Bug")
 			? TEXT("B")
 			: (Issue.IssueTypeName == TEXT("Doc") ? TEXT("D") : TEXT("T"));
@@ -4604,22 +4905,19 @@ TSharedRef<SWidget> SExtendedAtlassianWorkspace::BuildIssuesMain()
 								.Padding(9.0f, 0.0f, 0.0f, 0.0f)
 								[
 									SNew(SBox)
-									.WidthOverride(20.0f)
-									.HeightOverride(20.0f)
+									.WidthOverride(22.0f)
+									.HeightOverride(22.0f)
 									[
 										SNew(SBorder)
-										.BorderImage(AvatarBrush(
-											// Hash the initials, not the account id: the palette should be
-											// stable per person, not per opaque string.
-											AssigneeInitials(Assignee, Issue)))
+										.BorderImage(AvatarBrush(Assignee, AssigneeInitialsText))
 										.Padding(0.0f)
 										.HAlign(HAlign_Center)
 										.VAlign(VAlign_Center)
 										[
 											SNew(STextBlock)
-											.Text(FText::FromString(
-												AssigneeInitials(Assignee, Issue)))
-											.TextStyle(&Text(TEXT("Backlot.Mono.8")))
+											.Text(FText::FromString(AssigneeInitialsText))
+											.TextStyle(&Text(TEXT("Backlot.Mono.9")))
+											.ColorAndOpacity(AvatarForeground(Assignee))
 										]
 									]
 								]
@@ -4947,6 +5245,47 @@ TSharedRef<SWidget> SExtendedAtlassianWorkspace::BuildIssuesMain()
 		];
 }
 
+TSharedRef<SWidget> SExtendedAtlassianWorkspace::BuildIssueDescription(
+	const FExtendedAtlassianIssue& Issue)
+{
+	using namespace ExtendedAtlassianWorkspacePrivate;
+
+	TArray<FExtendedAtlassianDocBlock> Blocks = Issue.DescriptionBlocks;
+	if (Blocks.IsEmpty() && !Issue.Description.IsEmpty())
+	{
+		// Fixtures and older Jira sites can still provide plain text. They enter the exact same
+		// document renderer after this adapter rather than creating a second issue-only text path.
+		Blocks = FExtendedAtlassianMarkdown::ToBlocks(Issue.Description);
+	}
+
+	if (Blocks.IsEmpty())
+	{
+		return SelectableText(
+			LOCTEXT("IssueNoDescription", "No description yet."),
+			TEXT("Backlot.Sans.14"),
+			true,
+			1.3f,
+			FExtendedAtlassianStyle::FromHex(TEXT("#6f7783")));
+	}
+
+	TSharedRef<SExtendedAtlassianDocumentView> Reader =
+		SNew(SExtendedAtlassianDocumentView)
+		.MaxReadingWidth(672.0f)
+		.OnIssueClicked(
+			SExtendedAtlassianDocumentView::FOnIssueClicked::CreateSP(
+				this,
+				&SExtendedAtlassianWorkspace::OnDocumentIssueClicked));
+	TMap<FString, FString> IssueStatuses;
+	for (const FExtendedAtlassianIssue& SnapshotIssue :
+		Controller->GetSnapshot().Issues)
+	{
+		IssueStatuses.Add(SnapshotIssue.Key, SnapshotIssue.StatusName);
+	}
+	Reader->SetIssueStatuses(IssueStatuses);
+	Reader->SetBlocks(Blocks);
+	return Reader;
+}
+
 TSharedRef<SWidget> SExtendedAtlassianWorkspace::BuildIssueDetailMain()
 {
 	using namespace ExtendedAtlassianWorkspacePrivate;
@@ -4974,15 +5313,15 @@ TSharedRef<SWidget> SExtendedAtlassianWorkspace::BuildIssueDetailMain()
 				]
 				+ SVerticalBox::Slot().AutoHeight()
 				[
-					SNew(STextBlock).Text(FText::FromString(Issue->Summary)).TextStyle(&Text(TEXT("Backlot.Sans.27.Semibold"))).AutoWrapText(true)
+					SelectableText(
+						FText::FromString(Issue->Summary),
+						TEXT("Backlot.Sans.27.Semibold"),
+						true)
 				]
 				+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 28.0f, 0.0f, 8.0f)[SectionLabel(LOCTEXT("Description", "DESCRIPTION"))]
 				+ SVerticalBox::Slot().AutoHeight()
 				[
-					SNew(STextBlock)
-						.Text(FText::FromString(Issue->Description.IsEmpty() ? TEXT("No description yet.") : Issue->Description))
-						.TextStyle(&Text(TEXT("Backlot.Sans.14")))
-						.AutoWrapText(true)
+					BuildIssueDescription(*Issue)
 				]
 				+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 28.0f, 0.0f, 8.0f)[SectionLabel(LOCTEXT("Threads", "THREADS"))]
 				+ SVerticalBox::Slot().AutoHeight()
@@ -5100,18 +5439,14 @@ TSharedRef<SWidget> SExtendedAtlassianWorkspace::BuildIssueDetailMainDynamic()
 							.HeightOverride(19.0f)
 						[
 							SNew(SBorder)
-								.BorderImage(AvatarBrush(Initials))
+								.BorderImage(AvatarBrush(Author, Initials))
 								.HAlign(HAlign_Center)
 								.VAlign(VAlign_Center)
 							[
 								SNew(STextBlock)
 									.Text(FText::FromString(Initials))
 									.TextStyle(&Text(TEXT("Backlot.Mono.9.Medium")))
-									.ColorAndOpacity(
-										FExtendedAtlassianStyle::FromHex(
-											Author && !Author->AvatarForeground.IsEmpty()
-												? *Author->AvatarForeground
-												: TEXT("#cfe0ff")))
+									.ColorAndOpacity(AvatarForeground(Author))
 							]
 						]
 					]
@@ -5225,18 +5560,14 @@ TSharedRef<SWidget> SExtendedAtlassianWorkspace::BuildIssueDetailMainDynamic()
 						.HeightOverride(22.0f)
 					[
 						SNew(SBorder)
-							.BorderImage(AvatarBrush(Initials))
+							.BorderImage(AvatarBrush(Actor, Initials))
 							.HAlign(HAlign_Center)
 							.VAlign(VAlign_Center)
 						[
 							SNew(STextBlock)
 								.Text(FText::FromString(Initials))
 								.TextStyle(&Text(TEXT("Backlot.Mono.9.Medium")))
-								.ColorAndOpacity(
-									FExtendedAtlassianStyle::FromHex(
-										Actor && !Actor->AvatarForeground.IsEmpty()
-											? *Actor->AvatarForeground
-											: TEXT("#cfe0ff")))
+								.ColorAndOpacity(AvatarForeground(Actor))
 						]
 					]
 				]
@@ -5519,10 +5850,10 @@ TSharedRef<SWidget> SExtendedAtlassianWorkspace::BuildIssueDetailMainDynamic()
 			+ SHorizontalBox::Slot()
 			.FillWidth(1.0f)
 			[
-				SNew(STextBlock)
-					.Text(FText::FromString(Issue->Summary))
-					.TextStyle(&Text(TEXT("Backlot.Sans.27.Semibold")))
-					.AutoWrapText(true)
+				SelectableText(
+					FText::FromString(Issue->Summary),
+					TEXT("Backlot.Sans.27.Semibold"),
+					true)
 			]
 			+ SHorizontalBox::Slot()
 			.AutoWidth()
@@ -5569,14 +5900,7 @@ TSharedRef<SWidget> SExtendedAtlassianWorkspace::BuildIssueDetailMainDynamic()
 			SNew(SBox)
 			.WidthOverride(672.0f)
 			[
-				SNew(STextBlock)
-					.Text(FText::FromString(
-						Issue->Description.IsEmpty()
-							? TEXT("No description yet.")
-							: Issue->Description))
-					.TextStyle(&Text(TEXT("Backlot.Sans.14")))
-					.LineHeightPercentage(1.3f)
-					.AutoWrapText(true)
+				BuildIssueDescription(*Issue)
 			]
 		];
 	}
@@ -5759,11 +6083,16 @@ TSharedRef<SWidget> SExtendedAtlassianWorkspace::BuildBoardMain()
 	using namespace ExtendedAtlassianWorkspacePrivate;
 	TSharedRef<SHorizontalBox> Columns = SNew(SHorizontalBox);
 	const FString Search = Controller->GetGlobalSearch().TrimStartAndEnd();
-	for (const FExtendedAtlassianBoardColumn& Column : Controller->GetSnapshot().BoardColumns)
+	const FExtendedAtlassianWorkspaceSnapshot& Snapshot = Controller->GetSnapshot();
+	const FString AssigneeFilter = Controller->GetAssigneeFilter();
+	const bool bFilterByAssignee =
+		!AssigneeFilter.IsEmpty()
+		&& !AssigneeFilter.Equals(TEXT("anyone"), ESearchCase::IgnoreCase);
+	for (const FExtendedAtlassianBoardColumn& Column : Snapshot.BoardColumns)
 	{
 		TSharedRef<SVerticalBox> Cards = SNew(SVerticalBox);
 		int32 Count = 0;
-		for (const FExtendedAtlassianIssue& Issue : Controller->GetSnapshot().Issues)
+		for (const FExtendedAtlassianIssue& Issue : Snapshot.Issues)
 		{
 			if (!Column.StatusNames.ContainsByPredicate(
 					[&Issue](const FString& StatusName)
@@ -5775,18 +6104,30 @@ TSharedRef<SWidget> SExtendedAtlassianWorkspace::BuildBoardMain()
 				|| !ContainsSearch(
 					Issue.Key + TEXT(" ") + Issue.Summary + TEXT(" ")
 						+ Issue.EpicName,
-					Search))
+					Search)
+				|| (bFilterByAssignee
+					&& Issue.AssigneeAccountId != AssigneeFilter))
 			{
 				continue;
 			}
 			++Count;
+			const FExtendedAtlassianTeamLoad* AssigneeLoad =
+				Snapshot.TeamLoad.FindByPredicate(
+					[&Issue](const FExtendedAtlassianTeamLoad& Load)
+					{
+						return Load.User.AccountId == Issue.AssigneeAccountId;
+					});
 			const FExtendedAtlassianUser* Assignee =
-				Controller->GetSnapshot().People.FindByPredicate(
+				AssigneeLoad ? &AssigneeLoad->User : nullptr;
+			if (!Assignee)
+			{
+				Assignee = Snapshot.People.FindByPredicate(
 					[&Issue](const FExtendedAtlassianUser& User)
 					{
 						return User.AccountId == Issue.AssigneeAccountId
 							|| User.Initials == Issue.AssigneeAccountId;
 					});
+			}
 			const FString AssigneeInitials =
 				// Qualified: the local shadows the helper inside its own initialiser.
 				// The old fallback took the first two characters of an account id,
@@ -5918,18 +6259,19 @@ TSharedRef<SWidget> SExtendedAtlassianWorkspace::BuildBoardMain()
 							.VAlign(VAlign_Center)
 							[
 								SNew(SBox)
-									.WidthOverride(20.0f)
-									.HeightOverride(20.0f)
+									.WidthOverride(22.0f)
+									.HeightOverride(22.0f)
 									[
 										SNew(SBorder)
-											.BorderImage(AvatarBrush(AssigneeInitials))
+											.BorderImage(AvatarBrush(Assignee, AssigneeInitials))
 											.Padding(0.0f)
 											.HAlign(HAlign_Center)
 											.VAlign(VAlign_Center)
 											[
 												SNew(STextBlock)
 													.Text(FText::FromString(AssigneeInitials))
-													.TextStyle(&Text(TEXT("Backlot.Mono.8")))
+													.TextStyle(&Text(TEXT("Backlot.Mono.9")))
+													.ColorAndOpacity(AvatarForeground(Assignee))
 											]
 									]
 							]
@@ -7137,7 +7479,7 @@ TSharedRef<SWidget> SExtendedAtlassianWorkspace::BuildCommentCard(
 					.HeightOverride(18.0f)
 					[
 						SNew(SBorder)
-						.BorderImage(AvatarBrush(ReplyInitials))
+						.BorderImage(AvatarBrush(ReplyUser, ReplyInitials))
 						.Padding(0.0f)
 						.HAlign(HAlign_Center)
 						.VAlign(VAlign_Center)
@@ -7145,6 +7487,7 @@ TSharedRef<SWidget> SExtendedAtlassianWorkspace::BuildCommentCard(
 							SNew(STextBlock)
 								.Text(FText::FromString(ReplyInitials))
 								.TextStyle(&Text(TEXT("Backlot.Mono.8")))
+								.ColorAndOpacity(AvatarForeground(ReplyUser))
 						]
 					]
 				]
@@ -8505,7 +8848,7 @@ TSharedRef<SWidget> SExtendedAtlassianWorkspace::BuildInboxRail()
 TSharedRef<SWidget> SExtendedAtlassianWorkspace::BuildCreateCardPopover()
 {
 	using namespace ExtendedAtlassianWorkspacePrivate;
-	const float Height = bCreateCardEdit ? 424.0f : 356.0f;
+	const float Height = bCreateCardEdit ? 434.0f : 366.0f;
 	TSharedRef<SVerticalBox> Contents = SNew(SVerticalBox);
 	Contents->AddSlot()
 	.AutoHeight()
@@ -8643,6 +8986,17 @@ TSharedRef<SWidget> SExtendedAtlassianWorkspace::BuildCreateCardPopover()
 	for (const FExtendedAtlassianUser& User : Controller->GetSnapshot().People)
 	{
 		const bool bSelected = CreateCardAssignee == User.AccountId;
+		const FExtendedAtlassianTeamLoad* AvatarLoad =
+			Controller->GetSnapshot().TeamLoad.FindByPredicate(
+				[&User](const FExtendedAtlassianTeamLoad& Load)
+				{
+					return Load.User.AccountId == User.AccountId;
+				});
+		const FExtendedAtlassianUser* AvatarUser =
+			AvatarLoad ? &AvatarLoad->User : &User;
+		const FString UserInitials = !AvatarUser->Initials.IsEmpty()
+			? AvatarUser->Initials
+			: LabelInitials(User.DisplayName);
 		AssigneeChoices->AddSlot()
 		.AutoWidth()
 		.Padding(0.0f, 0.0f, 6.0f, 0.0f)
@@ -8664,16 +9018,40 @@ TSharedRef<SWidget> SExtendedAtlassianWorkspace::BuildCreateCardPopover()
 								CreateCardAssignee = AccountId;
 								Rebuild();
 								return FReply::Handled();
-							})
+						})
+					[
+						SNew(SBorder)
+						.BorderImage(AvatarBrush(AvatarUser, UserInitials))
+						.Padding(0.0f)
+						.HAlign(HAlign_Center)
+						.VAlign(VAlign_Center)
 						[
 							SNew(STextBlock)
-								.Text(FText::FromString(User.Initials))
-								.TextStyle(&Text(TEXT("Backlot.Mono.9.Medium")))
+							.Text(FText::FromString(UserInitials))
+							.TextStyle(&Text(TEXT("Backlot.Mono.9.Medium")))
+							.ColorAndOpacity(AvatarForeground(AvatarUser))
 						]
-				]
+					]
+			]
 		];
 	}
-	Contents->AddSlot().AutoHeight().Padding(0.0f, 0.0f, 0.0f, 11.0f)[AssigneeChoices];
+	Contents->AddSlot()
+	.AutoHeight()
+	.Padding(0.0f, 0.0f, 0.0f, 11.0f)
+	[
+		SNew(SBox)
+		.HeightOverride(36.0f)
+		[
+			SNew(SScrollBox)
+			.Orientation(Orient_Horizontal)
+			.ScrollBarStyle(&FExtendedAtlassianStyle::Get().GetWidgetStyle<FScrollBarStyle>(
+				TEXT("Backlot.ScrollBar")))
+			+ SScrollBox::Slot()
+			[
+				AssigneeChoices
+			]
+		]
+	];
 
 	Contents->AddSlot().AutoHeight().Padding(0.0f, 0.0f, 0.0f, 6.0f)
 	[
@@ -8682,36 +9060,24 @@ TSharedRef<SWidget> SExtendedAtlassianWorkspace::BuildCreateCardPopover()
 	Contents->AddSlot()
 	.AutoHeight()
 	[
-		SNew(SButton)
+		SNew(SComboButton)
 			.ButtonStyle(&Button(TEXT("Backlot.Button.Secondary")))
 			.ContentPadding(FMargin(10.0f, 7.0f))
-			.OnClicked_Lambda(
-				[this]()
-				{
-					TArray<FWorkspaceMenuItem> Items;
-					for (const FExtendedAtlassianEpic& Epic : Controller->GetSnapshot().Epics)
-					{
-						Items.Add({
-							FText::FromString(Epic.Name),
-							FExtendedAtlassianStyle::FromHex(*Epic.Color),
-							CreateCardEpic == Epic.Name ? TEXT("●") : FString(),
-							[this, Name = Epic.Name]()
-							{
-								CreateCardEpic = Name;
-								Rebuild();
-							}
-						});
-					}
-					OpenMenu(LOCTEXT("CreateCardEpicMenu", "EPIC"), MoveTemp(Items));
-					return FReply::Handled();
-				})
+			.HasDownArrow(false)
+			.OnGetMenuContent(
+				this,
+				&SExtendedAtlassianWorkspace::BuildCreateCardEpicPicker)
+			.ButtonContent()
 			[
 				SNew(SHorizontalBox)
 				+ SHorizontalBox::Slot()
 				.FillWidth(1.0f)
 				[
 					SNew(STextBlock)
-						.Text(FText::FromString(CreateCardEpic))
+						.Text(
+							CreateCardEpic.IsEmpty()
+								? LOCTEXT("CreateCardNoEpic", "No epic")
+								: FText::FromString(CreateCardEpic))
 						.TextStyle(&Text(TEXT("Backlot.Sans.12")))
 				]
 				+ SHorizontalBox::Slot()
@@ -8835,6 +9201,174 @@ TSharedRef<SWidget> SExtendedAtlassianWorkspace::BuildCreateCardPopover()
 					true)
 			]
 		];
+}
+
+void SExtendedAtlassianWorkspace::HandleAuthStateChanged()
+{
+	if (!Controller.IsValid() || Controller->IsFixtureProvider())
+	{
+		return;
+	}
+	LastAuthConfigurationSignature =
+		ExtendedAtlassianWorkspacePrivate::AuthConfigurationSignature();
+	LastSyncPollSeconds = HostServices.IsValid()
+		? HostServices->NowSeconds()
+		: 0.0;
+	bSyncRefreshDeferred = false;
+	Controller->Refresh();
+}
+
+TSharedRef<SWidget> SExtendedAtlassianWorkspace::BuildCreateCardEpicPicker()
+{
+	using namespace ExtendedAtlassianWorkspacePrivate;
+	CreateCardEpicSearch.Reset();
+	CreateCardEpicRows = SNew(SVerticalBox);
+	RebuildCreateCardEpicRows();
+
+	return SNew(SBox)
+		.WidthOverride(300.0f)
+		.MaxDesiredHeight(278.0f)
+		[
+			SNew(SBorder)
+			.BorderImage(Brush(TEXT("Backlot.Brush.Modal")))
+			.Padding(8.0f)
+			[
+				SNew(SVerticalBox)
+				+ SVerticalBox::Slot()
+				.AutoHeight()
+				.Padding(0.0f, 0.0f, 0.0f, 7.0f)
+				[
+					SNew(SEditableTextBox)
+					.Style(&FExtendedAtlassianStyle::Get().GetWidgetStyle<FEditableTextBoxStyle>(
+						TEXT("Backlot.Field")))
+					.HintText(LOCTEXT("CreateCardEpicSearchHint", "Search epics..."))
+					.Text(FText::FromString(CreateCardEpicSearch))
+					.SelectAllTextWhenFocused(true)
+					.OnTextChanged_Lambda(
+						[this](const FText& Value)
+						{
+							CreateCardEpicSearch = Value.ToString();
+							RebuildCreateCardEpicRows();
+						})
+				]
+				+ SVerticalBox::Slot()
+				.FillHeight(1.0f)
+				[
+					SNew(SBox)
+					.MaxDesiredHeight(220.0f)
+					[
+						SNew(SScrollBox)
+						.ScrollBarStyle(&FExtendedAtlassianStyle::Get().GetWidgetStyle<FScrollBarStyle>(
+							TEXT("Backlot.ScrollBar")))
+						+ SScrollBox::Slot()
+						[
+							CreateCardEpicRows.ToSharedRef()
+						]
+					]
+				]
+			]
+		];
+}
+
+void SExtendedAtlassianWorkspace::RebuildCreateCardEpicRows()
+{
+	using namespace ExtendedAtlassianWorkspacePrivate;
+	if (!CreateCardEpicRows.IsValid())
+	{
+		return;
+	}
+
+	CreateCardEpicRows->ClearChildren();
+	const FString Search = CreateCardEpicSearch.TrimStartAndEnd();
+	auto AddEpicRow =
+		[this](
+			const FText& Label,
+			const FString& EpicName,
+			const FString& Color,
+			const FString& Glyph)
+		{
+			const bool bSelected = CreateCardEpic == EpicName;
+			CreateCardEpicRows->AddSlot()
+			.AutoHeight()
+			.Padding(0.0f, 0.0f, 0.0f, 4.0f)
+			[
+				SNew(SButton)
+				.ButtonStyle(&Button(
+					bSelected
+						? TEXT("Backlot.Button.Primary")
+						: TEXT("Backlot.Button.Secondary")))
+				.ContentPadding(FMargin(9.0f, 7.0f))
+				.HAlign(HAlign_Left)
+				.OnClicked_Lambda(
+					[this, EpicName]()
+					{
+						CreateCardEpic = EpicName;
+						CreateCardEpicSearch.Reset();
+						CreateCardEpicRows.Reset();
+						FSlateApplication::Get().DismissAllMenus();
+						Rebuild();
+						return FReply::Handled();
+					})
+				[
+					SNew(SHorizontalBox)
+					+ SHorizontalBox::Slot()
+					.AutoWidth()
+					.Padding(0.0f, 0.0f, 8.0f, 0.0f)
+					.VAlign(VAlign_Center)
+					[
+						SNew(STextBlock)
+						.Text(FText::FromString(Glyph))
+						.TextStyle(&Text(TEXT("Backlot.Mono.10")))
+						.ColorAndOpacity(FExtendedAtlassianStyle::FromHex(
+							Color.IsEmpty() ? TEXT("#6f7783") : *Color))
+					]
+					+ SHorizontalBox::Slot()
+					.FillWidth(1.0f)
+					.VAlign(VAlign_Center)
+					[
+						SNew(STextBlock)
+						.Text(Label)
+						.TextStyle(&Text(TEXT("Backlot.Sans.11")))
+						.OverflowPolicy(ETextOverflowPolicy::Ellipsis)
+					]
+				]
+			];
+		};
+
+	AddEpicRow(
+		LOCTEXT("CreateCardEpicNone", "No epic"),
+		FString(),
+		TEXT("#6f7783"),
+		TEXT("—"));
+
+	int32 MatchCount = 0;
+	for (const FExtendedAtlassianEpic& Epic : Controller->GetSnapshot().Epics)
+	{
+		if (!Search.IsEmpty()
+			&& !Epic.Name.Contains(Search, ESearchCase::IgnoreCase)
+			&& !Epic.Id.Contains(Search, ESearchCase::IgnoreCase))
+		{
+			continue;
+		}
+		++MatchCount;
+		AddEpicRow(
+			FText::FromString(Epic.Name),
+			Epic.Name,
+			Epic.Color,
+			TEXT("●"));
+	}
+	if (MatchCount == 0)
+	{
+		CreateCardEpicRows->AddSlot()
+		.AutoHeight()
+		.Padding(9.0f, 8.0f)
+		[
+			SNew(STextBlock)
+			.Text(LOCTEXT("CreateCardNoEpicMatches", "No matching epics"))
+			.TextStyle(&Text(TEXT("Backlot.Sans.11")))
+			.ColorAndOpacity(FExtendedAtlassianStyle::FromHex(TEXT("#6f7783")))
+		];
+	}
 }
 
 TSharedRef<SWidget> SExtendedAtlassianWorkspace::BuildPagePopover()
@@ -10436,8 +10970,11 @@ FReply SExtendedAtlassianWorkspace::OnDismissPinPopover()
 
 FReply SExtendedAtlassianWorkspace::OnDismissCreateCard()
 {
+	FSlateApplication::Get().DismissAllMenus();
 	bMenuOpen = false;
 	bCreateCardOpen = false;
+	CreateCardEpicSearch.Reset();
+	CreateCardEpicRows.Reset();
 	MenuItems.Reset();
 	Rebuild();
 	RestoreOverlayFocus();
@@ -10466,19 +11003,27 @@ FReply SExtendedAtlassianWorkspace::OnSubmitCreateCard()
 	Mutation.Fields.Add(TEXT("status"), CreateCardStatus);
 	Mutation.Fields.Add(TEXT("points"), TEXT("3"));
 	const bool bWasEdit = bCreateCardEdit;
+	Mutation.bOpenResultOnSuccess = !bWasEdit;
 	const FString ResultKey = CreateCardTargetKey;
+	FSlateApplication::Get().DismissAllMenus();
 	bCreateCardOpen = false;
 	bMenuOpen = false;
+	CreateCardEpicSearch.Reset();
+	CreateCardEpicRows.Reset();
 	Controller->ExecuteMutation(Mutation);
-	Controller->SelectIssue(ResultKey);
-	Controller->ShowToast(FText::Format(
-		bWasEdit
-			? LOCTEXT("CardUpdatedToast", "Card updated  {0}")
-			: LOCTEXT("CardAddedToast", "Card added to {0}  {1}"),
-		bWasEdit
-			? FText::FromString(ResultKey)
-			: FText::FromString(CreateCardStatus),
-		FText::FromString(ResultKey)));
+	if (bWasEdit)
+	{
+		Controller->SelectIssue(ResultKey);
+		Controller->ShowToast(FText::Format(
+			LOCTEXT("CardUpdatedToast", "Card updated  {0}"),
+			FText::FromString(ResultKey)));
+	}
+	else
+	{
+		Controller->ShowToast(FText::Format(
+			LOCTEXT("CardAddedToast", "Card added to {0}"),
+			FText::FromString(CreateCardStatus)));
+	}
 	RestoreOverlayFocus();
 	return FReply::Handled();
 }
@@ -10779,14 +11324,13 @@ void SExtendedAtlassianWorkspace::OpenCreateCard(const FString& Status)
 					: Controller->GetSnapshot().Priorities[0].Name));
 	CreateCardAssignee =
 		Controller->GetSnapshot().CurrentUser.AccountId;
-	CreateCardEpic =
-		Controller->GetSnapshot().Epics.IsEmpty()
-			? FString()
-			: Controller->GetSnapshot().Epics[0].Name;
+	CreateCardEpic.Reset();
+	CreateCardEpicSearch.Reset();
+	CreateCardEpicRows.Reset();
 	CreateCardStatus = Status;
 	bCreateCardEdit = false;
 	bCreateCardOpen = true;
-	CreateCardPosition = PopupPosition(FVector2D(ExtendedAtlassianWorkspacePrivate::Metric(TEXT("Backlot.Metric.CreateCard.Width")), 356.0f), true);
+	CreateCardPosition = PopupPosition(FVector2D(ExtendedAtlassianWorkspacePrivate::Metric(TEXT("Backlot.Metric.CreateCard.Width")), 366.0f), true);
 	Rebuild();
 }
 
@@ -10808,10 +11352,12 @@ void SExtendedAtlassianWorkspace::OpenCardEdit(const FString& IssueKey)
 	CreateCardPriority = Issue->PriorityName;
 	CreateCardAssignee = Issue->AssigneeAccountId;
 	CreateCardEpic = Issue->EpicName;
+	CreateCardEpicSearch.Reset();
+	CreateCardEpicRows.Reset();
 	CreateCardStatus = Issue->StatusName;
 	bCreateCardEdit = true;
 	bCreateCardOpen = true;
-	CreateCardPosition = PopupPosition(FVector2D(ExtendedAtlassianWorkspacePrivate::Metric(TEXT("Backlot.Metric.CreateCard.Width")), 424.0f), false);
+	CreateCardPosition = PopupPosition(FVector2D(ExtendedAtlassianWorkspacePrivate::Metric(TEXT("Backlot.Metric.CreateCard.Width")), 434.0f), false);
 	Rebuild();
 }
 
@@ -11580,6 +12126,23 @@ void SExtendedAtlassianWorkspace::OpenDocumentActions(const FString& NodeId)
 			FString(),
 			[this, NodeId]() { OpenMoveToMenu(NodeId); }
 		});
+		Items.Add({
+			LOCTEXT("ArchivePageMenu", "Archive page"),
+			FExtendedAtlassianStyle::FromHex(TEXT("#e3a54a")),
+			FString(),
+			[this, NodeId, Label]()
+			{
+				OpenConfirm(
+					LOCTEXT("ArchivePageConfirmTitle", "Archive this page?"),
+					FText::Format(
+						LOCTEXT(
+							"ArchivePageConfirmBody",
+							"Archiving “{0}” removes it from the current page tree. Confluence will verify your archive permission."),
+						FText::FromString(Label)),
+					LOCTEXT("ArchivePageConfirmAccept", "Archive page"),
+					[this, NodeId]() { ArchiveDocumentPage(NodeId); });
+			}
+		});
 	}
 	Items.Add({
 		LOCTEXT("MoveDocumentUp", "Move up"),
@@ -11825,6 +12388,18 @@ void SExtendedAtlassianWorkspace::ReorderDocumentNode(
 		Mutation.OrderedIds.Add(Node.Id);
 	}
 	Controller->ExecuteMutation(Mutation);
+}
+
+void SExtendedAtlassianWorkspace::ArchiveDocumentPage(const FString& PageId)
+{
+	FExtendedAtlassianWorkspaceMutation Mutation;
+	Mutation.Type = EExtendedAtlassianWorkspaceMutation::ArchivePage;
+	Mutation.TargetId = PageId;
+	if (!Controller->ExecuteMutation(Mutation))
+	{
+		return;
+	}
+	Controller->ShowToast(LOCTEXT("ArchivingPageToast", "Archiving page…"));
 }
 
 void SExtendedAtlassianWorkspace::DeleteDocumentNode(const FString& NodeId)
@@ -12159,6 +12734,21 @@ void SExtendedAtlassianWorkspace::MutateIssueField(
 	Controller->ExecuteMutation(Mutation);
 }
 
+void SExtendedAtlassianWorkspace::ArchiveIssue(const FString& IssueKey)
+{
+	FExtendedAtlassianWorkspaceMutation Mutation;
+	Mutation.Type = EExtendedAtlassianWorkspaceMutation::ArchiveIssue;
+	Mutation.TargetId = IssueKey;
+	if (!Controller->ExecuteMutation(Mutation))
+	{
+		return;
+	}
+	Controller->Navigate(EExtendedAtlassianWorkspaceRoute::Issues);
+	Controller->ShowToast(FText::Format(
+		LOCTEXT("ArchivingIssueToast", "Archiving {0}…"),
+		FText::FromString(IssueKey)));
+}
+
 void SExtendedAtlassianWorkspace::OpenIssueActions()
 {
 	const FExtendedAtlassianIssue* Issue = SelectedIssue();
@@ -12178,6 +12768,23 @@ void SExtendedAtlassianWorkspace::OpenIssueActions()
 			Controller->ShowToast(FText::Format(
 				LOCTEXT("CopiedIssueKeyToast", "Copied  {0}"),
 				FText::FromString(Key)));
+		}
+	});
+	Items.Add({
+		LOCTEXT("ArchiveIssueMenu", "Archive issue"),
+		FExtendedAtlassianStyle::FromHex(TEXT("#e3a54a")),
+		FString(),
+		[this, Key]()
+		{
+			OpenConfirm(
+				FText::Format(
+					LOCTEXT("ArchiveIssueConfirmTitle", "Archive {0}?"),
+					FText::FromString(Key)),
+				LOCTEXT(
+					"ArchiveIssueConfirmBody",
+					"This removes the issue from normal Jira search and board views. Jira will verify that the site plan and your administrator role support archiving."),
+				LOCTEXT("ArchiveIssueConfirmAccept", "Archive issue"),
+				[this, Key]() { ArchiveIssue(Key); });
 		}
 	});
 	Items.Add({

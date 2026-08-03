@@ -51,6 +51,7 @@ public:
 	void SelectIssueView(const FString& ViewId);
 	void CycleStatusFilter();
 	void CycleAssigneeFilter();
+	void SetAssigneeFilter(const FString& AccountId);
 	void ToggleEpicFilter(const FString& EpicId);
 	void ResetIssueFilters();
 	void SetInboxTab(const FString& Tab);
@@ -61,7 +62,8 @@ public:
 	bool CanExecuteMutation(
 		EExtendedAtlassianWorkspaceMutation Type,
 		FText* OutReason = nullptr) const;
-	void ExecuteMutation(const FExtendedAtlassianWorkspaceMutation& Mutation);
+	/** Starts a mutation and returns false when capability checks reject it locally. */
+	bool ExecuteMutation(const FExtendedAtlassianWorkspaceMutation& Mutation);
 	void ExecuteDestructiveMutation(
 		const FExtendedAtlassianWorkspaceMutation& Mutation,
 		const FText& UndoMessage);
@@ -102,7 +104,11 @@ private:
 	void HandleLoad(
 		const FExtendedAtlassianWorkspaceRequest& Request,
 		const FExtendedAtlassianWorkspaceSnapshot& Loaded);
-	void HandleMutation(uint64 MutationId, bool bSuccess, const FExtendedAtlassianError& Error);
+	void HandleMutation(
+		uint64 MutationId,
+		bool bSuccess,
+		const FString& ResultId,
+		const FExtendedAtlassianError& Error);
 	void BeginProviderMutation(
 		FExtendedAtlassianWorkspaceMutation Mutation,
 		const FExtendedAtlassianWorkspaceSnapshot& RollbackSnapshot,
@@ -130,6 +136,16 @@ private:
 		void Reset() { *this = FPendingDestructiveMutation(); }
 	};
 
+	struct FMutationRollbackState
+	{
+		FExtendedAtlassianWorkspaceSnapshot Snapshot;
+		EExtendedAtlassianWorkspaceRoute Route = EExtendedAtlassianWorkspaceRoute::Docs;
+		FString SelectedPageId;
+		FString SelectedIssueKey;
+		FString SelectedPinId;
+		FString SelectedNotificationId;
+	};
+
 	TSharedRef<IExtendedAtlassianWorkspaceData> Data;
 	TSharedPtr<IExtendedAtlassianInteractionClock> Clock;
 	FExtendedAtlassianWorkspaceSnapshot Snapshot;
@@ -149,7 +165,8 @@ private:
 	FExtendedAtlassianError LastMutationError;
 	FExtendedAtlassianError LastMutationWarning;
 	TSet<uint64> PendingMutations;
-	TMap<uint64, FExtendedAtlassianWorkspaceSnapshot> MutationRollbacks;
+	TSet<uint64> PendingOpenResultMutations;
+	TMap<uint64, FMutationRollbackState> MutationRollbacks;
 	FPendingDestructiveMutation PendingDestructive;
 	FExtendedAtlassianToast Toast;
 	uint64 RequestGeneration = 0;

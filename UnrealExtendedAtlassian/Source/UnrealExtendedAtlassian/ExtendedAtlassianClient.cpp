@@ -4,6 +4,7 @@
 
 #include "ExtendedAtlassianLog.h"
 #include "ExtendedAtlassianSettings.h"
+#include "ExtendedAtlassianUserCache.h"
 
 #include "Async/Async.h"
 #include "Containers/Ticker.h"
@@ -234,13 +235,30 @@ FExtendedAtlassianClient::FExtendedAtlassianClient()
 
 void FExtendedAtlassianClient::ReloadCredentials()
 {
+	++CredentialGeneration;
 	Credentials.Reset();
 	FExtendedAtlassianCredentialStore::Load(Credentials);
 
 	VerifiedUser.Reset();
 	LastAuthError.Reset();
+	bAutomaticUserRefreshStarted = false;
+	bAutomaticUserRefreshInFlight = false;
+
+	const UExtendedAtlassianSettings* Settings = UExtendedAtlassianSettings::Get();
+	const bool bLoadedCachedUser =
+		Credentials.IsValid()
+		&& Settings
+		&& Settings->IsConfigured()
+		&& FExtendedAtlassianUserCache::Load(
+			Settings->GetNormalizedSiteUrl(),
+			Credentials.Email,
+			VerifiedUser);
 	SetAuthState(
-		Credentials.IsValid() ? EExtendedAtlassianAuthState::Unverified : EExtendedAtlassianAuthState::NotConfigured,
+		!Credentials.IsValid()
+			? EExtendedAtlassianAuthState::NotConfigured
+			: (bLoadedCachedUser
+				? EExtendedAtlassianAuthState::Verified
+				: EExtendedAtlassianAuthState::Unverified),
 		FExtendedAtlassianError());
 }
 
@@ -251,19 +269,27 @@ bool FExtendedAtlassianClient::SetCredentials(const FExtendedAtlassianCredential
 		return false;
 	}
 
+	++CredentialGeneration;
 	Credentials = InCredentials;
+	FExtendedAtlassianUserCache::Clear();
 	VerifiedUser.Reset();
 	LastAuthError.Reset();
+	bAutomaticUserRefreshStarted = false;
+	bAutomaticUserRefreshInFlight = false;
 	SetAuthState(EExtendedAtlassianAuthState::Unverified, FExtendedAtlassianError());
 	return true;
 }
 
 void FExtendedAtlassianClient::ClearCredentials()
 {
+	++CredentialGeneration;
 	FExtendedAtlassianCredentialStore::Clear();
+	FExtendedAtlassianUserCache::Clear();
 	Credentials.Reset();
 	VerifiedUser.Reset();
 	LastAuthError.Reset();
+	bAutomaticUserRefreshStarted = false;
+	bAutomaticUserRefreshInFlight = false;
 	SetAuthState(EExtendedAtlassianAuthState::NotConfigured, FExtendedAtlassianError());
 }
 
@@ -271,6 +297,38 @@ bool FExtendedAtlassianClient::IsReady() const
 {
 	const UExtendedAtlassianSettings* Settings = UExtendedAtlassianSettings::Get();
 	return Settings && Settings->IsConfigured() && Credentials.IsValid();
+}
+
+void FExtendedAtlassianClient::EnsureUserInfo()
+{
+	if (!IsReady()
+		|| bAutomaticUserRefreshStarted
+		|| bAutomaticUserRefreshInFlight)
+	{
+		return;
+	}
+
+	bAutomaticUserRefreshStarted = true;
+	bAutomaticUserRefreshInFlight = true;
+	const uint64 RefreshGeneration = CredentialGeneration;
+	const TWeakPtr<FExtendedAtlassianClient> WeakClient = AsShared();
+	TestConnection(
+		[WeakClient, RefreshGeneration](
+			bool bSuccess,
+			const FExtendedAtlassianUser&,
+			const FExtendedAtlassianError&)
+		{
+			if (const TSharedPtr<FExtendedAtlassianClient> Client = WeakClient.Pin())
+			{
+				if (Client->CredentialGeneration != RefreshGeneration)
+				{
+					return;
+				}
+				Client->bAutomaticUserRefreshInFlight = false;
+				// A later tab opening may retry a transient startup failure.
+				Client->bAutomaticUserRefreshStarted = bSuccess;
+			}
+		});
 }
 
 void FExtendedAtlassianClient::SetAuthState(EExtendedAtlassianAuthState NewState, const FExtendedAtlassianError& InError)
@@ -496,11 +554,20 @@ void FExtendedAtlassianClient::TestConnection(TFunction<void(bool, const FExtend
 {
 	const UExtendedAtlassianSettings* Settings = UExtendedAtlassianSettings::Get();
 	const FString Url = Settings ? Settings->GetJiraApiBaseUrl() + TEXT("/myself") : FString();
+	const FString SiteUrl = Settings ? Settings->GetNormalizedSiteUrl() : FString();
+	const FString CredentialEmail = Credentials.Email;
+	const uint64 RequestCredentialGeneration = CredentialGeneration;
 
 	TWeakPtr<FExtendedAtlassianClient> WeakClient = AsShared();
 
 	Get(Url, FExtendedAtlassianResponseDelegate::CreateLambda(
-		[WeakClient, OnDone = MoveTemp(OnDone)](const FExtendedAtlassianResponse& Response)
+		[
+			WeakClient,
+			SiteUrl,
+			CredentialEmail,
+			RequestCredentialGeneration,
+			OnDone = MoveTemp(OnDone)
+		](const FExtendedAtlassianResponse& Response)
 		{
 			FExtendedAtlassianUser User;
 
@@ -517,7 +584,7 @@ void FExtendedAtlassianClient::TestConnection(TFunction<void(bool, const FExtend
 				}
 			}
 
-			const bool bSuccess = Response.IsSuccess() && User.IsValid();
+			bool bSuccess = Response.IsSuccess() && User.IsValid();
 
 			FExtendedAtlassianError Error = Response.Error;
 			if (Response.IsSuccess() && !User.IsValid())
@@ -531,15 +598,42 @@ void FExtendedAtlassianClient::TestConnection(TFunction<void(bool, const FExtend
 
 			if (const TSharedPtr<FExtendedAtlassianClient> Client = WeakClient.Pin())
 			{
-				if (bSuccess)
+				const UExtendedAtlassianSettings* CurrentSettings =
+					UExtendedAtlassianSettings::Get();
+				const bool bRequestStillCurrent =
+					Client->CredentialGeneration == RequestCredentialGeneration
+					&& Client->Credentials.Email.Equals(
+						CredentialEmail,
+						ESearchCase::IgnoreCase)
+					&& CurrentSettings
+					&& CurrentSettings->GetNormalizedSiteUrl().Equals(
+						SiteUrl,
+						ESearchCase::IgnoreCase);
+				if (!bRequestStillCurrent)
+				{
+					bSuccess = false;
+					Error.Code = TEXT("StaleAuthRequest");
+					Error.Message = TEXT("Atlassian credentials or site changed while the connection test was running. Test the current connection again.");
+				}
+				else if (bSuccess)
 				{
 					Client->VerifiedUser = User;
+					Client->bAutomaticUserRefreshStarted = true;
+					FExtendedAtlassianUserCache::Save(
+						SiteUrl,
+						CredentialEmail,
+						User);
 					Client->SetAuthState(EExtendedAtlassianAuthState::Verified, FExtendedAtlassianError());
 					UE_LOG(LogExtendedAtlassian, Log, TEXT("Connected to Atlassian as %s (%s)."), *User.DisplayName, *User.AccountId);
 				}
 				else
 				{
-					Client->VerifiedUser.Reset();
+					Client->bAutomaticUserRefreshStarted = false;
+					if (Error.Code == TEXT("Unauthorized"))
+					{
+						Client->VerifiedUser.Reset();
+						FExtendedAtlassianUserCache::Clear();
+					}
 					Client->SetAuthState(EExtendedAtlassianAuthState::Failed, Error);
 				}
 			}

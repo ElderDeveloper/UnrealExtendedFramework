@@ -5,13 +5,16 @@
 #include "ExtendedAtlassianClient.h"
 #include "ExtendedAtlassianConnectPrompt.h"
 #include "ExtendedAtlassianJira.h"
+#include "ExtendedAtlassianMarkdown.h"
 #include "ExtendedAtlassianNewIssueDialog.h"
 #include "ExtendedAtlassianSettings.h"
 #include "ExtendedAtlassianStyle.h"
+#include "SExtendedAtlassianDocumentView.h"
 #include "UnrealExtendedAtlassian.h"
 
 #include "Framework/Notifications/NotificationManager.h"
 #include "HAL/PlatformProcess.h"
+#include "Misc/MessageDialog.h"
 #include "Styling/AppStyle.h"
 #include "Widgets/Images/SThrobber.h"
 #include "Widgets/Input/SButton.h"
@@ -475,6 +478,22 @@ TSharedRef<SWidget> SExtendedAtlassianIssueBrowser::BuildDetailPane()
 
 				+ SHorizontalBox::Slot()
 				.AutoWidth()
+				.Padding(0.0f, 0.0f, 6.0f, 0.0f)
+				[
+					SNew(SButton)
+					.Text(LOCTEXT("ArchiveIssue", "Archive"))
+					.ToolTipText(LOCTEXT(
+						"ArchiveIssueTip",
+						"Archive this issue in Jira. Jira limits this action to supported plans and Jira/site administrators."))
+					.OnClicked_Lambda([this]()
+					{
+						ArchiveSelectedIssue();
+						return FReply::Handled();
+					})
+				]
+
+				+ SHorizontalBox::Slot()
+				.AutoWidth()
 				[
 					SAssignNew(TransitionCombo, SComboBox<FTransitionPtr>)
 					.OptionsSource(&Transitions)
@@ -511,22 +530,12 @@ TSharedRef<SWidget> SExtendedAtlassianIssueBrowser::BuildDetailPane()
 			.FillHeight(0.5f)
 			.Padding(0.0f, 4.0f)
 			[
-				SNew(SMultiLineEditableTextBox)
-					.Style(&FExtendedAtlassianStyle::Get().GetWidgetStyle<FEditableTextBoxStyle>(
-						TEXT("Backlot.Field")))
-				.IsReadOnly(true)
-				.AllowMultiLine(true)
-				.AutoWrapText(true)
-				.Text_Lambda([this]()
-				{
-					if (!SelectedIssue.IsValid())
-					{
-						return FText::GetEmpty();
-					}
-					return SelectedIssue->Description.IsEmpty()
-						? LOCTEXT("NoDescription", "(no description)")
-						: FText::FromString(SelectedIssue->Description);
-				})
+				SNew(SScrollBox)
+				+ SScrollBox::Slot()
+				[
+					SAssignNew(DescriptionView, SExtendedAtlassianDocumentView)
+					.MaxReadingWidth(920.0f)
+				]
 			]
 
 			// Comments
@@ -651,9 +660,34 @@ void SExtendedAtlassianIssueBrowser::OnPresetChanged(TSharedPtr<FString> NewPres
 	}
 }
 
+void SExtendedAtlassianIssueBrowser::RefreshDescription()
+{
+	if (!DescriptionView.IsValid())
+	{
+		return;
+	}
+
+	if (!SelectedIssue.IsValid())
+	{
+		DescriptionView->Clear();
+		return;
+	}
+
+	TArray<FExtendedAtlassianDocBlock> Blocks = SelectedIssue->DescriptionBlocks;
+	if (Blocks.IsEmpty())
+	{
+		Blocks = FExtendedAtlassianMarkdown::ToBlocks(
+			SelectedIssue->Description.IsEmpty()
+				? FString(TEXT("(no description)"))
+				: SelectedIssue->Description);
+	}
+	DescriptionView->SetBlocks(Blocks);
+}
+
 void SExtendedAtlassianIssueBrowser::OnIssueSelectionChanged(FIssuePtr Item, ESelectInfo::Type SelectInfo)
 {
 	SelectedIssue = Item;
+	RefreshDescription();
 
 	Transitions.Reset();
 	Comments.Reset();
@@ -963,6 +997,76 @@ void SExtendedAtlassianIssueBrowser::ApplyTransition(FTransitionPtr Transition)
 					LOCTEXT("TransitionFailed", "Could not move {0}: {1}"),
 					FText::FromString(IssueKey),
 					FText::FromString(Error.Message)), false);
+			}));
+}
+
+void SExtendedAtlassianIssueBrowser::ArchiveSelectedIssue()
+{
+	if (!SelectedIssue.IsValid())
+	{
+		return;
+	}
+
+	const FString IssueKey = SelectedIssue->Key;
+	const EAppReturnType::Type Answer = FMessageDialog::Open(
+		EAppMsgType::YesNo,
+		FText::Format(
+			LOCTEXT(
+				"ConfirmArchiveIssue",
+				"Archive {0}? It will leave normal Jira search and board views. Jira may reject this unless the site plan and your administrator role support issue archiving."),
+			FText::FromString(IssueKey)));
+	if (Answer != EAppReturnType::Yes)
+	{
+		return;
+	}
+
+	TWeakPtr<SExtendedAtlassianIssueBrowser> WeakBrowser = SharedThis(this);
+	SetStatus(
+		FText::Format(
+			LOCTEXT("ArchivingIssue", "Archiving {0}..."),
+			FText::FromString(IssueKey)),
+		false);
+	FExtendedAtlassianJira::ArchiveIssue(
+		IssueKey,
+		FExtendedAtlassianActionDelegate::CreateLambda(
+			[WeakBrowser, IssueKey](
+				bool bSuccess,
+				const FExtendedAtlassianError& Error)
+			{
+				using namespace ExtendedAtlassianIssueBrowserPrivate;
+
+				const TSharedPtr<SExtendedAtlassianIssueBrowser> Browser =
+					WeakBrowser.Pin();
+				if (!Browser.IsValid())
+				{
+					return;
+				}
+				if (!bSuccess)
+				{
+					Browser->SetStatus(FText::FromString(Error.ToString()), true);
+					ShowNotification(
+						FText::Format(
+							LOCTEXT("ArchiveIssueFailed", "Could not archive {0}: {1}"),
+							FText::FromString(IssueKey),
+							FText::FromString(Error.Message)),
+						false);
+					return;
+				}
+
+				Browser->SelectedIssue.Reset();
+				Browser->RefreshDescription();
+				Browser->Transitions.Reset();
+				Browser->Comments.Reset();
+				if (Browser->CommentListView.IsValid())
+				{
+					Browser->CommentListView->RequestListRefresh();
+				}
+				ShowNotification(
+					FText::Format(
+						LOCTEXT("IssueArchived", "Archived {0}."),
+						FText::FromString(IssueKey)),
+					true);
+				Browser->Refresh();
 			}));
 }
 

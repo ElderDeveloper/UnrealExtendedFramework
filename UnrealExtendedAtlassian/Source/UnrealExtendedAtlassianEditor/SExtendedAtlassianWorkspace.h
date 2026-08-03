@@ -13,6 +13,7 @@ class IExtendedAtlassianWorkspaceHostServices;
 class SExtendedAtlassianDocumentEditor;
 class SEditableTextBox;
 class SOverlay;
+class SVerticalBox;
 struct FFileChangeData;
 struct FSlateDynamicImageBrush;
 
@@ -61,6 +62,7 @@ private:
 	};
 
 	void HandleControllerChanged();
+	void HandleAuthStateChanged();
 	void Rebuild();
 	float OverlayAnimationProgress() const;
 	float ToastAnimationProgress() const;
@@ -94,6 +96,8 @@ private:
 	TSharedRef<SWidget> BuildCaptureOverlay();
 	TSharedRef<SWidget> BuildToast();
 	TSharedRef<SWidget> BuildCreateCardPopover();
+	TSharedRef<SWidget> BuildCreateCardEpicPicker();
+	void RebuildCreateCardEpicRows();
 	TSharedRef<SWidget> BuildPagePopover();
 	TSharedRef<SWidget> BuildPinPopover();
 	TSharedRef<SWidget> BuildGenericMenu();
@@ -104,6 +108,8 @@ private:
 	TSharedRef<SWidget> BuildPinsSidebar();
 	TSharedRef<SWidget> BuildDocsMain();
 	TSharedRef<SWidget> BuildIssuesMain();
+	TSharedRef<SWidget> BuildIssueDescription(
+		const FExtendedAtlassianIssue& Issue);
 	TSharedRef<SWidget> BuildIssueDetailMain();
 	TSharedRef<SWidget> BuildIssueDetailMainDynamic();
 	TSharedRef<SWidget> BuildBoardMain();
@@ -221,6 +227,7 @@ private:
 	void DuplicatePage(const FString& PageId);
 	void MovePageToSection(const FString& PageId, const FString& SectionId);
 	void ReorderDocumentNode(const FString& NodeId, int32 Direction);
+	void ArchiveDocumentPage(const FString& PageId);
 	void DeleteDocumentNode(const FString& NodeId);
 	void ToggleCommentReply(const FString& CommentId);
 	void ToggleCommentReplies(const FString& CommentId);
@@ -237,6 +244,7 @@ private:
 		const FString& CommentId,
 		bool bIssueComment);
 	void OpenIssueActions();
+	void ArchiveIssue(const FString& IssueKey);
 	void OpenIssueFieldMenu(const FString& FieldName);
 	void MutateIssueField(const FString& FieldName, const FString& Value);
 	FString MakeUniqueDocumentId(const TCHAR* Prefix) const;
@@ -274,6 +282,7 @@ private:
 	TSharedPtr<SEditableTextBox> PageTitleBox;
 	TSharedPtr<SExtendedAtlassianDocumentEditor> DocumentEditor;
 	FDelegateHandle ChangedHandle;
+	FDelegateHandle AuthChangedHandle;
 	FDelegateHandle SettingsObjectChangedHandle;
 	bool bInteractionTimerRegistered = false;
 	bool bSearchDebounceTimerRegistered = false;
@@ -285,6 +294,8 @@ private:
 	double SearchDebounceDueAt = 0.0;
 	bool bAnimationsEnabled = true;
 	bool bHighContrastEnabled = false;
+	float ContextSidebarFraction = 0.17f;
+	float RightRailFraction = 0.24f;
 	uint8 LastOverlayMask = 0;
 	double OverlayAnimationStartedAt = 0.0;
 	double ToastAnimationStartedAt = 0.0;
@@ -312,6 +323,8 @@ private:
 	FString CreateCardPriority = TEXT("MEDIUM");
 	FString CreateCardAssignee;
 	FString CreateCardEpic;
+	FString CreateCardEpicSearch;
+	TSharedPtr<SVerticalBox> CreateCardEpicRows;
 	FString CreateCardStatus = TEXT("Triage");
 	FVector2D CreateCardPosition = FVector2D::ZeroVector;
 	bool bPagePopoverRename = false;

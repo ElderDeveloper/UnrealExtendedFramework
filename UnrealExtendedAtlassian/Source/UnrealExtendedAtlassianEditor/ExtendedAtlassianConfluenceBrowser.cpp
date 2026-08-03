@@ -132,6 +132,7 @@ void SExtendedAtlassianConfluenceBrowser::Construct(const FArguments& InArgs)
 	if (const TSharedPtr<FExtendedAtlassianClient> Client = FUnrealExtendedAtlassianModule::GetClient())
 	{
 		AuthChangedHandle = Client->OnAuthStateChanged().AddSP(this, &SExtendedAtlassianConfluenceBrowser::HandleAuthStateChanged);
+		Client->EnsureUserInfo();
 	}
 
 	StartWatchingDocuments();
@@ -241,6 +242,49 @@ TSharedRef<SWidget> SExtendedAtlassianConfluenceBrowser::BuildToolbar()
 					PullSpaceToDisk();
 					return FReply::Handled();
 				})
+			]
+
+			+ SHorizontalBox::Slot()
+			.AutoWidth()
+			.VAlign(VAlign_Center)
+			.Padding(10.0f, 0.0f, 0.0f, 0.0f)
+			[
+				SNew(SBorder)
+					.BorderImage(FAppStyle::GetBrush(TEXT("ToolPanel.GroupBorder")))
+					.Padding(FMargin(8.0f, 4.0f))
+					.Visibility_Lambda([]()
+					{
+						const TSharedPtr<FExtendedAtlassianClient> Client =
+							FUnrealExtendedAtlassianModule::GetClient();
+						return Client.IsValid() && Client->GetVerifiedUser().IsValid()
+							? EVisibility::Visible
+							: EVisibility::Collapsed;
+					})
+					.ToolTipText_Lambda([]()
+					{
+						const TSharedPtr<FExtendedAtlassianClient> Client =
+							FUnrealExtendedAtlassianModule::GetClient();
+						if (!Client.IsValid())
+						{
+							return FText::GetEmpty();
+						}
+						const FExtendedAtlassianUser& User = Client->GetVerifiedUser();
+						return FText::Format(
+							LOCTEXT("VerifiedConfluenceUserTip", "Connected Atlassian account\n{0}\n{1}"),
+							FText::FromString(User.EmailAddress),
+							FText::FromString(User.AccountId));
+					})
+				[
+					SNew(STextBlock)
+						.Text_Lambda([]()
+						{
+							const TSharedPtr<FExtendedAtlassianClient> Client =
+								FUnrealExtendedAtlassianModule::GetClient();
+							return Client.IsValid()
+								? FText::FromString(Client->GetVerifiedUser().DisplayName)
+								: FText::GetEmpty();
+						})
+				]
 			]
 		]
 
@@ -801,6 +845,20 @@ TSharedRef<SWidget> SExtendedAtlassianConfluenceBrowser::BuildEditActions()
 			.Padding(0.0f, 0.0f, 6.0f, 0.0f)
 			[
 				SNew(SButton)
+				.Text(LOCTEXT("ArchivePage", "Archive Page"))
+				.ToolTipText(LOCTEXT(
+					"ArchivePageTip",
+					"Archive this page in Confluence. Confluence checks archive permission when the request is submitted."))
+				.Visibility_Lambda([this]() { return bEditMode ? EVisibility::Collapsed : EVisibility::Visible; })
+				.IsEnabled_Lambda([IsRealConfluencePage]() { return IsRealConfluencePage(); })
+				.OnClicked_Lambda([this]() { ArchiveCurrentPage(); return FReply::Handled(); })
+			]
+
+			+ SHorizontalBox::Slot()
+			.AutoWidth()
+			.Padding(0.0f, 0.0f, 6.0f, 0.0f)
+			[
+				SNew(SButton)
 				.Text(LOCTEXT("DeletePage", "Delete Page"))
 				.ToolTipText(LOCTEXT("DeletePageTip", "Move this page to the Confluence trash."))
 				.Visibility_Lambda([this]() { return bEditMode ? EVisibility::Collapsed : EVisibility::Visible; })
@@ -1067,6 +1125,61 @@ void SExtendedAtlassianConfluenceBrowser::PushToConfluence()
 
 	FExtendedAtlassianConfluence::UpdatePage(EditingPage.Id, Title, Markdown, EditingPage.Version, OnDone);
 	SetStatus(LOCTEXT("Publishing", "Publishing..."), false);
+}
+
+void SExtendedAtlassianConfluenceBrowser::ArchiveCurrentPage()
+{
+	if (!SelectedNode.IsValid() || SelectedNode->Id.IsEmpty())
+	{
+		return;
+	}
+
+	const FString PageId = SelectedNode->Id;
+	const FString Title = SelectedNode->Title;
+	const EAppReturnType::Type Answer = FMessageDialog::Open(
+		EAppMsgType::YesNo,
+		FText::Format(
+			LOCTEXT(
+				"ConfirmArchivePage",
+				"Archive \"{0}\"? It will leave the current page tree and can be restored by a Confluence space administrator."),
+			FText::FromString(Title)));
+	if (Answer != EAppReturnType::Yes)
+	{
+		return;
+	}
+
+	TWeakPtr<SExtendedAtlassianConfluenceBrowser> WeakBrowser = SharedThis(this);
+	SetStatus(
+		FText::Format(
+			LOCTEXT("ArchivingPage", "Archiving \"{0}\"..."),
+			FText::FromString(Title)),
+		false);
+	FExtendedAtlassianConfluence::ArchivePage(
+		PageId,
+		FExtendedAtlassianActionDelegate::CreateLambda(
+			[WeakBrowser, Title](
+				bool bSuccess,
+				const FExtendedAtlassianError& Error)
+			{
+				const TSharedPtr<SExtendedAtlassianConfluenceBrowser> Browser =
+					WeakBrowser.Pin();
+				if (!Browser.IsValid())
+				{
+					return;
+				}
+				if (!bSuccess)
+				{
+					Browser->SetStatus(FText::FromString(Error.ToString()), true);
+					return;
+				}
+
+				Browser->SetStatus(
+					FText::Format(
+						LOCTEXT("PageArchived", "Archived \"{0}\"."),
+						FText::FromString(Title)),
+					false);
+				Browser->RefreshTree();
+			}));
 }
 
 void SExtendedAtlassianConfluenceBrowser::DeleteCurrentPage()
