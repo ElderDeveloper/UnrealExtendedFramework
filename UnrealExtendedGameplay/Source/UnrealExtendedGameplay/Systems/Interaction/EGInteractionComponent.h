@@ -170,9 +170,6 @@ public:
 	FEGInteractionFocusLost OnFocusLost;
 
 	UPROPERTY(BlueprintAssignable, Category = "Extended|Interaction")
-	FEGInteractionSucceeded OnInteractionSucceeded;
-
-	UPROPERTY(BlueprintAssignable, Category = "Extended|Interaction")
 	FEGInteractionFailed OnInteractionFailed;
 
 	UPROPERTY(BlueprintAssignable, Category = "Extended|Interaction")
@@ -236,41 +233,6 @@ public:
 	/** True when anything at all currently refuses interaction. */
 	UFUNCTION(BlueprintPure, Category = "Extended|Interaction")
 	bool IsInteractionAllowed() const;
-
-	// -----------------------------------------------------------------
-	// Mode stack
-	// -----------------------------------------------------------------
-
-	/** Push a mode entry. Highest priority wins; ties go to the entry pushed last. */
-	UFUNCTION(BlueprintCallable, Category = "Extended|Interaction|Mode")
-	FEGInteractionModeHandle PushInteractionMode(FGameplayTag Mode, int32 Priority, UObject* Source, FName DebugName);
-
-	/** Push at the standard tool band (100). */
-	UFUNCTION(BlueprintCallable, Category = "Extended|Interaction|Mode")
-	FEGInteractionModeHandle PushToolInteractionMode(FGameplayTag Mode, UObject* Source, FName DebugName);
-
-	/** Push a blocking entry at the modal band (1000). While it wins, interaction is refused. */
-	UFUNCTION(BlueprintCallable, Category = "Extended|Interaction|Mode")
-	FEGInteractionModeHandle PushBlockingInteractionMode(UObject* Source, FName DebugName);
-
-	UFUNCTION(BlueprintCallable, Category = "Extended|Interaction|Mode")
-	bool RemoveInteractionMode(FEGInteractionModeHandle Handle);
-
-	/** Remove every entry owned by a source. Cleanup path; prefer the handle. */
-	UFUNCTION(BlueprintCallable, Category = "Extended|Interaction|Mode")
-	int32 RemoveInteractionModesForSource(UObject* Source);
-
-	/** The winning mode tag. Invalid when only the baseline entry is present. */
-	UFUNCTION(BlueprintPure, Category = "Extended|Interaction|Mode")
-	FGameplayTag GetActiveMode() const { return ActiveMode; }
-
-	/** True when the winning entry blocks interaction outright. */
-	UFUNCTION(BlueprintPure, Category = "Extended|Interaction|Mode")
-	bool IsBlockedByMode() const { return bActiveModeBlocks; }
-
-	/** The mode an interactable is being asked under. Reachable from inside CanInteract/Interact. */
-	UFUNCTION(BlueprintPure, Category = "Extended|Interaction|Mode", meta = (DefaultToSelf = "Interactor"))
-	static FGameplayTag GetInteractionMode(const AActor* Interactor);
 
 	/** The hit that produced the current focus, or the client-supplied hit during server dispatch. */
 	UFUNCTION(BlueprintPure, Category = "Extended|Interaction", meta = (DefaultToSelf = "Interactor"))
@@ -346,23 +308,6 @@ private:
 	bool bPromptSuppressed = false;
 	bool bInteractionBlocked = false;
 
-	struct FEGInteractionModeEntry
-	{
-		FEGInteractionModeHandle Handle;
-		FGameplayTag Mode;
-		int32 Priority = EGInteractionModePriority::Baseline;
-		TWeakObjectPtr<UObject> Source;
-		FName DebugName = NAME_None;
-		bool bBlocks = false;
-		bool bIsPersistent = false;
-		bool bTrackSourceLifetime = false;
-	};
-
-	TArray<FEGInteractionModeEntry> ModeEntries;
-	FGameplayTag ActiveMode;
-	bool bActiveModeBlocks = false;
-	int32 NextModeHandleId = 1;
-
 	UFUNCTION(Server, Reliable)
 	void ServerInteractionStart(AActor* TargetActor, FHitResult ClientHitResult);
 
@@ -393,9 +338,6 @@ private:
 	bool IsServerInteractionValid(AActor* TargetActor, const FHitResult& HitResult) const;
 
 	// Mode stack
-	void EnsureBaselineMode();
-	bool PurgeInvalidModes();
-	void ResolveActiveMode();
 
 	// Debug
 	void DrawDebugInfo(const FVector& Start, const FVector& End, bool bHitValid, bool bHitBlocked) const;

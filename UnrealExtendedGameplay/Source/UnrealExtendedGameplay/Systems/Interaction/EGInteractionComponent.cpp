@@ -31,8 +31,6 @@ void UEGInteractionComponent::BeginPlay()
 {
 	Super::BeginPlay();
 
-	EnsureBaselineMode();
-	ResolveActiveMode();
 
 	const APawn* OwnerPawn = Cast<APawn>(GetOwner());
 	const bool bLocallyControlled = OwnerPawn && OwnerPawn->IsLocallyControlled();
@@ -64,9 +62,6 @@ void UEGInteractionComponent::TickComponent(float DeltaTime, ELevelTick TickType
 	{
 		return;
 	}
-
-	PurgeInvalidModes();
-	ResolveActiveMode();
 
 	if (!IsInteractionAllowed())
 	{
@@ -239,11 +234,6 @@ void UEGInteractionComponent::SetInteractionBlocked(bool bBlocked)
 
 bool UEGInteractionComponent::IsInteractionAllowed() const
 {
-	if (bActiveModeBlocks)
-	{
-		return false;
-	}
-
 	// Mouse tracing is the cursor-visible case: a dialogue screen blocks the world but not clicks.
 	if (bInteractionBlocked && !(bUseMouseTrace && bMouseTraceIgnoresBlocking))
 	{
@@ -253,180 +243,10 @@ bool UEGInteractionComponent::IsInteractionAllowed() const
 	return CanOwnerInteract();
 }
 
-FGameplayTag UEGInteractionComponent::GetInteractionMode(const AActor* Interactor)
-{
-	const UEGInteractionComponent* Component = Interactor ? Interactor->FindComponentByClass<UEGInteractionComponent>() : nullptr;
-	return Component ? Component->ActiveMode : FGameplayTag();
-}
-
 FHitResult UEGInteractionComponent::GetInteractionHit(const AActor* Interactor)
 {
 	const UEGInteractionComponent* Component = Interactor ? Interactor->FindComponentByClass<UEGInteractionComponent>() : nullptr;
 	return Component ? Component->LastHitResult : FHitResult();
-}
-
-// =====================================================================
-// Mode stack
-// =====================================================================
-
-void UEGInteractionComponent::EnsureBaselineMode()
-{
-	for (const FEGInteractionModeEntry& Entry : ModeEntries)
-	{
-		if (Entry.bIsPersistent)
-		{
-			return;
-		}
-	}
-
-	FEGInteractionModeEntry& Baseline = ModeEntries.AddDefaulted_GetRef();
-	Baseline.Priority = EGInteractionModePriority::Baseline;
-	Baseline.DebugName = TEXT("Baseline");
-	Baseline.bIsPersistent = true;
-	Baseline.bTrackSourceLifetime = false;
-}
-
-bool UEGInteractionComponent::PurgeInvalidModes()
-{
-	bool bRemovedAny = false;
-	for (int32 Index = ModeEntries.Num() - 1; Index >= 0; --Index)
-	{
-		const FEGInteractionModeEntry& Entry = ModeEntries[Index];
-		if (!Entry.bIsPersistent && Entry.bTrackSourceLifetime && !Entry.Source.IsValid())
-		{
-			ModeEntries.RemoveAt(Index);
-			bRemovedAny = true;
-		}
-	}
-
-	if (bRemovedAny)
-	{
-		EnsureBaselineMode();
-	}
-	return bRemovedAny;
-}
-
-void UEGInteractionComponent::ResolveActiveMode()
-{
-	EnsureBaselineMode();
-
-	int32 BestPriority = TNumericLimits<int32>::Lowest();
-	FGameplayTag BestMode;
-	bool bBestBlocks = false;
-
-	// Forward walk, so a later push with an equal priority wins the tie.
-	for (const FEGInteractionModeEntry& Entry : ModeEntries)
-	{
-		const bool bEntryValid = Entry.bIsPersistent || !Entry.bTrackSourceLifetime || Entry.Source.IsValid();
-		if (!bEntryValid || Entry.Priority < BestPriority)
-		{
-			continue;
-		}
-
-		BestPriority = Entry.Priority;
-		BestMode = Entry.Mode;
-		bBestBlocks = Entry.bBlocks;
-	}
-
-	ActiveMode = BestMode;
-	bActiveModeBlocks = bBestBlocks;
-}
-
-FEGInteractionModeHandle UEGInteractionComponent::PushInteractionMode(FGameplayTag Mode, int32 Priority, UObject* Source, FName DebugName)
-{
-	EnsureBaselineMode();
-
-	FEGInteractionModeEntry& NewEntry = ModeEntries.AddDefaulted_GetRef();
-	NewEntry.Handle.Id = NextModeHandleId++;
-	if (NextModeHandleId == 0)
-	{
-		NextModeHandleId = 1;
-	}
-	NewEntry.Mode = Mode;
-	NewEntry.Priority = Priority;
-	NewEntry.Source = Source;
-	NewEntry.DebugName = DebugName;
-	NewEntry.bTrackSourceLifetime = Source != nullptr;
-
-	const FEGInteractionModeHandle Handle = NewEntry.Handle;
-	ResolveActiveMode();
-	RefreshFocus();
-	return Handle;
-}
-
-FEGInteractionModeHandle UEGInteractionComponent::PushToolInteractionMode(FGameplayTag Mode, UObject* Source, FName DebugName)
-{
-	return PushInteractionMode(Mode, EGInteractionModePriority::ToolState, Source, DebugName);
-}
-
-FEGInteractionModeHandle UEGInteractionComponent::PushBlockingInteractionMode(UObject* Source, FName DebugName)
-{
-	EnsureBaselineMode();
-
-	FEGInteractionModeEntry& NewEntry = ModeEntries.AddDefaulted_GetRef();
-	NewEntry.Handle.Id = NextModeHandleId++;
-	if (NextModeHandleId == 0)
-	{
-		NextModeHandleId = 1;
-	}
-	NewEntry.Priority = EGInteractionModePriority::BlockingModal;
-	NewEntry.Source = Source;
-	NewEntry.DebugName = DebugName;
-	NewEntry.bBlocks = true;
-	NewEntry.bTrackSourceLifetime = Source != nullptr;
-
-	const FEGInteractionModeHandle Handle = NewEntry.Handle;
-	ResolveActiveMode();
-	ClearFocus();
-	return Handle;
-}
-
-bool UEGInteractionComponent::RemoveInteractionMode(FEGInteractionModeHandle Handle)
-{
-	if (!Handle.IsValid())
-	{
-		return false;
-	}
-
-	for (int32 Index = ModeEntries.Num() - 1; Index >= 0; --Index)
-	{
-		const FEGInteractionModeEntry& Entry = ModeEntries[Index];
-		if (!Entry.bIsPersistent && Entry.Handle == Handle)
-		{
-			ModeEntries.RemoveAt(Index);
-			ResolveActiveMode();
-			RefreshFocus();
-			return true;
-		}
-	}
-	return false;
-}
-
-int32 UEGInteractionComponent::RemoveInteractionModesForSource(UObject* Source)
-{
-	if (!Source)
-	{
-		return 0;
-	}
-
-	int32 RemovedCount = 0;
-	for (int32 Index = ModeEntries.Num() - 1; Index >= 0; --Index)
-	{
-		const FEGInteractionModeEntry& Entry = ModeEntries[Index];
-		if (!Entry.bIsPersistent && Entry.Source.Get() == Source)
-		{
-			ModeEntries.RemoveAt(Index);
-			++RemovedCount;
-		}
-	}
-
-	if (RemovedCount > 0)
-	{
-		EnsureBaselineMode();
-		ResolveActiveMode();
-		RefreshFocus();
-	}
-	return RemovedCount;
 }
 
 // =====================================================================
@@ -451,12 +271,6 @@ void UEGInteractionComponent::ClientInteractionResult_Implementation(bool bSucce
 {
 	if (bSuccess)
 	{
-		FEGInteractionContext Context;
-		Context.Interactor = GetOwner();
-		Context.Target = TargetActor;
-		Context.HitResult = ConfirmedHitResult;
-		Context.Mode = ActiveMode;
-		OnInteractionSucceeded.Broadcast(Context);
 		return;
 	}
 
@@ -535,7 +349,7 @@ bool UEGInteractionComponent::IsServerInteractionValid(AActor* TargetActor, cons
 		return false;
 	}
 
-	if (!IEGInteractableInterface::Execute_CanInteract(TargetActor, GetOwner()))
+	if (!IEGInteractableInterface::Execute_CanInteract(TargetActor, GetOwner(), HitResult))
 	{
 		UE_CLOG(bDebugLogTraceResults, LogEGInteraction, Warning, TEXT("[%s] Rejected: %s refused via CanInteract"), *GetNameSafe(GetOwner()), *GetNameSafe(TargetActor));
 		return false;
@@ -719,7 +533,7 @@ bool UEGInteractionComponent::IsCandidateValid(AActor* Candidate, const FHitResu
 	}
 
 	// The server asks CanInteract separately, after the cheaper checks have passed.
-	return bServerValidation || IEGInteractableInterface::Execute_CanInteract(Candidate, GetOwner());
+	return bServerValidation || IEGInteractableInterface::Execute_CanInteract(Candidate, GetOwner(), HitResult);
 }
 
 AActor* UEGInteractionComponent::SelectBestCandidate(const TArray<FHitResult>& Hits, const FVector& Start, const FVector& Direction, FHitResult& OutHit) const
@@ -989,10 +803,6 @@ void UEGInteractionComponent::DrawDebugInfo(const FVector& Start, const FVector&
 	if (!IsInteractionAllowed())
 	{
 		ScreenText += TEXT(" [BLOCKED]");
-	}
-	if (ActiveMode.IsValid())
-	{
-		ScreenText += FString::Printf(TEXT(" [MODE %s]"), *ActiveMode.ToString());
 	}
 	const float Progress = GetHoldProgress();
 	if (Progress > 0.0f)

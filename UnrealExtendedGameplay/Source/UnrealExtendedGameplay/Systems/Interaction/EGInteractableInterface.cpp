@@ -2,10 +2,13 @@
 
 #include "EGInteractableInterface.h"
 
+#include "EGInteractionComponent.h"
+
 void IEGInteractableInterface::InteractionStart_Implementation(AActor* Interactor)
 {
 	// Press-and-release interactables complete on the press. Hold interactables override this.
-	Execute_Interact(Cast<UObject>(this), Interactor);
+	// The hold trio carries no hit, so resolve the validated one the component published.
+	Execute_Interact(Cast<UObject>(this), Interactor, UEGInteractionComponent::GetInteractionHit(Interactor));
 }
 
 void IEGInteractableInterface::InteractionTick_Implementation(AActor* Interactor, float DeltaTime)

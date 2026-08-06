@@ -28,10 +28,13 @@ class UNREALEXTENDEDGAMEPLAY_API UEGInteractableInterface : public UInterface
  * GetInteractionPresentation and FocusStateChanged run on both sides, because the client needs
  * them to decide what prompt to draw.
  *
- * The current interaction mode and the hit that produced the focus are not parameters — they are
- * per-call state on the component, reachable with UEGInteractionComponent::GetInteractionMode()
- * and ::GetInteractionHit() from the interactor. Keeping them off the signature is what lets a
- * game's own interaction interface inherit this one without editing every implementer.
+ * CanInteract and Interact take the hit that produced the focus directly: interactables routinely
+ * branch on which component or bone was struck, and passing it makes that explicit at the call
+ * site instead of an ambient lookup. The hit is server-validated before dispatch — the same value
+ * UEGInteractionComponent::GetInteractionHit() reports.
+ *
+ * The hold trio (InteractionStart/Tick/End) keeps its Interactor-only shape and resolves the hit
+ * through GetInteractionHit() when it forwards to Interact.
  */
 class UNREALEXTENDEDGAMEPLAY_API IEGInteractableInterface
 {
@@ -40,13 +43,13 @@ class UNREALEXTENDEDGAMEPLAY_API IEGInteractableInterface
 public:
 	/** Can this actor be interacted with right now? Returning false also drops focus. */
 	UFUNCTION(BlueprintCallable, BlueprintNativeEvent, Category = "Extended|Interaction")
-	bool CanInteract(AActor* Interactor) const;
-	virtual bool CanInteract_Implementation(AActor* Interactor) const { return Interactor != nullptr; }
+	bool CanInteract(AActor* Interactor, const FHitResult& HitResult) const;
+	virtual bool CanInteract_Implementation(AActor* Interactor, const FHitResult& HitResult) const { return Interactor != nullptr; }
 
 	/** Run the interaction. Authority only. Return false to report failure to the interactor. */
 	UFUNCTION(BlueprintCallable, BlueprintNativeEvent, Category = "Extended|Interaction")
-	bool Interact(AActor* Interactor);
-	virtual bool Interact_Implementation(AActor* Interactor) { return false; }
+	bool Interact(AActor* Interactor, const FHitResult& HitResult);
+	virtual bool Interact_Implementation(AActor* Interactor, const FHitResult& HitResult) { return false; }
 
 	/**
 	 * Called once on the server when the interaction input is pressed.

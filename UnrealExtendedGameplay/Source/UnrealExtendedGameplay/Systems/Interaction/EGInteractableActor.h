@@ -17,12 +17,13 @@
  * cosmetic multicast — and leaves every gameplay decision to the subclass.
  *
  * Subclasses override Interact_Implementation, do their work, and finish with
- * Super::Interact_Implementation(Interactor) to notify every client:
+ * Super::Interact_Implementation(Interactor, HitResult) to notify every client. The hit that
+ * produced the focus is passed in — branch on HitResult.GetComponent() for per-part behaviour:
  *
- *     bool AMyThing::Interact_Implementation(AActor* Interactor)
+ *     bool AMyThing::Interact_Implementation(AActor* Interactor, const FHitResult& HitResult)
  *     {
  *         if (!DoTheThing(Interactor)) { return false; }   // no event, no multicast
- *         return Super::Interact_Implementation(Interactor);
+ *         return Super::Interact_Implementation(Interactor, HitResult);
  *     }
  *
  * Prompt text and icons come from PromptText/PromptIcon, or from overriding
@@ -72,8 +73,8 @@ public:
 	AActor* GetActiveInteractor() const { return ActiveInteractor.Get(); }
 
 	// IEGInteractableInterface
-	virtual bool CanInteract_Implementation(AActor* Interactor) const override;
-	virtual bool Interact_Implementation(AActor* Interactor) override;
+	virtual bool CanInteract_Implementation(AActor* Interactor, const FHitResult& HitResult) const override;
+	virtual bool Interact_Implementation(AActor* Interactor, const FHitResult& HitResult) override;
 	virtual void InteractionStart_Implementation(AActor* Interactor) override;
 	virtual void InteractionTick_Implementation(AActor* Interactor, float DeltaTime) override;
 	virtual void InteractionEnd_Implementation(AActor* Interactor) override;
@@ -81,11 +82,9 @@ public:
 	virtual void FocusStateChanged_Implementation(bool bIsFocused, const FHitResult& HitResult) override;
 
 protected:
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Interactable|Activation")
-	EEGInteractionActivation ActivationMode = EEGInteractionActivation::Instant;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Interactable|Activation", meta = (ClampMin = "0.0", EditCondition = "ActivationMode == EEGInteractionActivation::Hold", EditConditionHides))
-	float HoldDuration = 1.0f;
+	/** Above zero turns this into a hold interactable; zero fires on press. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Interactable|Activation", meta = (ClampMin = "0.0"))
+	float HoldDuration = 0.0f;
 
 	/** Default prompt text. Override GetInteractionPresentation for anything context-dependent. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Interactable|Presentation")
@@ -104,17 +103,6 @@ protected:
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Interactable|Focus", meta = (ClampMin = "0", ClampMax = "255", EditCondition = "bHighlightOnFocus"))
 	int32 HighlightStencilValue = 2;
-
-	/** Cosmetic hooks — run on every machine the actor is relevant to, including the listen host. */
-	UFUNCTION(BlueprintImplementableEvent, Category = "Extended|Interactable")
-	void BP_OnInteracted(AActor* Interactor);
-
-	UFUNCTION(BlueprintImplementableEvent, Category = "Extended|Interactable")
-	void BP_OnHoldStateChanged(bool bStarted, AActor* Interactor);
-
-	/** Local focus feedback only; never replicated. */
-	UFUNCTION(BlueprintImplementableEvent, Category = "Extended|Interactable")
-	void BP_OnFocusChanged(bool bIsFocused, const FHitResult& HitResult);
 
 	void ApplyFocusHighlight(bool bEnabled) const;
 
