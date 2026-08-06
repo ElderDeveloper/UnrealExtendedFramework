@@ -259,7 +259,7 @@ private:
 	void OnCommandQuestCompile() const;
 
 	// Opens (creating on demand) the quest's script Blueprint
-	void OnCommandOpenQuestScript();
+	void OnCommandOpenQuestRunActor();
 
 	//
 	// Graph events

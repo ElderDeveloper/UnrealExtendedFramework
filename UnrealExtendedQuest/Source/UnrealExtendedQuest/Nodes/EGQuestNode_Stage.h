@@ -96,8 +96,8 @@ protected:
 	FText Title;
 
 	/**
-	 * Optional script-facing name for this stage. The quest script's OnStageEntered/OnStageExited
-	 * receive it, so scripts can switch on a readable identifier instead of a GUID or a localized
+	 * Optional script-facing name for this stage. The run actor's OnStageEntered/OnStageExited
+	 * receive it, so they can switch on a readable identifier instead of a GUID or a localized
 	 * title. Never shown to players and never localized.
 	 */
 	UPROPERTY(EditAnywhere, Category = "Stage")

@@ -28,8 +28,8 @@ public:
 	// Compiles the editor graph into the runtime quest data. Saving does this too.
 	TSharedPtr<FUICommandInfo> QuestCompile;
 
-	// Opens the quest's script Blueprint, creating one next to the asset when it has none.
-	TSharedPtr<FUICommandInfo> OpenQuestScript;
+	// Opens the Blueprint of the quest's run actor, when it has one.
+	TSharedPtr<FUICommandInfo> OpenQuestRunActor;
 
 	// Saves all the quests
 	TSharedPtr<FUICommandInfo> SaveAllQuests;

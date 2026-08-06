@@ -8,7 +8,7 @@
 
 #include "IEGQuestEditorAccess.h"
 #include "EGQuestPluginSettings.h"
-// EEGQuestResumePolicy is a UPROPERTY below, so the type must be complete here.
+// EEGQuestAutoTrackPolicy is a UPROPERTY below, so the type must be complete here.
 #include "EGQuestTypes.h"
 
 #if NY_ENGINE_VERSION >= 500
@@ -18,8 +18,7 @@
 #include "EGQuestGraph.generated.h"
 
 class UEGQuestNode;
-class UEGQuestScript;
-class UBlueprint;
+class AEGQuestRunActor;
 
 // Custom serialization version for changes made in Dev-Quests stream
 struct UNREALEXTENDEDQUEST_API FEGQuestGraphObjectVersion
@@ -85,7 +84,7 @@ public:
 	 * like the obvious place to put the new namespaced id:
 	 *
 	 * - Overriding this is not redundant, but it is close. Config/DefaultGame.ini already registers
-	 *   PrimaryAssetType "QuestGraph" over /Game/Quests, and UObject::GetPrimaryAssetId forwards to
+	 *   PrimaryAssetType "QuestGraph" over its quest content directory, and UObject::GetPrimaryAssetId forwards to
 	 *   UAssetManager::DeterminePrimaryAssetIdForObject, which - for a non-blueprint type under a
 	 *   scanned directory - produces FPrimaryAssetId("QuestGraph", <short package name>). That is what
 	 *   this override already returns for every asset the config covers. It is not a no-op though:
@@ -230,8 +229,6 @@ public:
 	static FName GetMemberNameNodesGUIDToIndexMap() { return GET_MEMBER_NAME_CHECKED(UEGQuestGraph, NodesGUIDToIndexMap); }
 	static FName GetMemberNameAssetUserData() { return GET_MEMBER_NAME_CHECKED(UEGQuestGraph, AssetUserData); }
 	static FName GetMemberNameDefinitionId() { return GET_MEMBER_NAME_CHECKED(UEGQuestGraph, DefinitionId); }
-	static FName GetMemberNameContentVersion() { return GET_MEMBER_NAME_CHECKED(UEGQuestGraph, ContentVersion); }
-	static FName GetMemberNameResumePolicy() { return GET_MEMBER_NAME_CHECKED(UEGQuestGraph, ResumePolicy); }
 
 	//
 	// Priority migration (compiler only)
@@ -254,13 +251,7 @@ public:
 		return bWasNeeded;
 	}
 
-	void SetQuestScriptClass(TSubclassOf<UEGQuestScript> InClass) { QuestScriptClass = InClass; }
-
-#if WITH_EDITORONLY_DATA
-	// The script blueprint baked into this asset, or null when the quest has none.
-	UBlueprint* GetQuestScriptBlueprint() const { return QuestScriptBlueprint; }
-	void SetQuestScriptBlueprint(UBlueprint* InBlueprint) { QuestScriptBlueprint = InBlueprint; }
-#endif // WITH_EDITORONLY_DATA
+	void SetQuestRunActorClass(TSubclassOf<AEGQuestRunActor> InClass) { QuestRunActorClass = InClass; }
 
 	// Create the basic quest graph.
 	void CreateGraph();
@@ -310,7 +301,7 @@ public:
 #endif
 
 	// The authority-side script class is cooked and instantiated at runtime.
-	TSubclassOf<UEGQuestScript> GetQuestScriptClass() const { return QuestScriptClass; }
+	TSubclassOf<AEGQuestRunActor> GetQuestRunActorClass() const { return QuestRunActorClass; }
 
 	// Construct and initialize a node within this Quest.
 	template<class T>
@@ -351,28 +342,8 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Quest")
 	bool IsDefinitionIdWellFormed() const;
 
-	/**
-	 * Authored. Bump it when an edit to this graph makes a run recorded against the previous value
-	 * unsafe to resume.
-	 *
-	 * Coarse on purpose: this is a number a human types, not a hash of the graph, so a text-only fix
-	 * that gets bumped costs players a restart. That is the accepted price of keeping the authored
-	 * graph as the single artifact - a derived hash would have to be a second serialized artifact,
-	 * and would fire on cosmetic edits anyway (UEGQuestNode::PostDuplicate re-GUIDs every node, so
-	 * anything GUID-derived changes when a designer duplicates a quest to branch it).
-	 *
-	 * Stamped into every run record on start and compared against the save's on resume.
-	 */
-	UFUNCTION(BlueprintPure, Category = "Quest")
-	int32 GetContentVersion() const { return ContentVersion; }
-	void SetContentVersion(const int32 InContentVersion) { ContentVersion = FMath::Max(1, InContentVersion); }
-
-	/** What to do with a save whose ContentVersion no longer matches this graph. Applied on resume. */
-	UFUNCTION(BlueprintPure, Category = "Quest")
-	EEGQuestResumePolicy GetResumePolicy() const { return ResumePolicy; }
 	EEGQuestAutoTrackPolicy GetAutoTrackPolicy() const { return AutoTrackPolicy; }
 	void SetAutoTrackPolicy(EEGQuestAutoTrackPolicy InPolicy) { AutoTrackPolicy = InPolicy; }
-	void SetResumePolicy(const EEGQuestResumePolicy InResumePolicy) { ResumePolicy = InResumePolicy; }
 
 	/** Quest-lifetime roles resolved before the first stage is published. */
 	const TArray<FEGQuestRoleDefinition>& GetRoleDefinitions() const { return RoleDefinitions; }
@@ -536,16 +507,6 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "Quest")
 	FName DefinitionId;
 
-	// Authored content version. See GetContentVersion. Starts at 1: 0 would be indistinguishable from
-	// "a save written before run records carried a version at all", which resume must be able to tell apart.
-	UPROPERTY(EditAnywhere, Category = "Quest", Meta = (ClampMin = "1"))
-	int32 ContentVersion = 1;
-
-	// What to do with a save from a different ContentVersion. Defaults to Restart: losing progress is
-	// recoverable, resuming a run into a node that no longer means what it did is not.
-	UPROPERTY(EditAnywhere, Category = "Quest")
-	EEGQuestResumePolicy ResumePolicy = EEGQuestResumePolicy::Restart;
-
 	/** Player-facing journal selection policy; the component still enforces exactly one tracked run. */
 	UPROPERTY(EditAnywhere, Category = "Quest|Presentation")
 	EEGQuestAutoTrackPolicy AutoTrackPolicy = EEGQuestAutoTrackPolicy::IfNone;
@@ -554,25 +515,15 @@ protected:
 	TArray<FEGQuestRoleDefinition> RoleDefinitions;
 
 	/**
-	 * The quest's event graph: one instance of this script runs per running quest instance, on the
-	 * authority only. Optional.
+	 * The quest's logic and per-run state: one actor of this class is spawned per running instance and
+	 * destroyed when the run ends. Optional - leave it null and the quest is pure data, costing nothing.
 	 *
-	 * The quest editor's Open Script button bakes a script blueprint into this asset and keeps this
-	 * class pointing at it - while an embedded script exists, this property belongs to it. Without
-	 * one, a native UEGQuestScript subclass may be assigned here directly.
+	 * Point it at any AEGQuestRunActor subclass, native or an ordinary actor Blueprint. Being a real
+	 * actor, it gets tick, components and plain replicated properties, and it exists on the clients the
+	 * run is relevant to, so its lifecycle hooks fire there too.
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Quest")
-	TSubclassOf<UEGQuestScript> QuestScriptClass;
-
-#if WITH_EDITORONLY_DATA
-	/**
-	 * The script blueprint baked into this asset, the way a level blueprint is baked into its level:
-	 * it is not a content browser asset and belongs to this quest alone. Only its generated class
-	 * (QuestScriptClass above) cooks; the blueprint itself is editor-only.
-	 */
-	UPROPERTY(Meta = (QuestNoExport))
-	TObjectPtr<UBlueprint> QuestScriptBlueprint;
-#endif // WITH_EDITORONLY_DATA
+	TSubclassOf<AEGQuestRunActor> QuestRunActorClass;
 
 	// Root nodes, compiler output sorted by UEGQuestNode_Start::EntryPriority. A quest starts from the
 	// first one with a child that enters.

@@ -217,7 +217,6 @@ UENUM(BlueprintType)
 enum class EEGQuestTelemetryEventType : uint8
 {
 	Started,
-	Resumed,
 	StageEntered,
 	ObjectiveProgress,
 	ObjectiveResolved,
@@ -253,22 +252,6 @@ enum class EEGQuestDeactivationReason : uint8
 	Cancelled,
 	Obsolete,
 	Expired
-};
-
-/**
- * What to do with a saved run whose ContentVersion no longer matches the graph it was recorded
- * against. Authored per graph on UEGQuestGraph, and applied by UEGQuestComponent when resuming.
- */
-UENUM(BlueprintType)
-enum class EEGQuestResumePolicy : uint8
-{
-	// Throw the run away and start the quest again from its entry points. The safe default: a graph
-	// edit can move, delete or repurpose the very node the run is sitting on.
-	Restart,
-
-	// Resume anyway, keeping whatever still resolves against the new graph. For quests whose author
-	// accepts that a mid-run edit may land the player somewhere the edit did not anticipate.
-	BestEffortResume
 };
 
 /**
@@ -410,10 +393,9 @@ struct UNREALEXTENDEDQUEST_API FEGQuestTrackState
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Quest|Track") TArray<FEGQuestSnapshotObjective> ActiveObjectives;
 	/** Resolved rows retained for presentation; pending rows become Obsolete when their stage exits. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Quest|Track") TArray<FEGQuestSnapshotObjective> ObjectiveHistory;
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, NotReplicated, Category = "Quest|Track") TArray<FGuid> VisitedNodeGuids;
 };
 
-/** Why a quest script's OnStageExited fired: the stage advanced, or the whole quest ended. */
+/** Why a run actor's OnStageExited fired: the stage advanced, or the whole quest ended. */
 UENUM(BlueprintType)
 enum class EEGQuestStageExitReason : uint8
 {
@@ -502,10 +484,6 @@ struct UNREALEXTENDEDQUEST_API FEGQuestRunRecord
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Quest")
 	FName DefinitionId = NAME_None;
 
-	/** Authored graph version used for resume compatibility. */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Quest")
-	int32 ContentVersion = 1;
-
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Quest")
 	FGuid QuestInstanceGuid;
 
@@ -519,6 +497,10 @@ struct UNREALEXTENDEDQUEST_API FEGQuestRunRecord
 	/** The active stage. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Quest")
 	FGuid ActiveNodeGuid;
+
+	/** The active stage's authored script-facing name. May be None. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Quest")
+	FName ActiveStageId = NAME_None;
 
 	/** The journal entry for the active stage, with {arguments} resolved on the authority. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Quest")
@@ -546,13 +528,6 @@ struct UNREALEXTENDEDQUEST_API FEGQuestRunRecord
 	 */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Quest")
 	TArray<FEGQuestObjectiveCountOverride> ObjectiveRequiredCountOverrides;
-
-	/**
-	 * Visited history. Authority/save-game only: excluded from replication because clients have no
-	 * use for it and it grows unbounded on looping quests.
-	 */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, NotReplicated, Category = "Quest")
-	TArray<FGuid> VisitedNodeGuids;
 
 	/** Authority/save only. Replication views never expose producer progress. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, NotReplicated, Category = "Quest")
@@ -607,6 +582,10 @@ struct UNREALEXTENDEDQUEST_API FEGQuestViewSnapshot : public FFastArraySerialize
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Quest")
 	FGuid ActiveNodeGuid;
+
+	/** The active stage's authored script-facing name. May be None. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Quest")
+	FName ActiveStageId = NAME_None;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Quest")
 	FText ActiveStageTitle;
@@ -678,23 +657,3 @@ struct TStructOpsTypeTraits<FEGQuestSnapshotArray> : public TStructOpsTypeTraits
 	enum { WithNetDeltaSerializer = true };
 };
 
-/** Explicit persistence payload. Transient events and actor references are intentionally excluded. */
-USTRUCT(BlueprintType)
-struct UNREALEXTENDEDQUEST_API FEGQuestSaveEnvelope
-{
-	GENERATED_BODY()
-
-	/** Independent save schema; intentionally not tied to graph or plugin object versions. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Quest")
-	int32 SchemaVersion = 1;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Quest")
-	FEGQuestRunRecord RunRecord;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Quest")
-	bool bPrivate = false;
-
-	/** Ordered migration identifiers already applied to this envelope. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Quest")
-	TArray<FName> AppliedMigrations;
-};

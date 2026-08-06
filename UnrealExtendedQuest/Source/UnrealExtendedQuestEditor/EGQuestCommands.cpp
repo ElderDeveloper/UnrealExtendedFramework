@@ -16,9 +16,9 @@ void FEGQuestCommands::RegisterCommands()
 	);
 
 	UI_COMMAND(
-		OpenQuestScript,
-		"Open Script",
-		"Opens this quest's script Blueprint - its event graph, run once per quest instance on the authority. Creates one next to the asset if the quest has none.",
+		OpenQuestRunActor,
+		"Open Run Actor",
+		"Opens the Blueprint of this quest's run actor - the actor spawned once per quest instance, carrying its logic and per-run state.",
 		EUserInterfaceActionType::Button, FInputChord()
 	);
 

@@ -16,6 +16,10 @@
 #include "UnrealExtendedQuest/EGQuestTargetRegistry.h"
 #include "UnrealExtendedQuest/EGQuestTracker.h"
 #include "UnrealExtendedQuest/Tests/EGQuestIOTesterTypes.h"
+#include "UnrealExtendedQuest/Tests/EGQuestRunActorTestTypes.h"
+#include "UnrealExtendedQuest/EGQuestRunActor.h"
+#include "Engine/Engine.h"
+#include "Engine/World.h"
 #include "GameFramework/GameStateBase.h"
 #include "GameFramework/PlayerState.h"
 #include "Tests/AutomationEditorCommon.h"
@@ -213,11 +217,6 @@ bool FEGQuestStageEnterEventsAutomationTest::RunTest(const FString& Parameters)
 
 	// Objectives are never entered, so they never fire enter events - only stages and the end do.
 	TestTrue(TEXT("Objectives are not visited: only the stage is"), !Context->GetVisitedNodeGUIDs().Contains(Obj0->GetGUID()));
-
-	UEGQuestContext* Resumed = NewObject<UEGQuestContext>();
-	TestTrue(TEXT("Context resumes from a stable stage GUID"),
-		Resumed->ResumeFromNodeGUID(Graph, Stage0->GetGUID(), Context->GetHistoryOfThisContext(), false));
-	TestEqual(TEXT("Resume restores the requested stage"), Resumed->GetActiveNodeGUID(), Stage0->GetGUID());
 	return true;
 }
 
@@ -427,14 +426,14 @@ bool FEGQuestLevelQuestAssetsAutomationTest::RunTest(const FString& Parameters)
 	};
 
 	const TArray<FExpectedQuest> ExpectedQuests = {
-		{TEXT("/Game/Quests/Q_Castle.Q_Castle"), 4,
+		{TEXT("/Game/DOP/Quests/Q_Castle.Q_Castle"), 4,
 			{TEXT("DOP.Quest.Castle.GateOpened"), TEXT("DOP.Quest.Castle.BookAcquired"),
 			 TEXT("DOP.Quest.Castle.BookPlaced"), TEXT("DOP.Quest.Ritual.Completed")}},
-		{TEXT("/Game/Quests/Q_Dungeon.Q_Dungeon"), 5,
+		{TEXT("/Game/DOP/Quests/Q_Dungeon.Q_Dungeon"), 5,
 			{TEXT("DOP.Quest.Dungeon.KeyTaken"), TEXT("DOP.Quest.Dungeon.PatientPlaced"),
 			 TEXT("DOP.Quest.Dungeon.PatientInjected"), TEXT("DOP.Quest.Dungeon.FountainItemsPlaced"),
 			 TEXT("DOP.Quest.Dungeon.SyringeFilled")}},
-		{TEXT("/Game/Quests/Q_Egypt.Q_Egypt"), 6,
+		{TEXT("/Game/DOP/Quests/Q_Egypt.Q_Egypt"), 6,
 			{TEXT("DOP.Quest.Egypt.MaatFeatherPlaced"), TEXT("DOP.Quest.Egypt.CanopicsPlaced"),
 			 TEXT("DOP.Quest.Egypt.HeartAcquired"), TEXT("DOP.Quest.Egypt.HeartPurified"),
 			 TEXT("DOP.Quest.Egypt.HeartPlaced"), TEXT("DOP.Quest.Egypt.HeartMummified")}}
@@ -489,7 +488,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEGQuestComponentAuthorityAutomationTest,
 
 bool FEGQuestComponentAuthorityAutomationTest::RunTest(const FString& Parameters)
 {
-	UEGQuestGraph* Castle = LoadObject<UEGQuestGraph>(nullptr, TEXT("/Game/Quests/Q_Castle.Q_Castle"));
+	UEGQuestGraph* Castle = LoadObject<UEGQuestGraph>(nullptr, TEXT("/Game/DOP/Quests/Q_Castle.Q_Castle"));
 	TestNotNull(TEXT("Castle graph loads for component test"), Castle);
 	if (!Castle) return false;
 
@@ -537,7 +536,6 @@ bool FEGQuestComponentAuthorityAutomationTest::RunTest(const FString& Parameters
 	}
 	TestTrue(TEXT("Castle quest reaches a terminal snapshot"), Snapshot.IsTerminal());
 	TestEqual(TEXT("Castle quest completes after four accepted events"), Snapshot.LifecycleState, EEGQuestLifecycleState::Completed);
-	TestFalse(TEXT("Completed quest is not resumable"), [&]() { FEGQuestSaveEnvelope Data; return SharedComponent->BuildQuestSaveData(SharedInstance, Data) && SharedComponent->ResumeQuest(Data).IsValid(); }());
 
 	APlayerState* PlayerState = NewObject<APlayerState>();
 	UEGQuestComponent* PrivateComponent = NewObject<UEGQuestComponent>(PlayerState);
@@ -547,26 +545,10 @@ bool FEGQuestComponentAuthorityAutomationTest::RunTest(const FString& Parameters
 	TestEqual(TEXT("Private quest only populates owner-only collection"), PrivateComponent->GetPrivateQuestSnapshots().Num(), 1);
 	TestEqual(TEXT("PlayerState shared collection remains empty"), PrivateComponent->GetSharedQuestSnapshots().Num(), 0);
 
-	FEGQuestSaveEnvelope SaveData;
-	TestTrue(TEXT("Active private quest builds explicit save data"), PrivateComponent->BuildQuestSaveData(PrivateInstance, SaveData));
-	TestTrue(TEXT("Save payload carries the stage's checklist"), SaveData.RunRecord.ActiveObjectives.Num() > 0);
-	if (SaveData.RunRecord.ActiveObjectives.Num() == 0) return false;
-	// Partial progress on the first objective must survive the round trip.
-	SaveData.RunRecord.ActiveObjectives[0].Count = 1;
-	SaveData.RunRecord.ActiveObjectives[0].RequiredCount = 5;
-	APlayerState* RestoredPlayerState = NewObject<APlayerState>();
-	UEGQuestComponent* RestoredComponent = NewObject<UEGQuestComponent>(RestoredPlayerState);
-	const FGuid ResumedInstance = RestoredComponent->ResumeQuest(SaveData);
-	TestEqual(TEXT("Resume preserves the persistent run id"), ResumedInstance, PrivateInstance);
-	FEGQuestRuntimeSnapshot ResumedSnapshot;
-	TestTrue(TEXT("Resumed snapshot is queryable"), RestoredComponent->FindQuestSnapshot(ResumedInstance, ResumedSnapshot));
-	TestEqual(TEXT("Resume preserves the active stage"), ResumedSnapshot.ActiveNodeGuid, FirstStage);
-	TestEqual(TEXT("Resume preserves the checklist"), ResumedSnapshot.ActiveObjectives.Num(), SaveData.RunRecord.ActiveObjectives.Num());
-	if (ResumedSnapshot.ActiveObjectives.Num() > 0)
-	{
-		TestEqual(TEXT("Resume preserves partial objective progress"), ResumedSnapshot.ActiveObjectives[0].Count, 1);
-		TestFalse(TEXT("Resume restores the objective's text"), ResumedSnapshot.ActiveObjectives[0].Text.IsEmpty());
-	}
+	FEGQuestRuntimeSnapshot PrivateSnapshot;
+	TestTrue(TEXT("Private snapshot is queryable"), PrivateComponent->FindQuestSnapshot(PrivateInstance, PrivateSnapshot));
+	TestEqual(TEXT("Private run opens on the first stage"), PrivateSnapshot.ActiveNodeGuid, FirstStage);
+	TestTrue(TEXT("Private run publishes its stage checklist"), PrivateSnapshot.ActiveObjectives.Num() > 0);
 	return true;
 }
 
@@ -735,7 +717,7 @@ bool FEGQuestRequiredCountOverrideAutomationTest::RunTest(const FString& Paramet
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEGQuestPerPublisherCursorAutomationTest,
-	"QuestPlugin.Runtime.PerPublisherCursorPersistsAcrossResume",
+	"QuestPlugin.Runtime.PerPublisherCursorDedupes",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
 bool FEGQuestPerPublisherCursorAutomationTest::RunTest(const FString& Parameters)
@@ -774,29 +756,13 @@ bool FEGQuestPerPublisherCursorAutomationTest::RunTest(const FString& Parameters
 	TestEqual(TEXT("Duplicate input commits zero revisions"), Snapshot.Revision, RevisionBeforeDuplicate);
 	TestEqual(TEXT("Duplicate input does not advance progress"), Snapshot.ActiveObjectives[0].Count, 2);
 
-	FEGQuestSaveEnvelope SaveEnvelope;
-	TestTrue(TEXT("Run builds the Phase 1 save envelope"), FirstComponent->BuildQuestSaveData(RunId, SaveEnvelope));
-	TestEqual(TEXT("Save envelope schema is explicit"), SaveEnvelope.SchemaVersion, 1);
-
-	AGameStateBase* RestoredGameState = NewObject<AGameStateBase>();
-	UEGQuestComponent* RestoredComponent = NewObject<UEGQuestComponent>(RestoredGameState);
-	const FEGQuestOperationResult ResumeResult = RestoredComponent->ResumeQuest(SaveEnvelope);
-	TestEqual(TEXT("Resume preserves logical run identity"), ResumeResult.RunId, RunId);
-	TestEqual(TEXT("Resume reports an applied operation"), ResumeResult.Status, EEGQuestOperationStatus::Applied);
-
-	RestoredComponent->FindQuestSnapshot(RunId, Snapshot);
-	const int32 RestoredRevision = Snapshot.Revision;
-	TestEqual(TEXT("Persisted publisher cursor still dedupes after resume"),
-		RestoredComponent->NotifyGameplayEvent(PublisherB).Status, EEGQuestOperationStatus::AcceptedNoChange);
-	RestoredComponent->FindQuestSnapshot(RunId, Snapshot);
-	TestEqual(TEXT("Post-resume duplicate commits zero revisions"), Snapshot.Revision, RestoredRevision);
-
+	// Each publisher keeps its own cursor, so B's low sequence is not shadowed by A's high one.
 	PublisherB.Sequence = 2;
-	TestEqual(TEXT("Next sequence from restored publisher applies"),
-		RestoredComponent->NotifyGameplayEvent(PublisherB).Status, EEGQuestOperationStatus::Applied);
-	RestoredComponent->FindQuestSnapshot(RunId, Snapshot);
-	TestEqual(TEXT("Restored run continues from saved progress"), Snapshot.ActiveObjectives[0].Count, 3);
-	TestEqual(TEXT("Accepted event consumes exactly one revision"), Snapshot.Revision, RestoredRevision + 1);
+	TestEqual(TEXT("Next sequence from the same publisher applies"),
+		FirstComponent->NotifyGameplayEvent(PublisherB).Status, EEGQuestOperationStatus::Applied);
+	FirstComponent->FindQuestSnapshot(RunId, Snapshot);
+	TestEqual(TEXT("Run continues from the deduped progress"), Snapshot.ActiveObjectives[0].Count, 3);
+	TestEqual(TEXT("Accepted event consumes exactly one revision"), Snapshot.Revision, RevisionBeforeDuplicate + 1);
 	return true;
 }
 
@@ -1276,16 +1242,11 @@ bool FEGQuestTrackerLibrarySimulatorAutomationTest::RunTest(const FString& Param
 	FEGQuestSimulator TimerSim(*TimerComponent, *Facts, 100.0);
 	TimerSim.Start(*TimerGraph.Graph);
 	TimerSim.Advance(2.0);
-	FEGQuestSaveEnvelope TimerSave;
-	TestTrue(TEXT("Timer run saves"), TimerComponent->BuildQuestSaveData(TimerSim.GetRunId(), TimerSave));
-	TestEqual(TEXT("Timer save stores remaining duration"), TimerSave.RunRecord.ActiveObjectives[0].TrackerEndServerTime, 3.0);
-	UEGQuestComponent* RestoredComponent = NewObject<UEGQuestComponent>(GameState);
-	FEGQuestSimulator RestoredSim(*RestoredComponent, *Facts, 102.0);
-	TestTrue(TEXT("Timer run resumes"), RestoredSim.Resume(TimerSave).IsSuccess());
-	RestoredSim.Advance(2.0);
-	TestTrue(TEXT("Restored activation does not restart timer"), RestoredSim.AssertResult(EEGQuestLifecycleState::Active, Failure));
-	RestoredSim.Advance(1.0);
-	TestTrue(TEXT("Restored timer expires at original deadline"), RestoredSim.AssertResult(EEGQuestLifecycleState::Completed, Failure));
+	// The deadline is an absolute authority time, so advancing past it is what expires the tracker.
+	TimerSim.Advance(2.0);
+	TestTrue(TEXT("Timer is still running before its deadline"), TimerSim.AssertResult(EEGQuestLifecycleState::Active, Failure));
+	TimerSim.Advance(1.0);
+	TestTrue(TEXT("Timer expires at its deadline"), TimerSim.AssertResult(EEGQuestLifecycleState::Completed, Failure));
 	return true;
 }
 
@@ -1452,16 +1413,8 @@ bool FEGQuestMultiTrackAutomationTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("Legacy convenience fields map to main"), Snapshot.ActiveNodeGuid, Snapshot.Tracks[0].ActiveNodeGuid);
 	TestEqual(TEXT("Each track has its own objective"), Snapshot.Tracks[1].ActiveObjectives.Num(), 1);
 
-	FEGQuestSaveEnvelope Save;
-	TestTrue(TEXT("Multi-track state saves"), Component->BuildQuestSaveData(RunId, Save));
-	AGameStateBase* RestoredGameState = NewObject<AGameStateBase>();
-	UEGQuestComponent* Restored = NewObject<UEGQuestComponent>(RestoredGameState);
-	TestTrue(TEXT("Multi-track state resumes"), Restored->ResumeQuest(Save).IsSuccess());
-	TestTrue(TEXT("Restored projection exists"), Restored->FindQuestSnapshot(RunId, Snapshot));
-	TestEqual(TEXT("Sentinel is reconstructed on resume"), Snapshot.Tracks.Num(), 2);
-
-	Restored->NotifyGameplayEvent(TagEvent(TEXT("DOP.Quest.Castle.GateOpened")));
-	TestTrue(TEXT("Terminal projection remains queryable"), Restored->FindQuestSnapshot(RunId, Snapshot));
+	Component->NotifyGameplayEvent(TagEvent(TEXT("DOP.Quest.Castle.GateOpened")));
+	TestTrue(TEXT("Terminal projection remains queryable"), Component->FindQuestSnapshot(RunId, Snapshot));
 	TestEqual(TEXT("Sentinel end resolves the whole logical quest"), Snapshot.LifecycleState, EEGQuestLifecycleState::Failed);
 	TestEqual(TEXT("Terminal run retains both track histories"), Snapshot.Tracks.Num(), 2);
 	TestEqual(TEXT("Main active checklist is cleared"), Snapshot.Tracks[0].ActiveObjectives.Num(), 0);
@@ -1559,12 +1512,12 @@ bool FEGQuestRolesAutomationTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("Template binding wins over authored resolver"), Snapshot.ActiveObjectives[0].Text.ToString(), FString(TEXT("Find Beta")));
 	TestEqual(TEXT("Template count override applies before first projection"), Snapshot.ActiveObjectives[0].RequiredCount, 2);
 
-	FEGQuestSaveEnvelope Save;
-	TestTrue(TEXT("Role bindings save as stable handles"), Component->BuildQuestSaveData(TemplateRun, Save));
-	TestEqual(TEXT("Save contains one template role"), Save.RunRecord.RoleBindings.Num(), 1);
-	if (Save.RunRecord.RoleBindings.Num() == 1)
-		TestEqual(TEXT("No live pointer is needed to identify the saved target"),
-			Save.RunRecord.RoleBindings[0].Handles[0].StableId, FName(TEXT("Target.Beta")));
+	// Roles travel as stable handles, never live pointers - that is what lets a client resolve them.
+	Component->FindQuestSnapshot(TemplateRun, Snapshot);
+	TestEqual(TEXT("Projection contains one template role marker"), Snapshot.RoleMarkers.Num(), 1);
+	if (Snapshot.RoleMarkers.Num() == 1)
+		TestEqual(TEXT("No live pointer is needed to identify the target"),
+			Snapshot.RoleMarkers[0].Handle.StableId, FName(TEXT("Target.Beta")));
 
 	UEGQuestTestPlatformSink* PlatformSink = NewObject<UEGQuestTestPlatformSink>();
 	Component->OnQuestRoleLost.AddDynamic(PlatformSink, &UEGQuestTestPlatformSink::HandleRoleLost);
@@ -1684,15 +1637,6 @@ bool FEGQuestDirectivesAutomationTest::RunTest(const FString& Parameters)
 	const FGuid RunId = Component->StartSharedQuest(Graph);
 	TestEqual(TEXT("Stage activation emits after initial projection"), Sink->Directives.Num(), 1);
 	if (!Sink->DirectivePhases.IsEmpty()) TestEqual(TEXT("Initial phase is activate"), Sink->DirectivePhases[0], EEGQuestDirectivePhase::Activate);
-	FEGQuestSaveEnvelope Save;
-	TestTrue(TEXT("Active directive quest can be saved"), Component->BuildQuestSaveData(RunId, Save));
-	UEGQuestComponent* RestoredComponent = NewObject<UEGQuestComponent>(GameState);
-	UEGQuestTestPlatformSink* RestoredSink = NewObject<UEGQuestTestPlatformSink>();
-	RestoredComponent->OnQuestDirective.AddDynamic(RestoredSink, &UEGQuestTestPlatformSink::HandleDirective);
-	TestTrue(TEXT("Directive quest resumes"), RestoredComponent->ResumeQuest(Save).IsSuccess());
-	TestEqual(TEXT("Resume re-emits active-stage directives for idempotent consumers"), RestoredSink->Directives.Num(), 1);
-	if (!RestoredSink->DirectivePhases.IsEmpty())
-		TestEqual(TEXT("Resumed stage directive is activation"), RestoredSink->DirectivePhases[0], EEGQuestDirectivePhase::Activate);
 	FEGQuestGameplayEvent Complete = TagEvent(TEXT("DOP.Quest.Ritual.Completed"));
 	Complete.Magnitude = 3.0f;
 	Component->NotifyGameplayEvent(Complete);
@@ -1704,5 +1648,112 @@ bool FEGQuestDirectivesAutomationTest::RunTest(const FString& Parameters)
 	}
 	return true;
 }
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEGQuestRunActorAutomationTest,
+	"QuestPlugin.Runtime.RunActorLifecycle",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FEGQuestRunActorAutomationTest::RunTest(const FString& Parameters)
+{
+	// A run actor is a real actor, so unlike every other test here this one needs a world to
+	// spawn into.
+	UWorld* World = UWorld::CreateWorld(EWorldType::Game, false);
+	if (!World) return false;
+	FWorldContext& WorldContext = GEngine->CreateNewWorldContext(EWorldType::Game);
+	WorldContext.SetCurrentWorld(World);
+	World->InitializeActorsForPlay(FURL());
+	World->BeginPlay();
+
+	ON_SCOPE_EXIT
+	{
+		GEngine->DestroyWorldContext(World);
+		World->DestroyWorld(false);
+	};
+
+	UEGQuestNode_Objective* Objective = nullptr;
+	UEGQuestGraph* Graph = BuildCountingObjectiveGraph(Objective);
+	CastChecked<UEGQuestTracker_EventCount>(Objective->GetTracker())->RequiredCount = 1;
+	CastChecked<UEGQuestNode_Stage>(Graph->GetNodes()[0])->SetStageId(TEXT("Rites"));
+
+	AGameStateBase* GameState = World->SpawnActor<AGameStateBase>();
+	if (!GameState) return false;
+	UEGQuestComponent* Component = NewObject<UEGQuestComponent>(GameState);
+	Component->RegisterComponent();
+
+	// A graph that names no run actor spawns nothing: the null default has to stay free.
+	AEGQuestTestRunActor::Reset();
+	const FGuid BareRun = Component->StartSharedQuest(Graph);
+	TestTrue(TEXT("Quest without a run actor class still starts"), BareRun.IsValid());
+	TestNull(TEXT("No run actor is spawned when the graph names none"), Component->GetRunActor(BareRun));
+	TestEqual(TEXT("Nothing was constructed"), AEGQuestTestRunActor::SpawnCount, 0);
+	Component->AbandonQuest(BareRun);
+
+	Graph->SetQuestRunActorClass(AEGQuestTestRunActor::StaticClass());
+	AEGQuestTestRunActor::Reset();
+
+	const FGuid RunId = Component->StartSharedQuest(Graph);
+	TestTrue(TEXT("Quest with a run actor class starts"), RunId.IsValid());
+	AEGQuestRunActor* RunActor = Component->GetRunActor(RunId);
+	TestNotNull(TEXT("Starting the run spawns its actor"), RunActor);
+	if (!RunActor) return false;
+	TestEqual(TEXT("Exactly one run actor exists"), AEGQuestTestRunActor::SpawnCount, 1);
+	TestEqual(TEXT("Run actor knows its instance"), RunActor->GetQuestInstanceGuid(), RunId);
+	TestEqual(TEXT("Run actor knows its component"), RunActor->GetQuestComponent(), Component);
+	TestTrue(TEXT("A shared run's actor is always relevant"), RunActor->bAlwaysRelevant);
+	TestFalse(TEXT("A shared run's actor is not owner-restricted"), RunActor->bOnlyRelevantToOwner);
+
+	FEGQuestViewSnapshot ActorSnapshot;
+	TestTrue(TEXT("Run actor reads its own snapshot"), RunActor->GetQuestSnapshot(ActorSnapshot));
+	TestEqual(TEXT("Snapshot carries the active stage id"), ActorSnapshot.ActiveStageId, FName(TEXT("Rites")));
+
+	TestTrue(TEXT("Start dispatches QuestStarted then StageEntered"),
+		AEGQuestTestRunActor::Recorded == TArray<FName>({TEXT("QuestStarted"), TEXT("StageEntered:Rites")}));
+
+	// Completing the quest resolves the objective, exits the stage and ends the run, in that order.
+	Component->NotifyGameplayEvent(TagEvent(TEXT("DOP.Quest.Ritual.Completed")));
+
+	TestTrue(TEXT("Objective resolution reaches the run actor"),
+		AEGQuestTestRunActor::Recorded.Contains(TEXT("ObjectiveResolved")));
+	TestTrue(TEXT("Stage exit reaches the run actor"),
+		AEGQuestTestRunActor::Recorded.Contains(TEXT("StageExited")));
+	TestTrue(TEXT("Quest end reaches the run actor"),
+		AEGQuestTestRunActor::Recorded.Contains(TEXT("QuestEnded")));
+	TestEqual(TEXT("The run actor is told the run completed"), AEGQuestTestRunActor::LastResult, EEGQuestResult::Completed);
+	TestTrue(TEXT("QuestEnded is the last hook the run actor sees"),
+		AEGQuestTestRunActor::Recorded.Last() == FName(TEXT("QuestEnded")));
+
+	// Exactly one teardown per stage entered. DispatchQuestEnded closes an open stage so clients get
+	// the exit too (their terminal snapshot is purged before they could observe it), which would
+	// double-fire here if the authority's own exit had not already cleared the baseline.
+	int32 Entered = 0, Exited = 0;
+	for (const FName Hook : AEGQuestTestRunActor::Recorded)
+	{
+		if (Hook.ToString().StartsWith(TEXT("StageEntered"))) ++Entered;
+		else if (Hook == FName(TEXT("StageExited"))) ++Exited;
+	}
+	TestEqual(TEXT("One stage was entered"), Entered, 1);
+	TestEqual(TEXT("Every entered stage is exited exactly once"), Exited, Entered);
+
+	// Retired from the component the moment it ends, so nothing can drive a finished run through it.
+	TestNull(TEXT("A finished run has no run actor"), Component->GetRunActor(RunId));
+
+	// Relevancy follows the run: a private run belongs to one connection, so its actor is owned by
+	// the PlayerState and owner-only rather than always-relevant.
+	APlayerState* PlayerState = World->SpawnActor<APlayerState>();
+	if (!PlayerState) return false;
+	UEGQuestComponent* PrivateComponent = NewObject<UEGQuestComponent>(PlayerState);
+	PrivateComponent->RegisterComponent();
+
+	const FGuid PrivateRun = PrivateComponent->StartPrivateQuest(Graph);
+	TestTrue(TEXT("Private quest starts"), PrivateRun.IsValid());
+	AEGQuestRunActor* PrivateActor = PrivateComponent->GetRunActor(PrivateRun);
+	TestNotNull(TEXT("Private run spawns its actor too"), PrivateActor);
+	if (!PrivateActor) return false;
+	TestEqual(TEXT("A private run's actor is owned by its PlayerState"), PrivateActor->GetOwner(), Cast<AActor>(PlayerState));
+	TestTrue(TEXT("A private run's actor is owner-only"), PrivateActor->bOnlyRelevantToOwner);
+	TestFalse(TEXT("A private run's actor is not always relevant"), PrivateActor->bAlwaysRelevant);
+	return true;
+}
+
 
 #endif

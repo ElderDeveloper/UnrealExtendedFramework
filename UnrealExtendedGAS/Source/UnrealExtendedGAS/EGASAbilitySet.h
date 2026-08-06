@@ -9,6 +9,7 @@
 
 class UAbilitySystemComponent;
 class UAttributeSet;
+class UDataTable;
 class UGameplayAbility;
 class UGameplayEffect;
 
@@ -46,6 +47,18 @@ struct UNREALEXTENDEDGAS_API FEGASAbilitySet_AttributeSet
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Attribute Set")
 	TSubclassOf<UAttributeSet> AttributeSet = nullptr;
+
+	/**
+	 * Optional starting values for the set this entry spawns, as an FAttributeMetaData data table
+	 * (the engine's own default-attributes format, same as UAbilitySystemComponent::DefaultStartingData).
+	 * Rows are named "<AttributeSetClass>.<AttributeName>", e.g. "MyAttributeSet.Health".
+	 *
+	 * Applies only to the set granted by THIS entry. Attribute sets created elsewhere — a
+	 * CreateDefaultSubobject on the owning actor, for instance — are not touched by it.
+	 * Leave null to keep the values the attribute set's own constructor established.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Attribute Set")
+	TObjectPtr<UDataTable> DefaultAttributeTable = nullptr;
 };
 
 USTRUCT(BlueprintType)

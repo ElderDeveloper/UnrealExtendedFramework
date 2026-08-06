@@ -54,9 +54,5 @@ public:
 
 	// Tries to set the new outer for Object to the closes UEGQuestNode from UEdGraphNode
 	virtual void SetNewOuterForObjectFromGraphNode(UObject* Object, UEdGraphNode* GraphNode) const = 0;
-
-	// Recompiles the quest's embedded script blueprint when it is stale (dirty, or duplicated into a
-	// new package) and points QuestScriptClass back at its generated class.
-	virtual void RefreshQuestScriptBlueprint(UEGQuestGraph* Quest) const = 0;
 };
 #endif // WITH_EDITOR

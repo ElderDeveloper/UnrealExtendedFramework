@@ -2,6 +2,7 @@
 
 #include "AbilitySystemComponent.h"
 #include "AttributeSet.h"
+#include "Engine/DataTable.h"
 #include "GameplayEffect.h"
 
 void FEGASAbilitySetGrantedHandles::AddAbilitySpecHandle(const FGameplayAbilitySpecHandle& Handle)
@@ -85,6 +86,14 @@ void UEGASAbilitySet::GiveToAbilitySystem(UAbilitySystemComponent* AbilitySystem
 		}
 
 		UAttributeSet* NewAttributeSet = NewObject<UAttributeSet>(AttributeOuter, AttributeSetToGrant.AttributeSet);
+
+		// Seed the data-driven starting values before the set is registered, so it is already
+		// complete the moment the ability system starts broadcasting attribute changes for it.
+		if (AttributeSetToGrant.DefaultAttributeTable)
+		{
+			NewAttributeSet->InitFromMetaDataTable(AttributeSetToGrant.DefaultAttributeTable);
+		}
+
 		AbilitySystemComponent->AddAttributeSetSubobject(NewAttributeSet);
 		OutGrantedHandles.AddAttributeSet(NewAttributeSet);
 	}

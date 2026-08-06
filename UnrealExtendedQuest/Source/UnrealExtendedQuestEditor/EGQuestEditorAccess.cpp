@@ -1,8 +1,6 @@
 // Copyright Csaba Molnar, Daniel Butum. All Rights Reserved.
 #include "EGQuestEditorAccess.h"
 
-#include "Engine/Blueprint.h"
-#include "Kismet2/KismetEditorUtilities.h"
 
 #include "UnrealExtendedQuest/EGQuestGraph.h"
 #include "Editor/Graph/EGQuestEdGraph.h"
@@ -75,27 +73,6 @@ void FEGQuestEditorAccess::UpdateQuestToVersion_UseOnlyOneOutputAndInputPin(UEGQ
 	Quest->MarkPackageDirty();
 }
 
-
-void FEGQuestEditorAccess::RefreshQuestScriptBlueprint(UEGQuestGraph* Quest) const
-{
-	UBlueprint* ScriptBlueprint = Quest ? Quest->GetQuestScriptBlueprint() : nullptr;
-	if (!ScriptBlueprint)
-	{
-		return;
-	}
-
-	// Stale after an edit (dirty) or after the asset was duplicated: duplication copies the
-	// blueprint (it lives inside the asset) but not its generated class, which still belongs to the
-	// source package until a compile mints one here.
-	const bool bClassBelongsElsewhere =
-		!ScriptBlueprint->GeneratedClass || ScriptBlueprint->GeneratedClass->GetOutermost() != Quest->GetOutermost();
-	if (bClassBelongsElsewhere || ScriptBlueprint->Status == BS_Dirty)
-	{
-		FKismetEditorUtilities::CompileBlueprint(ScriptBlueprint, EBlueprintCompileOptions::SkipGarbageCollection);
-	}
-
-	Quest->SetQuestScriptClass(Cast<UClass>(ScriptBlueprint->GeneratedClass));
-}
 
 void FEGQuestEditorAccess::SetNewOuterForObjectFromGraphNode(UObject* Object, UEdGraphNode* GraphNode) const
 {

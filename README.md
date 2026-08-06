@@ -53,7 +53,7 @@ Each plugin has its own descriptor and module boundary. Install the full reposit
 | Plugin | Role | Highlights | Version |
 |:--|:--|:--|:--:|
 | [**UnrealExtendedFramework**](UnrealExtendedFramework/) | Core runtime and editor foundation | Modular settings, Blueprint libraries, async nodes, AI/EQS helpers, subtitles, HTTP/JSON, UI Lab, localization tooling | `1.0` |
-| [**UnrealExtendedGameplay**](UnrealExtendedGameplay/) | Reusable gameplay systems | Combat, targeting, cover, traversal, perception, footsteps, input buffering, outlines, spawners, animation notifies | `1.0` |
+| [**UnrealExtendedGameplay**](UnrealExtendedGameplay/) | Reusable gameplay systems | AI state machine, combat, targeting, cover, traversal, perception, footsteps, input buffering, outlines, spawners, animation notifies | `1.0` |
 | [**UnrealExtendedGAS**](UnrealExtendedGAS/) | Gameplay Ability System extensions | Ability sets, ASC/attribute bases, effect components, async listeners, ability tasks, debug UI | `1.0` |
 | [**UnrealExtendedQuest**](UnrealExtendedQuest/) | Runtime and editor quest framework | Custom graph editor, stages/objectives, facts, replication, JSON I/O, simulator, search, debugger, commandlets | `1.0` |
 | [**UnrealExtendedPlayFab**](UnrealExtendedPlayFab/) | PlayFab client integration | Authentication, player data, inventory, currency, matchmaking, CloudScript, groups, analytics, async Blueprint actions | `1.0` |
@@ -130,6 +130,7 @@ The core plugin supplies the shared runtime and editor foundation used across th
 
 Composable components and actors for common action-game needs:
 
+- **AI state machine** — replicated stack-based state machine (`UEGStateMachineComponent`, `UEGState`, `UEGBrainState`) with per-actor instanced states, a required brain state that owns the decision loop, declarative transition policy, state-scoped timers, opt-in client mirroring, a world debug overlay, and a gameplay debugger category. See [`UnrealExtendedGameplay/Docs/EGStateMachine.md`](UnrealExtendedGameplay/Docs/EGStateMachine.md).
 - Area damage actors and data-driven enemy spawning.
 - Sight, hearing, faction sense, stimuli sources, and procedural patrol generation.
 - Damage reactions and stat components.

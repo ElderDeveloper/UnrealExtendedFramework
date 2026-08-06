@@ -33,7 +33,6 @@ public:
 		double InitialServerTime = 0.0);
 
 	FEGQuestOperationResult Start(UEGQuestGraph& Graph, bool bPrivate = false);
-	FEGQuestOperationResult Resume(const FEGQuestSaveEnvelope& SaveData);
 	bool Set(FGameplayTag Fact, int32 Value, EEGQuestFactScope Scope = EEGQuestFactScope::World,
 		APlayerState* Player = nullptr);
 	FEGQuestOperationResult Drive(const FEGQuestGameplayEvent& Event);

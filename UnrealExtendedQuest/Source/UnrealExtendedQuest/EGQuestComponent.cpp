@@ -6,7 +6,8 @@
 #include "EGQuestFactsSubsystem.h"
 #include "EGQuestPluginSettings.h"
 #include "EGQuestTargetRegistry.h"
-#include "EGQuestScript.h"
+#include "EGQuestRunActor.h"
+#include "EGQuestPluginModule.h"
 #include "EGQuestEventCustom.h"
 #include "Nodes/EGQuestNode_End.h"
 #include "Nodes/EGQuestNode_Objective.h"
@@ -165,6 +166,18 @@ void UEGQuestComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 		World->GetTimerManager().ClearTimer(TrackerPulseTimerHandle);
 	}
 	bTrackerPulseTimerArmed = false;
+
+	// Run actors outlive nothing: the component that spawned them is going away, so any run still
+	// live is torn down with it rather than left orphaned in the world.
+	for (const TPair<FGuid, TObjectPtr<AEGQuestRunActor>>& Pair : ActiveRunActors)
+	{
+		if (IsValid(Pair.Value))
+		{
+			Pair.Value->Destroy();
+		}
+	}
+	ActiveRunActors.Reset();
+
 	Super::EndPlay(EndPlayReason);
 }
 
@@ -509,7 +522,7 @@ bool UEGQuestComponent::ApplyRoleLossPolicies(FGuid Instance)
 			const FEGQuestEntityHandle LostHandle = Binding.Handles.IsEmpty() ? FEGQuestEntityHandle{} : Binding.Handles[0];
 			const FName RoleName = Binding.RoleName;
 			QueuePostCommit([this, Instance, RoleName, LostHandle](){ OnQuestRoleLost.Broadcast(Instance, RoleName, LostHandle); });
-			NotifyScriptRoleLost(Instance, RoleName);
+			NotifyRunActorRoleLost(Instance, RoleName);
 			EmitTelemetry(EEGQuestTelemetryEventType::RoleLost, Instance);
 		}
 	}
@@ -627,272 +640,6 @@ void UEGQuestComponent::ClientQuestRequestRejected_Implementation(FGuid Instance
 	}
 }
 
-bool UEGQuestComponent::BuildQuestSaveData(FGuid Instance, FEGQuestSaveEnvelope& OutSaveData) const
-{
-	if (!HasQuestAuthority()) return false;
-	const FEGQuestRunRecord* Record = FindRunRecord(Instance);
-	if (!Record || Record->IsTerminal()) return false;
-	OutSaveData.SchemaVersion = 1;
-	OutSaveData.AppliedMigrations.Reset();
-	OutSaveData.RunRecord = *Record;
-	OutSaveData.bPrivate = Record->bPrivate;
-	ConvertTimerDeadlinesForSave(OutSaveData.RunRecord, GetServerTime());
-	return true;
-}
-
-FEGQuestOperationResult UEGQuestComponent::ResumeQuest(const FEGQuestSaveEnvelope& SaveData)
-{
-	return ExecuteOrQueue([this, SaveData]() { return ResumeQuestNow(SaveData); }, SaveData.RunRecord.QuestInstanceGuid);
-}
-
-FEGQuestOperationResult UEGQuestComponent::ResumeQuestNow(const FEGQuestSaveEnvelope& SaveData)
-{
-	const FGuid SavedRunId = SaveData.RunRecord.QuestInstanceGuid;
-	const int32 SavedRevision = SaveData.RunRecord.Revision;
-	if (!HasQuestAuthority()) return MakeRejectedResult(SavedRunId, TEXT("NoAuthority"));
-	if (SaveData.SchemaVersion != 1) return MakeRejectedResult(SavedRunId, TEXT("UnsupportedSaveSchema"));
-	if (!SavedRunId.IsValid()) return MakeRejectedResult({}, TEXT("InvalidRunId"));
-	if (FindRunRecord(SavedRunId)) return MakeRejectedResult(SavedRunId, TEXT("RunAlreadyExists"));
-	if (SaveData.RunRecord.IsTerminal()) return MakeRejectedResult(SavedRunId, TEXT("TerminalRunCannotResume"));
-	if (SaveData.RunRecord.QuestGraph.IsNull()) return MakeRejectedResult(SavedRunId, TEXT("MissingQuestGraph"));
-	if ((SaveData.bPrivate && !CanHostPrivateQuests()) || (!SaveData.bPrivate && !CanHostSharedQuests()))
-	{
-		return MakeRejectedResult(SavedRunId, TEXT("InvalidQuestHost"));
-	}
-	UEGQuestGraph* Graph = SaveData.RunRecord.QuestGraph.LoadSynchronous();
-	if (!Graph || Graph->GetGUID() != SaveData.RunRecord.GraphGuid || Graph->GetDefinitionId() != SaveData.RunRecord.DefinitionId)
-	{
-		return MakeRejectedResult(SavedRunId, TEXT("DefinitionMismatch"));
-	}
-	const bool bContentChanged = Graph->GetContentVersion() != SaveData.RunRecord.ContentVersion;
-
-	UEGQuestContext* Context = NewObject<UEGQuestContext>(this);
-	Context->SetRoleContext(this, SavedRunId);
-	FEGQuestHistory History;
-	History.VisitedNodeGUIDs.Append(SaveData.RunRecord.VisitedNodeGuids);
-	const bool bRestart = bContentChanged && Graph->GetResumePolicy() == EEGQuestResumePolicy::Restart;
-	const bool bContextReady = bRestart
-		? Context->Start(Graph)
-		: Context->ResumeFromNodeGUID(Graph, SaveData.RunRecord.ActiveNodeGuid, History, false);
-	if (!bContextReady)
-	{
-		return MakeRejectedResult(SavedRunId, TEXT("ResumeNodeUnavailable"));
-	}
-
-	FEGQuestRunRecord Added = bRestart ? FEGQuestRunRecord() : SaveData.RunRecord;
-	Added.QuestAssetId = Graph->GetPrimaryAssetId();
-	Added.QuestGraph = Graph;
-	Added.GraphGuid = Graph->GetGUID();
-	Added.DefinitionId = Graph->GetDefinitionId();
-	Added.ContentVersion = Graph->GetContentVersion();
-	Added.QuestInstanceGuid = SavedRunId;
-	Added.bPrivate = SaveData.bPrivate;
-	Added.LifecycleState = EEGQuestLifecycleState::Active;
-	Added.Revision = FMath::Max(1, SavedRevision + 1);
-	if (bRestart)
-	{
-		Added.StartServerTime = GetServerTime();
-		for (const FEGQuestRoleBinding& Binding : SaveData.RunRecord.RoleBindings)
-			if (!Binding.bStageScoped) Added.RoleBindings.Add(Binding);
-		Added.ObjectiveRequiredCountOverrides = SaveData.RunRecord.ObjectiveRequiredCountOverrides;
-	}
-	else
-	{
-		// Saved TrackerEndServerTime values are remaining durations (see BuildQuestSaveData).
-		ConvertTimerDeadlinesForResume(Added, GetServerTime());
-	}
-	const FGuid NewInstanceGuid = SavedRunId;
-	TerminalSnapshotCache.Remove(NewInstanceGuid);
-	TransactionRunRecords.Add(NewInstanceGuid, Added);
-	BindContextDelegates(NewInstanceGuid, *Context);
-	ActiveContexts.Add(NewInstanceGuid, Context);
-	RefreshRunRecord(NewInstanceGuid, false);
-	if (bRestart && !ResolveRoleDefinitions(NewInstanceGuid, Graph->GetRoleDefinitions(), false))
-	{
-		ActiveContexts.Remove(NewInstanceGuid);
-		TransactionRunRecords.Remove(NewInstanceGuid);
-		return MakeRejectedResult(SavedRunId, TEXT("RequiredQuestRoleUnresolved"));
-	}
-	if (bRestart && !ResolveStageRoles(NewInstanceGuid, TEXT("Main")))
-	{
-		ActiveContexts.Remove(NewInstanceGuid);
-		TransactionRunRecords.Remove(NewInstanceGuid);
-		return MakeRejectedResult(SavedRunId, TEXT("RequiredStageRoleUnresolved"));
-	}
-	RebuildRoleTexts(NewInstanceGuid, TEXT("Main"));
-
-	FEGQuestActiveTrackRuntimeSet& SentinelSet = ActiveSentinelTracks.Add(NewInstanceGuid);
-	for (const UEGQuestNode* EntryNode : Graph->GetStartNodes())
-	{
-		const UEGQuestNode_Start* Entry = Cast<UEGQuestNode_Start>(EntryNode);
-		if (!Entry || Entry->GetTrackType() != EEGQuestTrackType::Sentinel) continue;
-		const FName TrackName = Entry->GetTrackName();
-		FEGQuestTrackState* SavedTrack = FindMutableTrackState(NewInstanceGuid, TrackName);
-		if (!bRestart && !SavedTrack) continue;
-		UEGQuestContext* TrackContext = NewObject<UEGQuestContext>(this);
-		TrackContext->SetRoleContext(this, NewInstanceGuid);
-		bool bReady = false;
-		if (bRestart)
-		{
-			bReady = TrackContext->StartFromEntry(Graph, *Entry);
-		}
-		else
-		{
-			FEGQuestHistory TrackHistory;
-			TrackHistory.VisitedNodeGUIDs.Append(SavedTrack->VisitedNodeGuids);
-			bReady = TrackContext->ResumeFromNodeGUID(Graph, SavedTrack->ActiveNodeGuid, TrackHistory, false);
-		}
-		if (!bReady) continue;
-		BindContextDelegates(NewInstanceGuid, *TrackContext);
-		FEGQuestActiveTrackRuntime& Runtime = SentinelSet.Tracks.AddDefaulted_GetRef();
-		Runtime.TrackName = TrackName;
-		Runtime.TrackType = EEGQuestTrackType::Sentinel;
-		Runtime.Context = TrackContext;
-		if (!bRestart) RebuildRoleTexts(NewInstanceGuid, TrackName);
-		if (bRestart)
-		{
-			FEGQuestTrackState& NewTrack = FindMutableRunRecord(NewInstanceGuid)->Tracks.AddDefaulted_GetRef();
-			NewTrack.TrackName = TrackName;
-			NewTrack.TrackType = EEGQuestTrackType::Sentinel;
-			if (!ResolveStageRoles(NewInstanceGuid, TrackName))
-			{
-				SentinelSet.Tracks.Pop();
-				FindMutableRunRecord(NewInstanceGuid)->Tracks.Pop();
-				continue;
-			}
-			RebuildRoleTexts(NewInstanceGuid, TrackName);
-			RebuildTrackObjectives(NewInstanceGuid, TrackName, EEGQuestActivationReason::Migrated);
-		}
-		else
-		{
-			SavedTrack->ActiveNodeGuid = TrackContext->GetActiveNodeGUID();
-			if (const UEGQuestNode_Stage* Stage = GetActiveStage(NewInstanceGuid, TrackName))
-			{
-				SavedTrack->StageTitle = Stage->GetTitle();
-				const FText* Description = TrackContext->GetConstructedNodeText(Stage->GetGUID());
-				SavedTrack->StageDescription = Description ? *Description : Stage->GetDescription();
-				for (FEGQuestSnapshotObjective& Line : SavedTrack->ActiveObjectives)
-					if (const UEGQuestNode_Objective* Objective = FindActiveObjectiveNode(NewInstanceGuid, Line.Guid))
-						RefreshObjectivePresentation(NewInstanceGuid, TrackName, Line, *Objective);
-			}
-			CreateTrackEvaluators(NewInstanceGuid, TrackName, EEGQuestActivationReason::Restored);
-		}
-	}
-
-	// The saved checklist is authoritative: rebuilding it here would reset the progress and the
-	// outcomes the payload carries. Only the texts, which are not saved, are restored - and
-	// ResumeFromNodeGUID has already rebuilt the stage's; the objectives' need doing here.
-	if (const UEGQuestNode_Stage* Stage = GetActiveStage(NewInstanceGuid))
-	{
-		FEGQuestRunRecord* MutableRecord = FindMutableRunRecord(NewInstanceGuid);
-		const FText* StageDescription = Context->GetConstructedNodeText(Stage->GetGUID());
-		MutableRecord->ActiveStageTitle = Stage->GetTitle();
-		MutableRecord->ActiveStageDescription = StageDescription ? *StageDescription : Stage->GetDescription();
-		if (bRestart)
-		{
-			RebuildActiveObjectives(NewInstanceGuid, EEGQuestActivationReason::Migrated);
-		}
-		else for (FEGQuestSnapshotObjective& Line : MutableRecord->ActiveObjectives)
-		{
-			if (const UEGQuestNode_Objective* Objective = FindActiveObjectiveNode(NewInstanceGuid, Line.Guid))
-				RefreshObjectivePresentation(NewInstanceGuid, TEXT("Main"), Line, *Objective);
-		}
-		MarkRunDirty(NewInstanceGuid);
-	}
-	if (const UEGQuestNode_Stage* MainStage = GetActiveStage(NewInstanceGuid, TEXT("Main")))
-		QueueStageDirectives(NewInstanceGuid, TEXT("Main"), *MainStage, true);
-	if (const FEGQuestActiveTrackRuntimeSet* Sentinels = ActiveSentinelTracks.Find(NewInstanceGuid))
-		for (const FEGQuestActiveTrackRuntime& Track : Sentinels->Tracks)
-			if (const UEGQuestNode_Stage* Stage = GetActiveStage(NewInstanceGuid, Track.TrackName))
-				QueueStageDirectives(NewInstanceGuid, Track.TrackName, *Stage, true);
-
-	QueuePostCommit([this, NewInstanceGuid]() { OnQuestStarted.Broadcast(NewInstanceGuid); });
-	QueuePostCommit([this]() { OnQuestSnapshotsChanged.Broadcast(); });
-
-	// A resumed quest gets a fresh script: scripts are never saved, so it must rebuild whatever it
-	// needs from the snapshot. It is told about the resumed stage the same way a fresh start is.
-	CreateScriptInstance(NewInstanceGuid, *Graph);
-	{
-		// Fresh evaluators reseed from the saved checklist - their counters are the lines themselves.
-		// A still-pending objective that completes on activation resolves here, deferred so the
-		// script hears about the resumed stage first.
-		if (!bRestart)
-		{
-			CreateObjectiveEvaluators(NewInstanceGuid, EEGQuestActivationReason::Restored);
-		}
-		if (UEGQuestScript* Script = FindScript(NewInstanceGuid))
-		{
-			TWeakObjectPtr<UEGQuestScript> WeakScript = Script;
-			QueuePostCommit([WeakScript]() { if (WeakScript.IsValid()) WeakScript->HandleQuestResumed(); });
-		}
-		NotifyScriptStageEntered(NewInstanceGuid);
-		if (const UEGQuestNode* ActiveNode = Context->GetActiveNode())
-		{
-			QueueLifecycleFactWrite(NewInstanceGuid, FString::Printf(TEXT("Stage.%s"), *ActiveNode->GetGUID().ToString(EGuidFormats::Digits)));
-		}
-	}
-
-	// Whatever was pending when this was saved may already be satisfied now.
-	SettleQuest(NewInstanceGuid);
-	MarkRunDirty(NewInstanceGuid);
-	EmitTelemetry(EEGQuestTelemetryEventType::Resumed, NewInstanceGuid);
-	return FEGQuestOperationResult::Applied(NewInstanceGuid, SavedRevision, GetRunRevision(NewInstanceGuid));
-}
-
-TArray<FEGQuestSaveEnvelope> UEGQuestComponent::ExtractAllQuestSaveData() const
-{
-	TArray<FEGQuestSaveEnvelope> Result;
-	if (!HasQuestAuthority()) return Result;
-	for (const TPair<FGuid, FEGQuestRunRecord>& Pair : RunRecords)
-	{
-		const FEGQuestRunRecord& Record = Pair.Value;
-		if (!Record.IsTerminal())
-		{
-			FEGQuestSaveEnvelope& Data = Result.AddDefaulted_GetRef();
-			Data.SchemaVersion = 1;
-			Data.RunRecord = Record;
-			Data.bPrivate = Record.bPrivate;
-			ConvertTimerDeadlinesForSave(Data.RunRecord, GetServerTime());
-		}
-	}
-	return Result;
-}
-
-TArray<FEGQuestOperationResult> UEGQuestComponent::RestoreAllQuestSaveData(const TArray<FEGQuestSaveEnvelope>& SaveData, bool bReplaceExisting)
-{
-	TArray<FEGQuestOperationResult> Results;
-	Results.Reserve(SaveData.Num());
-	if (bReplaceExisting && HasQuestAuthority())
-	{
-		for (const FEGQuestSaveEnvelope& Data : SaveData)
-		{
-			const FGuid CollisionId = Data.RunRecord.QuestInstanceGuid;
-			if (!CollisionId.IsValid()) continue;
-			if (const FEGQuestRunRecord* Existing = FindRunRecord(CollisionId))
-			{
-				if (Existing->IsTerminal())
-				{
-					PurgeTerminalRun(CollisionId);
-				}
-				else
-				{
-					AbandonQuest(CollisionId);
-					PurgeTerminalRun(CollisionId);
-				}
-			}
-			else if (TerminalSnapshotCache.Contains(CollisionId))
-			{
-				PurgeTerminalRun(CollisionId);
-			}
-		}
-	}
-	for (const FEGQuestSaveEnvelope& Data : SaveData)
-	{
-		Results.Add(ResumeQuest(Data));
-	}
-	return Results;
-}
-
 FGuid UEGQuestComponent::StartQuestInternal(UEGQuestGraph* QuestGraph, bool bPrivate,
 	const FEGQuestTemplateParameters* Parameters, FGuid PreferredInstanceGuid)
 {
@@ -923,7 +670,6 @@ FGuid UEGQuestComponent::StartQuestInternal(UEGQuestGraph* QuestGraph, bool bPri
 	Record.QuestGraph = QuestGraph;
 	Record.GraphGuid = QuestGraph->GetGUID();
 	Record.DefinitionId = QuestGraph->GetDefinitionId();
-	Record.ContentVersion = QuestGraph->GetContentVersion();
 	Record.QuestInstanceGuid = NewInstanceGuid;
 	Record.bPrivate = bPrivate;
 	Record.LifecycleState = EEGQuestLifecycleState::Active;
@@ -987,13 +733,13 @@ FGuid UEGQuestComponent::StartQuestInternal(UEGQuestGraph* QuestGraph, bool bPri
 	QueuePostCommit([this, InstanceGuid]() { OnQuestStarted.Broadcast(InstanceGuid); });
 	QueuePostCommit([this]() { OnQuestSnapshotsChanged.Broadcast(); });
 
-	CreateScriptInstance(InstanceGuid, *QuestGraph);
-	if (UEGQuestScript* Script = FindScript(InstanceGuid))
+	CreateRunActor(InstanceGuid, *QuestGraph, bPrivate);
+	if (AEGQuestRunActor* RunActor = GetRunActor(InstanceGuid))
 	{
-		TWeakObjectPtr<UEGQuestScript> WeakScript = Script;
-		QueuePostCommit([WeakScript]() { if (WeakScript.IsValid()) WeakScript->HandleQuestStarted(); });
+		TWeakObjectPtr<AEGQuestRunActor> WeakRunActor = RunActor;
+		QueuePostCommit([WeakRunActor]() { if (WeakRunActor.IsValid()) WeakRunActor->HandleQuestStarted(); });
 	}
-	NotifyScriptStageEntered(InstanceGuid);
+	NotifyRunActorStageEntered(InstanceGuid);
 	if (const UEGQuestNode* ActiveNode = Context->GetActiveNode())
 	{
 		QueueLifecycleFactWrite(InstanceGuid, FString::Printf(TEXT("Stage.%s"), *ActiveNode->GetGUID().ToString(EGuidFormats::Digits)));
@@ -1180,7 +926,6 @@ void UEGQuestComponent::SyncMainTrack(FGuid Instance)
 	Main->StageTitle = Record->ActiveStageTitle;
 	Main->StageDescription = Record->ActiveStageDescription;
 	Main->ActiveObjectives = Record->ActiveObjectives;
-	if (const UEGQuestContext* Context = GetTrackContext(Instance, TEXT("Main"))) Main->VisitedNodeGuids = Context->GetVisitedNodeGUIDs().Array();
 }
 
 const UEGQuestNode_Objective* UEGQuestComponent::FindActiveObjectiveNode(FGuid Instance, FGuid ObjectiveGuid) const
@@ -1231,6 +976,7 @@ void UEGQuestComponent::RebuildActiveObjectives(FGuid Instance, EEGQuestActivati
 	// ended must not keep advertising the last stage's journal entry as if it were still worked on.
 	DestroyObjectiveEvaluators(Instance);
 	Record->ActiveObjectives.Reset();
+	Record->ActiveStageId = NAME_None;
 	Record->ActiveStageTitle = FText::GetEmpty();
 	Record->ActiveStageDescription = FText::GetEmpty();
 
@@ -1244,6 +990,7 @@ void UEGQuestComponent::RebuildActiveObjectives(FGuid Instance, EEGQuestActivati
 	}
 
 	UEGQuestContext& Context = **ContextPtr;
+	Record->ActiveStageId = Stage->GetStageId();
 	Record->ActiveStageTitle = Stage->GetTitle();
 	const FText* StageDescription = Context.GetConstructedNodeText(Stage->GetGUID());
 	Record->ActiveStageDescription = StageDescription ? *StageDescription : Stage->GetDescription();
@@ -1453,7 +1200,6 @@ void UEGQuestComponent::RebuildTrackObjectives(FGuid Instance, FName TrackName, 
 	State->StageTitle = FText::GetEmpty();
 	State->StageDescription = FText::GetEmpty();
 	State->ActiveNodeGuid = Context->GetActiveNodeGUID();
-	State->VisitedNodeGuids = Context->GetVisitedNodeGUIDs().Array();
 	if (!Stage) { MarkRunDirty(Instance); return; }
 	State->StageTitle = Stage->GetTitle();
 	const FText* Description = Context->GetConstructedNodeText(Stage->GetGUID());
@@ -1518,9 +1264,9 @@ bool UEGQuestComponent::EnterStage(FGuid Instance, FName TrackName, int32 StageI
 	if (const UEGQuestNode_Stage* PreviousStage = GetActiveStage(Instance, TrackName))
 	{
 		QueueStageDirectives(Instance, TrackName, *PreviousStage, false);
-		// The script only follows the main track, mirroring NotifyScriptStageEntered.
+		// The run actor only follows the main track, mirroring NotifyRunActorStageEntered.
 		if (TrackName == TEXT("Main"))
-			NotifyScriptStageExited(Instance, *PreviousStage, EEGQuestStageExitReason::Advanced);
+			NotifyRunActorStageExited(Instance, *PreviousStage, EEGQuestStageExitReason::Advanced);
 	}
 	ReleaseStageRoles(Instance, TrackName);
 	// Hold the context itself, not the map slot: entering fires enter events, and a game handler is
@@ -1554,7 +1300,7 @@ bool UEGQuestComponent::EnterStage(FGuid Instance, FName TrackName, int32 StageI
 			}
 			RebuildRoleTexts(Instance, TrackName);
 			RebuildActiveObjectives(Instance);
-			NotifyScriptStageEntered(Instance);
+			NotifyRunActorStageEntered(Instance);
 		}
 	}
 	else if (Context->HasQuestEnded())
@@ -1750,11 +1496,11 @@ bool UEGQuestComponent::ResolveObjective(FGuid Instance, FGuid ObjectiveGuid, EE
 	EmitTelemetry(EEGQuestTelemetryEventType::ObjectiveResolved, Instance, ObjectiveGuid);
 	++Snapshot->Revision;
 	MarkRunDirty(Instance);
-	// Copy the line: the script may mutate the quest, which can rebuild the checklist under Line.
-	// While a resolution scope is open the notification is deferred to scope exit, so the script
+	// Copy the line: the run actor may mutate the quest, which can rebuild the checklist under Line.
+	// While a resolution scope is open the notification is deferred to scope exit, so the run actor
 	// never hears a stage's resolutions before OnStageEntered for that stage.
 	const FEGQuestSnapshotObjective ResolvedLine = *Line;
-	QueuePostCommit([this, Instance, ResolvedLine]() { NotifyScriptObjectiveResolved(Instance, ResolvedLine); });
+	QueuePostCommit([this, Instance, ResolvedLine]() { NotifyRunActorObjectiveResolved(Instance, ResolvedLine); });
 	return true;
 }
 
@@ -1863,8 +1609,8 @@ bool UEGQuestComponent::ApplyObjectiveProgress(FGuid Instance, FGuid ObjectiveGu
 		RefreshObjectivePresentation(Instance, FindTrackNameForObjective(Instance, ObjectiveGuid), *Line, *Objective);
 	if (!bFailProgress) EvaluateObjectiveMilestones(Instance, ObjectiveGuid);
 	EmitTelemetry(EEGQuestTelemetryEventType::ObjectiveProgress, Instance, ObjectiveGuid);
-	// Copy the line: the script hears about it post-commit, after the checklist may have moved.
-	NotifyScriptObjectiveProgress(Instance, *Line);
+	// Copy the line: the run actor hears about it post-commit, after the checklist may have moved.
+	NotifyRunActorObjectiveProgress(Instance, *Line);
 	++Snapshot->Revision;
 	MarkRunDirty(Instance);
 	return true;
@@ -2271,7 +2017,7 @@ bool UEGQuestComponent::SetTerminalState(FGuid Instance, EEGQuestLifecycleState 
 		const EEGQuestStageExitReason ExitReason = State == EEGQuestLifecycleState::Completed
 			? EEGQuestStageExitReason::QuestCompleted
 			: (State == EEGQuestLifecycleState::Failed ? EEGQuestStageExitReason::QuestFailed : EEGQuestStageExitReason::QuestAbandoned);
-		NotifyScriptStageExited(Instance, *MainStage, ExitReason);
+		NotifyRunActorStageExited(Instance, *MainStage, ExitReason);
 	}
 	if (const FEGQuestActiveTrackRuntimeSet* Sentinels = ActiveSentinelTracks.Find(Instance))
 		for (const FEGQuestActiveTrackRuntime& Track : Sentinels->Tracks)
@@ -2287,6 +2033,7 @@ bool UEGQuestComponent::SetTerminalState(FGuid Instance, EEGQuestLifecycleState 
 		: (State == EEGQuestLifecycleState::Failed ? EEGQuestTelemetryEventType::Failed : EEGQuestTelemetryEventType::Abandoned);
 	EmitTelemetry(TelemetryType, Instance);
 	Snapshot->ActiveNodeGuid.Invalidate();
+	Snapshot->ActiveStageId = NAME_None;
 	Snapshot->ActiveStageTitle = FText::GetEmpty();
 	Snapshot->ActiveStageDescription = FText::GetEmpty();
 	for (FEGQuestTrackState& Track : Snapshot->Tracks)
@@ -2316,7 +2063,7 @@ bool UEGQuestComponent::SetTerminalState(FGuid Instance, EEGQuestLifecycleState 
 				if (IsValid(Evaluator)) Evaluator->DeactivateEvaluator();
 	}
 	ActiveSentinelTracks.Remove(Instance);
-	NotifyScriptQuestEnded(Instance, State);
+	NotifyRunActorQuestEnded(Instance, State);
 	BroadcastUpdated(Instance);
 	return true;
 }
@@ -2328,7 +2075,6 @@ void UEGQuestComponent::RefreshRunRecord(FGuid Instance, bool bIncrementRevision
 	if (!Snapshot || !ContextPtr || !*ContextPtr) return;
 	UEGQuestContext& Context = **ContextPtr;
 	Snapshot->ActiveNodeGuid = Context.GetActiveNodeGUID();
-	Snapshot->VisitedNodeGuids = Context.GetVisitedNodeGUIDs().Array();
 	if (bIncrementRevision) ++Snapshot->Revision;
 
 	if (Context.HasQuestEnded())
@@ -2587,6 +2333,7 @@ void UEGQuestComponent::ProjectRun(FGuid Instance)
 	View->QuestInstanceGuid = Record->QuestInstanceGuid;
 	View->LifecycleState = Record->LifecycleState;
 	View->ActiveNodeGuid = Record->ActiveNodeGuid;
+	View->ActiveStageId = Record->ActiveStageId;
 	View->ActiveStageTitle = Record->ActiveStageTitle;
 	View->ActiveStageDescription = Record->ActiveStageDescription;
 	View->ActiveObjectives = Record->ActiveObjectives;
@@ -2671,139 +2418,131 @@ void UEGQuestComponent::PurgeTerminalRun(FGuid Instance)
 	TransactionRunRecords.Remove(Instance);
 	TerminalSnapshotCache.Remove(Instance);
 	ActiveContexts.Remove(Instance);
-	ActiveScripts.Remove(Instance);
+	DiscardRunActor(Instance);
 	ActiveSentinelTracks.Remove(Instance);
 	DestroyObjectiveEvaluators(Instance);
 }
 
-void UEGQuestComponent::ConvertTimerDeadlinesForSave(FEGQuestRunRecord& Record, double NowServerTime)
-{
-	auto ConvertLines = [NowServerTime](TArray<FEGQuestSnapshotObjective>& Lines)
-	{
-		for (FEGQuestSnapshotObjective& Line : Lines)
-		{
-			if (Line.TrackerEndServerTime > 0.0)
-			{
-				Line.TrackerEndServerTime = FMath::Max(0.0, Line.TrackerEndServerTime - NowServerTime);
-			}
-		}
-	};
-	ConvertLines(Record.ActiveObjectives);
-	for (FEGQuestTrackState& Track : Record.Tracks)
-	{
-		ConvertLines(Track.ActiveObjectives);
-		ConvertLines(Track.ObjectiveHistory);
-	}
-}
-
-void UEGQuestComponent::ConvertTimerDeadlinesForResume(FEGQuestRunRecord& Record, double NowServerTime)
-{
-	auto ConvertLines = [NowServerTime](TArray<FEGQuestSnapshotObjective>& Lines)
-	{
-		for (FEGQuestSnapshotObjective& Line : Lines)
-		{
-			if (Line.TrackerEndServerTime > 0.0)
-			{
-				Line.TrackerEndServerTime = NowServerTime + Line.TrackerEndServerTime;
-			}
-		}
-	};
-	ConvertLines(Record.ActiveObjectives);
-	for (FEGQuestTrackState& Track : Record.Tracks)
-	{
-		ConvertLines(Track.ActiveObjectives);
-		ConvertLines(Track.ObjectiveHistory);
-	}
-}
-
-void UEGQuestComponent::CreateScriptInstance(FGuid Instance, const UEGQuestGraph& QuestGraph)
+void UEGQuestComponent::CreateRunActor(FGuid Instance, const UEGQuestGraph& QuestGraph, const bool bPrivate)
 {
 	if (!HasQuestAuthority()) return;
-	const TSubclassOf<UEGQuestScript> ScriptClass = QuestGraph.GetQuestScriptClass();
-	if (!ScriptClass || ScriptClass->HasAnyClassFlags(CLASS_Abstract)) return;
+	const TSubclassOf<AEGQuestRunActor> RunActorClass = QuestGraph.GetQuestRunActorClass();
+	if (!RunActorClass || RunActorClass->HasAnyClassFlags(CLASS_Abstract)) return;
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		// A run actor needs somewhere to spawn. There is no deferral: the run continues without its
+		// logic, which is silent enough to lose an afternoon to, so it is worth a warning.
+		UE_LOG(LogEGQuestPlugin, Warning,
+			TEXT("Quest '%s' names a run actor but the component has no world; the run starts without one."),
+			*QuestGraph.GetName());
+		return;
+	}
 
-	UEGQuestScript* Script = NewObject<UEGQuestScript>(this, ScriptClass, NAME_None, RF_Transient);
-	Script->Initialize(this, Instance);
-	ActiveScripts.Add(Instance, Script);
+	// Deferred so relevancy and the run binding are set before BeginPlay: a subclass reading
+	// GetQuestInstanceGuid() in BeginPlay must not see an empty one.
+	AEGQuestRunActor* RunActor = World->SpawnActorDeferred<AEGQuestRunActor>(
+		RunActorClass, FTransform::Identity, GetOwner(), nullptr,
+		ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
+	if (!RunActor) return;
+
+	// A private run belongs to one connection. Owning it by this component's owner (the PlayerState)
+	// and marking it owner-only is what keeps one player's private quest off everyone else's client.
+	if (bPrivate)
+	{
+		RunActor->SetOwner(GetOwner());
+		RunActor->bAlwaysRelevant = false;
+		RunActor->bOnlyRelevantToOwner = true;
+	}
+	RunActor->Initialize(this, Instance);
+	RunActor->FinishSpawning(FTransform::Identity);
+	ActiveRunActors.Add(Instance, RunActor);
 }
 
-UEGQuestScript* UEGQuestComponent::FindScript(FGuid Instance) const
+AEGQuestRunActor* UEGQuestComponent::GetRunActor(FGuid Instance) const
 {
-	const TObjectPtr<UEGQuestScript>* ScriptPtr = ActiveScripts.Find(Instance);
-	return ScriptPtr ? ScriptPtr->Get() : nullptr;
+	const TObjectPtr<AEGQuestRunActor>* RunActorPtr = ActiveRunActors.Find(Instance);
+	return RunActorPtr ? RunActorPtr->Get() : nullptr;
 }
 
-void UEGQuestComponent::NotifyScriptStageEntered(FGuid Instance)
+void UEGQuestComponent::DiscardRunActor(FGuid Instance)
 {
-	UEGQuestScript* Script = FindScript(Instance);
-	const UEGQuestNode_Stage* Stage = Script ? GetActiveStage(Instance) : nullptr;
+	TObjectPtr<AEGQuestRunActor> RunActor;
+	if (ActiveRunActors.RemoveAndCopyValue(Instance, RunActor) && IsValid(RunActor))
+	{
+		// No end hook: this path is a purge, not a quest ending. NotifyRunActorQuestEnded has already
+		// taken the actor out of the map for a run that finished properly.
+		RunActor->Destroy();
+	}
+}
+
+void UEGQuestComponent::NotifyRunActorStageEntered(FGuid Instance)
+{
+	AEGQuestRunActor* RunActor = GetRunActor(Instance);
+	const UEGQuestNode_Stage* Stage = RunActor ? GetActiveStage(Instance) : nullptr;
 	if (Stage)
 	{
-		TWeakObjectPtr<UEGQuestScript> WeakScript = Script;
+		TWeakObjectPtr<AEGQuestRunActor> WeakRunActor = RunActor;
 		const FGuid StageGuid = Stage->GetGUID();
 		const FName StageId = Stage->GetStageId();
 		const FText StageTitle = Stage->GetTitle();
-		QueuePostCommit([WeakScript, StageGuid, StageId, StageTitle]()
+		QueuePostCommit([WeakRunActor, StageGuid, StageId, StageTitle]()
 		{
-			if (WeakScript.IsValid()) WeakScript->HandleStageEntered(StageGuid, StageId, StageTitle);
+			if (WeakRunActor.IsValid()) WeakRunActor->HandleStageEntered(StageGuid, StageId, StageTitle);
 		});
 	}
 }
 
-void UEGQuestComponent::NotifyScriptStageExited(FGuid Instance, const UEGQuestNode_Stage& Stage, EEGQuestStageExitReason Reason)
+void UEGQuestComponent::NotifyRunActorStageExited(FGuid Instance, const UEGQuestNode_Stage& Stage, EEGQuestStageExitReason Reason)
 {
-	if (UEGQuestScript* Script = FindScript(Instance))
+	if (AEGQuestRunActor* RunActor = GetRunActor(Instance))
 	{
-		TWeakObjectPtr<UEGQuestScript> WeakScript = Script;
+		TWeakObjectPtr<AEGQuestRunActor> WeakRunActor = RunActor;
 		const FGuid StageGuid = Stage.GetGUID();
 		const FName StageId = Stage.GetStageId();
-		QueuePostCommit([WeakScript, StageGuid, StageId, Reason]()
+		QueuePostCommit([WeakRunActor, StageGuid, StageId, Reason]()
 		{
-			if (WeakScript.IsValid()) WeakScript->HandleStageExited(StageGuid, StageId, Reason);
+			if (WeakRunActor.IsValid()) WeakRunActor->HandleStageExited(StageGuid, StageId, Reason);
 		});
 	}
 }
 
-void UEGQuestComponent::NotifyScriptObjectiveProgress(FGuid Instance, FEGQuestSnapshotObjective ProgressedLine)
+void UEGQuestComponent::NotifyRunActorObjectiveProgress(FGuid Instance, FEGQuestSnapshotObjective ProgressedLine)
 {
-	if (UEGQuestScript* Script = FindScript(Instance))
+	if (AEGQuestRunActor* RunActor = GetRunActor(Instance))
 	{
-		TWeakObjectPtr<UEGQuestScript> WeakScript = Script;
-		QueuePostCommit([WeakScript, ProgressedLine = MoveTemp(ProgressedLine)]()
+		TWeakObjectPtr<AEGQuestRunActor> WeakRunActor = RunActor;
+		QueuePostCommit([WeakRunActor, ProgressedLine = MoveTemp(ProgressedLine)]()
 		{
-			if (WeakScript.IsValid()) WeakScript->HandleObjectiveProgress(ProgressedLine);
+			if (WeakRunActor.IsValid()) WeakRunActor->HandleObjectiveProgress(ProgressedLine);
 		});
 	}
 }
 
-void UEGQuestComponent::NotifyScriptRoleLost(FGuid Instance, FName RoleName)
+void UEGQuestComponent::NotifyRunActorRoleLost(FGuid Instance, FName RoleName)
 {
-	if (UEGQuestScript* Script = FindScript(Instance))
+	if (AEGQuestRunActor* RunActor = GetRunActor(Instance))
 	{
-		TWeakObjectPtr<UEGQuestScript> WeakScript = Script;
-		QueuePostCommit([WeakScript, RoleName]()
+		TWeakObjectPtr<AEGQuestRunActor> WeakRunActor = RunActor;
+		QueuePostCommit([WeakRunActor, RoleName]()
 		{
-			if (WeakScript.IsValid()) WeakScript->HandleRoleLost(RoleName);
+			if (WeakRunActor.IsValid()) WeakRunActor->HandleRoleLost(RoleName);
 		});
 	}
 }
 
-void UEGQuestComponent::NotifyScriptObjectiveResolved(FGuid Instance, FEGQuestSnapshotObjective ResolvedLine)
+void UEGQuestComponent::NotifyRunActorObjectiveResolved(FGuid Instance, FEGQuestSnapshotObjective ResolvedLine)
 {
-	if (UEGQuestScript* Script = FindScript(Instance))
+	if (AEGQuestRunActor* RunActor = GetRunActor(Instance))
 	{
-		Script->HandleObjectiveResolved(ResolvedLine);
+		RunActor->HandleObjectiveResolved(ResolvedLine);
 	}
 }
 
-void UEGQuestComponent::NotifyScriptQuestEnded(FGuid Instance, EEGQuestLifecycleState State)
+void UEGQuestComponent::NotifyRunActorQuestEnded(FGuid Instance, EEGQuestLifecycleState State)
 {
-	UEGQuestScript* Script = FindScript(Instance);
-	if (!Script) return;
-
-	// The script is retired before the callback: a script that reacts to the end by starting or
-	// abandoning quests must not be re-entered for this already-finished instance.
-	ActiveScripts.Remove(Instance);
+	AEGQuestRunActor* RunActor = GetRunActor(Instance);
+	if (!IsValid(RunActor)) return;
 
 	EEGQuestResult Result = EEGQuestResult::Completed;
 	switch (State)
@@ -2812,8 +2551,19 @@ void UEGQuestComponent::NotifyScriptQuestEnded(FGuid Instance, EEGQuestLifecycle
 		case EEGQuestLifecycleState::Abandoned: Result = EEGQuestResult::Abandoned; break;
 		default: break;
 	}
-	TWeakObjectPtr<UEGQuestScript> WeakScript = Script;
-	QueuePostCommit([WeakScript, Result]() { if (WeakScript.IsValid()) WeakScript->HandleQuestEnded(Result); });
+	TWeakObjectPtr<AEGQuestRunActor> WeakRunActor = RunActor;
+	QueuePostCommit([this, Instance, WeakRunActor, Result]()
+	{
+		// Retired here rather than when the run went terminal. The objective whose resolution ended
+		// the run queued its own callback first, and that callback looks the actor up by instance -
+		// removing the entry inside the transaction would silently drop OnObjectiveResolved for the
+		// very objective that finished the quest. Retiring at dispatch time keeps the documented
+		// order (resolved, exited, ended) while still making re-entry for a finished run impossible.
+		ActiveRunActors.Remove(Instance);
+		// HandleQuestEnded fires the hook, replicates the outcome and then expires the actor itself,
+		// so clients still receive OnQuestEnded instead of just losing the actor.
+		if (WeakRunActor.IsValid()) WeakRunActor->HandleQuestEnded(Result);
+	});
 }
 
 void UEGQuestComponent::Reject(FGuid Instance, FName Reason)

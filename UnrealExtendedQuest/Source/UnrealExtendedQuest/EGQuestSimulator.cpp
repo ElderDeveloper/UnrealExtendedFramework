@@ -19,14 +19,6 @@ FEGQuestOperationResult FEGQuestSimulator::Start(UEGQuestGraph& Graph, bool bPri
 	return Result;
 }
 
-FEGQuestOperationResult FEGQuestSimulator::Resume(const FEGQuestSaveEnvelope& SaveData)
-{
-	if (!Component.IsValid()) return FEGQuestOperationResult::Rejected({}, 0, TEXT("MissingComponent"));
-	FEGQuestOperationResult Result = Component->ResumeQuest(SaveData);
-	if (Result.IsSuccess()) RunId = Result.RunId;
-	return Result;
-}
-
 bool FEGQuestSimulator::Set(FGameplayTag Fact, int32 Value, EEGQuestFactScope Scope, APlayerState* Player)
 {
 	return Facts.IsValid() && Facts->SetFact(Fact, Value, Scope, Player, Component.IsValid() ? Component->GetOwner() : nullptr);

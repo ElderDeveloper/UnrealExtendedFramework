@@ -10,11 +10,11 @@
 #include "Templates/Function.h"
 #include "EGQuestComponent.generated.h"
 
+class AEGQuestRunActor;
 class UEGQuestContext;
 class UEGQuestGraph;
 class UEGQuestNode_Objective;
 class UEGQuestNode_Stage;
-class UEGQuestScript;
 class UEGQuestEventCustom;
 
 /**
@@ -137,20 +137,13 @@ public:
 	/** The first bound entity's transform (also answers for unloaded targets that registered one). */
 	UFUNCTION(BlueprintPure, Category = "Quest|Roles")
 	bool GetRoleTransform(FGuid QuestInstanceGuid, FName RoleName, FTransform& OutTransform) const;
-	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "Quest|Save")
-	bool BuildQuestSaveData(FGuid QuestInstanceGuid, FEGQuestSaveEnvelope& OutSaveData) const;
-	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "Quest|Save")
-	FEGQuestOperationResult ResumeQuest(const FEGQuestSaveEnvelope& SaveData);
-
-	/** Save payloads for every non-terminal quest on this component. Call before map travel. */
-	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "Quest|Save")
-	TArray<FEGQuestSaveEnvelope> ExtractAllQuestSaveData() const;
 	/**
-	 * Resumes every payload. When bReplaceExisting is true, colliding run ids (active or terminal
-	 * history) are purged before resume so travel restore is idempotent.
+	 * This run's actor, when its graph names a QuestRunActorClass. Valid on clients too, once the
+	 * actor has replicated in - it and the snapshot arrive on separate channels, so a brief null
+	 * right after a run starts means "not yet", not "no run actor".
 	 */
-	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "Quest|Save")
-	TArray<FEGQuestOperationResult> RestoreAllQuestSaveData(const TArray<FEGQuestSaveEnvelope>& SaveData, bool bReplaceExisting = true);
+	UFUNCTION(BlueprintPure, Category = "Quest")
+	AEGQuestRunActor* GetRunActor(FGuid QuestInstanceGuid) const;
 
 	/**
 	 * Succeeds an objective of the active stage from authoritative gameplay code.
@@ -274,10 +267,10 @@ protected:
 	UPROPERTY(Transient)
 	TMap<FGuid, FEGQuestActiveTrackRuntimeSet> ActiveSentinelTracks;
 
-	// Authority-only quest scripts, one per running instance whose graph declares a QuestScriptClass.
-	// Never replicated, never saved: a resumed quest gets a fresh script and OnQuestResumed.
+	// One run actor per running instance whose graph declares a QuestRunActorClass. Spawned on the
+	// authority and replicated; this map is the authority's own handle on them.
 	UPROPERTY(Transient)
-	TMap<FGuid, TObjectPtr<UEGQuestScript>> ActiveScripts;
+	TMap<FGuid, TObjectPtr<AEGQuestRunActor>> ActiveRunActors;
 
 	// Authority-only objective evaluators for each instance's active stage. Never replicated, never
 	// saved: their counters live in the snapshot lines, so a resumed quest just gets fresh ones.
@@ -317,7 +310,6 @@ private:
 	FEGQuestOperationResult StartSharedQuestNow(UEGQuestGraph* QuestGraph);
 	FEGQuestOperationResult StartPrivateQuestNow(UEGQuestGraph* QuestGraph);
 	FEGQuestOperationResult StartQuestFromTemplateNow(UEGQuestGraph* QuestGraph, FEGQuestTemplateParameters Parameters);
-	FEGQuestOperationResult ResumeQuestNow(const FEGQuestSaveEnvelope& SaveData);
 	FEGQuestOperationResult CompleteActiveObjectiveNow(FGuid QuestInstanceGuid, FGuid ObjectiveGuid);
 	FEGQuestOperationResult FailActiveObjectiveNow(FGuid QuestInstanceGuid, FGuid ObjectiveGuid);
 	FEGQuestOperationResult AbandonQuestNow(FGuid QuestInstanceGuid);
@@ -381,8 +373,6 @@ private:
 	void PurgeTerminalRun(FGuid QuestInstanceGuid);
 	int32 GetRunRevision(FGuid QuestInstanceGuid) const;
 	FEGQuestOperationResult MakeRejectedResult(FGuid QuestInstanceGuid, FName Reason);
-	static void ConvertTimerDeadlinesForSave(FEGQuestRunRecord& Record, double NowServerTime);
-	static void ConvertTimerDeadlinesForResume(FEGQuestRunRecord& Record, double NowServerTime);
 
 	/** The stage this instance is on, or null when the quest is not running on a stage. */
 	const UEGQuestNode_Stage* GetActiveStage(FGuid QuestInstanceGuid) const;
@@ -413,28 +403,32 @@ private:
 	bool IsDestinationSatisfied(FGuid QuestInstanceGuid, int32 TargetIndex) const;
 	bool IsDestinationSatisfied(FGuid QuestInstanceGuid, FName TrackName, int32 TargetIndex) const;
 	/**
-	 * Records an outcome on a checklist line. Returns false when it was already resolved. The script
-	 * hears about it inline, or on scope exit while a resolution scope is open.
+	 * Records an outcome on a checklist line. Returns false when it was already resolved. The run
+	 * actor hears about it inline, or on scope exit while a resolution scope is open.
 	 */
 	bool ResolveObjective(FGuid QuestInstanceGuid, FGuid ObjectiveGuid, EEGQuestObjectiveOutcome Outcome);
 	/** The count an objective needs this run: its authored one, or this instance's override. */
 	int32 ResolveRequiredCount(const FEGQuestRunRecord& Record, const UEGQuestNode_Objective& Objective) const;
 
-	/** Creates the quest script instance for this quest, when its graph declares one. */
-	void CreateScriptInstance(FGuid QuestInstanceGuid, const UEGQuestGraph& QuestGraph);
-	UEGQuestScript* FindScript(FGuid QuestInstanceGuid) const;
-	/** Tells the script about the active stage, when there is a script and an active stage. */
-	void NotifyScriptStageEntered(FGuid QuestInstanceGuid);
+	/**
+	 * Spawns this quest's run actor, when its graph declares one. Relevancy follows the run: a shared
+	 * run is always relevant, a private run is owned by this component's owner and owner-only.
+	 */
+	void CreateRunActor(FGuid QuestInstanceGuid, const UEGQuestGraph& QuestGraph, bool bPrivate);
+	/** Destroys the run actor without dispatching an end hook. For purges, not for a quest ending. */
+	void DiscardRunActor(FGuid QuestInstanceGuid);
+	/** Tells the run actor about the active stage, when there is one of each. */
+	void NotifyRunActorStageEntered(FGuid QuestInstanceGuid);
 
-	void NotifyScriptStageExited(FGuid QuestInstanceGuid, const UEGQuestNode_Stage& Stage, EEGQuestStageExitReason Reason);
+	void NotifyRunActorStageExited(FGuid QuestInstanceGuid, const UEGQuestNode_Stage& Stage, EEGQuestStageExitReason Reason);
 
-	void NotifyScriptObjectiveProgress(FGuid QuestInstanceGuid, FEGQuestSnapshotObjective ProgressedLine);
+	void NotifyRunActorObjectiveProgress(FGuid QuestInstanceGuid, FEGQuestSnapshotObjective ProgressedLine);
 
-	void NotifyScriptRoleLost(FGuid QuestInstanceGuid, FName RoleName);
-	/** Tells the script one checklist line reached an outcome. Takes a copy: callers may be mid-iteration. */
-	void NotifyScriptObjectiveResolved(FGuid QuestInstanceGuid, FEGQuestSnapshotObjective ResolvedLine);
-	/** Tells the script the quest ended, then discards the script. */
-	void NotifyScriptQuestEnded(FGuid QuestInstanceGuid, EEGQuestLifecycleState State);
+	void NotifyRunActorRoleLost(FGuid QuestInstanceGuid, FName RoleName);
+	/** Tells the run actor one checklist line reached an outcome. Takes a copy: callers may be mid-iteration. */
+	void NotifyRunActorObjectiveResolved(FGuid QuestInstanceGuid, FEGQuestSnapshotObjective ResolvedLine);
+	/** Tells the run actor the quest ended, then retires it. */
+	void NotifyRunActorQuestEnded(FGuid QuestInstanceGuid, EEGQuestLifecycleState State);
 
 	void RefreshRunRecord(FGuid QuestInstanceGuid, bool bIncrementRevision = true);
 	void Reject(FGuid QuestInstanceGuid, FName Reason);

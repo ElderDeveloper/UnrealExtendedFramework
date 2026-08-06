@@ -103,7 +103,7 @@ void FEGQuestGraphNode_Details::CustomizeDetails(IDetailLayoutBuilder& DetailBui
 		BaseDataCategory.AddProperty(PropertyQuestNode->GetChildHandle(UEGQuestNode_Stage::GetMemberNameTextArguments()))
 			.ShouldAutoExpand(true);
 
-		// The script-facing stage name, passed to OnStageEntered/OnStageExited.
+		// The run actor's stage name, passed to OnStageEntered/OnStageExited.
 		BaseDataCategory.AddProperty(PropertyQuestNode->GetChildHandle(UEGQuestNode_Stage::GetMemberNameStageId()));
 
 		// The checklist: each row is an objective with its text and conditions. Rows can also be

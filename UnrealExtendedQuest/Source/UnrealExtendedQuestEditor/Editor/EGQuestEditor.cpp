@@ -18,10 +18,8 @@
 #include "HAL/PlatformApplicationMisc.h"
 #include "Editor/Transactor.h"
 #include "Engine/Blueprint.h"
-#include "Engine/BlueprintGeneratedClass.h"
-#include "Kismet2/KismetEditorUtilities.h"
 
-#include "UnrealExtendedQuest/EGQuestScript.h"
+#include "UnrealExtendedQuest/EGQuestRunActor.h"
 
 #include "UnrealExtendedQuestEditor/EGQuestPluginEditorModule.h"
 #include "UnrealExtendedQuestEditor/EGQuestStyle.h"
@@ -550,8 +548,8 @@ void FEGQuestEditor::BindEditorCommands()
 
 	// The toolbar script button
 	ToolkitCommands->MapAction(
-		QuestCommands.OpenQuestScript,
-		FExecuteAction::CreateSP(this, &Self::OnCommandOpenQuestScript)
+		QuestCommands.OpenQuestRunActor,
+		FExecuteAction::CreateSP(this, &Self::OnCommandOpenQuestRunActor)
 	);
 
 	// Find in All Quests
@@ -644,7 +642,7 @@ void FEGQuestEditor::ExtendToolbar()
 					}
 
 					ToolbarBuilder.AddToolBarButton(
-						FEGQuestCommands::Get().OpenQuestScript,
+						FEGQuestCommands::Get().OpenQuestRunActor,
 						NAME_None,
 						TAttribute<FText>(),
 						TAttribute<FText>(),
@@ -975,55 +973,34 @@ void FEGQuestEditor::OnCommandQuestCompile() const
 	QuestBeingEdited->MarkPackageDirty();
 }
 
-void FEGQuestEditor::OnCommandOpenQuestScript()
+void FEGQuestEditor::OnCommandOpenQuestRunActor()
 {
 	check(QuestBeingEdited);
 
-	// The script baked into this asset.
-	if (UBlueprint* Embedded = QuestBeingEdited->GetQuestScriptBlueprint())
+	// The run actor is an ordinary asset - a Blueprint in the content browser, or a native class -
+	// referenced by QuestRunActorClass. Nothing is baked into the quest asset: an actor Blueprint
+	// outered to a non-level asset is an unusual thing to cook, and a normal one costs nothing.
+	UClass* RunActorClass = QuestBeingEdited->GetQuestRunActorClass();
+	if (!RunActorClass)
 	{
-		FEGQuestEditorUtilities::OpenBlueprintEditor(Embedded);
+		FEGQuestEditorUtilities::ShowMessageBox(EAppMsgType::Ok,
+			TEXT("This quest has no run actor. Create a Blueprint deriving from EGQuestRunActor (or a native ")
+			TEXT("AEGQuestRunActor subclass) and assign it to the quest's QuestRunActorClass.\n\n")
+			TEXT("A quest without one is pure data and costs nothing - only add one when the quest needs logic ")
+			TEXT("or per-run state."),
+			TEXT("Quest Run Actor"));
 		return;
 	}
 
-	// No embedded script, but a class assigned by hand: open it when it is a separate-asset
-	// blueprint (the pre-embedded flow), explain when it is native.
-	if (UClass* ScriptClass = QuestBeingEdited->GetQuestScriptClass())
+	if (UBlueprint* Blueprint = Cast<UBlueprint>(RunActorClass->ClassGeneratedBy))
 	{
-		if (UBlueprint* Blueprint = Cast<UBlueprint>(ScriptClass->ClassGeneratedBy))
-		{
-			FEGQuestEditorUtilities::OpenBlueprintEditor(Blueprint);
-		}
-		else
-		{
-			FEGQuestEditorUtilities::ShowMessageBox(EAppMsgType::Ok,
-				FString::Printf(TEXT("The quest script class '%s' is native C++, there is no Blueprint to open."), *ScriptClass->GetName()),
-				TEXT("Quest Script"));
-		}
+		FEGQuestEditorUtilities::OpenBlueprintEditor(Blueprint);
 		return;
 	}
 
-	// No script yet: bake one into the quest asset, the way a level blueprint lives in its level.
-	// It is not a content browser asset - it saves, duplicates and deletes with the quest.
-	const FScopedTransaction Transaction(LOCTEXT("QuestEditorCreateScript", "Quest Editor: Create Quest Script"));
-	QuestBeingEdited->Modify();
-
-	const FName ScriptName = MakeUniqueObjectName(
-		QuestBeingEdited, UBlueprint::StaticClass(), FName(*(QuestBeingEdited->GetName() + TEXT("_Script"))));
-	UBlueprint* Blueprint = FKismetEditorUtilities::CreateBlueprint(
-		UEGQuestScript::StaticClass(), QuestBeingEdited, ScriptName, BPTYPE_Normal,
-		UBlueprint::StaticClass(), UBlueprintGeneratedClass::StaticClass(), FName("QuestEditor"));
-	if (!Blueprint)
-	{
-		return;
-	}
-
-	QuestBeingEdited->SetQuestScriptBlueprint(Blueprint);
-	QuestBeingEdited->SetQuestScriptClass(Cast<UClass>(Blueprint->GeneratedClass));
-	QuestBeingEdited->MarkPackageDirty();
-	RefreshDetailsView(true);
-
-	FEGQuestEditorUtilities::OpenBlueprintEditor(Blueprint);
+	FEGQuestEditorUtilities::ShowMessageBox(EAppMsgType::Ok,
+		FString::Printf(TEXT("The quest run actor class '%s' is native C++, there is no Blueprint to open."), *RunActorClass->GetName()),
+		TEXT("Quest Run Actor"));
 }
 
 void FEGQuestEditor::OnSelectedNodesChanged(const TSet<UObject*>& NewSelection)

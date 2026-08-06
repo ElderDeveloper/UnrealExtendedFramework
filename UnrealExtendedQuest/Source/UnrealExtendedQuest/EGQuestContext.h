@@ -144,15 +144,10 @@ public:
 	// Gets the History of this context
 	const FEGQuestHistory& GetHistoryOfThisContext() const { return History; }
 
-	// Enters the first stage any start node points at, ignoring entry priority. This is the
-	// content-changed restart path; UEGQuestComponent's normal start picks an entry and calls
-	// StartFromEntry instead.
+	// Enters the first stage any start node points at, ignoring entry priority. UEGQuestComponent's
+	// normal start picks an entry and calls StartFromEntry instead.
 	bool Start(UEGQuestGraph* InQuest) { return StartWithContext(TEXT(""), InQuest); }
 	bool StartWithContext(const FString& ContextString, UEGQuestGraph* InQuest);
-	bool ResumeFromNodeGUID(UEGQuestGraph* InQuest, const FGuid& StartNodeGUID, const FEGQuestHistory& StartHistory, bool bFireEnterEvents)
-	{
-		return StartWithContextFromNode(TEXT(""), InQuest, INDEX_NONE, StartNodeGUID, StartHistory, bFireEnterEvents);
-	}
 	bool StartWithContextFromNode(const FString& ContextString, UEGQuestGraph* InQuest, int32 StartNodeIndex,
 		const FGuid& StartNodeGUID, const FEGQuestHistory& StartHistory, bool bFireEnterEvents);
 

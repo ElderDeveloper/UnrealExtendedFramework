@@ -282,14 +282,6 @@ void UEGQuestGraph::PostDuplicate(bool bDuplicateForPIE)
 		DefinitionId = MakeSeededQuestDefinitionId(this);
 	}
 
-#if WITH_EDITOR
-	// The embedded script blueprint was copied with the asset, but its generated class still lives
-	// in the source package until it recompiles here.
-	if (!bDuplicateForPIE && GetQuestEditorAccess().IsValid())
-	{
-		GetQuestEditorAccess()->RefreshQuestScriptBlueprint(this);
-	}
-#endif // WITH_EDITOR
 }
 
 void UEGQuestGraph::PostEditImport()
@@ -652,13 +644,6 @@ void UEGQuestGraph::OnPreAssetSaved()
 #if WITH_EDITOR
 	// Compile, graph data -> quest data
 	CompileQuestNodesFromGraphNodes();
-
-	// Saving the quest also saves its embedded script blueprint (it lives in this package), so make
-	// sure what saves is compiled and QuestScriptClass points at it.
-	if (GetQuestEditorAccess().IsValid())
-	{
-		GetQuestEditorAccess()->RefreshQuestScriptBlueprint(this);
-	}
 #endif
 
 	// Save file, quest data -> text file (.quest)

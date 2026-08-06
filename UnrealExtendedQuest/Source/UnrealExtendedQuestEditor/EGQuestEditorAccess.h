@@ -21,7 +21,6 @@ public:
 	void RemoveAllGraphNodes(UEGQuestGraph* Quest) const override;
 	void UpdateQuestToVersion_UseOnlyOneOutputAndInputPin(UEGQuestGraph* Quest) const override;
 	void SetNewOuterForObjectFromGraphNode(UObject* Object, UEdGraphNode* GraphNode) const override;
-	void RefreshQuestScriptBlueprint(UEGQuestGraph* Quest) const override;
 
 	bool AreQuestNodesInSyncWithGraphNodes(UEGQuestGraph* Quest) const override
 	{
