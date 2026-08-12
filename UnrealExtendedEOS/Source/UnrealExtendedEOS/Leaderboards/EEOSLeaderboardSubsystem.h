@@ -13,6 +13,10 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnEOSScoreUploaded, bool, bSuccess
 /**
  * Manages EOS leaderboard queries — global, friends, and range-based.
  * Supports score uploads and pagination.
+ *
+ * FEATURE TOGGLE: with bEnableLeaderboards = false (Project Settings → Extended EOS →
+ * Features) every action below is inert — it logs, broadcasts its failure delegate so waiters
+ * are released, and returns false without issuing a read or a stat ingest.
  */
 UCLASS()
 class UNREALEXTENDEDEOS_API UEEOSLeaderboardSubsystem : public UEEOSSubsystem
@@ -115,6 +119,10 @@ private:
 	 *  takes a (center, range) window — the completion handler trims rows back to this. */
 	int32 PendingRankMin = -1;
 	int32 PendingRankMax = -1;
+
+	/** Returns true when bEnableLeaderboards is set; logs a warning naming CallSite when it is
+	 *  not. Every action entry point gates on this before doing any work. */
+	bool IsLeaderboardsEnabled(const TCHAR* CallSite) const;
 
 	/** Rejects the new query if a leaderboard read is already in flight. Log-only — never
 	 *  broadcasts, so the in-flight query's waiters are not misled on the shared delegate.

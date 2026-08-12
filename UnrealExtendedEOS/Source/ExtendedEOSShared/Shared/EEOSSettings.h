@@ -21,6 +21,12 @@ public:
 
 	UEEOSSettings();
 
+	virtual void PostInitProperties() override;
+
+#if WITH_EDITOR
+	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
+#endif
+
 	// ── Application Credentials ──────────────────────────────────────────────
 
 	/** The Product ID from the EOS Developer Portal */
@@ -94,12 +100,27 @@ public:
 		meta = (DisplayName = "Default Session Name"))
 	FString DefaultSessionName = TEXT("DefaultGame");
 
-	/** If true, sessions are advertised publicly by default */
+	/**
+	 * Default for UEEOSSessionSubsystem::CreateSession's bShouldAdvertise — false creates
+	 * sessions that are not returned by any search (invite/presence joins only).
+	 * CreateSessionAdvanced is unaffected: it carries its own explicit
+	 * FEEOSSessionSettings::bShouldAdvertise.
+	 */
 	UPROPERTY(config, EditAnywhere, BlueprintReadOnly, Category = "Sessions",
 		meta = (DisplayName = "Public Sessions by Default"))
 	bool bPublicSessionsByDefault = true;
 
-	/** If true, use lobbies instead of sessions by default */
+	/**
+	 * Route UEEOSSessionSubsystem onto the EOS lobby backend instead of the sessions backend.
+	 * Applied consistently to all three halves of the flow — CreateSession sets
+	 * bUseLobbiesIfAvailable, FindSessions/FindSessionsFiltered add the "LOBBYSEARCH" query
+	 * filter, and JoinSession joins on the lobby path — because a lobby-backed session created
+	 * without the matching search filter is invisible to every search.
+	 *
+	 * This does NOT change UEEOSLobbySubsystem (always lobbies) or CreateSessionAdvanced (uses
+	 * its own explicit FEEOSSessionSettings::bUseLobbiesIfAvailable). Changing it at runtime
+	 * while a session exists is not supported — the create, search and join must agree.
+	 */
 	UPROPERTY(config, EditAnywhere, BlueprintReadOnly, Category = "Sessions",
 		meta = (DisplayName = "Use Lobbies by Default"))
 	bool bUseLobbiesByDefault = false;
@@ -148,7 +169,15 @@ public:
 		meta = (DisplayName = "Dev Auth Credential Name", EditCondition = "DefaultLoginType == EEOSLoginType::Developer"))
 	FString DevAuthCredentialName;
 
-	/** If true, log verbose EOS SDK output to the output log */
+	/**
+	 * Raise the LogExtendedEOS category to Verbose (per-subsystem Initialize/Deinitialize
+	 * traces and other detail suppressed at the default Log level).
+	 *
+	 * This setting OWNS the category's runtime verbosity: it is applied at module startup and
+	 * re-applied on every Project Settings edit, so it takes effect live and a
+	 * -LogCmds="LogExtendedEOS ..." override for this one category is overwritten. It does not
+	 * affect the EOS SDK's own categories (LogEOSSDK) — raise those with -LogCmds.
+	 */
 	UPROPERTY(config, EditAnywhere, BlueprintReadOnly, Category = "Developer",
 		meta = (DisplayName = "Enable Verbose Logging"))
 	bool bEnableVerboseLogging = false;
@@ -171,12 +200,20 @@ public:
 		meta = (DisplayName = "Enable P2P"))
 	bool bEnableP2P = false;
 
-	/** Enable Leaderboard features */
+	/**
+	 * Enable Leaderboard features. When false, every UEEOSLeaderboardSubsystem action is a
+	 * no-op that fails closed: it logs, broadcasts its failure delegate so waiters are
+	 * released, returns false, and performs no backend call.
+	 */
 	UPROPERTY(config, EditAnywhere, BlueprintReadOnly, Category = "Features",
 		meta = (DisplayName = "Enable Leaderboards"))
 	bool bEnableLeaderboards = true;
 
-	/** Enable Achievement tracking */
+	/**
+	 * Enable Achievement tracking. When false, every UEEOSAchievementSubsystem action is a
+	 * no-op that fails closed — including the local-only partial progress tracking, so the
+	 * cache never diverges from a backend that is not being read.
+	 */
 	UPROPERTY(config, EditAnywhere, BlueprintReadOnly, Category = "Features",
 		meta = (DisplayName = "Enable Achievements"))
 	bool bEnableAchievements = true;
@@ -189,6 +226,14 @@ public:
 	{
 		return GetDefault<UEEOSSettings>();
 	}
+
+	/**
+	 * Push bEnableVerboseLogging onto the LogExtendedEOS category. Called from
+	 * PostInitProperties, from FUnrealExtendedEOSModule::StartupModule (Default phase — after
+	 * the engine has processed -LogCmds / [Core.Log], so the setting wins on a cold boot), and
+	 * from PostEditChangeProperty so an edit in Project Settings takes effect immediately.
+	 */
+	void ApplyLogVerbosity() const;
 
 	/** Category path for Project Settings UI */
 	virtual FName GetCategoryName() const override { return FName(TEXT("Extended Framework")); }

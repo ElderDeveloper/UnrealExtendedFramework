@@ -12,6 +12,11 @@ UEFWorldSettingsComponent::UEFWorldSettingsComponent()
 {
 	PrimaryComponentTick.bCanEverTick = false;
 	SetIsReplicatedByDefault(true);
+
+	// Settings are registered on THIS component's subobject list, not the owner's — a
+	// component may use the registered list even when its actor does not. Registering on
+	// the owner ensures out unless every host actor also sets the flag.
+	bReplicateUsingRegisteredSubObjectList = true;
 }
 
 UEFModularSettingsBase* UEFWorldSettingsComponent::AddSettingFromTemplate_Local(UEFModularSettingsBase* Template)
@@ -42,10 +47,7 @@ UEFModularSettingsBase* UEFWorldSettingsComponent::AddSettingFromTemplate_Local(
 
 	if (GetOwnerRole() == ROLE_Authority)
 	{
-		if (AActor* Owner = GetOwner())
-		{
-			Owner->AddReplicatedSubObject(NewSetting);
-		}
+		AddReplicatedSubObject(NewSetting);
 	}
 
 	return NewSetting;
@@ -117,22 +119,6 @@ void UEFWorldSettingsComponent::GetLifetimeReplicatedProps(TArray<FLifetimePrope
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 	DOREPLIFETIME(UEFWorldSettingsComponent, Settings);
 	DOREPLIFETIME(UEFWorldSettingsComponent, SettingDefinitions);
-}
-
-
-bool UEFWorldSettingsComponent::ReplicateSubobjects(UActorChannel* Channel, FOutBunch* Bunch, FReplicationFlags* RepFlags)
-{
-	bool bWroteSomething = Super::ReplicateSubobjects(Channel, Bunch, RepFlags);
-
-	for (UEFModularSettingsBase* Setting : Settings)
-	{
-		if (Setting)
-		{
-			bWroteSomething |= Channel->ReplicateSubobject(Setting, *Bunch, *RepFlags);
-		}
-	}
-
-	return bWroteSomething;
 }
 
 

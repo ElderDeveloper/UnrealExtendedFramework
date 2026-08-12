@@ -22,6 +22,7 @@ public class ExtendedSteamEditor : ModuleRules
 
 		PrivateDependencyModuleNames.AddRange(new string[]
 		{
+			"ExtendedSteamShared",
 			"UnrealEd",
 			"Slate",
 			"SlateCore",

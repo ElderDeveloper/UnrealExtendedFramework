@@ -35,9 +35,34 @@ public:
 	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Steam|General")
 	bool bInitializeSteamOnStartup = true;
 
-	/** Also initialize the Steam client API in the editor (enables Steam features in PIE). */
-	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Steam|General", meta = (EditCondition = "bInitializeSteamOnStartup"))
+	/**
+	 * Also initialize the Steam client API in the editor (enables Steam features in PIE).
+	 *
+	 * Turning this OFF takes effect on the next editor start — the Steam client API cannot be
+	 * un-initialized safely mid-session once something has begun using it.
+	 */
+	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Steam|General", meta = (EditCondition = "bInitializeSteamOnStartup", ConfigRestartRequired = true))
 	bool bInitializeSteamInEditor = true;
+
+	/**
+	 * Editor only: hold the Steam client API back until a PIE session starts, and shut it down again
+	 * when it ends, instead of initializing it for the whole editor session.
+	 *
+	 * Initializing Steam registers the *process* with the Steam client, so an always-on editor makes
+	 * Steam report the account as playing the game (and accrue store playtime) for as long as the
+	 * editor is open, whether or not anyone pressed Play. Deferring to PIE keeps Steam features
+	 * working while you actually play and leaves the account idle while you edit.
+	 *
+	 * Partial by nature: SteamAPI_Shutdown releases the API but does NOT remove the process from the
+	 * Steam client's running-games list — Steam drops a tracked pid only when it exits. So this stops
+	 * an editor that never played from counting as in-game, but once someone presses Play the editor
+	 * stays in-game until it closes. For a session that ends cleanly, play as Standalone Game (its own
+	 * process), or turn bInitializeSteamInEditor off entirely.
+	 *
+	 * Has no effect on cooked/standalone runs, which are their own process and initialize normally.
+	 */
+	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Steam|General", meta = (EditCondition = "bInitializeSteamOnStartup && bInitializeSteamInEditor"))
+	bool bDeferEditorInitToPIE = true;
 
 	/**
 	 * Shipping builds only: relaunch through the Steam client when the game was started

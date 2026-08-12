@@ -67,17 +67,5 @@ public class UnrealExtendedGameplay : ModuleRules
 				// ... add any modules that your module loads dynamically here ...
 			}
 			);
-
-		// Gameplay debugger category for the state machine. Not available in Shipping or Test.
-		if (Target.bBuildDeveloperTools ||
-			(Target.Configuration != UnrealTargetConfiguration.Shipping && Target.Configuration != UnrealTargetConfiguration.Test))
-		{
-			PrivateDependencyModuleNames.Add("GameplayDebugger");
-			PublicDefinitions.Add("WITH_GAMEPLAY_DEBUGGER=1");
-		}
-		else
-		{
-			PublicDefinitions.Add("WITH_GAMEPLAY_DEBUGGER=0");
-		}
 	}
 }

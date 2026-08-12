@@ -127,8 +127,17 @@ public:
 	FEGQuestOperationResult StartSharedQuest(UEGQuestGraph* QuestGraph);
 	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "Quest")
 	FEGQuestOperationResult StartPrivateQuest(UEGQuestGraph* QuestGraph);
-	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "Quest|Template")
-	FEGQuestOperationResult StartQuestFromTemplate(UEGQuestGraph* QuestGraph, const FEGQuestTemplateParameters& Parameters);
+	/**
+	 * Starts a quest without saying which kind, picking private only when this host cannot hold
+	 * shared quests. Use it when the caller genuinely does not care; StartSharedQuest and
+	 * StartPrivateQuest say which you meant and are the better choice when you do.
+	 *
+	 * Takes the graph and nothing else, deliberately. A quest is started, not configured: anything
+	 * that varies per run is a normal authority call afterwards (SetObjectiveRequiredCount and
+	 * friends), and roles come from the resolvers the graph itself authors.
+	 */
+	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "Quest")
+	FEGQuestOperationResult StartQuest(UEGQuestGraph* QuestGraph);
 	UFUNCTION(BlueprintPure, Category = "Quest|Roles")
 	FText GetRoleDisplayText(FGuid QuestInstanceGuid, FName RoleName) const;
 	/** Live actors currently bound to a role of this instance. Unresolvable handles are skipped. */
@@ -309,7 +318,7 @@ private:
 	/** Public API bodies. Public functions enqueue these so callback re-entry becomes a new input. */
 	FEGQuestOperationResult StartSharedQuestNow(UEGQuestGraph* QuestGraph);
 	FEGQuestOperationResult StartPrivateQuestNow(UEGQuestGraph* QuestGraph);
-	FEGQuestOperationResult StartQuestFromTemplateNow(UEGQuestGraph* QuestGraph, FEGQuestTemplateParameters Parameters);
+	FEGQuestOperationResult StartQuestNow(UEGQuestGraph* QuestGraph);
 	FEGQuestOperationResult CompleteActiveObjectiveNow(FGuid QuestInstanceGuid, FGuid ObjectiveGuid);
 	FEGQuestOperationResult FailActiveObjectiveNow(FGuid QuestInstanceGuid, FGuid ObjectiveGuid);
 	FEGQuestOperationResult AbandonQuestNow(FGuid QuestInstanceGuid);
@@ -363,7 +372,7 @@ private:
 		const UEGQuestNode_Stage& Stage, bool bEntering);
 	void EmitTelemetry(EEGQuestTelemetryEventType EventType, FGuid QuestInstanceGuid, FGuid ElementGuid = {});
 
-	FGuid StartQuestInternal(UEGQuestGraph* QuestGraph, bool bPrivate, const FEGQuestTemplateParameters* Parameters = nullptr, FGuid PreferredInstanceGuid = {});
+	FGuid StartQuestInternal(UEGQuestGraph* QuestGraph, bool bPrivate, FGuid PreferredInstanceGuid = {});
 	void BindContextDelegates(FGuid QuestInstanceGuid, UEGQuestContext& Context);
 	const FEGQuestViewSnapshot* FindSnapshot(FGuid QuestInstanceGuid) const;
 	bool SetTerminalState(FGuid QuestInstanceGuid, EEGQuestLifecycleState State);

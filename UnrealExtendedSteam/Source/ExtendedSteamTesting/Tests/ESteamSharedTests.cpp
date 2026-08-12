@@ -30,6 +30,7 @@ bool FESteamSettingsDefaultsTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("Default app id is Spacewar (480)"), Settings->SteamAppId, 480);
 	TestTrue(TEXT("Steam initializes on startup by default"), Settings->bInitializeSteamOnStartup);
 	TestTrue(TEXT("Editor initialization on by default"), Settings->bInitializeSteamInEditor);
+	TestTrue(TEXT("Editor initialization defers to PIE by default"), Settings->bDeferEditorInitToPIE);
 	TestFalse(TEXT("Relaunch in Steam off by default"), Settings->bRelaunchInSteam);
 	TestEqual(TEXT("Default async timeout"), Settings->AsyncTaskTimeoutSeconds, 10.0f);
 	TestFalse(TEXT("Verbose logging off by default"), Settings->bVerboseLogging);

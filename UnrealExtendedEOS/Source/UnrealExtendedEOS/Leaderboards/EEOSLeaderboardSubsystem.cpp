@@ -5,6 +5,7 @@
 #include "Interfaces/OnlineLeaderboardInterface.h"
 #include "Interfaces/OnlineIdentityInterface.h"
 #include "Shared/EEOSBlueprintLibrary.h"
+#include "Shared/EEOSSettings.h"
 #include "UnrealExtendedEOS.h"
 
 #include "eos_sdk.h"
@@ -18,6 +19,25 @@ static constexpr int32 GMaxEOSRankings = 1000;
 void UEEOSLeaderboardSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
 	Super::Initialize(Collection);
+
+	// Every code path here is request-scoped (the read delegate is bound per query), so a
+	// disabled feature needs no teardown — the per-call gate below is the whole implementation.
+	const UEEOSSettings* Settings = GetEOSSettings();
+	if (Settings && !Settings->bEnableLeaderboards)
+	{
+		UE_LOG(LogExtendedEOS, Log, TEXT("EEOSLeaderboardSubsystem: Leaderboards are disabled in settings (bEnableLeaderboards=false) — subsystem inactive"));
+	}
+}
+
+bool UEEOSLeaderboardSubsystem::IsLeaderboardsEnabled(const TCHAR* CallSite) const
+{
+	const UEEOSSettings* Settings = GetEOSSettings();
+	if (Settings && Settings->bEnableLeaderboards)
+	{
+		return true;
+	}
+	UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSLeaderboardSubsystem::%s — Leaderboards are disabled in settings (bEnableLeaderboards=false). No operation performed."), CallSite);
+	return false;
 }
 
 void UEEOSLeaderboardSubsystem::Deinitialize()
@@ -87,6 +107,12 @@ void UEEOSLeaderboardSubsystem::BindLeaderboardReadDelegate(IOnlineLeaderboardsP
 
 bool UEEOSLeaderboardSubsystem::QueryLeaderboard(const FString& LeaderboardId, int32 MaxEntries)
 {
+	if (!IsLeaderboardsEnabled(TEXT("QueryLeaderboard")))
+	{
+		OnLeaderboardQueried.Broadcast(false, TArray<FEEOSLeaderboardEntry>());
+		return false;
+	}
+
 	if (!IsEOSAvailable())
 	{
 		LogEOSUnavailable(TEXT("QueryLeaderboard"));
@@ -137,6 +163,12 @@ bool UEEOSLeaderboardSubsystem::QueryLeaderboard(const FString& LeaderboardId, i
 
 bool UEEOSLeaderboardSubsystem::QueryFriendsLeaderboard(const FString& LeaderboardId)
 {
+	if (!IsLeaderboardsEnabled(TEXT("QueryFriendsLeaderboard")))
+	{
+		OnLeaderboardQueried.Broadcast(false, TArray<FEEOSLeaderboardEntry>());
+		return false;
+	}
+
 	if (!IsEOSAvailable())
 	{
 		LogEOSUnavailable(TEXT("QueryFriendsLeaderboard"));
@@ -172,6 +204,12 @@ bool UEEOSLeaderboardSubsystem::QueryFriendsLeaderboard(const FString& Leaderboa
 
 bool UEEOSLeaderboardSubsystem::QueryLeaderboardAroundPlayer(const FString& LeaderboardId, int32 Range)
 {
+	if (!IsLeaderboardsEnabled(TEXT("QueryLeaderboardAroundPlayer")))
+	{
+		OnLeaderboardQueried.Broadcast(false, TArray<FEEOSLeaderboardEntry>());
+		return false;
+	}
+
 	if (!IsEOSAvailable())
 	{
 		LogEOSUnavailable(TEXT("QueryLeaderboardAroundPlayer"));
@@ -214,6 +252,12 @@ bool UEEOSLeaderboardSubsystem::QueryLeaderboardAroundPlayer(const FString& Lead
 
 bool UEEOSLeaderboardSubsystem::QueryLeaderboardByRange(const FString& LeaderboardId, int32 StartRank, int32 EndRank)
 {
+	if (!IsLeaderboardsEnabled(TEXT("QueryLeaderboardByRange")))
+	{
+		OnLeaderboardQueried.Broadcast(false, TArray<FEEOSLeaderboardEntry>());
+		return false;
+	}
+
 	if (!IsEOSAvailable())
 	{
 		LogEOSUnavailable(TEXT("QueryLeaderboardByRange"));
@@ -279,6 +323,14 @@ bool UEEOSLeaderboardSubsystem::QueryLeaderboardByRange(const FString& Leaderboa
 
 bool UEEOSLeaderboardSubsystem::UploadScore(const FString& LeaderboardId, int32 Score)
 {
+	// Gated too: the upload IS the leaderboard write (a stat ingest the backend re-ranks from),
+	// so letting it through with leaderboards disabled would keep mutating them.
+	if (!IsLeaderboardsEnabled(TEXT("UploadScore")))
+	{
+		OnScoreUploaded.Broadcast(false, LeaderboardId);
+		return false;
+	}
+
 	if (!IsEOSAvailable())
 	{
 		LogEOSUnavailable(TEXT("UploadScore"));

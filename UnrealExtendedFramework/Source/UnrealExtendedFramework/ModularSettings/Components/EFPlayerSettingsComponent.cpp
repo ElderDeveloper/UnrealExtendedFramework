@@ -21,6 +21,13 @@ UEFPlayerSettingsComponent::UEFPlayerSettingsComponent()
 {
   PrimaryComponentTick.bCanEverTick = false;
   SetIsReplicatedByDefault(true);
+
+  // The setting objects are registered on THIS component's subobject list, not the
+  // owner's — a component may use the registered list even when its actor does not
+  // (UActorChannel::ReplicateSubobject handles that case explicitly). Registering on
+  // the owner instead ensures out unless every actor hosting this component also sets
+  // the flag, and the registration would then be silently ignored.
+  bReplicateUsingRegisteredSubObjectList = true;
 }
 
 UEFModularSettingsBase* UEFPlayerSettingsComponent::AddSettingFromTemplate_Local(UEFModularSettingsBase* Template) 
@@ -51,12 +58,9 @@ UEFModularSettingsBase* UEFPlayerSettingsComponent::AddSettingFromTemplate_Local
   Settings.Add(NewSetting);
 
   // Only register as replicated subobject on server
-  if (GetOwnerRole() == ROLE_Authority) 
+  if (GetOwnerRole() == ROLE_Authority)
   {
-    if (AActor *Owner = GetOwner()) 
-    {
-      Owner->AddReplicatedSubObject(NewSetting);
-    }
+    AddReplicatedSubObject(NewSetting);
   }
 
   OnSettingChanged.Broadcast(NewSetting);
@@ -186,21 +190,6 @@ void UEFPlayerSettingsComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProp
   DOREPLIFETIME(UEFPlayerSettingsComponent, Settings);
   DOREPLIFETIME(UEFPlayerSettingsComponent, SettingDefinitions);
   DOREPLIFETIME(UEFPlayerSettingsComponent, RuntimeSettingDefinitions);
-}
-
-bool UEFPlayerSettingsComponent::ReplicateSubobjects(UActorChannel *Channel, FOutBunch *Bunch, FReplicationFlags *RepFlags) 
-{
-  bool bWroteSomething = Super::ReplicateSubobjects(Channel, Bunch, RepFlags);
-
-  for (UEFModularSettingsBase* Setting : Settings) 
-  {
-    if (Setting) 
-    {
-      bWroteSomething |= Channel->ReplicateSubobject(Setting, *Bunch, *RepFlags);
-    }
-  }
-
-  return bWroteSomething;
 }
 
 UEFModularSettingsBase* UEFPlayerSettingsComponent::GetSettingByTag(FGameplayTag Tag) const 
@@ -555,12 +544,9 @@ UEFModularSettingsBase* UEFPlayerSettingsComponent::CreateSettingFromRuntimeDefi
     Settings.Add(NewSetting);
 
     // Only register as replicated subobject on server
-    if (GetOwnerRole() == ROLE_Authority) 
+    if (GetOwnerRole() == ROLE_Authority)
     {
-      if (AActor *Owner = GetOwner()) 
-      {
-        Owner->AddReplicatedSubObject(NewSetting);
-      }
+      AddReplicatedSubObject(NewSetting);
     }
 
     OnSettingChanged.Broadcast(NewSetting);

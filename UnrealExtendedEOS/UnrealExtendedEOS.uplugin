@@ -34,6 +34,11 @@
 			"Name": "ExtendedEOSTesting",
 			"Type": "UncookedOnly",
 			"LoadingPhase": "Default"
+		},
+		{
+			"Name": "ExtendedEOSEditor",
+			"Type": "Editor",
+			"LoadingPhase": "Default"
 		}
 	],
 	"Plugins": [

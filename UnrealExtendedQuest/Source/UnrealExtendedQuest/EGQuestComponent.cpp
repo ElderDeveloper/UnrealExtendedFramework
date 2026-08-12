@@ -294,7 +294,7 @@ FEGQuestOperationResult UEGQuestComponent::StartSharedQuest(UEGQuestGraph* Quest
 	return ExecuteOrQueue([this, QuestGraph, RunId]()
 	{
 		if (!CanHostSharedQuests()) return MakeRejectedResult(RunId, TEXT("InvalidSharedQuestHost"));
-		const FGuid Started = StartQuestInternal(QuestGraph, false, nullptr, RunId);
+		const FGuid Started = StartQuestInternal(QuestGraph, false, RunId);
 		return Started.IsValid()
 			? FEGQuestOperationResult::Applied(Started, 0, GetRunRevision(Started))
 			: MakeRejectedResult(RunId, TEXT("StartFailed"));
@@ -316,7 +316,7 @@ FEGQuestOperationResult UEGQuestComponent::StartPrivateQuest(UEGQuestGraph* Ques
 	return ExecuteOrQueue([this, QuestGraph, RunId]()
 	{
 		if (!CanHostPrivateQuests()) return MakeRejectedResult(RunId, TEXT("InvalidPrivateQuestHost"));
-		const FGuid Started = StartQuestInternal(QuestGraph, true, nullptr, RunId);
+		const FGuid Started = StartQuestInternal(QuestGraph, true, RunId);
 		return Started.IsValid()
 			? FEGQuestOperationResult::Applied(Started, 0, GetRunRevision(Started))
 			: MakeRejectedResult(RunId, TEXT("StartFailed"));
@@ -332,32 +332,30 @@ FEGQuestOperationResult UEGQuestComponent::StartPrivateQuestNow(UEGQuestGraph* Q
 		: MakeRejectedResult({}, TEXT("StartFailed"));
 }
 
-FEGQuestOperationResult UEGQuestComponent::StartQuestFromTemplate(UEGQuestGraph* QuestGraph,
-	const FEGQuestTemplateParameters& Parameters)
+FEGQuestOperationResult UEGQuestComponent::StartQuest(UEGQuestGraph* QuestGraph)
 {
 	const FGuid RunId = FGuid::NewGuid();
-	return ExecuteOrQueue([this, QuestGraph, Parameters, RunId]()
+	return ExecuteOrQueue([this, QuestGraph, RunId]()
 	{
 		const bool bPrivate = CanHostPrivateQuests() && !CanHostSharedQuests();
 		if ((!bPrivate && !CanHostSharedQuests()) || (bPrivate && !CanHostPrivateQuests()))
 			return MakeRejectedResult(RunId, TEXT("InvalidQuestHost"));
-		const FGuid Started = StartQuestInternal(QuestGraph, bPrivate, &Parameters, RunId);
+		const FGuid Started = StartQuestInternal(QuestGraph, bPrivate, RunId);
 		return Started.IsValid()
 			? FEGQuestOperationResult::Applied(Started, 0, GetRunRevision(Started))
-			: MakeRejectedResult(RunId, TEXT("TemplateStartFailed"));
+			: MakeRejectedResult(RunId, TEXT("StartFailed"));
 	}, RunId);
 }
 
-FEGQuestOperationResult UEGQuestComponent::StartQuestFromTemplateNow(UEGQuestGraph* QuestGraph,
-	FEGQuestTemplateParameters Parameters)
+FEGQuestOperationResult UEGQuestComponent::StartQuestNow(UEGQuestGraph* QuestGraph)
 {
 	const bool bPrivate = CanHostPrivateQuests() && !CanHostSharedQuests();
 	if ((!bPrivate && !CanHostSharedQuests()) || (bPrivate && !CanHostPrivateQuests()))
 		return MakeRejectedResult({}, TEXT("InvalidQuestHost"));
-	const FGuid RunId = StartQuestInternal(QuestGraph, bPrivate, &Parameters);
+	const FGuid RunId = StartQuestInternal(QuestGraph, bPrivate);
 	return RunId.IsValid()
 		? FEGQuestOperationResult::Applied(RunId, 0, GetRunRevision(RunId))
-		: MakeRejectedResult({}, TEXT("TemplateStartFailed"));
+		: MakeRejectedResult({}, TEXT("StartFailed"));
 }
 
 FText UEGQuestComponent::GetRoleDisplayText(FGuid Instance, FName RoleName) const
@@ -641,9 +639,21 @@ void UEGQuestComponent::ClientQuestRequestRejected_Implementation(FGuid Instance
 }
 
 FGuid UEGQuestComponent::StartQuestInternal(UEGQuestGraph* QuestGraph, bool bPrivate,
-	const FEGQuestTemplateParameters* Parameters, FGuid PreferredInstanceGuid)
+	FGuid PreferredInstanceGuid)
 {
-	if (!HasQuestAuthority() || !IsValid(QuestGraph)) return {};
+	// Every abandon path below says why. A start that returns an invalid GUID with no line in the log
+	// is the single most expensive failure this system has: the caller sees "no quest" and has nothing
+	// to go on, and the causes (wrong authority, an unsaved graph, a missing Start node) look identical.
+	const FString GraphName = IsValid(QuestGraph) ? QuestGraph->GetName() : TEXT("null");
+	auto FailStart = [this, &GraphName](const TCHAR* Reason) -> FGuid
+	{
+		UE_LOG(LogEGQuestPlugin, Warning, TEXT("Quest '%s' did not start: %s (owner '%s')"),
+			*GraphName, Reason, GetOwner() ? *GetOwner()->GetName() : TEXT("no owner"));
+		return {};
+	};
+
+	if (!HasQuestAuthority()) return FailStart(TEXT("this component has no quest authority"));
+	if (!IsValid(QuestGraph)) return FailStart(TEXT("the quest graph is null or pending kill"));
 	const UEGQuestNode_Start* MainEntry = nullptr;
 	TArray<const UEGQuestNode_Start*> SentinelEntries;
 	for (const UEGQuestNode* EntryNode : QuestGraph->GetStartNodes())
@@ -653,17 +663,19 @@ FGuid UEGQuestComponent::StartQuestInternal(UEGQuestGraph* QuestGraph, bool bPri
 		if (Entry->GetTrackType() == EEGQuestTrackType::Main && !MainEntry) MainEntry = Entry;
 		else if (Entry->GetTrackType() == EEGQuestTrackType::Sentinel) SentinelEntries.Add(Entry);
 	}
-	if (!MainEntry) return {};
+	if (!MainEntry) return FailStart(TEXT("the graph has no Main-track Start node (was it compiled?)"));
 	UEGQuestContext* Context = NewObject<UEGQuestContext>(this);
-	if (!Context) return {};
+	if (!Context) return FailStart(TEXT("the quest context could not be constructed"));
 	// Bind before Start so notifies fired by the first stage's enter events are not lost.
 	const FGuid NewInstanceGuid = PreferredInstanceGuid.IsValid() ? PreferredInstanceGuid : FGuid::NewGuid();
-	if (FindRunRecord(NewInstanceGuid) || TransactionRunRecords.Contains(NewInstanceGuid)) return {};
+	if (FindRunRecord(NewInstanceGuid) || TransactionRunRecords.Contains(NewInstanceGuid))
+		return FailStart(TEXT("a run already exists with this instance GUID"));
 	BindContextDelegates(NewInstanceGuid, *Context);
 	Context->SetRoleContext(this, NewInstanceGuid);
 	// Start only makes the first stage active; its enter events fire below, once this quest is
 	// published and a handler can actually read it back.
-	if (!Context->StartFromEntry(QuestGraph, *MainEntry)) return {};
+	if (!Context->StartFromEntry(QuestGraph, *MainEntry))
+		return FailStart(TEXT("the Start node leads nowhere runnable (check its outgoing arrow)"));
 
 	FEGQuestRunRecord& Record = TransactionRunRecords.Add(NewInstanceGuid);
 	Record.QuestAssetId = QuestGraph->GetPrimaryAssetId();
@@ -675,15 +687,12 @@ FGuid UEGQuestComponent::StartQuestInternal(UEGQuestGraph* QuestGraph, bool bPri
 	Record.LifecycleState = EEGQuestLifecycleState::Active;
 	Record.StartServerTime = GetServerTime();
 	Record.Revision = 1;
-	if (Parameters)
-	{
-		Record.RoleBindings = Parameters->RoleBindings;
-		Record.ObjectiveRequiredCountOverrides = Parameters->ObjectiveCountOverrides;
-	}
+	// A run starts with no bindings and no overrides of its own: roles come from the resolvers the
+	// graph authors, and per-session targets are applied afterwards through SetObjectiveRequiredCount.
 	if (!ResolveRoleDefinitions(NewInstanceGuid, QuestGraph->GetRoleDefinitions(), false))
 	{
 		TransactionRunRecords.Remove(NewInstanceGuid);
-		return {};
+		return FailStart(TEXT("a required quest-level role resolved to nothing (is its target registered?)"));
 	}
 	const FGuid InstanceGuid = Record.QuestInstanceGuid;
 	ActiveContexts.Add(InstanceGuid, Context);
@@ -692,7 +701,7 @@ FGuid UEGQuestComponent::StartQuestInternal(UEGQuestGraph* QuestGraph, bool bPri
 	{
 		ActiveContexts.Remove(InstanceGuid);
 		TransactionRunRecords.Remove(InstanceGuid);
-		return {};
+		return FailStart(TEXT("a required role on the first stage resolved to nothing"));
 	}
 	RebuildRoleTexts(InstanceGuid, TEXT("Main"));
 	RebuildActiveObjectives(InstanceGuid);
@@ -751,6 +760,41 @@ FGuid UEGQuestComponent::StartQuestInternal(UEGQuestGraph* QuestGraph, bool bPri
 	// The first stage may already be satisfied (objectives that complete on stage enter), so settle.
 	SettleQuest(InstanceGuid);
 	EmitTelemetry(EEGQuestTelemetryEventType::Started, InstanceGuid);
+
+	// Deferred to post-commit on purpose. Everything above still runs inside the transaction, where the
+	// run lives in TransactionRunRecords and no snapshot has been projected yet - reading one here
+	// reports an empty stage and zero objectives for a quest that started perfectly well. Post-commit
+	// runs after ProjectRun, so this describes the state the player and the UI actually get.
+	{
+		const FString GraphDisplayName = QuestGraph->GetName();
+		const FName DefinitionId = Record.DefinitionId;
+		const int32 SentinelCount = SentinelEntries.Num();
+		QueuePostCommit([this, InstanceGuid, GraphDisplayName, DefinitionId, bPrivate, SentinelCount]()
+		{
+			FEGQuestViewSnapshot Started;
+			if (!FindQuestSnapshot(InstanceGuid, Started))
+			{
+				UE_LOG(LogEGQuestPlugin, Warning,
+					TEXT("Quest started: '%s' [%s] run %s, but no snapshot was projected for it."),
+					*GraphDisplayName, *DefinitionId.ToString(), *InstanceGuid.ToString(EGuidFormats::DigitsWithHyphens));
+				return;
+			}
+			UE_LOG(LogEGQuestPlugin, Display,
+				TEXT("Quest started: '%s' [%s] as %s | run %s | stage '%s' with %d objective(s)%s"),
+				*GraphDisplayName,
+				*DefinitionId.ToString(),
+				bPrivate ? TEXT("private") : TEXT("shared"),
+				*InstanceGuid.ToString(EGuidFormats::DigitsWithHyphens),
+				*Started.ActiveStageTitle.ToString(),
+				Started.ActiveObjectives.Num(),
+				SentinelCount > 0 ? *FString::Printf(TEXT(" + %d sentinel track(s)"), SentinelCount) : TEXT(""));
+			for (const FEGQuestSnapshotObjective& Objective : Started.ActiveObjectives)
+			{
+				UE_LOG(LogEGQuestPlugin, Verbose, TEXT("  objective: '%s' (%d/%d)"),
+					*Objective.Text.ToString(), Objective.Count, Objective.RequiredCount);
+			}
+		});
+	}
 	return InstanceGuid;
 }
 
@@ -809,7 +853,14 @@ FEGQuestOperationResult UEGQuestComponent::SetTrackedQuestNow(FGuid Instance)
 		if (!Requested || Requested->IsTerminal()) return MakeRejectedResult(Instance, TEXT("UnknownOrTerminalQuest"));
 	}
 	const FGuid BeforeTracked = GetTrackedQuest();
-	if (BeforeTracked == Instance) return FEGQuestOperationResult::NoChange(Instance, GetRunRevision(Instance), TEXT("AlreadyTracked"));
+	if (BeforeTracked == Instance)
+	{
+		// Not a failure, but silence here reads as one: this is the answer to "I called SetTrackedQuest
+		// and nothing happened".
+		UE_LOG(LogEGQuestPlugin, Display, TEXT("Tracked quest unchanged: %s was already tracked."),
+			Instance.IsValid() ? *Instance.ToString(EGuidFormats::DigitsWithHyphens) : TEXT("nothing"));
+		return FEGQuestOperationResult::NoChange(Instance, GetRunRevision(Instance), TEXT("AlreadyTracked"));
+	}
 	for (TPair<FGuid, FEGQuestRunRecord>& Pair : TransactionRunRecords)
 	{
 		const bool bNewTracked = Pair.Key == Instance;
@@ -819,6 +870,9 @@ FEGQuestOperationResult UEGQuestComponent::SetTrackedQuestNow(FGuid Instance)
 		MarkRunDirty(Pair.Key);
 		BroadcastUpdated(Pair.Key);
 	}
+	UE_LOG(LogEGQuestPlugin, Display, TEXT("Tracked quest changed: %s -> %s."),
+		BeforeTracked.IsValid() ? *BeforeTracked.ToString(EGuidFormats::DigitsWithHyphens) : TEXT("nothing"),
+		Instance.IsValid() ? *Instance.ToString(EGuidFormats::DigitsWithHyphens) : TEXT("nothing"));
 	return FEGQuestOperationResult::Applied(Instance, 0, GetRunRevision(Instance));
 }
 
@@ -2569,6 +2623,13 @@ void UEGQuestComponent::NotifyRunActorQuestEnded(FGuid Instance, EEGQuestLifecyc
 void UEGQuestComponent::Reject(FGuid Instance, FName Reason)
 {
 	LastRejectReason = Reason;
+	// Every rejection in this component funnels through here, so this one line is what makes a refused
+	// request visible at all. Without it the diagnostic is built, returned, and thrown away by callers
+	// that only check the GUID - which is exactly how a quest "silently does nothing".
+	UE_LOG(LogEGQuestPlugin, Warning, TEXT("Quest request rejected: %s (run %s, owner '%s')"),
+		*Reason.ToString(),
+		Instance.IsValid() ? *Instance.ToString(EGuidFormats::DigitsWithHyphens) : TEXT("none"),
+		GetOwner() ? *GetOwner()->GetName() : TEXT("no owner"));
 	QueuePostCommit([this, Instance, Reason]() { OnQuestRequestRejected.Broadcast(Instance, Reason); });
 }
 
@@ -2578,9 +2639,26 @@ void UEGQuestComponent::BroadcastUpdated(FGuid Instance)
 	QueuePostCommit([this]() { OnQuestSnapshotsChanged.Broadcast(); });
 }
 
-void UEGQuestComponent::NotifySnapshotReplicatedAdd(const FEGQuestViewSnapshot& Snapshot) { OnQuestStarted.Broadcast(Snapshot.QuestInstanceGuid); }
-void UEGQuestComponent::NotifySnapshotReplicatedChange(const FEGQuestViewSnapshot& Snapshot) { OnQuestUpdated.Broadcast(Snapshot.QuestInstanceGuid); }
-void UEGQuestComponent::NotifySnapshotReplicatedRemove(const FEGQuestViewSnapshot& Snapshot) { OnQuestRemoved.Broadcast(Snapshot.QuestInstanceGuid); }
+// Each of these also fires the coarse delegate, because OnQuestSnapshotsChanged promises to fire
+// "whenever any snapshot changes" and a replicated change is exactly that. Without it the delegate
+// was authority-only in practice: a client's snapshots arrived, these per-instance events fired, and
+// every widget bound to the coarse one (the natural choice for "just re-read everything") sat stale
+// for the whole run.
+void UEGQuestComponent::NotifySnapshotReplicatedAdd(const FEGQuestViewSnapshot& Snapshot)
+{
+	OnQuestStarted.Broadcast(Snapshot.QuestInstanceGuid);
+	OnQuestSnapshotsChanged.Broadcast();
+}
+void UEGQuestComponent::NotifySnapshotReplicatedChange(const FEGQuestViewSnapshot& Snapshot)
+{
+	OnQuestUpdated.Broadcast(Snapshot.QuestInstanceGuid);
+	OnQuestSnapshotsChanged.Broadcast();
+}
+void UEGQuestComponent::NotifySnapshotReplicatedRemove(const FEGQuestViewSnapshot& Snapshot)
+{
+	OnQuestRemoved.Broadcast(Snapshot.QuestInstanceGuid);
+	OnQuestSnapshotsChanged.Broadcast();
+}
 void UEGQuestComponent::NotifySnapshotsChanged() { OnQuestSnapshotsChanged.Broadcast(); }
 
 bool UEGQuestComponent::HasQuestAuthority() const { return GetOwner() && GetOwner()->HasAuthority(); }

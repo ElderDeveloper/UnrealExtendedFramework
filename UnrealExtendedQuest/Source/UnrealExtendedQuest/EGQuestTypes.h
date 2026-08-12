@@ -365,20 +365,6 @@ struct UNREALEXTENDEDQUEST_API FEGQuestObjectiveCountOverride
 	int32 RequiredCount = 0;
 };
 
-/** Typed inputs applied before a template quest's first stage is published. */
-USTRUCT(BlueprintType)
-struct UNREALEXTENDEDQUEST_API FEGQuestTemplateParameters
-{
-	GENERATED_BODY()
-
-	/** Explicit bindings win over authored resolvers and survive save/resume as handles. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Quest|Template")
-	TArray<FEGQuestRoleBinding> RoleBindings;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Quest|Template")
-	TArray<FEGQuestObjectiveCountOverride> ObjectiveCountOverrides;
-};
-
 /** One independently settling flow within a logical run. */
 USTRUCT(BlueprintType)
 struct UNREALEXTENDEDQUEST_API FEGQuestTrackState

@@ -218,6 +218,15 @@ private:
 
 	// ── Search coordination ──────────────────────────────────────────────────
 
+	/**
+	 * UEEOSSettings::bUseLobbiesByDefault — whether this subsystem runs on the EOS lobby
+	 * backend instead of the sessions backend. Read through one helper because create, search
+	 * and join MUST agree: a lobby-backed session created without the matching "LOBBYSEARCH"
+	 * query filter is invisible to every search, and joining it on the sessions path fails.
+	 * Defaults to false (plain sessions) when settings are unavailable.
+	 */
+	bool UseLobbiesByDefault() const;
+
 	/** The shared search coordinator (may be null during GameInstance teardown). */
 	UEEOSSearchCoordinator* GetSearchCoordinator() const;
 	/** Acquire the cross-subsystem search slot; false while any session/lobby search is in flight. */

@@ -109,9 +109,6 @@ public:
 
   virtual void GetLifetimeReplicatedProps(
       TArray<FLifetimeProperty> &OutLifetimeProps) const override;
-  virtual bool ReplicateSubobjects(class UActorChannel *Channel,
-                                   class FOutBunch *Bunch,
-                                   FReplicationFlags *RepFlags) override;
 
   UPROPERTY(BlueprintAssignable, Category = "Modular Settings")
   FOnPlayerSettingChanged OnSettingChanged;

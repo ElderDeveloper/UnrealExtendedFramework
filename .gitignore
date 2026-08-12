@@ -93,3 +93,4 @@ DerivedDataCache/*
 /UnrealExtendedAtlassian/Binaries
 /UnrealExtendedAtlassian/Tests
 /UnrealExtendedAtlassian/Tools/Parity/__pycache__
+/UnrealExtendedEOS/Thirdparty/EOS/SDK/Tools/EOS_DevAuthTool-win32-x64-1.2.1

@@ -3,11 +3,31 @@
 #include "EEOSAchievementSubsystem.h"
 #include "OnlineSubsystemUtils.h"
 #include "Interfaces/OnlineAchievementsInterface.h"
+#include "Shared/EEOSSettings.h"
 #include "UnrealExtendedEOS.h"
 
 void UEEOSAchievementSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
 	Super::Initialize(Collection);
+
+	// Nothing is registered up front (every code path is request-scoped), so a disabled
+	// feature needs no teardown — the per-call gate below is the whole implementation.
+	const UEEOSSettings* Settings = GetEOSSettings();
+	if (Settings && !Settings->bEnableAchievements)
+	{
+		UE_LOG(LogExtendedEOS, Log, TEXT("EEOSAchievementSubsystem: Achievements are disabled in settings (bEnableAchievements=false) — subsystem inactive"));
+	}
+}
+
+bool UEEOSAchievementSubsystem::IsAchievementsEnabled(const TCHAR* CallSite) const
+{
+	const UEEOSSettings* Settings = GetEOSSettings();
+	if (Settings && Settings->bEnableAchievements)
+	{
+		return true;
+	}
+	UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSAchievementSubsystem::%s — Achievements are disabled in settings (bEnableAchievements=false). No operation performed."), CallSite);
+	return false;
 }
 
 void UEEOSAchievementSubsystem::Deinitialize()
@@ -19,6 +39,12 @@ void UEEOSAchievementSubsystem::Deinitialize()
 
 bool UEEOSAchievementSubsystem::QueryAchievements()
 {
+	if (!IsAchievementsEnabled(TEXT("QueryAchievements")))
+	{
+		OnAchievementsQueried.Broadcast(false, TArray<FEEOSAchievement>());
+		return false;
+	}
+
 	if (!IsEOSAvailable())
 	{
 		LogEOSUnavailable(TEXT("QueryAchievements"));
@@ -52,6 +78,12 @@ bool UEEOSAchievementSubsystem::QueryAchievements()
 
 bool UEEOSAchievementSubsystem::UnlockAchievement(const FString& AchievementId)
 {
+	if (!IsAchievementsEnabled(TEXT("UnlockAchievement")))
+	{
+		OnAchievementUnlocked.Broadcast(false, AchievementId);
+		return false;
+	}
+
 	if (!IsEOSAvailable())
 	{
 		LogEOSUnavailable(TEXT("UnlockAchievement"));
@@ -175,6 +207,14 @@ bool UEEOSAchievementSubsystem::IsAchievementUnlocked(const FString& Achievement
 
 bool UEEOSAchievementSubsystem::SetAchievementProgress(const FString& AchievementId, float Progress)
 {
+	// Log-only, like this function's other pre-flight failures. OnAchievementProgressUpdated is
+	// a state-CHANGE notification (its bool is bUnlocked, not bSuccess), so broadcasting here
+	// would announce a change that did not happen.
+	if (!IsAchievementsEnabled(TEXT("SetAchievementProgress")))
+	{
+		return false;
+	}
+
 	Progress = FMath::Clamp(Progress, 0.f, 1.f);
 
 	// NOTE: The EOS OSS implements WriteAchievements as UnlockAchievements — the stat value is
@@ -246,6 +286,13 @@ bool UEEOSAchievementSubsystem::SetAchievementProgress(const FString& Achievemen
 
 bool UEEOSAchievementSubsystem::IncrementAchievementProgress(const FString& AchievementId, float IncrementAmount)
 {
+	// Gated here as well as in SetAchievementProgress so the warning names the real call site
+	// (and the cache read below is skipped entirely).
+	if (!IsAchievementsEnabled(TEXT("IncrementAchievementProgress")))
+	{
+		return false;
+	}
+
 	FEEOSAchievement Ach;
 	float NewProgress = IncrementAmount;
 	if (GetAchievementById(AchievementId, Ach))
@@ -257,6 +304,11 @@ bool UEEOSAchievementSubsystem::IncrementAchievementProgress(const FString& Achi
 
 void UEEOSAchievementSubsystem::ResetAchievement(const FString& AchievementId)
 {
+	if (!IsAchievementsEnabled(TEXT("ResetAchievement")))
+	{
+		return;
+	}
+
 	if (!IsEOSAvailable())
 	{
 		LogEOSUnavailable(TEXT("ResetAchievement"));

@@ -22,6 +22,11 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOnEOSAchievementProgressUpdated,
  * whose backend write succeeds) updates the cache immediately and drops the local partial.
  * ResetAchievement clears both the cached entry and the local partial (local-only — the EOS
  * backend is forward-only).
+ *
+ * FEATURE TOGGLE: with bEnableAchievements = false (Project Settings → Extended EOS →
+ * Features) every action below is inert — it logs, broadcasts its failure delegate so waiters
+ * are released, and returns false without touching the backend OR the local cache. The queries
+ * keep reading the (then permanently empty) cache rather than erroring.
  */
 UCLASS()
 class UNREALEXTENDEDEOS_API UEEOSAchievementSubsystem : public UEEOSSubsystem
@@ -109,6 +114,10 @@ private:
 	 *  QueryAchievements rebuilds (merged back as max(backend, local partial) on locked
 	 *  achievements); dropped per-id on confirmed unlock or ResetAchievement. */
 	TMap<FString, float> LocalPartialProgress;
+
+	/** Returns true when bEnableAchievements is set; logs a warning naming CallSite when it is
+	 *  not. Every action entry point gates on this before doing any work. */
+	bool IsAchievementsEnabled(const TCHAR* CallSite) const;
 
 	/** Marks an achievement unlocked in the cache (adds the entry if missing) and drops its
 	 *  local partial — called after a CONFIRMED backend unlock so IsAchievementUnlocked()

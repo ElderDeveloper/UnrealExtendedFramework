@@ -11,8 +11,10 @@
  * Single owner of the Steamworks SDK lifecycle for the whole plugin.
  *
  * Client API: initialized automatically on PostEngineInit when enabled in UESteamSettings
- * (skipped for commandlets, unattended runs, dedicated servers and -NoSteam). Also callable
- * explicitly. Game server API: never automatic; call InitializeSteamGameServer explicitly
+ * (skipped for commandlets, unattended runs, dedicated servers and -NoSteam). In the editor the
+ * default is instead to defer to PIE — see UESteamSettings::bDeferEditorInitToPIE and
+ * ShouldInitializeClientForPIE, which ExtendedSteamEditor drives. Also callable explicitly.
+ * Game server API: never automatic; call InitializeSteamGameServer explicitly
  * (the Extended Steam online subsystem orchestrates this in dedicated-server setups).
  *
  * While either API is initialized, a core ticker pumps the Steam callback queues every frame.
@@ -62,6 +64,13 @@ public:
 	/** True while the Steam game server API is initialized. */
 	bool IsSteamGameServerInitialized() const { return bSteamGameServerInitialized; }
 
+	/**
+	 * True when the editor should drive the client lifecycle from PIE instead of engine startup
+	 * (UESteamSettings::bDeferEditorInitToPIE). ExtendedSteamEditor owns that binding; the answer is
+	 * false everywhere outside the editor, and false whenever automatic initialization is off entirely.
+	 */
+	bool ShouldInitializeClientForPIE() const;
+
 	/** Broadcast after the Steam client API initialized successfully. */
 	FSimpleMulticastDelegate OnSteamClientInitialized;
 
@@ -76,10 +85,22 @@ public:
 
 private:
 	void HandlePostEngineInit();
+
+	/** Gates shared by both automatic paths: settings, run mode and -NoSteam. Ignores the editor/PIE split. */
+	bool IsClientAutoInitAllowed() const;
+
+	/**
+	 * True when this process should initialize during StartupModule rather than waiting for
+	 * PostEngineInit — game processes only, so Steam's overlay renderer lands before the swapchain.
+	 */
+	bool ShouldInitializeClientEarly() const;
 	bool ShouldAutoInitializeClient() const;
 
 	/** Loads the platform Steam API library so delay-loaded calls can resolve. */
 	bool LoadSteamDll();
+
+	/** Configured Steam app id, readable before the UObject system exists (PostConfigInit early path). */
+	int32 GetConfiguredAppId() const;
 
 	/** Publishes the configured app id to the process environment (non-shipping convenience). */
 	void ApplyAppIdEnvironment() const;

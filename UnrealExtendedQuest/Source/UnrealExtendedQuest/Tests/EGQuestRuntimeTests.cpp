@@ -418,22 +418,33 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEGQuestLevelQuestAssetsAutomationTest,
 
 bool FEGQuestLevelQuestAssetsAutomationTest::RunTest(const FString& Parameters)
 {
+	// Stage and objective counts are separate because a stage owns a checklist, not a single row:
+	// Castle groups three objectives per stage and repeats its ritual stage once per ritual, while
+	// Dungeon and Egypt are still one objective per stage. EventTags is checked as a PREFIX of the
+	// authored order, so a repeating quest lists only as far as its first repeat.
 	struct FExpectedQuest
 	{
 		const TCHAR* ObjectPath;
-		int32 StepCount;
+		int32 StageCount;
+		int32 ObjectiveCount;
 		TArray<const TCHAR*> EventTags;
 	};
 
+	// Castle: 1 preparation stage + N ritual stages, 3 objectives each.
+	const TArray<const TCHAR*> CastlePrefix = {
+		TEXT("DOP.Quest.Castle.GateOpened"), TEXT("DOP.Quest.Castle.BookAcquired"),
+		TEXT("DOP.Quest.Castle.BookPlaced"),
+		TEXT("DOP.Quest.Castle.HeartPlaced"), TEXT("DOP.Quest.Castle.DoseInjected"),
+		TEXT("DOP.Quest.Ritual.Completed")};
+
 	const TArray<FExpectedQuest> ExpectedQuests = {
-		{TEXT("/Game/DOP/Quests/Q_Castle.Q_Castle"), 4,
-			{TEXT("DOP.Quest.Castle.GateOpened"), TEXT("DOP.Quest.Castle.BookAcquired"),
-			 TEXT("DOP.Quest.Castle.BookPlaced"), TEXT("DOP.Quest.Ritual.Completed")}},
-		{TEXT("/Game/DOP/Quests/Q_Dungeon.Q_Dungeon"), 5,
+		{TEXT("/Game/DOP/Quests/Q_Castle.Q_Castle"), 1 + 8, 3 + 8 * 3, CastlePrefix},
+		{TEXT("/Game/DOP/Quests/Q_Castle_Solo.Q_Castle_Solo"), 1 + 6, 3 + 6 * 3, CastlePrefix},
+		{TEXT("/Game/DOP/Quests/Q_Dungeon.Q_Dungeon"), 5, 5,
 			{TEXT("DOP.Quest.Dungeon.KeyTaken"), TEXT("DOP.Quest.Dungeon.PatientPlaced"),
 			 TEXT("DOP.Quest.Dungeon.PatientInjected"), TEXT("DOP.Quest.Dungeon.FountainItemsPlaced"),
 			 TEXT("DOP.Quest.Dungeon.SyringeFilled")}},
-		{TEXT("/Game/DOP/Quests/Q_Egypt.Q_Egypt"), 6,
+		{TEXT("/Game/DOP/Quests/Q_Egypt.Q_Egypt"), 6, 6,
 			{TEXT("DOP.Quest.Egypt.MaatFeatherPlaced"), TEXT("DOP.Quest.Egypt.CanopicsPlaced"),
 			 TEXT("DOP.Quest.Egypt.HeartAcquired"), TEXT("DOP.Quest.Egypt.HeartPurified"),
 			 TEXT("DOP.Quest.Egypt.HeartPlaced"), TEXT("DOP.Quest.Egypt.HeartMummified")}}
@@ -448,7 +459,7 @@ bool FEGQuestLevelQuestAssetsAutomationTest::RunTest(const FString& Parameters)
 		TestTrue(TEXT("Graph has a QuestGraph primary asset id"), Graph->GetPrimaryAssetId().IsValid());
 		TestEqual(TEXT("Graph has exactly one start node"), Graph->GetStartNodes().Num(), 1);
 
-		// Each step is a stage plus its objective, and the whole chain ends in one end node.
+		// Stages own their objectives as rows, and the whole chain ends in one end node.
 		TArray<const UEGQuestNode_Stage*> Stages;
 		TArray<const UEGQuestNode_Objective*> Objectives;
 		TArray<const UEGQuestNode_End*> Ends;
@@ -461,8 +472,8 @@ bool FEGQuestLevelQuestAssetsAutomationTest::RunTest(const FString& Parameters)
 			else if (const UEGQuestNode_Objective* Objective = Cast<UEGQuestNode_Objective>(Node)) Objectives.Add(Objective);
 			else if (const UEGQuestNode_End* End = Cast<UEGQuestNode_End>(Node)) Ends.Add(End);
 		}
-		TestEqual(TEXT("Graph has one stage per step"), Stages.Num(), Expected.StepCount);
-		TestEqual(TEXT("Graph has one objective per step"), Objectives.Num(), Expected.StepCount);
+		TestEqual(TEXT("Graph has the authored number of stages"), Stages.Num(), Expected.StageCount);
+		TestEqual(TEXT("Graph has the authored number of objectives"), Objectives.Num(), Expected.ObjectiveCount);
 		TestEqual(TEXT("Graph has exactly one end node"), Ends.Num(), 1);
 		if (Ends.Num() == 1) TestEqual(TEXT("Level quest completes"), Ends[0]->GetQuestResult(), EEGQuestResult::Completed);
 
@@ -1434,7 +1445,7 @@ bool FEGQuestMultiTrackAutomationTest::RunTest(const FString& Parameters)
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEGQuestRolesAutomationTest,
-	"QuestPlugin.Roles.RegistryTextMarkersTemplateAndSave",
+	"QuestPlugin.Roles.RegistryTextMarkersAndLoss",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
 bool FEGQuestRolesAutomationTest::RunTest(const FString& Parameters)
@@ -1481,12 +1492,16 @@ bool FEGQuestRolesAutomationTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("Registry query resolver finds a target"), Resolver->Resolve(ResolveContext, TEXT("Target"), ResolvedHandles));
 	TestEqual(TEXT("Nearest selection is deterministic"), ResolvedHandles[0].StableId, FName(TEXT("Target.Alpha")));
 
+	// The graph authors the role, which is the only way one is bound now that starting a quest takes
+	// nothing but the graph: the resolver picks the target and the definition carries the loss policy.
+	FEGQuestRoleDefinition TargetRole;
+	TargetRole.RoleName = TEXT("Target");
+	TargetRole.Resolver = Resolver;
+	TargetRole.LossPolicy = EEGQuestRoleLossPolicy::Notify;
+	Fixture.Graph->SetRoleDefinitions({TargetRole});
+
 	UEGQuestComponent* Component = NewObject<UEGQuestComponent>(GameState);
-	FEGQuestTemplateParameters ResolvedTemplate;
-	FEGQuestRoleBinding& ResolvedBinding = ResolvedTemplate.RoleBindings.AddDefaulted_GetRef();
-	ResolvedBinding.RoleName = TEXT("Target");
-	ResolvedBinding.Handles = ResolvedHandles;
-	const FGuid ResolvedRun = Component->StartQuestFromTemplate(Fixture.Graph, ResolvedTemplate);
+	const FGuid ResolvedRun = Component->StartQuest(Fixture.Graph);
 	FEGQuestViewSnapshot Snapshot;
 	TestTrue(TEXT("Resolver-backed quest starts"), ResolvedRun.IsValid());
 	TestTrue(TEXT("Resolver-backed projection exists"), Component->FindQuestSnapshot(ResolvedRun, Snapshot));
@@ -1498,45 +1513,35 @@ bool FEGQuestRolesAutomationTest::RunTest(const FString& Parameters)
 		TestTrue(TEXT("Loaded marker carries a transform"), Snapshot.RoleMarkers[0].bResolved);
 	}
 
-	FEGQuestTemplateParameters Template;
-	FEGQuestRoleBinding& Binding = Template.RoleBindings.AddDefaulted_GetRef();
-	Binding.RoleName = TEXT("Target");
-	Binding.Handles.Add(Beta->GetEntityHandle());
-	Binding.LossPolicy = EEGQuestRoleLossPolicy::Notify;
-	FEGQuestObjectiveCountOverride& Override = Template.ObjectiveCountOverrides.AddDefaulted_GetRef();
-	Override.ObjectiveGuid = Fixture.Objective->GetGUID();
-	Override.RequiredCount = 2;
-	const FGuid TemplateRun = Component->StartQuestFromTemplate(Fixture.Graph, Template);
-	TestTrue(TEXT("Typed template quest starts"), TemplateRun.IsValid());
-	Component->FindQuestSnapshot(TemplateRun, Snapshot);
-	TestEqual(TEXT("Template binding wins over authored resolver"), Snapshot.ActiveObjectives[0].Text.ToString(), FString(TEXT("Find Beta")));
-	TestEqual(TEXT("Template count override applies before first projection"), Snapshot.ActiveObjectives[0].RequiredCount, 2);
+	// Per-session scaling is a call against the started run, not an input to starting it.
+	Component->SetObjectiveRequiredCount(ResolvedRun, Fixture.Objective->GetGUID(), 2);
+	Component->FindQuestSnapshot(ResolvedRun, Snapshot);
+	TestEqual(TEXT("Count override applies to the running quest"), Snapshot.ActiveObjectives[0].RequiredCount, 2);
 
 	// Roles travel as stable handles, never live pointers - that is what lets a client resolve them.
-	Component->FindQuestSnapshot(TemplateRun, Snapshot);
-	TestEqual(TEXT("Projection contains one template role marker"), Snapshot.RoleMarkers.Num(), 1);
+	TestEqual(TEXT("Projection contains one role marker"), Snapshot.RoleMarkers.Num(), 1);
 	if (Snapshot.RoleMarkers.Num() == 1)
 		TestEqual(TEXT("No live pointer is needed to identify the target"),
-			Snapshot.RoleMarkers[0].Handle.StableId, FName(TEXT("Target.Beta")));
+			Snapshot.RoleMarkers[0].Handle.StableId, FName(TEXT("Target.Alpha")));
 
 	UEGQuestTestPlatformSink* PlatformSink = NewObject<UEGQuestTestPlatformSink>();
 	Component->OnQuestRoleLost.AddDynamic(PlatformSink, &UEGQuestTestPlatformSink::HandleRoleLost);
 	Component->OnQuestTelemetry.AddDynamic(PlatformSink, &UEGQuestTestPlatformSink::HandleTelemetry);
-	Beta->UnregisterComponent();
+	Alpha->UnregisterComponent();
 	Component->RefreshRoleBindings();
 	TestEqual(TEXT("Notify loss policy emits exactly once"), PlatformSink->LostRoles.Num(), 1);
 	TestEqual(TEXT("Notify loss policy identifies the role"), PlatformSink->LostRoles[0], FName(TEXT("Target")));
 	TestTrue(TEXT("Role loss enters the structured telemetry funnel"),
 		PlatformSink->TelemetryTypes.Contains(EEGQuestTelemetryEventType::RoleLost));
-	Component->SetObjectiveRequiredCount(TemplateRun, Fixture.Objective->GetGUID(), 4);
-	Component->FindQuestSnapshot(TemplateRun, Snapshot);
+	Component->SetObjectiveRequiredCount(ResolvedRun, Fixture.Objective->GetGUID(), 4);
+	Component->FindQuestSnapshot(ResolvedRun, Snapshot);
 	TestEqual(TEXT("Unloaded target handle remains projected"), Snapshot.RoleMarkers.Num(), 1);
 	if (Snapshot.RoleMarkers.Num() == 1)
 	{
-		TestEqual(TEXT("Unloaded marker preserves stable identity"), Snapshot.RoleMarkers[0].Handle.StableId, FName(TEXT("Target.Beta")));
+		TestEqual(TEXT("Unloaded marker preserves stable identity"), Snapshot.RoleMarkers[0].Handle.StableId, FName(TEXT("Target.Alpha")));
 		TestFalse(TEXT("Unloaded marker explicitly reports unresolved transform"), Snapshot.RoleMarkers[0].bResolved);
 	}
-	Alpha->UnregisterComponent();
+	Beta->UnregisterComponent();
 	return true;
 }
 

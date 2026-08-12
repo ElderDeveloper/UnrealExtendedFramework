@@ -4,6 +4,7 @@
 #include "EEOSSearchCoordinator.h"
 #include "OnlineSubsystemUtils.h"
 #include "OnlineSessionSettings.h"
+#include "Shared/EEOSSettings.h"
 #include "UnrealExtendedEOS.h"
 #include "GameFramework/PlayerController.h"
 #include "Engine/GameInstance.h"
@@ -118,6 +119,16 @@ bool UEEOSSessionSubsystem::TickRetryRegisterNotifications(float /*DeltaTime*/)
 	}
 	return true;
 }
+
+bool UEEOSSessionSubsystem::UseLobbiesByDefault() const
+{
+	const UEEOSSettings* Settings = GetEOSSettings();
+	return Settings ? Settings->bUseLobbiesByDefault : false;
+}
+
+/** Query key the EOS OSS reads to search the lobby backend instead of the sessions backend —
+ *  the same literal UEEOSLobbySubsystem::FindLobbiesFiltered uses. */
+static const FName GEEOSLobbySearchKey(TEXT("LOBBYSEARCH"));
 
 // ── Search coordination ──────────────────────────────────────────────────────
 
@@ -235,13 +246,19 @@ bool UEEOSSessionSubsystem::CreateSession(int32 MaxPlayers, bool bIsLAN, bool bI
 
 	PendingCreateSessionName = FName(*SessionName);
 
+	// Project-level defaults. CreateSessionAdvanced deliberately does NOT consult these — it
+	// carries an explicit FEEOSSessionSettings, and an explicit value must beat a default.
+	const UEEOSSettings* EOSSettings = GetEOSSettings();
+	const bool bShouldAdvertise = EOSSettings ? EOSSettings->bPublicSessionsByDefault : true;
+
 	FOnlineSessionSettings Settings;
 	Settings.NumPublicConnections = MaxPlayers;
 	Settings.bIsLANMatch = bIsLAN;
-	Settings.bShouldAdvertise = true;
+	Settings.bShouldAdvertise = bShouldAdvertise;
 	Settings.bUsesPresence = bIsPresence;
 	Settings.bAllowJoinInProgress = true;
 	Settings.bAllowJoinViaPresence = bIsPresence;
+	Settings.bUseLobbiesIfAvailable = UseLobbiesByDefault();
 	PendingCreateSettings = MoveTemp(Settings);
 
 	// Same existing-session handling as CreateSessionAdvanced: destroy first, then create
@@ -363,10 +380,17 @@ bool UEEOSSessionSubsystem::FindSessions(int32 MaxResults)
 	SessionSearch = MakeShareable(new FOnlineSessionSearch());
 	SessionSearch->MaxSearchResults = MaxResults;
 	SessionSearch->bIsLanQuery = false;
-	// Deliberately NO query attributes here. The 5.8 EOS OSS forwards every QuerySettings key
-	// (outside a small skip-list) verbatim as an EOS attribute filter, so a key like the old
-	// "PRESENCESEARCH" — which no session ever advertises — made every plain search return
-	// 0 results. The engine adds its own bucket-id and NumPublicConnections >= 1 filters.
+	// Deliberately NO query attributes here beyond the lobby-backend switch. The 5.8 EOS OSS
+	// forwards every QuerySettings key (outside a small skip-list) verbatim as an EOS attribute
+	// filter, so a key like the old "PRESENCESEARCH" — which no session ever advertises — made
+	// every plain search return 0 results. The engine adds its own bucket-id and
+	// NumPublicConnections >= 1 filters. LOBBYSEARCH is in the skip-list: it selects the lobby
+	// backend rather than becoming an attribute filter, and it must be set whenever
+	// bUseLobbiesByDefault made CreateSession produce lobby-backed sessions.
+	if (UseLobbiesByDefault())
+	{
+		SessionSearch->QuerySettings.Set(GEEOSLobbySearchKey, true, EOnlineComparisonOp::Equals);
+	}
 
 	// A synchronous false return means the engine fires NO delegate at all (unique to the
 	// find path) — clean up and fail here or the handle wedges forever. Broadcasting is safe:
@@ -423,6 +447,13 @@ bool UEEOSSessionSubsystem::FindSessionsFiltered(int32 MaxResults, const TMap<FS
 	SessionSearch = MakeShareable(new FOnlineSessionSearch());
 	SessionSearch->MaxSearchResults = MaxResults;
 	SessionSearch->bIsLanQuery = false;
+
+	// See FindSessions: selects the lobby backend, must match what CreateSession produced.
+	// Set before the caller's filters so an explicit "LOBBYSEARCH" in the map still wins.
+	if (UseLobbiesByDefault())
+	{
+		SessionSearch->QuerySettings.Set(GEEOSLobbySearchKey, true, EOnlineComparisonOp::Equals);
+	}
 
 	// Apply custom search filters
 	for (const auto& Filter : SearchFilters)
@@ -484,12 +515,14 @@ bool UEEOSSessionSubsystem::JoinSession(int32 SearchResultIndex, const FString& 
 
 	// Engine-documented requirement (same class as the lobby join fix): bUsesPresence is
 	// false by default in search results and must be set game-side before JoinSession, or
-	// the joiner loses presence/invites. Game sessions are NOT lobbies, so force
-	// bUseLobbiesIfAvailable off to keep the join on the sessions path. Modify a local copy
-	// so the cached search results stay pristine.
+	// the joiner loses presence/invites. bUseLobbiesIfAvailable is forced to the configured
+	// backend rather than left as the search result reported it — the join must land on the
+	// same path CreateSession/FindSessions used (default false: game sessions are NOT lobbies
+	// and the join stays on the sessions path). Modify a local copy so the cached search
+	// results stay pristine.
 	FOnlineSessionSearchResult SearchResultCopy = SessionSearch->SearchResults[SearchResultIndex];
 	SearchResultCopy.Session.SessionSettings.bUsesPresence = true;
-	SearchResultCopy.Session.SessionSettings.bUseLobbiesIfAvailable = false;
+	SearchResultCopy.Session.SessionSettings.bUseLobbiesIfAvailable = UseLobbiesByDefault();
 
 	SessionInterface->JoinSession(0, PendingJoinSessionName, SearchResultCopy);
 	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSSessionSubsystem::JoinSession — Joining session at index %d..."), SearchResultIndex);
