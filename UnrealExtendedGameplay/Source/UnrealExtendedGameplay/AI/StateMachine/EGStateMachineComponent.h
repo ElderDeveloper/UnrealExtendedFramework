@@ -21,9 +21,11 @@
  *
  * Simulation is authority-only: every transition entry point refuses to run without authority.
  *
- * Phase 1 scope: registration, stack, transitions, lifecycle, timers, debug ring log.
- * Replication (net struct + client mirroring) and the brain requirement land in later phases;
- * the IsBrainState() hook and the authority gates below are already in place for them.
+ * Scope: registration, stack, transitions, lifecycle, timers, debug ring log, replication
+ * (FEGStateMachineNetState plus client mirroring) and the brain requirement. All of it has
+ * shipped — an earlier version of this comment described replication and the brain as landing in
+ * later phases, which stopped being true and misled anyone reading the header to decide whether
+ * they could rely on them.
  */
 UCLASS(ClassGroup = (Custom), meta = (BlueprintSpawnableComponent))
 class UNREALEXTENDEDGAMEPLAY_API UEGStateMachineComponent : public UActorComponent
