@@ -10,11 +10,24 @@
 #include "Editor.h"
 #include "Framework/Notifications/NotificationManager.h"
 #include "Misc/CoreDelegates.h"
+#include "Misc/EngineVersionComparison.h"
 #include "Misc/ScopedSlowTask.h"
 #include "ToolMenus.h"
 #include "Widgets/Notifications/SNotificationList.h"
 
 #define LOCTEXT_NAMESPACE "ExtendedEOSEditor"
+
+namespace
+{
+	FSimpleMulticastDelegate& GetPostEngineInitDelegate()
+	{
+#if UE_VERSION_NEWER_THAN_OR_EQUAL(5, 8, 0)
+		return FCoreDelegates::GetOnPostEngineInit();
+#else
+		return FCoreDelegates::OnPostEngineInit;
+#endif
+	}
+}
 
 void FExtendedEOSEditorModule::StartupModule()
 {
@@ -24,7 +37,7 @@ void FExtendedEOSEditorModule::StartupModule()
 	// StartupModule would be too early: the reflection lookup for UOnlinePIESettings can fail
 	// before OnlineSubsystemUtils' class data exists, and the panel would open showing a
 	// spurious "could not read Play Credentials".
-	PostEngineInitHandle = FCoreDelegates::GetOnPostEngineInit().AddStatic(&UEEOSPIELoginSettings::RefreshStatusOnDefault);
+	PostEngineInitHandle = GetPostEngineInitDelegate().AddStatic(&UEEOSPIELoginSettings::RefreshStatusOnDefault);
 
 	// ToolMenus may not be up yet during module load; this defers to its own ready callback.
 	UToolMenus::RegisterStartupCallback(
@@ -43,7 +56,7 @@ void FExtendedEOSEditorModule::ShutdownModule()
 
 	if (PostEngineInitHandle.IsValid())
 	{
-		FCoreDelegates::GetOnPostEngineInit().Remove(PostEngineInitHandle);
+		GetPostEngineInitDelegate().Remove(PostEngineInitHandle);
 		PostEngineInitHandle.Reset();
 	}
 
