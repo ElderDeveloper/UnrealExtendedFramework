@@ -67,7 +67,7 @@ public:
 
 	/** 0..1 hold progress. Authority uses the accumulated time, clients extrapolate from the hold start. */
 	UFUNCTION(BlueprintPure, Category = "Extended|Interactable")
-	float GetHoldProgress() const;
+	virtual float GetHoldProgress() const;
 
 	UFUNCTION(BlueprintPure, Category = "Extended|Interactable")
 	AActor* GetActiveInteractor() const { return ActiveInteractor.Get(); }

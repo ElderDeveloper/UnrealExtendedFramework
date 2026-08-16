@@ -271,6 +271,14 @@ struct FEFActiveSubtitle
 	UPROPERTY(BlueprintReadOnly)
 	float ElapsedTime = 0.0f;
 
+	/** Countdown before this entry becomes visible. It is not part of display duration. */
+	UPROPERTY(BlueprintReadOnly)
+	float DelayRemaining = 0.0f;
+
+	/** True after OnActiveChanged has fired and presentation/audio have started. */
+	UPROPERTY(BlueprintReadOnly)
+	bool bHasStarted = false;
+
 	UPROPERTY(BlueprintReadOnly)
 	int32 RequestId = 0;
 

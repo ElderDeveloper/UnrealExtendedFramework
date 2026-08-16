@@ -10,6 +10,9 @@
 #include "EGInteractionComponent.generated.h"
 
 class UEGInteractionPromptWidget;
+class UEFInputMappingComponent;
+class UEnhancedInputComponent;
+class UInputAction;
 
 /**
  * UEGInteractionComponent
@@ -29,6 +32,8 @@ class UEGInteractionPromptWidget;
  *  - the target itself refuses via CanInteract or carries a BlockedTags tag.
  *
  * Gameplay never disables this component; it refuses instead, so prompts stay accurate.
+ * When InteractionInputAction is configured, the component also owns its Enhanced Input
+ * bindings. Pawns should compose this component rather than forwarding input into it.
  */
 UCLASS(ClassGroup = (Custom), meta = (BlueprintSpawnableComponent))
 class UNREALEXTENDEDGAMEPLAY_API UEGInteractionComponent : public UActorComponent
@@ -41,6 +46,29 @@ public:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
+
+	// -----------------------------------------------------------------
+	// Input
+	// -----------------------------------------------------------------
+
+	/** Input action owned by this component. Started begins interaction; Completed/Canceled ends it. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Extended|Interaction|Input")
+	TSoftObjectPtr<UInputAction> InteractionInputAction;
+
+	/** Automatically bind InteractionInputAction to the owning pawn's Enhanced Input component. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Extended|Interaction|Input")
+	bool bAutoBindInteractionInput = true;
+
+	/** Rebuild the component-owned bindings after changing InteractionInputAction at runtime. */
+	UFUNCTION(BlueprintCallable, Category = "Extended|Interaction|Input")
+	void RefreshInteractionInputBindings();
+
+	/** Remove every Enhanced Input binding created by this component. */
+	UFUNCTION(BlueprintCallable, Category = "Extended|Interaction|Input")
+	void ClearInteractionInputBindings();
+
+	UFUNCTION(BlueprintPure, Category = "Extended|Interaction|Input")
+	bool HasInteractionInputBindings() const { return BoundInputComponent.IsValid(); }
 
 	// -----------------------------------------------------------------
 	// Trace
@@ -129,6 +157,10 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Extended|Interaction|Widget")
 	TSubclassOf<UEGInteractionPromptWidget> PromptWidgetClass;
+
+	/** Create PromptWidgetClass automatically during BeginPlay. Disable when a HUD owns UI. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Extended|Interaction|Widget")
+	bool bAutoCreatePromptWidget = true;
 
 	// -----------------------------------------------------------------
 	// Debug
@@ -308,6 +340,13 @@ private:
 	bool bPromptSuppressed = false;
 	bool bInteractionBlocked = false;
 
+	TWeakObjectPtr<UEnhancedInputComponent> BoundInputComponent;
+	TWeakObjectPtr<UInputAction> BoundInteractionInputAction;
+	TWeakObjectPtr<UEFInputMappingComponent> OwnerInputMappingComponent;
+	uint32 InteractionStartedBindingHandle = 0;
+	uint32 InteractionCompletedBindingHandle = 0;
+	uint32 InteractionCanceledBindingHandle = 0;
+
 	UFUNCTION(Server, Reliable)
 	void ServerInteractionStart(AActor* TargetActor, FHitResult ClientHitResult);
 
@@ -325,6 +364,10 @@ private:
 	AActor* SelectBestCandidate(const TArray<FHitResult>& Hits, const FVector& Start, const FVector& Direction, FHitResult& OutHit) const;
 	bool PassesTagFilter(const AActor* Candidate) const;
 	void GetViewPoint(FVector& OutLocation, FRotator& OutRotation) const;
+
+	// Input
+	void EnsureInteractionInputBindings();
+	bool IsInteractionInputAvailable() const;
 
 	// Focus
 	void SetFocusedActor(AActor* NewFocusedActor, const FHitResult& HitResult);

@@ -42,11 +42,12 @@ void UEFSubtitleLocalSubsystem::Deinitialize()
 		QueuePolicy->ClearAll();
 	}
 
-	if (DisplayWidget)
+	if (DisplayWidget && bDisplayWidgetOwnedBySubsystem)
 	{
 		DisplayWidget->RemoveFromParent();
-		DisplayWidget = nullptr;
 	}
+	DisplayWidget = nullptr;
+	bDisplayWidgetOwnedBySubsystem = false;
 
 	QueuePolicy = nullptr;
 	AudioPlayer = nullptr;
@@ -204,6 +205,56 @@ bool UEFSubtitleLocalSubsystem::HasActiveSubtitle() const
 	return QueuePolicy && QueuePolicy->GetActive().IsValid();
 }
 
+void UEFSubtitleLocalSubsystem::SetExternalDisplayWidget(
+	UEFSubtitleDisplayWidget* InDisplayWidget)
+{
+	if (DisplayWidget == InDisplayWidget && !bDisplayWidgetOwnedBySubsystem)
+	{
+		RefreshWidgetPresentation();
+		return;
+	}
+
+	if (DisplayWidget && bDisplayWidgetOwnedBySubsystem)
+	{
+		DisplayWidget->RemoveFromParent();
+	}
+
+	DisplayWidget = InDisplayWidget;
+	bDisplayWidgetOwnedBySubsystem = false;
+	RefreshWidgetPresentation();
+
+	if (!DisplayWidget || !QueuePolicy)
+	{
+		return;
+	}
+
+	const FEFActiveSubtitle& Active = QueuePolicy->GetActive();
+	if (!Active.IsValid() || !Active.bHasStarted)
+	{
+		return;
+	}
+
+	if (QueuePolicy->GetQueueMode() == EEFSubtitleQueueMode::Stack)
+	{
+		DisplayWidget->AddStackedSubtitle(Active.Entry, Active.RequestId);
+	}
+	else
+	{
+		DisplayWidget->ShowSubtitle(Active.Entry, Active.Request);
+	}
+}
+
+void UEFSubtitleLocalSubsystem::ClearExternalDisplayWidget(
+	UEFSubtitleDisplayWidget* InDisplayWidget)
+{
+	if (bDisplayWidgetOwnedBySubsystem || DisplayWidget != InDisplayWidget)
+	{
+		return;
+	}
+
+	DisplayWidget = nullptr;
+}
+
 UEFSubtitleStyleProfile* UEFSubtitleLocalSubsystem::ResolveActiveStyleProfile() const
 {
 	return EFSubtitleSettingsHelpers::ResolveStyleProfile(PresentationState.StyleProfileId);
@@ -221,14 +272,19 @@ void UEFSubtitleLocalSubsystem::RefreshWidgetPresentation()
 
 void UEFSubtitleLocalSubsystem::EnsureWidgetReady()
 {
-	if (DisplayWidget && DisplayWidget->IsInViewport())
+	if (DisplayWidget && (!bDisplayWidgetOwnedBySubsystem || DisplayWidget->IsInViewport()))
 	{
 		RefreshWidgetPresentation();
 		return;
 	}
 
 	const UEFSubtitleProjectSettings* Settings = GetDefault<UEFSubtitleProjectSettings>();
-	if (!Settings || !Settings->SubtitleWidgetClass)
+	if (!Settings || !Settings->bAutoCreateDisplayWidget)
+	{
+		return;
+	}
+
+	if (!Settings->SubtitleWidgetClass)
 	{
 		UE_LOG(LogTemp, Error, TEXT("[EFSubtitleLocalSubsystem] No SubtitleWidgetClass set in project settings!"));
 		return;
@@ -244,6 +300,7 @@ void UEFSubtitleLocalSubsystem::EnsureWidgetReady()
 	if (!DisplayWidget)
 	{
 		DisplayWidget = CreateWidget<UEFSubtitleDisplayWidget>(PC, Settings->SubtitleWidgetClass);
+		bDisplayWidgetOwnedBySubsystem = DisplayWidget != nullptr;
 	}
 
 	if (DisplayWidget && !DisplayWidget->IsInViewport())
@@ -310,7 +367,8 @@ void UEFSubtitleLocalSubsystem::TickQueue()
 	const float DeltaTime = 1.0f / 30.0f;
 	QueuePolicy->Tick(DeltaTime);
 
-	if (DisplayWidget && QueuePolicy->GetActive().IsValid())
+	if (DisplayWidget && QueuePolicy->GetActive().IsValid()
+		&& QueuePolicy->GetActive().bHasStarted)
 	{
 		const FEFActiveSubtitle& Active = QueuePolicy->GetActive();
 		const float TotalTime = Active.ElapsedTime + Active.RemainingTime;

@@ -33,15 +33,18 @@ public:
     
     // Start listening for key presses
     UFUNCTION(BlueprintCallable, Category = "Input")
-    void StartRebinding();
+    virtual void StartRebinding();
     
     // Cancel the rebinding process
     UFUNCTION(BlueprintCallable, Category = "Input")
-    void CancelRebinding();
+    virtual void CancelRebinding();
     
     // Confirm the new key binding
     UFUNCTION(BlueprintCallable, Category = "Input")
-    void ConfirmRebinding();
+    virtual void ConfirmRebinding();
+
+    UFUNCTION(BlueprintPure, Category = "Input")
+    bool IsListeningForInput() const { return bIsListeningForInput; }
     
     // Get the name of the current key binding
     UFUNCTION(BlueprintCallable, Category = "Input")
@@ -66,6 +69,10 @@ protected:
     // Override mouse input to capture mouse button presses
     virtual FReply NativeOnMouseButtonDown(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent) override;
 
+    // Protected so visual subclasses can add cancel/timeout behavior without
+    // reimplementing the framework's conflict and persistence logic.
+    bool bIsListeningForInput;
+
 private:
     // The input action being rebound
     UPROPERTY()
@@ -76,9 +83,6 @@ private:
     
     // The newly selected key
     FKey NewKey;
-    
-    // Whether we're currently listening for input
-    bool bIsListeningForInput;
     
     // Reference to the input binding subsystem
     UPROPERTY()

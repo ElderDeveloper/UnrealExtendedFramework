@@ -136,6 +136,11 @@ public:
 	}
 
 private:
+	void ApplyLoadedSettings(class UEFSettingsSaveGame* LoadedGame);
+	void HandleMissingSettingsSave();
+	void HandleAsyncSaveComplete(const FString& SlotName, int32 UserIndex, bool bSuccess);
+	void HandleAsyncLoadComplete(const FString& SlotName, int32 UserIndex, class USaveGame* LoadedGame);
+
 	void RegisterConsoleCommands();
 	void UnregisterConsoleCommands();
 	void RegisterConsoleCommand(const TCHAR* Name, const TCHAR* Help, const FConsoleCommandWithArgsDelegate& Delegate);

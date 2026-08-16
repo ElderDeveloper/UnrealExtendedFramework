@@ -27,6 +27,7 @@ public class UnrealExtendedGameplay : ModuleRules
 			{
 				"Core",
 				"Engine",
+				"EnhancedInput",
 				"InputCore",
 				"EngineSettings",
 				"Slate",

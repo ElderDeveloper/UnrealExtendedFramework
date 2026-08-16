@@ -1,4 +1,4 @@
-// EFSubtitleLocalSubsystem.h — Per-player subtitle subsystem (orchestrator)
+// EFSubtitleLocalSubsystem.h - Per-player subtitle subsystem (orchestrator)
 #pragma once
 
 #include "CoreMinimal.h"
@@ -71,6 +71,17 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Subtitle")
 	bool HasActiveSubtitle() const;
 
+	/** Use a display widget created and placed by the game's HUD. */
+	UFUNCTION(BlueprintCallable, Category = "Subtitle|Widget")
+	void SetExternalDisplayWidget(UEFSubtitleDisplayWidget* InDisplayWidget);
+
+	/** Release the matching HUD-owned widget without removing it from its parent. */
+	UFUNCTION(BlueprintCallable, Category = "Subtitle|Widget")
+	void ClearExternalDisplayWidget(UEFSubtitleDisplayWidget* InDisplayWidget);
+
+	UFUNCTION(BlueprintPure, Category = "Subtitle|Widget")
+	UEFSubtitleDisplayWidget* GetDisplayWidget() const { return DisplayWidget; }
+
 	UPROPERTY(BlueprintAssignable)
 	FOnLocalSubtitleStarted OnSubtitleStarted;
 
@@ -96,6 +107,8 @@ private:
 
 	UPROPERTY()
 	TObjectPtr<UEFSubtitleDisplayWidget> DisplayWidget;
+
+	bool bDisplayWidgetOwnedBySubsystem = false;
 
 	FEFSubtitlePresentationState PresentationState;
 

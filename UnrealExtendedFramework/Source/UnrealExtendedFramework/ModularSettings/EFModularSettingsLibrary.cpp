@@ -299,8 +299,6 @@ FString UEFModularSettingsLibrary::GetModularSelectedOption(const UObject* World
 
 void UEFModularSettingsLibrary::AdjustModularIndex(const UObject* WorldContextObject, FGameplayTag Tag, int32 Amount, bool bWrap, EEFSettingsSource Source, APlayerState* SpecificPlayer, bool bApplyImmediately)
 {
-	FString ConfirmationType = bApplyImmediately ? TEXT("Immediate") : TEXT("Delayed");
-	UKismetSystemLibrary::PrintString(WorldContextObject, FString::Printf(TEXT("Adjusting modular index for tag %s with %d options, %d amount, %s confirmation"), *Tag.ToString(), 1, Amount, *ConfirmationType), true, false, FColor::Yellow);
 	UEFModularSettingsBase* SettingBase = GetModularSetting(WorldContextObject, Tag, Source, SpecificPlayer);
 	if (UEFModularSettingsMultiSelect* MultiSelectSetting = Cast<UEFModularSettingsMultiSelect>(SettingBase))
 	{

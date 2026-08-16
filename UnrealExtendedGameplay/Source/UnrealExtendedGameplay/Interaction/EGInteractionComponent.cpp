@@ -6,11 +6,15 @@
 #include "DrawDebugHelpers.h"
 #include "EGInteractableActor.h"
 #include "EGInteractableInterface.h"
+#include "EnhancedInputComponent.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
 #include "GameFramework/Pawn.h"
 #include "GameFramework/PlayerController.h"
 #include "GameplayTagAssetInterface.h"
+#include "InputAction.h"
+#include "InputMappingContext.h"
+#include "Systems/Input/EFInputMappingComponent.h"
 #include "UI/EGInteractionPromptWidget.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogEGInteraction, Log, All);
@@ -31,19 +35,27 @@ void UEGInteractionComponent::BeginPlay()
 {
 	Super::BeginPlay();
 
-
 	const APawn* OwnerPawn = Cast<APawn>(GetOwner());
 	const bool bLocallyControlled = OwnerPawn && OwnerPawn->IsLocallyControlled();
 	SetComponentTickEnabled(bLocallyControlled || (GetOwner() && GetOwner()->HasAuthority()));
+	OwnerInputMappingComponent = GetOwner()
+		? GetOwner()->FindComponentByClass<UEFInputMappingComponent>()
+		: nullptr;
 
 	if (bLocallyControlled)
 	{
-		ShowPromptWidget();
+		EnsureInteractionInputBindings();
+		if (bAutoCreatePromptWidget)
+		{
+			ShowPromptWidget();
+		}
 	}
 }
 
 void UEGInteractionComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	ClearInteractionInputBindings();
+	OwnerInputMappingComponent.Reset();
 	InteractionEnd();
 	ClearFocus();
 	HidePromptWidget();
@@ -62,8 +74,9 @@ void UEGInteractionComponent::TickComponent(float DeltaTime, ELevelTick TickType
 	{
 		return;
 	}
+	EnsureInteractionInputBindings();
 
-	if (!IsInteractionAllowed())
+	if (!IsInteractionAllowed() || !IsInteractionInputAvailable())
 	{
 		if (FocusedActor.IsValid())
 		{
@@ -86,6 +99,125 @@ void UEGInteractionComponent::TickComponent(float DeltaTime, ELevelTick TickType
 	TraceAccumulator = 0.0f;
 
 	RefreshFocus();
+}
+
+// =====================================================================
+// Input
+// =====================================================================
+
+void UEGInteractionComponent::RefreshInteractionInputBindings()
+{
+	ClearInteractionInputBindings();
+	EnsureInteractionInputBindings();
+}
+
+void UEGInteractionComponent::ClearInteractionInputBindings()
+{
+	if (UEnhancedInputComponent* EnhancedInput = BoundInputComponent.Get())
+	{
+		if (InteractionStartedBindingHandle != 0)
+		{
+			EnhancedInput->RemoveBindingByHandle(InteractionStartedBindingHandle);
+		}
+		if (InteractionCompletedBindingHandle != 0)
+		{
+			EnhancedInput->RemoveBindingByHandle(InteractionCompletedBindingHandle);
+		}
+		if (InteractionCanceledBindingHandle != 0)
+		{
+			EnhancedInput->RemoveBindingByHandle(InteractionCanceledBindingHandle);
+		}
+	}
+
+	BoundInputComponent.Reset();
+	BoundInteractionInputAction.Reset();
+	InteractionStartedBindingHandle = 0;
+	InteractionCompletedBindingHandle = 0;
+	InteractionCanceledBindingHandle = 0;
+}
+
+void UEGInteractionComponent::EnsureInteractionInputBindings()
+{
+	if (!bAutoBindInteractionInput || InteractionInputAction.IsNull())
+	{
+		if (BoundInputComponent.IsValid())
+		{
+			ClearInteractionInputBindings();
+		}
+		return;
+	}
+
+	const APawn* OwnerPawn = Cast<APawn>(GetOwner());
+	UEnhancedInputComponent* EnhancedInput = OwnerPawn
+		? Cast<UEnhancedInputComponent>(OwnerPawn->InputComponent)
+		: nullptr;
+	UInputAction* InputAction = InteractionInputAction.LoadSynchronous();
+	if (!EnhancedInput || !InputAction)
+	{
+		if (BoundInputComponent.IsValid())
+		{
+			ClearInteractionInputBindings();
+		}
+		return;
+	}
+
+	if (BoundInputComponent.Get() == EnhancedInput
+		&& BoundInteractionInputAction.Get() == InputAction)
+	{
+		return;
+	}
+
+	ClearInteractionInputBindings();
+	BoundInputComponent = EnhancedInput;
+	BoundInteractionInputAction = InputAction;
+	InteractionStartedBindingHandle = EnhancedInput->BindAction(
+		InputAction,
+		ETriggerEvent::Started,
+		this,
+		&UEGInteractionComponent::InteractionStart).GetHandle();
+	InteractionCompletedBindingHandle = EnhancedInput->BindAction(
+		InputAction,
+		ETriggerEvent::Completed,
+		this,
+		&UEGInteractionComponent::InteractionEnd).GetHandle();
+	InteractionCanceledBindingHandle = EnhancedInput->BindAction(
+		InputAction,
+		ETriggerEvent::Canceled,
+		this,
+		&UEGInteractionComponent::InteractionEnd).GetHandle();
+}
+
+bool UEGInteractionComponent::IsInteractionInputAvailable() const
+{
+	const APawn* OwnerPawn = Cast<APawn>(GetOwner());
+	if (!OwnerPawn || !OwnerPawn->IsLocallyControlled())
+	{
+		return true;
+	}
+
+	const UInputAction* InputAction = InteractionInputAction.Get();
+	if (bAutoBindInteractionInput && (!InputAction || !BoundInputComponent.IsValid()))
+	{
+		return false;
+	}
+
+	const UEFInputMappingComponent* MappingComponent = OwnerInputMappingComponent.Get();
+	if (!MappingComponent || !InputAction)
+	{
+		return true;
+	}
+
+	const UInputMappingContext* ActiveMapping = MappingComponent->GetActiveInputMapping();
+	if (!ActiveMapping)
+	{
+		return false;
+	}
+
+	return ActiveMapping->GetMappings().ContainsByPredicate(
+		[InputAction](const FEnhancedActionKeyMapping& Mapping)
+		{
+			return Mapping.Action == InputAction;
+		});
 }
 
 // =====================================================================
@@ -112,6 +244,11 @@ void UEGInteractionComponent::RefreshFocus()
 
 bool UEGInteractionComponent::TryInteract()
 {
+	if (!IsInteractionInputAvailable())
+	{
+		return false;
+	}
+
 	if (!FocusedActor.IsValid())
 	{
 		OnInteractionFailed.Broadcast(nullptr, EGInteraction::NoTargetReason);
@@ -125,6 +262,11 @@ bool UEGInteractionComponent::TryInteract()
 
 void UEGInteractionComponent::InteractionStart()
 {
+	if (!IsInteractionInputAvailable())
+	{
+		return;
+	}
+
 	AActor* TargetActor = FocusedActor.Get();
 	if (!TargetActor || ActiveInteractionActor.IsValid())
 	{

@@ -48,6 +48,10 @@
 			"Enabled": true
 		},
 		{
+			"Name": "VoiceChat",
+			"Enabled": true
+		},
+		{
 			"Name": "DLSS",
 			"Enabled": true,
 			"Optional": true

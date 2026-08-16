@@ -35,15 +35,13 @@ int32 FEFSubtitleQueue::Enqueue(const FEFSubtitleEntry& Entry, const FEFSubtitle
 	FEFActiveSubtitle NewSub;
 	NewSub.Entry = Entry;
 	NewSub.Request = Request;
-	NewSub.RequestId = NextRequestId++;
+	NewSub.RequestId = Request.RequestId > 0 ? Request.RequestId : NextRequestId++;
+	NewSub.Request.RequestId = NewSub.RequestId;
+	NextRequestId = FMath::Max(NextRequestId, NewSub.RequestId + 1);
 	NewSub.ElapsedTime = 0.0f;
 	NewSub.RemainingTime = CalculateDuration(Entry);
-
-	// Apply delay
-	if (Entry.Delay > 0.0f)
-	{
-		NewSub.RemainingTime += Entry.Delay;
-	}
+	NewSub.DelayRemaining = FMath::Max(Entry.Delay, 0.0f);
+	NewSub.bHasStarted = false;
 
 	switch (QueueMode)
 	{
@@ -53,7 +51,7 @@ int32 FEFSubtitleQueue::Enqueue(const FEFSubtitleEntry& Entry, const FEFSubtitle
 		ActiveSubtitles.Empty();
 		PendingSubtitles.Empty();
 		ActiveSubtitles.Add(NewSub);
-		OnActiveChanged.ExecuteIfBound(NewSub);
+		StartIfReady(ActiveSubtitles.Last());
 		break;
 	}
 
@@ -62,7 +60,7 @@ int32 FEFSubtitleQueue::Enqueue(const FEFSubtitleEntry& Entry, const FEFSubtitle
 		if (ActiveSubtitles.Num() == 0)
 		{
 			ActiveSubtitles.Add(NewSub);
-			OnActiveChanged.ExecuteIfBound(NewSub);
+			StartIfReady(ActiveSubtitles.Last());
 		}
 		else
 		{
@@ -76,7 +74,7 @@ int32 FEFSubtitleQueue::Enqueue(const FEFSubtitleEntry& Entry, const FEFSubtitle
 		if (ActiveSubtitles.Num() == 0)
 		{
 			ActiveSubtitles.Add(NewSub);
-			OnActiveChanged.ExecuteIfBound(NewSub);
+			StartIfReady(ActiveSubtitles.Last());
 		}
 		else
 		{
@@ -85,9 +83,12 @@ int32 FEFSubtitleQueue::Enqueue(const FEFSubtitleEntry& Entry, const FEFSubtitle
 			if (Entry.Priority > Current.Entry.Priority && !Current.Entry.bUninterruptible)
 			{
 				// Move current to pending front, replace with new
-				PendingSubtitles.Insert(ActiveSubtitles[0], 0);
+				FEFActiveSubtitle Interrupted = ActiveSubtitles[0];
+				Interrupted.bHasStarted = false;
+				Interrupted.DelayRemaining = 0.0f;
+				PendingSubtitles.Insert(Interrupted, 0);
 				ActiveSubtitles[0] = NewSub;
-				OnActiveChanged.ExecuteIfBound(NewSub);
+				StartIfReady(ActiveSubtitles[0]);
 			}
 			else
 			{
@@ -111,7 +112,7 @@ int32 FEFSubtitleQueue::Enqueue(const FEFSubtitleEntry& Entry, const FEFSubtitle
 		if (ActiveSubtitles.Num() < MaxStacked)
 		{
 			ActiveSubtitles.Add(NewSub);
-			OnActiveChanged.ExecuteIfBound(NewSub);
+			StartIfReady(ActiveSubtitles.Last());
 		}
 		else
 		{
@@ -121,7 +122,7 @@ int32 FEFSubtitleQueue::Enqueue(const FEFSubtitleEntry& Entry, const FEFSubtitle
 			OnExpired.ExecuteIfBound(OldId);
 
 			ActiveSubtitles.Add(NewSub);
-			OnActiveChanged.ExecuteIfBound(NewSub);
+			StartIfReady(ActiveSubtitles.Last());
 		}
 		break;
 	}
@@ -173,12 +174,27 @@ void FEFSubtitleQueue::Tick(float DeltaTime)
 	// Tick active subtitles
 	for (int32 i = ActiveSubtitles.Num() - 1; i >= 0; --i)
 	{
-		ActiveSubtitles[i].ElapsedTime += DeltaTime;
-		ActiveSubtitles[i].RemainingTime -= DeltaTime;
-
-		if (ActiveSubtitles[i].RemainingTime <= 0.0f)
+		FEFActiveSubtitle& Subtitle = ActiveSubtitles[i];
+		float DisplayDelta = FMath::Max(DeltaTime, 0.0f);
+		if (!Subtitle.bHasStarted)
 		{
-			const int32 ExpiredId = ActiveSubtitles[i].RequestId;
+			Subtitle.DelayRemaining -= DisplayDelta;
+			if (Subtitle.DelayRemaining > 0.0f)
+			{
+				continue;
+			}
+
+			DisplayDelta = FMath::Max(-Subtitle.DelayRemaining, 0.0f);
+			Subtitle.DelayRemaining = 0.0f;
+			StartIfReady(Subtitle);
+		}
+
+		Subtitle.ElapsedTime += DisplayDelta;
+		Subtitle.RemainingTime -= DisplayDelta;
+
+		if (Subtitle.RemainingTime <= 0.0f)
+		{
+			const int32 ExpiredId = Subtitle.RequestId;
 			ActiveSubtitles.RemoveAt(i);
 			OnExpired.ExecuteIfBound(ExpiredId);
 		}
@@ -209,7 +225,7 @@ void FEFSubtitleQueue::TryAdvance()
 			FEFActiveSubtitle Next = PendingSubtitles[0];
 			PendingSubtitles.RemoveAt(0);
 			ActiveSubtitles.Add(Next);
-			OnActiveChanged.ExecuteIfBound(Next);
+			StartIfReady(ActiveSubtitles.Last());
 		}
 	}
 	else
@@ -220,7 +236,16 @@ void FEFSubtitleQueue::TryAdvance()
 			FEFActiveSubtitle Next = PendingSubtitles[0];
 			PendingSubtitles.RemoveAt(0);
 			ActiveSubtitles.Add(Next);
-			OnActiveChanged.ExecuteIfBound(Next);
+			StartIfReady(ActiveSubtitles.Last());
 		}
+	}
+}
+
+void FEFSubtitleQueue::StartIfReady(FEFActiveSubtitle& Subtitle)
+{
+	if (!Subtitle.bHasStarted && Subtitle.DelayRemaining <= 0.0f)
+	{
+		Subtitle.bHasStarted = true;
+		OnActiveChanged.ExecuteIfBound(Subtitle);
 	}
 }

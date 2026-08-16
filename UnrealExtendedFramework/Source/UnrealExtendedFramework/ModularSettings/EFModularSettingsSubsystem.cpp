@@ -184,11 +184,12 @@ void UEFModularSettingsSubsystem::Initialize(FSubsystemCollectionBase& Subsystem
 		{
 			if (UEFModularSettingsContainer* Container = ContainerPtr.LoadSynchronous())
 			{
-				for (UEFModularSettingsBase* Setting : Container->Settings)
+				for (UEFModularSettingsBase* SettingTemplate : Container->Settings)
 				{
-					if (Setting)
+					if (SettingTemplate)
 					{
-						RegisterSetting(Setting);
+						UEFModularSettingsBase* RuntimeSetting = DuplicateObject<UEFModularSettingsBase>(SettingTemplate, this);
+						RegisterSetting(RuntimeSetting);
 					}
 				}
 			}
@@ -477,14 +478,19 @@ void UEFModularSettingsSubsystem::ApplyAllChanges()
 
 void UEFModularSettingsSubsystem::RevertPendingChanges()
 {
+	int32 RevertedCount = 0;
 	for (const auto& SettingPair : Settings)
 	{
 		UEFModularSettingsBase* Setting = SettingPair.Value;
-		Setting->RevertToSavedValue();
-		OnSettingsChanged.Broadcast(Setting);
+		if (Setting && Setting->IsDirty())
+		{
+			Setting->RevertToSavedValue();
+			OnSettingsChanged.Broadcast(Setting);
+			++RevertedCount;
+		}
 	}
     
-	UE_LOG(LogTemp, Log, TEXT("All unapplied pending settings reverted to saved values."));
+	UE_LOG(LogTemp, Log, TEXT("Reverted %d unapplied setting(s) to saved values."), RevertedCount);
 }
 
 
@@ -541,20 +547,38 @@ bool UEFModularSettingsSubsystem::HasPendingChanges() const
 
 void UEFModularSettingsSubsystem::ResetToDefaults(FGameplayTag CategoryTag)
 {
+	int32 ResetCount = 0;
 	for (const auto& SettingPair : Settings)
 	{
 		UEFModularSettingsBase* Setting = SettingPair.Value;
-		Setting->ResetToDefault();
-		OnSettingsChanged.Broadcast(Setting);
+		if (Setting && (!CategoryTag.IsValid() || Setting->SettingTag.MatchesTag(CategoryTag)))
+		{
+			Setting->ResetToDefault();
+			OnSettingsChanged.Broadcast(Setting);
+			++ResetCount;
+		}
 	}
 	
 	ApplyAllChanges(); // Apply and save
-	UE_LOG(LogTemp, Log, TEXT("Settings reset to defaults."));
+	UE_LOG(LogTemp, Log, TEXT("Reset %d setting(s) in category '%s' to defaults."), ResetCount, *CategoryTag.ToString());
 }
 
 
 void UEFModularSettingsSubsystem::SaveToDisk()
 {
+	if (!IsInGameThread())
+	{
+		TWeakObjectPtr<UEFModularSettingsSubsystem> WeakThis(this);
+		AsyncTask(ENamedThreads::GameThread, [WeakThis]()
+		{
+			if (UEFModularSettingsSubsystem* Subsystem = WeakThis.Get())
+			{
+				Subsystem->SaveToDisk();
+			}
+		});
+		return;
+	}
+
 	if (UEFSettingsSaveGame* SaveGameInstance = Cast<UEFSettingsSaveGame>(UGameplayStatics::CreateSaveGameObject(UEFSettingsSaveGame::StaticClass())))
 	{
 		for (const auto& SettingPair : Settings)
@@ -571,109 +595,194 @@ void UEFModularSettingsSubsystem::SaveToDisk()
 
 void UEFModularSettingsSubsystem::LoadFromDisk()
 {
+	if (!IsInGameThread())
+	{
+		TWeakObjectPtr<UEFModularSettingsSubsystem> WeakThis(this);
+		AsyncTask(ENamedThreads::GameThread, [WeakThis]()
+		{
+			if (UEFModularSettingsSubsystem* Subsystem = WeakThis.Get())
+			{
+				Subsystem->LoadFromDisk();
+			}
+		});
+		return;
+	}
+
 	if (UGameplayStatics::DoesSaveGameExist(SettingsSaveSlotName, SettingsUserIndex))
 	{
 		if (UEFSettingsSaveGame* LoadedGame = Cast<UEFSettingsSaveGame>(UGameplayStatics::LoadGameFromSlot(SettingsSaveSlotName, SettingsUserIndex)))
 		{
-			for (const auto& StoredPair : LoadedGame->StoredSettings)
-			{
-				if (UEFModularSettingsBase* Setting = Settings.FindRef(StoredPair.Key))
-				{
-					Setting->SetValueFromString(StoredPair.Value);
-				}
-			}
-
-			UE_LOG(LogTemp, Log, TEXT("Modular settings loaded from slot: %s"), *SettingsSaveSlotName);
+			ApplyLoadedSettings(LoadedGame);
 		}
 	}
 	else
 	{
-		if (ShouldSkipHardwareBenchmarkInPIE(this))
-		{
-			UE_LOG(LogTemp, Log, TEXT("No existing settings save found. Skipping hardware benchmark during PIE and using current/default settings."));
-			return;
-		}
-
-		UE_LOG(LogTemp, Log, TEXT("No existing settings save found. Running hardware benchmark to detect optimal settings."));
-		
-		// Use Unreal Engine's built-in hardware benchmark to auto-detect appropriate settings
-		if (GEngine)
-		{
-			if (UGameUserSettings* UserSettings = GEngine->GetGameUserSettings())
-			{
-				// RunHardwareBenchmark analyzes GPU, CPU, and memory to determine optimal settings
-				UserSettings->RunHardwareBenchmark();
-				
-				// Apply the benchmark results to all scalability settings
-				UserSettings->ApplyHardwareBenchmarkResults();
-				
-				// Get the detected overall quality level for logging and syncing modular settings
-				const int32 DetectedQuality = UserSettings->GetOverallScalabilityLevel();
-				
-				// Apply and save the benchmark-determined settings
-				UserSettings->ApplySettings(false);
-				UserSettings->SaveSettings();
-				
-				UE_LOG(LogTemp, Log, TEXT("Hardware benchmark complete. Detected optimal quality level: %d (0=Low, 1=Medium, 2=High, 3=Ultra, -1=Custom)"), DetectedQuality);
-				
-				// Sync the modular settings to match the benchmark results
-				// This updates our settings objects to reflect what the engine is now using
-				const FGameplayTag OverallQualityTag = FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.OverallQuality"), false);
-				if (OverallQualityTag.IsValid())
-				{
-					if (UEFModularSettingsBase* OverallSetting = Settings.FindRef(OverallQualityTag))
-					{
-						if (UEFOverallQualitySetting* OverallQualitySetting = Cast<UEFOverallQualitySetting>(OverallSetting))
-						{
-							OverallQualitySetting->SyncFromCurrentEngineState();
-						}
-						else
-						{
-							// Fallback for non-standard overall-quality implementations.
-							FString DetectedValue;
-							if (DetectedQuality == 0) DetectedValue = TEXT("Low");
-							else if (DetectedQuality == 1) DetectedValue = TEXT("Medium");
-							else if (DetectedQuality == 2) DetectedValue = TEXT("High");
-							else if (DetectedQuality == 3) DetectedValue = TEXT("Ultra");
-							else DetectedValue = TEXT("Custom"); // -1 or mixed results
-
-							OverallSetting->SetValueFromString(DetectedValue);
-						}
-					}
-				}
-
-				SaveToDisk();
-			}
-		}
+		HandleMissingSettingsSave();
 	}
 }
 
 
 void UEFModularSettingsSubsystem::SaveToDiskAsync()
 {
-	AsyncTask(ENamedThreads::AnyBackgroundThreadNormalTask, [this]()
+	if (!IsInGameThread())
 	{
-		SaveToDisk();
-		
-		AsyncTask(ENamedThreads::GameThread, [this]()
+		TWeakObjectPtr<UEFModularSettingsSubsystem> WeakThis(this);
+		AsyncTask(ENamedThreads::GameThread, [WeakThis]()
 		{
-			OnSettingsSaved.Broadcast();
+			if (UEFModularSettingsSubsystem* Subsystem = WeakThis.Get())
+			{
+				Subsystem->SaveToDiskAsync();
+			}
 		});
-	});
+		return;
+	}
+
+	UEFSettingsSaveGame* SaveGameInstance = Cast<UEFSettingsSaveGame>(
+		UGameplayStatics::CreateSaveGameObject(UEFSettingsSaveGame::StaticClass()));
+	if (!SaveGameInstance)
+	{
+		HandleAsyncSaveComplete(SettingsSaveSlotName, SettingsUserIndex, false);
+		return;
+	}
+
+	for (const auto& SettingPair : Settings)
+	{
+		if (const UEFModularSettingsBase* Setting = SettingPair.Value)
+		{
+			SaveGameInstance->StoredSettings.Add(Setting->SettingTag, Setting->GetValueAsString());
+		}
+	}
+
+	// AsyncSaveGameToSlot serializes the UObject immediately on the game thread,
+	// then dispatches only the platform file write.
+	UGameplayStatics::AsyncSaveGameToSlot(
+		SaveGameInstance,
+		SettingsSaveSlotName,
+		SettingsUserIndex,
+		FAsyncSaveGameToSlotDelegate::CreateUObject(this, &UEFModularSettingsSubsystem::HandleAsyncSaveComplete));
 }
 
 
 void UEFModularSettingsSubsystem::LoadFromDiskAsync()
 {
-	AsyncTask(ENamedThreads::AnyBackgroundThreadNormalTask, [this]()
+	if (!IsInGameThread())
 	{
-		LoadFromDisk();
-		
-		AsyncTask(ENamedThreads::GameThread, [this]()
+		TWeakObjectPtr<UEFModularSettingsSubsystem> WeakThis(this);
+		AsyncTask(ENamedThreads::GameThread, [WeakThis]()
 		{
-			OnSettingsLoaded.Broadcast();
+			if (UEFModularSettingsSubsystem* Subsystem = WeakThis.Get())
+			{
+				Subsystem->LoadFromDiskAsync();
+			}
 		});
-	});
+		return;
+	}
+
+	// The engine performs the platform read asynchronously and constructs the
+	// SaveGame UObject on the game thread before invoking this delegate.
+	UGameplayStatics::AsyncLoadGameFromSlot(
+		SettingsSaveSlotName,
+		SettingsUserIndex,
+		FAsyncLoadGameFromSlotDelegate::CreateUObject(this, &UEFModularSettingsSubsystem::HandleAsyncLoadComplete));
+}
+
+
+void UEFModularSettingsSubsystem::ApplyLoadedSettings(UEFSettingsSaveGame* LoadedGame)
+{
+	if (!LoadedGame)
+	{
+		return;
+	}
+
+	for (const auto& StoredPair : LoadedGame->StoredSettings)
+	{
+		if (UEFModularSettingsBase* Setting = Settings.FindRef(StoredPair.Key))
+		{
+			Setting->SetValueFromString(StoredPair.Value);
+		}
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("Modular settings loaded from slot: %s"), *SettingsSaveSlotName);
+}
+
+
+void UEFModularSettingsSubsystem::HandleMissingSettingsSave()
+{
+	if (ShouldSkipHardwareBenchmarkInPIE(this))
+	{
+		UE_LOG(LogTemp, Log, TEXT("No existing settings save found. Skipping hardware benchmark during PIE and using current/default settings."));
+		return;
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("No existing settings save found. Running hardware benchmark to detect optimal settings."));
+	if (!GEngine)
+	{
+		return;
+	}
+
+	UGameUserSettings* UserSettings = GEngine->GetGameUserSettings();
+	if (!UserSettings)
+	{
+		return;
+	}
+
+	UserSettings->RunHardwareBenchmark();
+	UserSettings->ApplyHardwareBenchmarkResults();
+	const int32 DetectedQuality = UserSettings->GetOverallScalabilityLevel();
+	UserSettings->ApplySettings(false);
+	UserSettings->SaveSettings();
+
+	UE_LOG(LogTemp, Log, TEXT("Hardware benchmark complete. Detected optimal quality level: %d (0=Low, 1=Medium, 2=High, 3=Ultra, -1=Custom)"), DetectedQuality);
+
+	const FGameplayTag OverallQualityTag = FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.OverallQuality"), false);
+	if (UEFModularSettingsBase* OverallSetting = Settings.FindRef(OverallQualityTag))
+	{
+		if (UEFOverallQualitySetting* OverallQualitySetting = Cast<UEFOverallQualitySetting>(OverallSetting))
+		{
+			OverallQualitySetting->SyncFromCurrentEngineState();
+		}
+		else
+		{
+			FString DetectedValue;
+			if (DetectedQuality == 0) DetectedValue = TEXT("Low");
+			else if (DetectedQuality == 1) DetectedValue = TEXT("Medium");
+			else if (DetectedQuality == 2) DetectedValue = TEXT("High");
+			else if (DetectedQuality == 3) DetectedValue = TEXT("Ultra");
+			else DetectedValue = TEXT("Custom");
+			OverallSetting->SetValueFromString(DetectedValue);
+		}
+	}
+
+	SaveToDisk();
+}
+
+
+void UEFModularSettingsSubsystem::HandleAsyncSaveComplete(const FString& SlotName, int32 UserIndex, bool bSuccess)
+{
+	if (bSuccess)
+	{
+		UE_LOG(LogTemp, Log, TEXT("Modular settings saved asynchronously to slot: %s"), *SlotName);
+	}
+	else
+	{
+		UE_LOG(LogTemp, Error, TEXT("Failed to save modular settings asynchronously to slot: %s (user %d)"), *SlotName, UserIndex);
+	}
+	OnSettingsSaved.Broadcast();
+}
+
+
+void UEFModularSettingsSubsystem::HandleAsyncLoadComplete(const FString& SlotName, int32 UserIndex, USaveGame* LoadedGame)
+{
+	if (UEFSettingsSaveGame* SettingsSave = Cast<UEFSettingsSaveGame>(LoadedGame))
+	{
+		ApplyLoadedSettings(SettingsSave);
+	}
+	else
+	{
+		UE_LOG(LogTemp, Verbose, TEXT("No modular settings data loaded from slot '%s' for user %d."), *SlotName, UserIndex);
+		HandleMissingSettingsSave();
+	}
+	OnSettingsLoaded.Broadcast();
 }
 
 

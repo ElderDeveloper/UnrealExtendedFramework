@@ -143,6 +143,19 @@ void UEFSubtitleSubsystem::CancelSubtitle(int32 RequestId)
 	{
 		if (APlayerController* PC = It->Get())
 		{
+			if (PC->IsLocalController())
+			{
+				if (ULocalPlayer* LocalPlayer = PC->GetLocalPlayer())
+				{
+					if (UEFSubtitleLocalSubsystem* LocalSubsystem =
+						LocalPlayer->GetSubsystem<UEFSubtitleLocalSubsystem>())
+					{
+						LocalSubsystem->CancelSubtitle(RequestId);
+						continue;
+					}
+				}
+			}
+
 			if (UEFSubtitleReceiverComponent* Receiver = PC->FindComponentByClass<UEFSubtitleReceiverComponent>())
 			{
 				Receiver->ClientCancelSubtitle(RequestId);

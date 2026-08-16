@@ -13,7 +13,7 @@ DECLARE_DELEGATE_OneParam(FOnSubtitleExpired, int32 /*RequestId*/);
  * Supports Replace, Queue, PriorityQueue, and Stack modes.
  */
 USTRUCT()
-struct FEFSubtitleQueue
+struct UNREALEXTENDEDFRAMEWORK_API FEFSubtitleQueue
 {
 	GENERATED_BODY()
 
@@ -64,6 +64,9 @@ private:
 
 	// Try to advance: move from pending to active
 	void TryAdvance();
+
+	// Fires presentation exactly once when an active subtitle's delay has elapsed.
+	void StartIfReady(FEFActiveSubtitle& Subtitle);
 
 	// Static invalid subtitle for returning references
 	static FEFActiveSubtitle InvalidSubtitle;
