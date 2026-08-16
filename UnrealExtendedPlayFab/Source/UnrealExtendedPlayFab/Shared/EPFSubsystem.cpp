@@ -3,6 +3,7 @@
 #include "EPFSubsystem.h"
 #include "EPFSettings.h"
 #include "UnrealExtendedPlayFab.h"
+#include "Auth/EPFAuthSubsystem.h"
 
 #include "HttpModule.h"
 #include "Interfaces/IHttpRequest.h"
@@ -452,12 +453,129 @@ void UEPFSubsystem::HandleHttpResponse(
 	LastError = Error;
 
 	UE_LOG(LogExtendedPlayFab, Warning, TEXT("PlayFab Error [%s] %s - %s"), *ApiPath, *Error.ErrorCode, *Error.ErrorMessage);
+
+	if (TryReauthenticateAndReplay(ApiPath, RequestBodyString, AuthMode, OnComplete, RetryAttempt, PlayFabCode, ErrorCode, Error, JsonResponse))
+	{
+		return;
+	}
+
+	DeliverFailure(Error, JsonResponse, OnComplete);
+}
+
+void UEPFSubsystem::DeliverFailure(const FEPFError& Error, TSharedPtr<FJsonObject> JsonResponse, const FOnPlayFabResponseDetailed& OnComplete)
+{
 	if (OnComplete.IsBound())
 	{
 		OnComplete.Execute(FEPFResult::Failure(Error), JsonResponse);
 	}
 	OnRequestError.Broadcast(Error);
 	OnRequestComplete.Broadcast(FEPFResult::Failure(Error));
+}
+
+bool UEPFSubsystem::IsSessionRejection(int32 PlayFabCode, const FString& ErrorCode)
+{
+	if (PlayFabCode == 401)
+	{
+		return true;
+	}
+
+	// PlayFab reports the same condition under several names depending on which token failed.
+	static const TCHAR* RejectionCodes[] = {
+		TEXT("NotAuthenticated"),
+		TEXT("NotAuthorized"),
+		TEXT("InvalidSessionTicket"),
+		TEXT("AuthTokenDoesNotExist"),
+		TEXT("ExpiredAuthToken"),
+		TEXT("InvalidEntityToken"),
+		TEXT("EntityTokenExpired"),
+	};
+
+	for (const TCHAR* Code : RejectionCodes)
+	{
+		if (ErrorCode.Equals(Code, ESearchCase::IgnoreCase))
+		{
+			return true;
+		}
+	}
+
+	return false;
+}
+
+bool UEPFSubsystem::TryReauthenticateAndReplay(
+	const FString& ApiPath,
+	const FString& RequestBodyString,
+	EEPFAuthMode AuthMode,
+	const FOnPlayFabResponseDetailed& OnComplete,
+	int32 RetryAttempt,
+	int32 PlayFabCode,
+	const FString& ErrorCode,
+	const FEPFError& Error,
+	TSharedPtr<FJsonObject> JsonResponse)
+{
+	// Only a call that carried a token can have had a stale one. Login itself uses AuthMode::None,
+	// so the request that would fix the session can never trigger this and recurse.
+	if (AuthMode != EEPFAuthMode::SessionTicket && AuthMode != EEPFAuthMode::EntityToken)
+	{
+		return false;
+	}
+
+	if (!IsSessionRejection(PlayFabCode, ErrorCode))
+	{
+		return false;
+	}
+
+	// Shares the transport retry budget rather than adding a second one, so a server that
+	// rejects every token cannot bounce one request between re-auth and replay forever.
+	if (RetryAttempt >= MaxRetries)
+	{
+		UE_LOG(LogExtendedPlayFab, Warning, TEXT("PlayFab %s still rejected after re-authentication; giving up."), *ApiPath);
+		return false;
+	}
+
+	const UEPFSettings* Settings = GetSettings();
+	if (!Settings || !Settings->bReauthenticateOnSessionRejected)
+	{
+		return false;
+	}
+
+	UGameInstance* GameInstance = GetGameInstance();
+	UEPFAuthSubsystem* Auth = GameInstance ? GameInstance->GetSubsystem<UEPFAuthSubsystem>() : nullptr;
+	if (!Auth || !Auth->CanReauthenticate())
+	{
+		return false;
+	}
+
+	UE_LOG(LogExtendedPlayFab, Log, TEXT("PlayFab session rejected on %s; re-authenticating and replaying."), *ApiPath);
+
+	// The handle has to outlive this scope so the waiter can unregister itself from inside its
+	// own broadcast, which UE multicast delegates support.
+	TSharedRef<FDelegateHandle> WaiterHandle = MakeShared<FDelegateHandle>();
+	*WaiterHandle = Auth->OnReauthFinished.AddWeakLambda(this,
+		[this, WaiterHandle, ApiPath, RequestBodyString, AuthMode, OnComplete, RetryAttempt, Error, JsonResponse](bool bReauthSucceeded)
+		{
+			if (UGameInstance* GI = GetGameInstance())
+			{
+				if (UEPFAuthSubsystem* AuthSubsystem = GI->GetSubsystem<UEPFAuthSubsystem>())
+				{
+					AuthSubsystem->OnReauthFinished.Remove(*WaiterHandle);
+				}
+			}
+
+			if (!bReauthSucceeded)
+			{
+				// Hand back the original rejection, not a re-auth error: the caller asked about
+				// its own request, and that is still the failure it needs to see.
+				DeliverFailure(Error, JsonResponse, OnComplete);
+				return;
+			}
+
+			// ExecuteRequest reads the token out of SharedAuthContext as it builds the headers,
+			// so the replay picks up the one the re-login just installed.
+			ExecuteRequest(ApiPath, RequestBodyString, AuthMode, OnComplete, RetryAttempt + 1);
+		});
+
+	Auth->NotifySessionRejected();
+	return true;
 }
 
 void UEPFSubsystem::ResetRateLimitCounter()

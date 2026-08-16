@@ -50,6 +50,11 @@ UEFModularSettingsBase* UEFWorldSettingsComponent::AddSettingFromTemplate_Local(
 		AddReplicatedSubObject(NewSetting);
 	}
 
+	// Same contract as UEFModularSettingsSubsystem::RegisterSetting - this is where a
+	// setting builds its option list and binds its delegates. Callers apply the saved /
+	// replicated value after this returns, so a dynamic list is populated in time.
+	NewSetting->OnRegistered();
+
 	return NewSetting;
 }
 

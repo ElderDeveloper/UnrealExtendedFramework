@@ -14,6 +14,45 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnEPFAccountRecoveryEmailSent, cons
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnEPFUsernamePasswordAdded, const FEPFResult&, Result);
 
 /**
+ * How a PlayFab sign-in authenticates. File scope rather than class scope so credential
+ * providers can name it; UEPFAuthSubsystem::ELastLoginMethod still resolves via the alias below.
+ */
+enum EEPFLoginMethod { LM_None, LM_Steam, LM_CustomId, LM_DeviceId, LM_Email, LM_PlayFab };
+
+/**
+ * One sign-in's worth of credentials, minted on demand by the game.
+ *
+ * Credential1 is the ticket / custom id / e-mail / username; Credential2 is the password for
+ * the two methods that have one.
+ */
+struct FEPFLoginCredentials
+{
+	EEPFLoginMethod Method = LM_None;
+	FString Credential1;
+	FString Credential2;
+};
+
+/**
+ * A provider's answer. Reply with bSuccess = false to abandon the attempt — the auth subsystem
+ * cannot tell "still working" from "gave up", so a provider that never replies stalls sign-in
+ * until the request times out.
+ */
+DECLARE_DELEGATE_TwoParams(FEPFCredentialsReady, bool /*bSuccess*/, const FEPFLoginCredentials& /*Credentials*/);
+
+/**
+ * Asked to mint fresh credentials, possibly asynchronously. This is the seam that keeps the
+ * PlayFab plugin free of Steam/EOS dependencies: the game registers a provider that knows how
+ * to obtain a credential, and the plugin only knows how to spend one.
+ */
+DECLARE_DELEGATE_OneParam(FEPFCredentialProvider, FEPFCredentialsReady /*Reply*/);
+
+/**
+ * A re-authentication attempt settled. Non-dynamic and internal: this coordinates the request
+ * layer with auth, so that many subsystems hitting a rejected session at once share one re-login.
+ */
+DECLARE_MULTICAST_DELEGATE_OneParam(FOnEPFReauthFinished, bool /*bSuccess*/);
+
+/**
  * Manages PlayFab authentication — Steam, Custom ID, Device ID, Email, and PlayFab login.
  * Supports automatic session refresh to prevent token expiry.
  */
@@ -119,7 +158,50 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "PlayFab|Auth")
 	FOnEPFUsernamePasswordAdded OnUsernamePasswordAdded;
 	
-	enum ELastLoginMethod { LM_None, LM_Steam, LM_CustomId, LM_DeviceId, LM_Email, LM_PlayFab };
+	using ELastLoginMethod = EEPFLoginMethod;
+
+
+	// ── Credential Provider ──────────────────────────────────────────────────
+
+	/**
+	 * Register the game's credential source. The provider is asked for a *fresh* credential on
+	 * auto-login and on every session refresh, which is what makes ticket-based methods work:
+	 * a Steam auth ticket is spent once, so replaying the stored one re-authenticates with
+	 * something PlayFab rejects. Registering from a module that already depends on Steam/EOS
+	 * keeps that dependency out of this plugin.
+	 */
+	void SetCredentialProvider(FEPFCredentialProvider Provider);
+
+	void ClearCredentialProvider();
+
+	bool HasCredentialProvider() const { return CredentialProvider.IsBound(); }
+
+	/**
+	 * Sign in using the registered provider. Called automatically at startup when
+	 * bAutoLoginOnStart is set; safe to call by hand for a retry.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "PlayFab|Auth")
+	void TryAutoLogin();
+
+
+	// ── Re-authentication ────────────────────────────────────────────────────
+
+	/**
+	 * Report that PlayFab rejected an authenticated call, so the session should be rebuilt.
+	 * Coalesced: concurrent reports from different subsystems share one re-login, and every
+	 * caller hears the outcome on OnReauthFinished. Safe to call when nothing can be done —
+	 * it answers false rather than doing nothing.
+	 */
+	void NotifySessionRejected();
+
+	/** True when a re-login is possible at all: a credential provider, or a stored credential. */
+	bool CanReauthenticate() const;
+
+	bool IsReauthenticating() const { return bReauthInFlight; }
+
+	/** Settles exactly once per NotifySessionRejected, success or failure. */
+	FOnEPFReauthFinished OnReauthFinished;
+
 private:
 
 	FString CachedDisplayName;
@@ -143,6 +225,46 @@ private:
 	/** Start session refresh timer (30 min intervals) */
 	void StartSessionRefreshTimer();
 
-	/** Called by timer — silently re-authenticates using stored credentials */
+	/** Called by timer — silently re-authenticates via the provider, or stored credentials. */
 	void RefreshSession();
+
+
+	// ── Credential Provider ─────────────────────────────────────────────────
+
+	FEPFCredentialProvider CredentialProvider;
+
+	/** Ask the provider for a credential and sign in with whatever comes back. */
+	void RequestCredentialsAndLogin(const TCHAR* Reason);
+
+	void HandleProvidedCredentials(bool bSuccess, const FEPFLoginCredentials& Credentials);
+
+	void LoginWithCredentials(const FEPFLoginCredentials& Credentials);
+
+	/** Single exit point, so an unanswered request cannot latch the in-flight flag. */
+	void FinishCredentialRequest();
+
+	void OnCredentialRequestTimeout();
+
+	bool bCredentialRequestInFlight = false;
+	FTimerHandle CredentialRequestTimeoutTimer;
+
+
+	// ── Re-authentication ───────────────────────────────────────────────────
+
+	bool bReauthInFlight = false;
+	FTimerHandle ReauthTimeoutTimer;
+
+	/**
+	 * Broadcast OnReauthFinished and clear the flag. Called from every point a login attempt
+	 * settles; a latched flag would make the *first* dropped session disable re-auth for good.
+	 */
+	void CompleteReauth(bool bSuccess);
+
+	void OnReauthTimeout();
+
+	/** Backstop: covers a login that neither succeeds nor reports failure. */
+	static constexpr float ReauthTimeoutSeconds = 60.0f;
+
+	/** A provider may have to reach a platform backend; generous, but bounded. */
+	static constexpr float CredentialRequestTimeoutSeconds = 30.0f;
 };

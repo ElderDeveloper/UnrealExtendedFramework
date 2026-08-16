@@ -146,5 +146,32 @@ private:
 	void ProcessRequestQueue();
 	void ResetRateLimitCounter();
 
+	/**
+	 * True when PlayFab rejected the call because the session is no longer good.
+	 *
+	 * Reads the *PlayFab* code, not the transport one: requests set X-ReportErrorAsSuccess, so
+	 * a rejected call still arrives as HTTP 200 with the real status in the body's "code".
+	 */
+	static bool IsSessionRejection(int32 PlayFabCode, const FString& ErrorCode);
+
+	/**
+	 * On a rejected session, re-authenticate once and replay this request. Returns true when it
+	 * has taken ownership of the completion — the caller must not also deliver the failure.
+	 */
+	bool TryReauthenticateAndReplay(
+		const FString& ApiPath,
+		const FString& RequestBodyString,
+		EEPFAuthMode AuthMode,
+		const FOnPlayFabResponseDetailed& OnComplete,
+		int32 RetryAttempt,
+		int32 PlayFabCode,
+		const FString& ErrorCode,
+		const FEPFError& Error,
+		TSharedPtr<FJsonObject> JsonResponse
+	);
+
+	/** The one place a failed request is handed back, so the replay path cannot drift from it. */
+	void DeliverFailure(const FEPFError& Error, TSharedPtr<FJsonObject> JsonResponse, const FOnPlayFabResponseDetailed& OnComplete);
+
 	FEPFError LastError;
 };

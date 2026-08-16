@@ -361,6 +361,14 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Settings")
 	void SetOptionLocked(const FString& OptionValue, bool bLocked)
 	{
+		// OnOptionLockChanged broadcasts OnSettingChanged, so firing it when the lock set is
+		// unchanged is not merely wasteful: a listener that re-locks in response (a settings
+		// object that recomputes ownership on change) recurses until the stack overflows.
+		if (IsOptionLocked(OptionValue) == bLocked)
+		{
+			return;
+		}
+
 		if (bLocked)
 		{
 			LockedOptions.AddUnique(OptionValue);
@@ -369,7 +377,7 @@ public:
 		{
 			LockedOptions.Remove(OptionValue);
 		}
-		
+
 		OnOptionLockChanged();
 	}
 

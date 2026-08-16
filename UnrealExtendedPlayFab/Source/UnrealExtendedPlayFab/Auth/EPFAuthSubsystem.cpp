@@ -52,15 +52,15 @@ namespace
 	{
 		switch (LoginMethod)
 		{
-		case UEPFAuthSubsystem::LM_Steam:
+		case LM_Steam:
 			return TEXT("Steam");
-		case UEPFAuthSubsystem::LM_CustomId:
+		case LM_CustomId:
 			return TEXT("CustomId");
-		case UEPFAuthSubsystem::LM_DeviceId:
+		case LM_DeviceId:
 			return TEXT("DeviceId");
-		case UEPFAuthSubsystem::LM_Email:
+		case LM_Email:
 			return TEXT("Email");
-		case UEPFAuthSubsystem::LM_PlayFab:
+		case LM_PlayFab:
 			return TEXT("PlayFab");
 		default:
 			return TEXT("None");
@@ -71,15 +71,15 @@ namespace
 	{
 		switch (LoginMethod)
 		{
-		case UEPFAuthSubsystem::LM_Steam:
+		case LM_Steam:
 			return TEXT("SteamTicket");
-		case UEPFAuthSubsystem::LM_CustomId:
+		case LM_CustomId:
 			return TEXT("CustomId");
-		case UEPFAuthSubsystem::LM_DeviceId:
+		case LM_DeviceId:
 			return TEXT("PersistedDeviceLoginId");
-		case UEPFAuthSubsystem::LM_Email:
+		case LM_Email:
 			return TEXT("Email");
-		case UEPFAuthSubsystem::LM_PlayFab:
+		case LM_PlayFab:
 			return TEXT("Username");
 		default:
 			return TEXT("Identifier");
@@ -90,12 +90,12 @@ namespace
 	{
 		switch (LoginMethod)
 		{
-		case UEPFAuthSubsystem::LM_Steam:
+		case LM_Steam:
 			return DescribeSteamTicketForLog(Credential);
-		case UEPFAuthSubsystem::LM_CustomId:
-		case UEPFAuthSubsystem::LM_DeviceId:
-		case UEPFAuthSubsystem::LM_Email:
-		case UEPFAuthSubsystem::LM_PlayFab:
+		case LM_CustomId:
+		case LM_DeviceId:
+		case LM_Email:
+		case LM_PlayFab:
 			return Credential.IsEmpty() ? TEXT("<empty>") : Credential;
 		default:
 			return TEXT("<none>");
@@ -106,6 +106,211 @@ namespace
 void UEPFAuthSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
 	Super::Initialize(Collection);
+
+	const UEPFSettings* Settings = GetSettings();
+	if (Settings && Settings->bAutoLoginOnStart)
+	{
+		// Deferred one tick for two reasons: Blueprints get to bind OnLoginComplete before any
+		// result broadcasts, and the game's credential provider is registered by another game
+		// instance subsystem that may not exist yet during this one's Initialize. The game
+		// instance timer manager is safe here — it is created in the UGameInstance constructor,
+		// while subsystems initialize later inside UGameInstance::Init.
+		if (UGameInstance* GI = GetGameInstance())
+		{
+			GI->GetTimerManager().SetTimerForNextTick(FTimerDelegate::CreateWeakLambda(this, [this]()
+			{
+				TryAutoLogin();
+			}));
+		}
+	}
+}
+
+void UEPFAuthSubsystem::SetCredentialProvider(FEPFCredentialProvider Provider)
+{
+	CredentialProvider = MoveTemp(Provider);
+}
+
+void UEPFAuthSubsystem::ClearCredentialProvider()
+{
+	CredentialProvider.Unbind();
+}
+
+void UEPFAuthSubsystem::TryAutoLogin()
+{
+	RequestCredentialsAndLogin(TEXT("auto-login"));
+}
+
+void UEPFAuthSubsystem::RequestCredentialsAndLogin(const TCHAR* Reason)
+{
+	if (!CredentialProvider.IsBound())
+	{
+		UE_LOG(LogExtendedPlayFab, Warning,
+			TEXT("EPFAuthSubsystem — %s requested but no credential provider is registered. "
+				 "Call SetCredentialProvider from a module that can mint one (Steam/EOS/custom id)."), Reason);
+		return;
+	}
+
+	if (bCredentialRequestInFlight)
+	{
+		UE_LOG(LogExtendedPlayFab, Warning, TEXT("EPFAuthSubsystem — %s ignored: a credential request is already in flight."), Reason);
+		return;
+	}
+
+	// Armed before Execute, because a provider is free to reply synchronously.
+	bCredentialRequestInFlight = true;
+	if (UGameInstance* GI = GetGameInstance())
+	{
+		GI->GetTimerManager().SetTimer(
+			CredentialRequestTimeoutTimer, this, &UEPFAuthSubsystem::OnCredentialRequestTimeout,
+			CredentialRequestTimeoutSeconds, false);
+	}
+
+	UE_LOG(LogExtendedPlayFab, Log, TEXT("EPFAuthSubsystem — Requesting credentials for %s..."), Reason);
+	CredentialProvider.Execute(FEPFCredentialsReady::CreateUObject(this, &UEPFAuthSubsystem::HandleProvidedCredentials));
+}
+
+void UEPFAuthSubsystem::HandleProvidedCredentials(bool bSuccess, const FEPFLoginCredentials& Credentials)
+{
+	if (!bCredentialRequestInFlight)
+	{
+		// A late reply from a request that already timed out; signing in on it would race
+		// whatever the timeout's failure broadcast prompted the game to do.
+		return;
+	}
+
+	FinishCredentialRequest();
+
+	if (!bSuccess || Credentials.Method == LM_None)
+	{
+		UE_LOG(LogExtendedPlayFab, Warning, TEXT("EPFAuthSubsystem — Credential provider returned no usable credential."));
+		CompleteReauth(false);
+		OnLoginComplete.Broadcast(FEPFResult::Failure(TEXT("Credential provider returned no usable credential")), TEXT(""));
+		return;
+	}
+
+	LoginWithCredentials(Credentials);
+}
+
+void UEPFAuthSubsystem::LoginWithCredentials(const FEPFLoginCredentials& Credentials)
+{
+	switch (Credentials.Method)
+	{
+	case LM_Steam:
+		LoginWithSteam(Credentials.Credential1);
+		break;
+	case LM_CustomId:
+	case LM_DeviceId:
+		LoginWithCustomId(Credentials.Credential1);
+		break;
+	case LM_Email:
+		LoginWithEmail(Credentials.Credential1, Credentials.Credential2);
+		break;
+	case LM_PlayFab:
+		LoginWithPlayFab(Credentials.Credential1, Credentials.Credential2);
+		break;
+	default:
+		break;
+	}
+}
+
+void UEPFAuthSubsystem::OnCredentialRequestTimeout()
+{
+	FinishCredentialRequest();
+
+	UE_LOG(LogExtendedPlayFab, Warning,
+		TEXT("EPFAuthSubsystem — Credential provider did not answer within %.0f seconds."), CredentialRequestTimeoutSeconds);
+	CompleteReauth(false);
+	OnLoginComplete.Broadcast(FEPFResult::Failure(TEXT("Credential provider timed out")), TEXT(""));
+}
+
+void UEPFAuthSubsystem::FinishCredentialRequest()
+{
+	bCredentialRequestInFlight = false;
+
+	if (UGameInstance* GI = GetGameInstance())
+	{
+		GI->GetTimerManager().ClearTimer(CredentialRequestTimeoutTimer);
+	}
+}
+
+bool UEPFAuthSubsystem::CanReauthenticate() const
+{
+	// A provider mints something new; a stored credential is only reusable when it is a durable
+	// secret. A spent Steam ticket is neither, so LM_Steam without a provider is not a route back.
+	if (CredentialProvider.IsBound())
+	{
+		return true;
+	}
+
+	switch (LastLoginMethod)
+	{
+	case LM_CustomId:
+	case LM_DeviceId:
+	case LM_Email:
+	case LM_PlayFab:
+		return !SavedCredential1.IsEmpty();
+	default:
+		return false;
+	}
+}
+
+void UEPFAuthSubsystem::NotifySessionRejected()
+{
+	if (bReauthInFlight)
+	{
+		// Several subsystems can be rejected in the same frame; they all wait on the one attempt.
+		return;
+	}
+
+	if (!CanReauthenticate())
+	{
+		UE_LOG(LogExtendedPlayFab, Warning,
+			TEXT("EPFAuthSubsystem — Session rejected but no way to re-authenticate (no credential provider, no reusable stored credential)."));
+
+		// Broadcast directly rather than via CompleteReauth: nothing is in flight, and that
+		// function deliberately ignores calls when the flag is clear — routing through it would
+		// silently strand every waiter instead of answering them.
+		OnReauthFinished.Broadcast(false);
+		return;
+	}
+
+	UE_LOG(LogExtendedPlayFab, Log, TEXT("EPFAuthSubsystem — Session rejected; re-authenticating..."));
+
+	bReauthInFlight = true;
+	if (UGameInstance* GI = GetGameInstance())
+	{
+		GI->GetTimerManager().SetTimer(
+			ReauthTimeoutTimer, this, &UEPFAuthSubsystem::OnReauthTimeout, ReauthTimeoutSeconds, false);
+	}
+
+	// Same routing as the periodic refresh: provider first, stored credential as fallback.
+	RefreshSession();
+}
+
+void UEPFAuthSubsystem::OnReauthTimeout()
+{
+	UE_LOG(LogExtendedPlayFab, Warning,
+		TEXT("EPFAuthSubsystem — Re-authentication did not settle within %.0f seconds."), ReauthTimeoutSeconds);
+	CompleteReauth(false);
+}
+
+void UEPFAuthSubsystem::CompleteReauth(bool bSuccess)
+{
+	if (!bReauthInFlight)
+	{
+		// Either nothing was waiting, or the timeout already answered for this attempt.
+		return;
+	}
+
+	bReauthInFlight = false;
+
+	if (UGameInstance* GI = GetGameInstance())
+	{
+		GI->GetTimerManager().ClearTimer(ReauthTimeoutTimer);
+	}
+
+	UE_LOG(LogExtendedPlayFab, Log, TEXT("EPFAuthSubsystem — Re-authentication %s."), bSuccess ? TEXT("succeeded") : TEXT("failed"));
+	OnReauthFinished.Broadcast(bSuccess);
 }
 
 void UEPFAuthSubsystem::Deinitialize()
@@ -118,6 +323,11 @@ void UEPFAuthSubsystem::Deinitialize()
 			World->GetTimerManager().ClearTimer(SessionRefreshTimer);
 		}
 	}
+
+	FinishCredentialRequest();
+	CompleteReauth(false);
+	OnReauthFinished.Clear();
+	CredentialProvider.Unbind();
 
 	ClearSharedAuthContext();
 	CachedDisplayName.Empty();
@@ -521,6 +731,10 @@ void UEPFAuthSubsystem::HandleLoginResponse(const FEPFResult& Result, TSharedPtr
 		// Start session refresh timer on successful login
 		StartSessionRefreshTimer();
 
+		// Before OnLoginComplete: a request replayed by a waiter must go out against the token
+		// this response just installed, not race whatever a login listener starts doing.
+		CompleteReauth(true);
+
 		OnLoginComplete.Broadcast(FEPFResult::Success(), AuthContext.PlayFabId);
 	}
 	else
@@ -539,6 +753,7 @@ void UEPFAuthSubsystem::HandleLoginResponse(const FEPFResult& Result, TSharedPtr
 			*LoginIdentifierValue,
 			*ErrorMessage
 		);
+		CompleteReauth(false);
 		OnLoginComplete.Broadcast(Result.bSuccess ? Result : FEPFResult::Failure(ErrorMessage), TEXT(""));
 	}
 }
@@ -591,6 +806,17 @@ void UEPFAuthSubsystem::StartSessionRefreshTimer()
 
 void UEPFAuthSubsystem::RefreshSession()
 {
+	// Prefer a freshly minted credential. This is the difference between a refresh that works
+	// and one that only looks like it does: a Steam auth ticket is spent by the login it was
+	// minted for, so replaying SavedCredential1 re-authenticates with something PlayFab rejects.
+	// Stored credentials stay the fallback — they are durable secrets for e-mail / custom id,
+	// and a game that registers no provider keeps exactly its old behaviour.
+	if (CredentialProvider.IsBound())
+	{
+		RequestCredentialsAndLogin(TEXT("session refresh"));
+		return;
+	}
+
 	if (LastLoginMethod == LM_None)
 	{
 		UE_LOG(LogExtendedPlayFab, Warning, TEXT("EPFAuthSubsystem::RefreshSession — No stored login method, cannot refresh"));

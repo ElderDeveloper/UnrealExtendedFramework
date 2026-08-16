@@ -41,6 +41,23 @@ public:
 		meta = (DisplayName = "Create Account on First Login"))
 	bool bCreateAccountOnFirstLogin = true;
 
+	/**
+	 * If true, sign in on subsystem initialization using the registered credential provider.
+	 * Does nothing without one — the plugin has no way to obtain a credential by itself.
+	 */
+	UPROPERTY(config, EditAnywhere, BlueprintReadOnly, Category = "Auth",
+		meta = (DisplayName = "Auto Login on Start"))
+	bool bAutoLoginOnStart = false;
+
+	/**
+	 * If true, a PlayFab rejection of an authenticated call (401 / NotAuthenticated /
+	 * InvalidSessionTicket / expired entity token) re-authenticates once and replays the
+	 * request, instead of surfacing the failure. Inert without a way to re-authenticate.
+	 */
+	UPROPERTY(config, EditAnywhere, BlueprintReadOnly, Category = "Auth",
+		meta = (DisplayName = "Reauthenticate on Session Rejected"))
+	bool bReauthenticateOnSessionRejected = true;
+
 
 	// ── Debug ────────────────────────────────────────────────────────────────
 

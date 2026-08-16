@@ -63,6 +63,11 @@ UEFModularSettingsBase* UEFPlayerSettingsComponent::AddSettingFromTemplate_Local
     AddReplicatedSubObject(NewSetting);
   }
 
+  // Same contract as UEFModularSettingsSubsystem::RegisterSetting - this is where a
+  // setting builds its option list and binds its delegates. Callers apply the saved /
+  // replicated value after this returns, so a dynamic list is populated in time.
+  NewSetting->OnRegistered();
+
   OnSettingChanged.Broadcast(NewSetting);
   return NewSetting;
 }
@@ -548,6 +553,8 @@ UEFModularSettingsBase* UEFPlayerSettingsComponent::CreateSettingFromRuntimeDefi
     {
       AddReplicatedSubObject(NewSetting);
     }
+
+    NewSetting->OnRegistered();
 
     OnSettingChanged.Broadcast(NewSetting);
   }
