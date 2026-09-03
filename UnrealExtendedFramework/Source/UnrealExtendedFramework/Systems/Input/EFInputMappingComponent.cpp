@@ -3,6 +3,7 @@
 #include "Systems/Input/EFInputMappingComponent.h"
 
 #include "EnhancedInputSubsystems.h"
+#include "Systems/Input/EFPlayerMappableKeySettings.h"
 #include "Engine/LocalPlayer.h"
 #include "Engine/World.h"
 #include "GameFramework/Pawn.h"
@@ -424,6 +425,17 @@ int32 UEFInputMappingComponent::GetActiveInputMappingPriority() const
 	return InputMappingStack.IsValidIndex(ActiveInputMappingIndex)
 		? InputMappingStack[ActiveInputMappingIndex].Spec.Priority
 		: 0;
+}
+
+TArray<FEFInputPromptEntry> UEFInputMappingComponent::GetActiveInputPrompts() const
+{
+	TArray<FEFInputPromptEntry> Prompts;
+	const UEnhancedInputLocalPlayerSubsystem* InputSubsystem = GetEnhancedInputSubsystem();
+	UEFPlayerMappableKeySettings::CollectInputPrompts(
+		AppliedMappingContext,
+		InputSubsystem ? InputSubsystem->GetUserSettings() : nullptr,
+		Prompts);
+	return Prompts;
 }
 
 TArray<FEFInputMappingSpec> UEFInputMappingComponent::GetInputMappingStack() const

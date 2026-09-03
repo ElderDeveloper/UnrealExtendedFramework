@@ -9,8 +9,9 @@
 
 #include "EGInteractionComponent.generated.h"
 
+class AController;
+class APawn;
 class UEGInteractionPromptWidget;
-class UEFInputMappingComponent;
 class UEnhancedInputComponent;
 class UInputAction;
 
@@ -342,7 +343,6 @@ private:
 
 	TWeakObjectPtr<UEnhancedInputComponent> BoundInputComponent;
 	TWeakObjectPtr<UInputAction> BoundInteractionInputAction;
-	TWeakObjectPtr<UEFInputMappingComponent> OwnerInputMappingComponent;
 	uint32 InteractionStartedBindingHandle = 0;
 	uint32 InteractionCompletedBindingHandle = 0;
 	uint32 InteractionCanceledBindingHandle = 0;
@@ -367,7 +367,12 @@ private:
 
 	// Input
 	void EnsureInteractionInputBindings();
-	bool IsInteractionInputAvailable() const;
+
+	// Ownership
+	UFUNCTION()
+	void HandleOwnerControllerChanged(APawn* Pawn, AController* OldController, AController* NewController);
+	/** Tick enable, input bind and prompt lifetime, derived from who controls the owner right now. */
+	void RefreshOwnerControlState();
 
 	// Focus
 	void SetFocusedActor(AActor* NewFocusedActor, const FHitResult& HitResult);

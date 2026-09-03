@@ -3,8 +3,11 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "InputCoreTypes.h"
 #include "EFInputMappingTypes.generated.h"
 
+class UEFPlayerMappableKeySettings;
+class UInputAction;
 class UInputMappingContext;
 
 /**
@@ -100,4 +103,41 @@ struct UNREALEXTENDEDFRAMEWORK_API FEFInputMappingEntry
 	/** Managed entries live until removed by context; override entries until released by handle. */
 	UPROPERTY()
 	bool bManaged = false;
+};
+
+/**
+ * One on-screen prompt resolved from a mapping context: an action and the keys
+ * that reach it, as authored by UEFPlayerMappableKeySettings. Built by
+ * UEFPlayerMappableKeySettings::CollectInputPrompts; the live set comes from
+ * UEFInputMappingComponent::GetActiveInputPrompts.
+ */
+USTRUCT(BlueprintType)
+struct UNREALEXTENDEDFRAMEWORK_API FEFInputPromptEntry
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadOnly, Category="ExtendedInput|Prompts")
+	TObjectPtr<const UInputAction> Action = nullptr;
+
+	/**
+	 * Every flagged key for the action in the context, in mapping order. Reflects
+	 * the player's remaps when Enhanced Input user settings are enabled. Filtering
+	 * by input device is the presenter's job.
+	 */
+	UPROPERTY(BlueprintReadOnly, Category="ExtendedInput|Prompts")
+	TArray<FKey> Keys;
+
+	UPROPERTY(BlueprintReadOnly, Category="ExtendedInput|Prompts")
+	FText Label;
+
+	UPROPERTY(BlueprintReadOnly, Category="ExtendedInput|Prompts")
+	FName Style;
+
+	/** Lower first. */
+	UPROPERTY(BlueprintReadOnly, Category="ExtendedInput|Prompts")
+	int32 Order = 0;
+
+	/** The settings Label, Style and Order were read from: the action's first flagged mapping. */
+	UPROPERTY(BlueprintReadOnly, Category="ExtendedInput|Prompts")
+	TObjectPtr<UEFPlayerMappableKeySettings> Settings = nullptr;
 };

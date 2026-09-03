@@ -89,6 +89,16 @@ public:
 	UFUNCTION(BlueprintPure, Category="ExtendedInput")
 	int32 GetActiveInputMappingPriority() const;
 
+	/**
+	 * Prompts for the context currently applied: every mapping flagged by a
+	 * UEFPlayerMappableKeySettings, one entry per action, in PromptOrder. Empty
+	 * when nothing is applied. Because only one context is ever live, this is
+	 * the complete answer to "what can the player press right now" — read it
+	 * from OnActiveInputMappingChanged rather than every frame.
+	 */
+	UFUNCTION(BlueprintPure, Category="ExtendedInput|Prompts")
+	TArray<FEFInputPromptEntry> GetActiveInputPrompts() const;
+
 	/** Every entry in push order — index 0 is the oldest, not the winner. */
 	UFUNCTION(BlueprintPure, Category="ExtendedInput")
 	TArray<FEFInputMappingSpec> GetInputMappingStack() const;

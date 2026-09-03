@@ -13,8 +13,6 @@
 #include "GameFramework/PlayerController.h"
 #include "GameplayTagAssetInterface.h"
 #include "InputAction.h"
-#include "InputMappingContext.h"
-#include "Systems/Input/EFInputMappingComponent.h"
 #include "UI/EGInteractionPromptWidget.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogEGInteraction, Log, All);
@@ -35,31 +33,65 @@ void UEGInteractionComponent::BeginPlay()
 {
 	Super::BeginPlay();
 
+	// Whether this component ticks depends on who controls the pawn, and on a
+	// client that answer changes after BeginPlay: the controller replicates in
+	// later, through OnRep_Controller. Deciding once here would leave a client
+	// pawn's tick off for good, so the decision is re-run on every controller
+	// change for the life of the component.
+	if (APawn* OwnerPawn = Cast<APawn>(GetOwner()))
+	{
+		OwnerPawn->ReceiveControllerChangedDelegate.AddUniqueDynamic(this, &UEGInteractionComponent::HandleOwnerControllerChanged);
+	}
+
+	RefreshOwnerControlState();
+}
+
+void UEGInteractionComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	if (APawn* OwnerPawn = Cast<APawn>(GetOwner()))
+	{
+		OwnerPawn->ReceiveControllerChangedDelegate.RemoveDynamic(this, &UEGInteractionComponent::HandleOwnerControllerChanged);
+	}
+
+	ClearInteractionInputBindings();
+	InteractionEnd();
+	ClearFocus();
+	HidePromptWidget();
+	Super::EndPlay(EndPlayReason);
+}
+
+void UEGInteractionComponent::HandleOwnerControllerChanged(APawn* /*Pawn*/, AController* /*OldController*/, AController* /*NewController*/)
+{
+	RefreshOwnerControlState();
+}
+
+void UEGInteractionComponent::RefreshOwnerControlState()
+{
 	const APawn* OwnerPawn = Cast<APawn>(GetOwner());
 	const bool bLocallyControlled = OwnerPawn && OwnerPawn->IsLocallyControlled();
-	SetComponentTickEnabled(bLocallyControlled || (GetOwner() && GetOwner()->HasAuthority()));
-	OwnerInputMappingComponent = GetOwner()
-		? GetOwner()->FindComponentByClass<UEFInputMappingComponent>()
-		: nullptr;
+	const bool bAuthority = GetOwner() && GetOwner()->HasAuthority();
+
+	// The local owner traces and draws prompts; authority pumps holds for every
+	// pawn it owns. A remote proxy on a client is neither and stays idle.
+	SetComponentTickEnabled(bLocallyControlled || bAuthority);
 
 	if (bLocallyControlled)
 	{
+		// The input component may not exist yet when possession lands on a client
+		// (it is created in PawnClientRestart); the tick retries the bind until it does.
 		EnsureInteractionInputBindings();
 		if (bAutoCreatePromptWidget)
 		{
 			ShowPromptWidget();
 		}
+		return;
 	}
-}
 
-void UEGInteractionComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
-{
+	// Local control ended, or never began: anything that belongs to a local
+	// player goes with it. Each of these is a no-op when there is nothing to drop.
 	ClearInteractionInputBindings();
-	OwnerInputMappingComponent.Reset();
-	InteractionEnd();
 	ClearFocus();
 	HidePromptWidget();
-	Super::EndPlay(EndPlayReason);
 }
 
 void UEGInteractionComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
@@ -76,7 +108,10 @@ void UEGInteractionComponent::TickComponent(float DeltaTime, ELevelTick TickType
 	}
 	EnsureInteractionInputBindings();
 
-	if (!IsInteractionAllowed() || !IsInteractionInputAvailable())
+	// Whether the interaction key can currently fire is the mapping context's
+	// business: a modal tier replaces the gameplay context and the action simply
+	// stops arriving. The component does not second-guess that here.
+	if (!IsInteractionAllowed())
 	{
 		if (FocusedActor.IsValid())
 		{
@@ -187,39 +222,6 @@ void UEGInteractionComponent::EnsureInteractionInputBindings()
 		&UEGInteractionComponent::InteractionEnd).GetHandle();
 }
 
-bool UEGInteractionComponent::IsInteractionInputAvailable() const
-{
-	const APawn* OwnerPawn = Cast<APawn>(GetOwner());
-	if (!OwnerPawn || !OwnerPawn->IsLocallyControlled())
-	{
-		return true;
-	}
-
-	const UInputAction* InputAction = InteractionInputAction.Get();
-	if (bAutoBindInteractionInput && (!InputAction || !BoundInputComponent.IsValid()))
-	{
-		return false;
-	}
-
-	const UEFInputMappingComponent* MappingComponent = OwnerInputMappingComponent.Get();
-	if (!MappingComponent || !InputAction)
-	{
-		return true;
-	}
-
-	const UInputMappingContext* ActiveMapping = MappingComponent->GetActiveInputMapping();
-	if (!ActiveMapping)
-	{
-		return false;
-	}
-
-	return ActiveMapping->GetMappings().ContainsByPredicate(
-		[InputAction](const FEnhancedActionKeyMapping& Mapping)
-		{
-			return Mapping.Action == InputAction;
-		});
-}
-
 // =====================================================================
 // Actions
 // =====================================================================
@@ -244,11 +246,6 @@ void UEGInteractionComponent::RefreshFocus()
 
 bool UEGInteractionComponent::TryInteract()
 {
-	if (!IsInteractionInputAvailable())
-	{
-		return false;
-	}
-
 	if (!FocusedActor.IsValid())
 	{
 		OnInteractionFailed.Broadcast(nullptr, EGInteraction::NoTargetReason);
@@ -262,11 +259,6 @@ bool UEGInteractionComponent::TryInteract()
 
 void UEGInteractionComponent::InteractionStart()
 {
-	if (!IsInteractionInputAvailable())
-	{
-		return;
-	}
-
 	AActor* TargetActor = FocusedActor.Get();
 	if (!TargetActor || ActiveInteractionActor.IsValid())
 	{
