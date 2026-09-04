@@ -53,7 +53,7 @@ UEFModularSettingsBase* UEFModularSettingsLibrary::GetModularSetting(const UObje
 		{
 			if (UEFModularSettingsSubsystem* Subsystem = World->GetGameInstance()->GetSubsystem<UEFModularSettingsSubsystem>())
 			{
-				return Subsystem->GetSettingByTag(Tag);
+				return Subsystem->GetLocalSettingByTag(Tag);
 			}
 		}
 		return nullptr;
@@ -76,6 +76,12 @@ UEFModularSettingsBase* UEFModularSettingsLibrary::GetModularSetting(const UObje
 }
 
 
+bool UEFModularSettingsLibrary::HasModularSetting(const UObject* WorldContextObject, FGameplayTag Tag, EEFSettingsSource Source, APlayerState* SpecificPlayer)
+{
+	return GetModularSetting(WorldContextObject, Tag, Source, SpecificPlayer) != nullptr;
+}
+
+
 bool UEFModularSettingsLibrary::GetModularBool(const UObject* WorldContextObject, FGameplayTag Tag, EEFSettingsSource Source, APlayerState* SpecificPlayer)
 {
 	if (UEFModularSettingsBool* Setting = Cast<UEFModularSettingsBool>(GetModularSetting(WorldContextObject, Tag, Source, SpecificPlayer)))
@@ -86,59 +92,70 @@ bool UEFModularSettingsLibrary::GetModularBool(const UObject* WorldContextObject
 }
 
 
-void UEFModularSettingsLibrary::SetModularBool(const UObject* WorldContextObject, FGameplayTag Tag, bool bValue, EEFSettingsSource Source, APlayerState* SpecificPlayer, bool bApplyImmediately)
+namespace
 {
-	UEFModularSettingsBase* SettingBase = GetModularSetting(WorldContextObject, Tag, Source, SpecificPlayer);
-	if (UEFModularSettingsBool* Setting = Cast<UEFModularSettingsBool>(SettingBase))
+	// Routes a change through the scope that owns the setting. Player and World
+	// settings go through their component so the value replicates; Local
+	// settings are changed in place and persisted by the subsystem. Every path
+	// ends in UEFModularSettingsBase::RequestChange (refresh -> validate -> set),
+	// so lock and range checks behave identically across scopes.
+	bool ChangeModularSetting(const UObject* WorldContextObject, UEFModularSettingsBase* Setting, const FString& NewValue, bool bApplyImmediately)
 	{
-		FString ValStr = bValue ? TEXT("true") : TEXT("false");
-		if (Setting->GetOuter()->IsA<UEFPlayerSettingsComponent>())
+		if (!Setting)
 		{
-			if (bApplyImmediately)
-			{
-				Cast<UEFPlayerSettingsComponent>(Setting->GetOuter())->RequestUpdateSetting(Tag, ValStr);
-			}
-			else
-			{
-				Setting->SetValue(bValue);
-			}
+			return false;
 		}
-		else if (Setting->GetOuter()->IsA<UEFWorldSettingsComponent>())
-		{
-			if (bApplyImmediately)
-			{
-				Cast<UEFWorldSettingsComponent>(Setting->GetOuter())->UpdateSettingValue(Tag, ValStr);
-			}
-			else
-			{
-				Setting->SetValue(bValue);
-			}
-		}
-		else
-		{
-			Setting->SetValue(bValue);
-			
-			if (bApplyImmediately)
-			{
-				Setting->SaveCurrentValue();
-				Setting->Apply();
-				Setting->ClearDirty();
-			}
 
-			UWorld* World = GEngine->GetWorldFromContextObject(WorldContextObject, EGetWorldErrorMode::LogAndReturnNull);
-			if (World && World->GetGameInstance())
+		if (UEFPlayerSettingsComponent* PlayerComp = Cast<UEFPlayerSettingsComponent>(Setting->GetOuter()))
+		{
+			return bApplyImmediately
+				? PlayerComp->RequestUpdateSetting(Setting->SettingTag, NewValue)
+				: Setting->RequestChange(NewValue);
+		}
+
+		if (UEFWorldSettingsComponent* WorldComp = Cast<UEFWorldSettingsComponent>(Setting->GetOuter()))
+		{
+			return bApplyImmediately
+				? WorldComp->UpdateSettingValue(Setting->SettingTag, NewValue)
+				: Setting->RequestChange(NewValue);
+		}
+
+		if (!Setting->RequestChange(NewValue))
+		{
+			return false;
+		}
+
+		if (bApplyImmediately)
+		{
+			Setting->SaveCurrentValue();
+			Setting->Apply();
+			Setting->ClearDirty();
+		}
+
+		UWorld* World = GEngine->GetWorldFromContextObject(WorldContextObject, EGetWorldErrorMode::LogAndReturnNull);
+		if (World && World->GetGameInstance())
+		{
+			if (UEFModularSettingsSubsystem* Subsystem = World->GetGameInstance()->GetSubsystem<UEFModularSettingsSubsystem>())
 			{
-				if (UEFModularSettingsSubsystem* Subsystem = World->GetGameInstance()->GetSubsystem<UEFModularSettingsSubsystem>())
+				Subsystem->OnSettingsChanged.Broadcast(Setting);
+
+				if (bApplyImmediately)
 				{
-					Subsystem->OnSettingsChanged.Broadcast(Setting);
-					
-					if (bApplyImmediately)
-					{
-						Subsystem->SaveToDiskAsync();
-					}
+					Subsystem->SaveToDiskAsync();
 				}
 			}
 		}
+
+		return true;
+	}
+}
+
+
+void UEFModularSettingsLibrary::SetModularBool(const UObject* WorldContextObject, FGameplayTag Tag, bool bValue, EEFSettingsSource Source, APlayerState* SpecificPlayer, bool bApplyImmediately)
+{
+	if (UEFModularSettingsBool* Setting = Cast<UEFModularSettingsBool>(GetModularSetting(WorldContextObject, Tag, Source, SpecificPlayer)))
+	{
+		ChangeModularSetting(WorldContextObject, Setting, bValue ? TEXT("true") : TEXT("false"), bApplyImmediately);
 	}
 }
 
@@ -155,57 +172,9 @@ float UEFModularSettingsLibrary::GetModularFloat(const UObject* WorldContextObje
 
 void UEFModularSettingsLibrary::SetModularFloat(const UObject* WorldContextObject, FGameplayTag Tag, float Value, EEFSettingsSource Source, APlayerState* SpecificPlayer, bool bApplyImmediately)
 {
-	UEFModularSettingsBase* SettingBase = GetModularSetting(WorldContextObject, Tag, Source, SpecificPlayer);
-	if (UEFModularSettingsFloat* Setting = Cast<UEFModularSettingsFloat>(SettingBase))
+	if (UEFModularSettingsFloat* Setting = Cast<UEFModularSettingsFloat>(GetModularSetting(WorldContextObject, Tag, Source, SpecificPlayer)))
 	{
-		FString ValStr = FString::SanitizeFloat(Value);
-		if (Setting->GetOuter()->IsA<UEFPlayerSettingsComponent>())
-		{
-			if (bApplyImmediately)
-			{
-				Cast<UEFPlayerSettingsComponent>(Setting->GetOuter())->RequestUpdateSetting(Tag, ValStr);
-			}
-			else
-			{
-				Setting->SetValue(Value);
-			}
-		}
-		else if (Setting->GetOuter()->IsA<UEFWorldSettingsComponent>())
-		{
-			if (bApplyImmediately)
-			{
-				Cast<UEFWorldSettingsComponent>(Setting->GetOuter())->UpdateSettingValue(Tag, ValStr);
-			}
-			else
-			{
-				Setting->SetValue(Value);
-			}
-		}
-		else
-		{
-			Setting->SetValue(Value);
-			
-			if (bApplyImmediately)
-			{
-				Setting->SaveCurrentValue();
-				Setting->Apply();
-				Setting->ClearDirty();
-			}
-
-			UWorld* World = GEngine->GetWorldFromContextObject(WorldContextObject, EGetWorldErrorMode::LogAndReturnNull);
-			if (World && World->GetGameInstance())
-			{
-				if (UEFModularSettingsSubsystem* Subsystem = World->GetGameInstance()->GetSubsystem<UEFModularSettingsSubsystem>())
-				{
-					Subsystem->OnSettingsChanged.Broadcast(Setting);
-					
-					if (bApplyImmediately)
-					{
-						Subsystem->SaveToDiskAsync();
-					}
-				}
-			}
-		}
+		ChangeModularSetting(WorldContextObject, Setting, FString::SanitizeFloat(Value), bApplyImmediately);
 	}
 }
 
@@ -222,68 +191,18 @@ int32 UEFModularSettingsLibrary::GetModularSelectedIndex(const UObject* WorldCon
 
 bool UEFModularSettingsLibrary::SetModularSelectedIndex(const UObject* WorldContextObject, FGameplayTag Tag, int32 Index, EEFSettingsSource Source, APlayerState* SpecificPlayer, bool bApplyImmediately)
 {
-	UEFModularSettingsBase* SettingBase = GetModularSetting(WorldContextObject, Tag, Source, SpecificPlayer);
-	if (UEFModularSettingsMultiSelect* Setting = Cast<UEFModularSettingsMultiSelect>(SettingBase))
+	UEFModularSettingsMultiSelect* Setting = Cast<UEFModularSettingsMultiSelect>(GetModularSetting(WorldContextObject, Tag, Source, SpecificPlayer));
+	if (!Setting || !Setting->Values.IsValidIndex(Index))
 	{
-		if (Setting->Values.IsValidIndex(Index))
-		{
-			if (Setting->SelectedIndex == Index)
-			{
-				return true;
-			}
-
-			FString OptionValue = Setting->Values[Index];
-			if (Setting->GetOuter()->IsA<UEFPlayerSettingsComponent>())
-			{
-				if (bApplyImmediately)
-				{
-					Cast<UEFPlayerSettingsComponent>(Setting->GetOuter())->RequestUpdateSetting(Tag, OptionValue);
-				}
-				else
-				{
-					Setting->SetSelectedIndex(Index);
-				}
-			}
-			else if (Setting->GetOuter()->IsA<UEFWorldSettingsComponent>())
-			{
-				if (bApplyImmediately)
-				{
-					Cast<UEFWorldSettingsComponent>(Setting->GetOuter())->UpdateSettingValue(Tag, OptionValue);
-				}
-				else
-				{
-					Setting->SetSelectedIndex(Index);
-				}
-			}
-			else
-			{
-				Setting->SetSelectedIndex(Index);
-				
-				if (bApplyImmediately)
-				{
-					Setting->SaveCurrentValue();
-					Setting->Apply();
-					Setting->ClearDirty();
-				}
-
-				UWorld* World = GEngine->GetWorldFromContextObject(WorldContextObject, EGetWorldErrorMode::LogAndReturnNull);
-				if (World && World->GetGameInstance())
-				{
-					if (UEFModularSettingsSubsystem* Subsystem = World->GetGameInstance()->GetSubsystem<UEFModularSettingsSubsystem>())
-					{
-						Subsystem->OnSettingsChanged.Broadcast(Setting);
-						
-						if (bApplyImmediately)
-						{
-							Subsystem->SaveToDiskAsync();
-						}
-					}
-				}
-			}
-			return true;
-		}
+		return false;
 	}
-	return false;
+
+	if (Setting->SelectedIndex == Index)
+	{
+		return true;
+	}
+
+	return ChangeModularSetting(WorldContextObject, Setting, Setting->Values[Index], bApplyImmediately);
 }
 
 
@@ -390,7 +309,16 @@ void UEFModularSettingsLibrary::SetModularOptionLocked(const UObject* WorldConte
 	{
 		if (Setting->Values.IsValidIndex(Index))
 		{
-			Setting->SetOptionLocked(Setting->Values[Index], bLocked);
+			// Player-scope locks route through the component so client calls reach
+			// the server and replicate back to everyone, mirroring SetModularBool.
+			if (UEFPlayerSettingsComponent* PlayerComp = Cast<UEFPlayerSettingsComponent>(Setting->GetOuter()))
+			{
+				PlayerComp->RequestSetOptionLocked(Tag, Setting->Values[Index], bLocked);
+			}
+			else
+			{
+				Setting->SetOptionLocked(Setting->Values[Index], bLocked);
+			}
 		}
 	}
 }

@@ -93,8 +93,15 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Modular Settings")
 	void LoadFromDiskAsync();
 	
+	// True if the tag exists in any scope: Player (PlayerState component), World
+	// (GameState component), or Local (this subsystem). Only local settings are
+	// stored here; the other scopes are resolved through the current world.
 	UFUNCTION(BlueprintCallable, Category = "Modular Settings")
 	bool HasSetting(FGameplayTag Tag) const;
+
+	// True only if the tag is a Local setting owned by this subsystem.
+	UFUNCTION(BlueprintCallable, Category = "Modular Settings")
+	bool HasLocalSetting(FGameplayTag Tag) const { return Settings.Contains(Tag); }
 
 	// Register setting (called by registry)
 	void RegisterSetting(UEFModularSettingsBase* Setting);
@@ -118,19 +125,25 @@ public:
 	TMap<FGameplayTag, FString> PreviousSettingsSnapshot;
 	
 public:
-	// Template method moved to header
+	// Typed lookup across all scopes (see GetSettingByTag).
 	template<typename T>
 	T* GetSetting(FGameplayTag Tag) const
 	{
-		if (const UEFModularSettingsBase* Setting = Settings.FindRef(Tag))
-		{
-			return Cast<T>(const_cast<UEFModularSettingsBase*>(Setting));
-		}
-		return nullptr;
+		return Cast<T>(GetSettingByTag(Tag));
 	}
 
+	// Finds the setting in any scope: Player (PlayerState component), World
+	// (GameState component), then Local (this subsystem). Only local settings
+	// are stored here; the other scopes are resolved through the current world.
 	UFUNCTION(BlueprintCallable, Category = "Modular Settings")
-	UEFModularSettingsBase* GetSettingByTag(FGameplayTag Tag) const
+	UEFModularSettingsBase* GetSettingByTag(FGameplayTag Tag) const;
+
+	// Local-scope only: the settings owned by this subsystem. Use this for
+	// anything that reads or writes the local save (console commands, the
+	// library's Local source) so a same-named Player/World setting is not
+	// mutated outside its component's replication path.
+	UFUNCTION(BlueprintCallable, Category = "Modular Settings")
+	UEFModularSettingsBase* GetLocalSettingByTag(FGameplayTag Tag) const
 	{
 		return Settings.FindRef(Tag);
 	}

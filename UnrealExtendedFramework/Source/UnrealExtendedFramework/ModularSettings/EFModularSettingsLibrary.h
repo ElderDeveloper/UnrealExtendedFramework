@@ -27,6 +27,10 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "Modular Settings", meta = (WorldContext = "WorldContextObject"))
 	static UEFModularSettingsBase* GetModularSetting(const UObject* WorldContextObject, FGameplayTag Tag, EEFSettingsSource Source = EEFSettingsSource::Auto, APlayerState* SpecificPlayer = nullptr);
+
+	// True if a setting with this tag exists in the requested scope. Auto checks Player, World, then Local.
+	UFUNCTION(BlueprintPure, Category = "Modular Settings", meta = (WorldContext = "WorldContextObject"))
+	static bool HasModularSetting(const UObject* WorldContextObject, FGameplayTag Tag, EEFSettingsSource Source = EEFSettingsSource::Auto, APlayerState* SpecificPlayer = nullptr);
 	
 	UFUNCTION(BlueprintPure, Category = "Modular Settings", meta = (WorldContext = "WorldContextObject"))
 	static bool GetModularBool(const UObject* WorldContextObject, FGameplayTag Tag, EEFSettingsSource Source = EEFSettingsSource::Auto, APlayerState* SpecificPlayer = nullptr);

@@ -97,12 +97,16 @@ void UEFPlayerSettingsComponent::BeginPlay()
         }
       }
 
-      if (!bExists) 
+      if (!bExists)
       {
         FEFPlayerSettingDefinition NewDef;
         NewDef.Tag = Template->SettingTag;
         NewDef.Template = Template;
         NewDef.CurrentValue = Template->GetValueAsString();
+        if (const UEFModularSettingsMultiSelect* MultiTemplate = Cast<UEFModularSettingsMultiSelect>(Template))
+        {
+          NewDef.LockedOptions = MultiTemplate->GetLockedOptions();
+        }
         SettingDefinitions.Add(NewDef);
       }
     }
@@ -141,6 +145,7 @@ void UEFPlayerSettingsComponent::BeginPlay()
   // --- Deferred load: check if we can identify the local player now ---
   if (IsLocalPlayerComponent())
   {
+    RefreshLocalPlayerSettings();
     LoadState = EPlayerSettingsLoadState::LoadingFromDisk;
     LoadPlayerSettings();
   }
@@ -170,7 +175,8 @@ void UEFPlayerSettingsComponent::RetryIdentifyOwner()
     {
       World->GetTimerManager().ClearTimer(OwnerRetryTimer);
     }
-    
+
+    RefreshLocalPlayerSettings();
     LoadState = EPlayerSettingsLoadState::LoadingFromDisk;
     LoadPlayerSettings();
     return;
@@ -222,52 +228,61 @@ TArray<UEFModularSettingsBase*> UEFPlayerSettingsComponent::GetSettingsByCategor
   return FoundSettings;
 }
 
-void UEFPlayerSettingsComponent::RequestUpdateSetting(FGameplayTag Tag, const FString &NewValue, bool bFromLoad) 
+bool UEFPlayerSettingsComponent::RequestUpdateSetting(FGameplayTag Tag, const FString &NewValue, bool bFromLoad)
 {
-  if (GetOwnerRole() == ROLE_Authority) 
+  UEFModularSettingsBase *Setting = GetSettingByTag(Tag);
+
+  if (GetOwnerRole() == ROLE_Authority)
   {
     // Authority path (listen-server host or dedicated server)
-    if (UEFModularSettingsBase *Setting = GetSettingByTag(Tag)) 
+    if (!Setting || !Setting->RequestChange(NewValue))
     {
-      if (Setting->Validate(NewValue)) 
-      {
-        Setting->SetValueFromString(NewValue);
-        Setting->Apply();
-        OnSettingChanged.Broadcast(Setting);
-
-        // Keep the definition's CurrentValue in sync so late-joiners get it.
-        UpdateDefinitionCurrentValue(Tag, Setting->GetValueAsString());
-
-        // Only save on explicit user changes, NOT during load
-        if (!bFromLoad)
-        {
-          RequestSave();
-        }
-      }
+      return false;
     }
-  } 
-  else 
-  {
-    // Client: apply value locally first, then tell server
-    if (UEFModularSettingsBase *Setting = GetSettingByTag(Tag)) 
+
+    Setting->Apply();
+    OnSettingChanged.Broadcast(Setting);
+
+    // Keep the definition's CurrentValue in sync so late-joiners get it.
+    UpdateDefinitionCurrentValue(Tag, Setting->GetValueAsString());
+
+    // Only save on explicit user changes, NOT during load
+    if (!bFromLoad)
     {
-      if (Setting->Validate(NewValue)) 
-      {
-        Setting->SetValueFromString(NewValue);
-        Setting->Apply();
-        OnSettingChanged.Broadcast(Setting);
-        
-        // Only save on explicit user changes, NOT during load
-        if (!bFromLoad)
-        {
-          RequestSave();
-        }
-      }
+      RequestSave();
     }
-    
-    // Send to server
-    ServerUpdateSetting(Tag, NewValue);
+
+    return true;
   }
+
+  // Client: run the pipeline locally first. RequestChange refreshes before it
+  // validates, so any lock change the refresh discovers is forwarded to the
+  // server (ServerSetOptionLocked) BEFORE the update below. Both RPCs are
+  // reliable on the same channel, so the server validates against the
+  // updated lock state.
+  if (Setting)
+  {
+    if (!Setting->RequestChange(NewValue))
+    {
+      // Rejected locally (locked / unknown / out of range). Do not push a value
+      // the server might accept against stale lock state.
+      return false;
+    }
+
+    Setting->Apply();
+    OnSettingChanged.Broadcast(Setting);
+
+    // Only save on explicit user changes, NOT during load
+    if (!bFromLoad)
+    {
+      RequestSave();
+    }
+  }
+
+  // Send to server. When the setting does not exist locally yet, the server
+  // still validates on its side, as before.
+  ServerUpdateSetting(Tag, NewValue);
+  return Setting != nullptr;
 }
 
 bool UEFPlayerSettingsComponent::ServerUpdateSetting_Validate(FGameplayTag Tag, const FString &NewValue) 
@@ -277,13 +292,15 @@ bool UEFPlayerSettingsComponent::ServerUpdateSetting_Validate(FGameplayTag Tag, 
   return Tag.IsValid();
 }
 
-void UEFPlayerSettingsComponent::ServerUpdateSetting_Implementation(FGameplayTag Tag, const FString &NewValue) 
+void UEFPlayerSettingsComponent::ServerUpdateSetting_Implementation(FGameplayTag Tag, const FString &NewValue)
 {
-  if (UEFModularSettingsBase *Setting = GetSettingByTag(Tag)) 
+  if (UEFModularSettingsBase *Setting = GetSettingByTag(Tag))
   {
-    if (Setting->Validate(NewValue)) 
+    // RequestChange refreshes only when this machine owns the player's data
+    // (never for a remote client), then validates against the replicated lock
+    // state the owning client pushed up.
+    if (Setting->RequestChange(NewValue))
     {
-      Setting->SetValueFromString(NewValue);
       Setting->Apply();
       OnSettingChanged.Broadcast(Setting);
 
@@ -297,7 +314,48 @@ void UEFPlayerSettingsComponent::ServerUpdateSetting_Implementation(FGameplayTag
   }
 }
 
-void UEFPlayerSettingsComponent::OnRep_Settings() 
+void UEFPlayerSettingsComponent::RequestSetOptionLocked(FGameplayTag Tag, const FString &OptionValue, bool bLocked)
+{
+  // SetOptionLocked applies locally and forwards to the server off-authority.
+  if (UEFModularSettingsMultiSelect *Setting = Cast<UEFModularSettingsMultiSelect>(GetSettingByTag(Tag)))
+  {
+    Setting->SetOptionLocked(OptionValue, bLocked);
+  }
+}
+
+bool UEFPlayerSettingsComponent::ServerSetOptionLocked_Validate(FGameplayTag Tag, const FString &OptionValue, bool bLocked)
+{
+  return Tag.IsValid();
+}
+
+void UEFPlayerSettingsComponent::ServerSetOptionLocked_Implementation(FGameplayTag Tag, const FString &OptionValue, bool bLocked)
+{
+  if (UEFModularSettingsMultiSelect *Setting = Cast<UEFModularSettingsMultiSelect>(GetSettingByTag(Tag)))
+  {
+    // OnOptionLockChanged keeps the replicated definition in sync; LockedOptions
+    // property replication updates every client's subobject instance.
+    Setting->SetOptionLocked(OptionValue, bLocked);
+  }
+}
+
+void UEFPlayerSettingsComponent::UpdateDefinitionLockedOptions(FGameplayTag Tag, const TArray<FString> &InLockedOptions)
+{
+  if (GetOwnerRole() != ROLE_Authority)
+  {
+    return;
+  }
+
+  for (FEFPlayerSettingDefinition &Def : SettingDefinitions)
+  {
+    if (Def.Tag == Tag)
+    {
+      Def.LockedOptions = InLockedOptions;
+      return;
+    }
+  }
+}
+
+void UEFPlayerSettingsComponent::OnRep_Settings()
 {
   // If we haven't loaded our saved values yet, don't broadcast server defaults
   // to the UI — they would be overwritten shortly anyway.
@@ -316,6 +374,10 @@ void UEFPlayerSettingsComponent::OnRep_Settings()
 
   // Try to apply any pending values for newly replicated settings
   TryApplyPendingValues();
+
+  // Replicated subobject instances arrive without machine-local state — for
+  // the local player's component, recompute it (inventory locks, device lists).
+  RefreshLocalPlayerSettings();
 }
 
 void UEFPlayerSettingsComponent::OnRep_SettingDefinitions() 
@@ -359,7 +421,7 @@ void UEFPlayerSettingsComponent::OnRep_SettingDefinitions()
       continue;
     }
 
-    if (UEFModularSettingsBase* Setting = GetSettingByTag(Def.Tag)) 
+    if (UEFModularSettingsBase* Setting = GetSettingByTag(Def.Tag))
     {
       if (Setting->GetValueAsString() != Def.CurrentValue)
       {
@@ -370,8 +432,28 @@ void UEFPlayerSettingsComponent::OnRep_SettingDefinitions()
     }
   }
 
+  // Apply the server's lock state. Like CurrentValue above, this covers
+  // instances built locally from definitions, which subobject property
+  // replication of LockedOptions never reaches.
+  for (const FEFPlayerSettingDefinition &Def : SettingDefinitions)
+  {
+    if (!Def.Tag.IsValid())
+    {
+      continue;
+    }
+
+    if (UEFModularSettingsMultiSelect* MultiSetting = Cast<UEFModularSettingsMultiSelect>(GetSettingByTag(Def.Tag)))
+    {
+      MultiSetting->SetLockedOptions(Def.LockedOptions);
+    }
+  }
+
   // Try to apply pending values to any newly created settings
   TryApplyPendingValues();
+
+  // Newly created settings need their machine-local refresh (inventory locks,
+  // device lists) when this is the local player's component.
+  RefreshLocalPlayerSettings();
 }
 
 UEFModularSettingsBool *UEFPlayerSettingsComponent::AddBoolSetting(FGameplayTag Tag, FText DisplayName, FName ConfigCategory,bool DefaultValue, bool InitialValue) 
@@ -582,6 +664,10 @@ void UEFPlayerSettingsComponent::OnRep_RuntimeSettingDefinitions()
 
   // Try to apply pending values to any newly created settings
   TryApplyPendingValues();
+
+  // Newly created settings need their machine-local refresh (inventory locks,
+  // device lists) when this is the local player's component.
+  RefreshLocalPlayerSettings();
 }
 
 // ============================================================================
@@ -830,6 +916,22 @@ void UEFPlayerSettingsComponent::TryApplyPendingValues()
     
     // Save to the new slot (ensures migration is persisted)
     RequestSave();
+  }
+}
+
+void UEFPlayerSettingsComponent::RefreshLocalPlayerSettings()
+{
+  if (!IsLocalPlayerComponent())
+  {
+    return;
+  }
+
+  for (UEFModularSettingsBase* Setting : Settings)
+  {
+    if (Setting)
+    {
+      Setting->RefreshValues();
+    }
   }
 }
 

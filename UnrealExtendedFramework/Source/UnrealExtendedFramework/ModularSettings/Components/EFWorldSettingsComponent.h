@@ -23,6 +23,11 @@ struct FEFWorldSettingDefinition
 
 	UPROPERTY()
 	FString CurrentValue;
+
+	// Locked options of a MultiSelect setting, kept in sync by the server so
+	// clients that built the setting from this definition receive lock state.
+	UPROPERTY()
+	TArray<FString> LockedOptions;
 };
 
 UCLASS(ClassGroup=(Custom), meta=(BlueprintSpawnableComponent))
@@ -61,9 +66,15 @@ protected:
 	int32 FindSettingIndex(FGameplayTag Tag) const;
 
 public:
-	// Server-side update
+	// Server-side update through the setting's RequestChange pipeline
+	// (refresh -> validate -> set), then Apply. Returns false when the change
+	// was rejected (unknown or locked option, out of range) or off-authority.
 	UFUNCTION(BlueprintCallable, Category = "Modular Settings", BlueprintAuthorityOnly)
-	void UpdateSettingValue(FGameplayTag Tag, const FString& NewValue);
+	bool UpdateSettingValue(FGameplayTag Tag, const FString& NewValue);
+
+	// Keeps SettingDefinitions[].LockedOptions in sync on the server. Called by
+	// UEFModularSettingsMultiSelect::OnOptionLockChanged; no-op off-authority.
+	void UpdateDefinitionLockedOptions(FGameplayTag Tag, const TArray<FString>& InLockedOptions);
 
 private:
 	UFUNCTION()

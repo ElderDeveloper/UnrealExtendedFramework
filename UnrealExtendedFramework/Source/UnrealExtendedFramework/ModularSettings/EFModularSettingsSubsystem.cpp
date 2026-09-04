@@ -1,6 +1,7 @@
 // Fill out your copyright notice in the Description page of Project Settings.
 
 #include "EFModularSettingsSubsystem.h"
+#include "EFModularSettingsLibrary.h"
 #include "HAL/IConsoleManager.h"
 #include "Misc/DefaultValueHelper.h"
 #include "Engine/Engine.h"
@@ -310,7 +311,7 @@ void UEFModularSettingsSubsystem::RegisterConsoleCommand(const TCHAR* Name, cons
 
 bool UEFModularSettingsSubsystem::ApplyConsoleSettingValue(FGameplayTag Tag, const FString& ValueString, const TCHAR* CommandLabel)
 {
-	UEFModularSettingsBase* Setting = GetSettingByTag(Tag);
+	UEFModularSettingsBase* Setting = GetLocalSettingByTag(Tag);
 	if (!Setting)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("%s could not find setting '%s'"), CommandLabel, *Tag.ToString());
@@ -324,6 +325,12 @@ bool UEFModularSettingsSubsystem::ApplyConsoleSettingValue(FGameplayTag Tag, con
 		return false;
 	}
 
+	// Parse the console text into the setting's canonical string form with
+	// friendlier diagnostics than RequestChange gives. Refresh first so the
+	// option list and range being reported are current.
+	Setting->EnsureFresh();
+
+	FString CanonicalValue = TrimmedValue;
 	if (UEFModularSettingsMultiSelect* MultiSelectSetting = Cast<UEFModularSettingsMultiSelect>(Setting))
 	{
 		const int32 ValueIndex = MultiSelectSetting->Values.IndexOfByPredicate([&TrimmedValue](const FString& Candidate)
@@ -347,9 +354,9 @@ bool UEFModularSettingsSubsystem::ApplyConsoleSettingValue(FGameplayTag Tag, con
 			return false;
 		}
 
-		MultiSelectSetting->SetSelectedIndex(ValueIndex);
+		CanonicalValue = MultiSelectSetting->Values[ValueIndex];
 	}
-	else if (UEFModularSettingsBool* BoolSetting = Cast<UEFModularSettingsBool>(Setting))
+	else if (Setting->IsA<UEFModularSettingsBool>())
 	{
 		bool bParsedValue = false;
 		if (!EFModularSettingsConsole::TryParseBool(TrimmedValue, bParsedValue))
@@ -361,9 +368,9 @@ bool UEFModularSettingsSubsystem::ApplyConsoleSettingValue(FGameplayTag Tag, con
 			return false;
 		}
 
-		BoolSetting->SetValue(bParsedValue);
+		CanonicalValue = bParsedValue ? TEXT("true") : TEXT("false");
 	}
-	else if (UEFModularSettingsFloat* FloatSetting = Cast<UEFModularSettingsFloat>(Setting))
+	else if (const UEFModularSettingsFloat* FloatSetting = Cast<UEFModularSettingsFloat>(Setting))
 	{
 		float ParsedValue = 0.0f;
 		if (!FDefaultValueHelper::ParseFloat(TrimmedValue, ParsedValue))
@@ -383,17 +390,13 @@ bool UEFModularSettingsSubsystem::ApplyConsoleSettingValue(FGameplayTag Tag, con
 			return false;
 		}
 
-		FloatSetting->SetValue(ParsedValue);
+		CanonicalValue = FString::SanitizeFloat(ParsedValue);
 	}
-	else
-	{
-		if (!Setting->Validate(TrimmedValue))
-		{
-			UE_LOG(LogTemp, Warning, TEXT("%s rejected value '%s' for '%s'"), CommandLabel, *TrimmedValue, *Tag.ToString());
-			return false;
-		}
 
-		Setting->SetValueFromString(TrimmedValue);
+	if (!Setting->RequestChange(CanonicalValue))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("%s rejected value '%s' for '%s'"), CommandLabel, *TrimmedValue, *Tag.ToString());
+		return false;
 	}
 
 	Setting->Apply();
@@ -409,7 +412,7 @@ bool UEFModularSettingsSubsystem::ApplyConsoleSettingValue(FGameplayTag Tag, con
 
 void UEFModularSettingsSubsystem::LogSettingValue(FGameplayTag Tag, const TCHAR* Label) const
 {
-	const UEFModularSettingsBase* Setting = GetSettingByTag(Tag);
+	const UEFModularSettingsBase* Setting = GetLocalSettingByTag(Tag);
 	if (!Setting)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("%s: setting '%s' is not registered"), Label, *Tag.ToString());
@@ -788,7 +791,20 @@ void UEFModularSettingsSubsystem::HandleAsyncLoadComplete(const FString& SlotNam
 
 bool UEFModularSettingsSubsystem::HasSetting(FGameplayTag Tag) const
 {
-	return Settings.Contains(Tag);
+	return GetSettingByTag(Tag) != nullptr;
+}
+
+
+UEFModularSettingsBase* UEFModularSettingsSubsystem::GetSettingByTag(FGameplayTag Tag) const
+{
+	if (UEFModularSettingsBase* LocalSetting = Settings.FindRef(Tag))
+	{
+		return LocalSetting;
+	}
+
+	// Player and World settings live on components, not in this map. Resolve
+	// them through the world so callers get one answer regardless of scope.
+	return UEFModularSettingsLibrary::GetModularSetting(this, Tag, EEFSettingsSource::Auto);
 }
 
 
@@ -1047,7 +1063,7 @@ void UEFModularSettingsSubsystem::HandleDisplayTestAspectCommand(const TArray<FS
 
 	const FString ResolutionString = FString::Printf(TEXT("%dx%d"), TargetResolution.X, TargetResolution.Y);
 
-	if (UEFModularSettingsMultiSelect* DisplayModeSetting = Cast<UEFModularSettingsMultiSelect>(GetSettingByTag(EFModularSettingsConsole::MakeTag(TEXT("Settings.Display.DisplayMode")))))
+	if (UEFModularSettingsMultiSelect* DisplayModeSetting = Cast<UEFModularSettingsMultiSelect>(GetLocalSettingByTag(EFModularSettingsConsole::MakeTag(TEXT("Settings.Display.DisplayMode")))))
 	{
 		const int32 DisplayModeIndex = DisplayModeSetting->Values.IndexOfByPredicate([&WindowModeName](const FString& Candidate)
 		{
@@ -1063,7 +1079,7 @@ void UEFModularSettingsSubsystem::HandleDisplayTestAspectCommand(const TArray<FS
 		}
 	}
 
-	if (UEFModularSettingsMultiSelect* ResolutionSetting = Cast<UEFModularSettingsMultiSelect>(GetSettingByTag(EFModularSettingsConsole::MakeTag(TEXT("Settings.Graphics.Resolution")))))
+	if (UEFModularSettingsMultiSelect* ResolutionSetting = Cast<UEFModularSettingsMultiSelect>(GetLocalSettingByTag(EFModularSettingsConsole::MakeTag(TEXT("Settings.Graphics.Resolution")))))
 	{
 		ResolutionSetting->RefreshValues();
 		if (!ResolutionSetting->Values.Contains(ResolutionString))

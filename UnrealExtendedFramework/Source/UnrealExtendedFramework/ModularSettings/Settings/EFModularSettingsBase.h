@@ -32,6 +32,36 @@ public:
 	void RefreshValues();
 	virtual void RefreshValues_Implementation() {}
 
+	// When enabled, this setting's derived state (option lists, device names,
+	// owned-item locks, ranges) is rebuilt from its source at every gate:
+	// before a requested change is validated (RequestChange) and before Apply()
+	// resolves the value. At most one refresh runs per frame, so a request that
+	// is applied in the same frame refreshes once. Useful for settings whose
+	// backing data can go stale between the moment the player picks a value
+	// and the moment it is checked or applied.
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Settings")
+	bool bRefreshBeforeApply = false;
+
+	// The single entry point for changing a value at runtime. Refreshes derived
+	// state (when bRefreshBeforeApply is set), validates the new value against
+	// that fresh state, then sets it. Returns false, leaving the value untouched,
+	// when the change is rejected (unknown option, locked option, out of range).
+	// Apply() is a separate step so callers control when the change takes effect.
+	UFUNCTION(BlueprintCallable, Category = "Settings")
+	bool RequestChange(const FString& NewValue);
+
+	// Runs RefreshValues() if bRefreshBeforeApply is set, this setting has not
+	// already refreshed this frame, and this machine owns the data the refresh
+	// reads (see CanRefreshLocally). Safe to call from anywhere; no-op otherwise.
+	UFUNCTION(BlueprintCallable, Category = "Settings")
+	void EnsureFresh();
+
+	// Apply() is a BlueprintNativeEvent thunk, so every caller — C++ and
+	// Blueprint alike — funnels through ProcessEvent. Hooked here so
+	// bRefreshBeforeApply covers all Apply call sites, including Blueprint
+	// overrides, and so every RefreshValues() call stamps the frame it ran in.
+	virtual void ProcessEvent(UFunction* Function, void* Parms) override;
+
 	UFUNCTION(BlueprintCallable,BlueprintNativeEvent, Category = "Settings")
 	void Apply();
 	virtual void Apply_Implementation() {}
@@ -99,6 +129,18 @@ protected:
 	
 	UPROPERTY(Transient)
 	bool bIsDirty = false;
+
+	// RefreshValues implementations read machine-local data (inventory caches,
+	// audio devices). For a player setting only the owning machine has that
+	// player's data, so a server must not refresh a remote client's setting.
+	bool CanRefreshLocally() const;
+
+	// Guards against RefreshValues() re-entering EnsureFresh() (e.g. through
+	// ResetToDefault -> SetSelectedIndex) while a refresh is already in flight.
+	bool bIsRefreshing = false;
+
+	// GFrameCounter value of the last RefreshValues() call; Max means never.
+	uint64 LastRefreshFrame = TNumericLimits<uint64>::Max();
 };
 
 /* Bool */
@@ -208,6 +250,19 @@ public:
 	{
 		return FMath::GetMappedRangeValueClamped(FVector2D(Min, Max), FVector2D(DisplayMin, DisplayMax), Value);
 	}
+
+	// A requested change must be numeric and inside [Min, Max]. Without this,
+	// SetValue would accept the request and then silently reset to default.
+	virtual bool Validate_Implementation(const FString& ValueString) const override
+	{
+		if (!ValueString.IsNumeric())
+		{
+			return false;
+		}
+
+		const float Parsed = FCString::Atof(*ValueString);
+		return Parsed >= Min && Parsed <= Max;
+	}
 	
 	virtual void Apply_Implementation() override {}
 	virtual void SaveCurrentValue() override { SavedValue = Value; Super::SaveCurrentValue(); }
@@ -252,7 +307,7 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Settings Value")
 	FString DefaultValue = TEXT("");
-	
+
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Replicated, Category="Settings Value")
 	TArray<FString> Values;
 	
@@ -272,15 +327,28 @@ public:
 			return;
 		}
 
-		if (SelectedIndex != Index)
+		if (SelectedIndex == Index)
 		{
-			FString NewValue = Values[Index];
-			if (IsOptionLocked(NewValue))
+			return;
+		}
+
+		const FString NewValue = Values[Index];
+		if (IsOptionLocked(NewValue))
+		{
+			// Direct callers bypass RequestChange, so the lock state may be stale.
+			// Refresh once (no-op unless bRefreshBeforeApply) and re-resolve by
+			// value, since a refresh can rebuild the option list.
+			EnsureFresh();
+			Index = Values.Find(NewValue);
+			if (Index == INDEX_NONE || IsOptionLocked(NewValue))
 			{
-				UE_LOG(LogTemp, Warning, TEXT("[UEFModularSettingsMultiSelect] Attempted to select locked option: %s"), *NewValue);
+				UE_LOG(LogTemp, Warning, TEXT("[UEFModularSettingsMultiSelect] Rejected locked or unavailable option '%s' for %s"), *NewValue, *SettingTag.ToString());
 				return;
 			}
+		}
 
+		if (SelectedIndex != Index)
+		{
 			SelectedIndex = Index;
 			MarkDirty();
 		}
@@ -358,30 +426,27 @@ public:
 		return Values.IsValidIndex(Index) ? IsOptionLocked(Values[Index]) : false;
 	}
 
+	// Locks/unlocks an option. Safe to call from any machine: when this setting
+	// belongs to a player settings component and we are not the authority, the
+	// change is applied locally and forwarded to the server, which replicates it
+	// to every client.
 	UFUNCTION(BlueprintCallable, Category = "Settings")
-	void SetOptionLocked(const FString& OptionValue, bool bLocked)
-	{
-		// OnOptionLockChanged broadcasts OnSettingChanged, so firing it when the lock set is
-		// unchanged is not merely wasteful: a listener that re-locks in response (a settings
-		// object that recomputes ownership on change) recurses until the stack overflows.
-		if (IsOptionLocked(OptionValue) == bLocked)
-		{
-			return;
-		}
-
-		if (bLocked)
-		{
-			LockedOptions.AddUnique(OptionValue);
-		}
-		else
-		{
-			LockedOptions.Remove(OptionValue);
-		}
-
-		OnOptionLockChanged();
-	}
+	void SetOptionLocked(const FString& OptionValue, bool bLocked);
 
 	void OnOptionLockChanged();
+
+	const TArray<FString>& GetLockedOptions() const { return LockedOptions; }
+
+	// Replaces the whole lock list. Used when applying replicated definition state
+	// on clients; fires OnOptionLockChanged only when the list actually differs.
+	void SetLockedOptions(const TArray<FString>& NewLockedOptions)
+	{
+		if (LockedOptions != NewLockedOptions)
+		{
+			LockedOptions = NewLockedOptions;
+			OnOptionLockChanged();
+		}
+	}
 
 	virtual bool Validate_Implementation(const FString& Value) const override
 	{

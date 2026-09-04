@@ -85,6 +85,10 @@ void UEFWorldSettingsComponent::BeginPlay()
 			NewDef.Tag = Template->SettingTag;
 			NewDef.Template = Template;
 			NewDef.CurrentValue = Template->GetValueAsString();
+			if (const UEFModularSettingsMultiSelect* MultiTemplate = Cast<UEFModularSettingsMultiSelect>(Template))
+			{
+				NewDef.LockedOptions = MultiTemplate->GetLockedOptions();
+			}
 			SettingDefinitions.Add(NewDef);
 		}
 
@@ -167,17 +171,20 @@ int32 UEFWorldSettingsComponent::FindSettingIndex(FGameplayTag Tag) const
 }
 
 
-void UEFWorldSettingsComponent::UpdateSettingValue(FGameplayTag Tag, const FString& NewValue)
+bool UEFWorldSettingsComponent::UpdateSettingValue(FGameplayTag Tag, const FString& NewValue)
 {
-	if (GetOwnerRole() != ROLE_Authority) return;
+	if (GetOwnerRole() != ROLE_Authority) return false;
 
-	if (UEFModularSettingsBase* Setting = GetSettingByTag(Tag))
+	UEFModularSettingsBase* Setting = GetSettingByTag(Tag);
+	if (!Setting || !Setting->RequestChange(NewValue))
 	{
-		Setting->SetValueFromString(NewValue);
-		Setting->Apply();
-		UpdateDefinitionCurrentValue(Tag, Setting->GetValueAsString());
-		OnSettingChanged.Broadcast(Setting);
+		return false;
 	}
+
+	Setting->Apply();
+	UpdateDefinitionCurrentValue(Tag, Setting->GetValueAsString());
+	OnSettingChanged.Broadcast(Setting);
+	return true;
 }
 
 
@@ -231,6 +238,14 @@ void UEFWorldSettingsComponent::OnRep_SettingDefinitions()
 				Setting->Apply();
 			}
 
+			// Apply the server's lock state. Like CurrentValue, this covers instances
+			// built locally from definitions, which subobject property replication of
+			// LockedOptions never reaches.
+			if (UEFModularSettingsMultiSelect* MultiSetting = Cast<UEFModularSettingsMultiSelect>(Setting))
+			{
+				MultiSetting->SetLockedOptions(Def.LockedOptions);
+			}
+
 			OnSettingChanged.Broadcast(Setting);
 		}
 	}
@@ -243,6 +258,23 @@ void UEFWorldSettingsComponent::UpdateDefinitionCurrentValue(FGameplayTag Tag, c
 		if (Def.Tag == Tag)
 		{
 			Def.CurrentValue = NewValue;
+			return;
+		}
+	}
+}
+
+void UEFWorldSettingsComponent::UpdateDefinitionLockedOptions(FGameplayTag Tag, const TArray<FString>& InLockedOptions)
+{
+	if (GetOwnerRole() != ROLE_Authority)
+	{
+		return;
+	}
+
+	for (FEFWorldSettingDefinition& Def : SettingDefinitions)
+	{
+		if (Def.Tag == Tag)
+		{
+			Def.LockedOptions = InLockedOptions;
 			return;
 		}
 	}

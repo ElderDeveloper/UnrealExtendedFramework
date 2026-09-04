@@ -33,6 +33,12 @@ struct FEFPlayerSettingDefinition {
   // of subobject property replication timing.
   UPROPERTY()
   FString CurrentValue;
+
+  // Locked options of a MultiSelect setting, kept in sync by the server for the
+  // same reason as CurrentValue: clients that built the setting from this
+  // definition never receive the subobject's LockedOptions property.
+  UPROPERTY()
+  TArray<FString> LockedOptions;
 };
 
 // For runtime-created settings (created via AddBoolSetting, etc.)
@@ -173,10 +179,25 @@ protected:
   CreateSettingFromRuntimeDefinition(const FEFRuntimeSettingDefinition &Def);
 
 public:
-  // Client-to-Server request. bFromLoad suppresses the client-side save to
-  // prevent circular save-during-load.
+  // Client-to-Server request. Runs the setting's RequestChange pipeline
+  // (refresh -> validate -> set) locally, applies, and forwards to the server.
+  // Returns whether the change was accepted locally; a rejected change is not
+  // sent to the server (also false when the setting does not exist locally,
+  // in which case the request is still forwarded for the server to validate).
+  // bFromLoad suppresses the client-side save to prevent circular
+  // save-during-load.
   UFUNCTION(BlueprintCallable, Category = "Modular Settings")
-  void RequestUpdateSetting(FGameplayTag Tag, const FString &NewValue, bool bFromLoad = false);
+  bool RequestUpdateSetting(FGameplayTag Tag, const FString &NewValue, bool bFromLoad = false);
+
+  // Lock/unlock a MultiSelect option. Applies locally for responsiveness and
+  // routes to the server off-authority; the server's LockedOptions then
+  // replicates to every client.
+  UFUNCTION(BlueprintCallable, Category = "Modular Settings")
+  void RequestSetOptionLocked(FGameplayTag Tag, const FString &OptionValue, bool bLocked);
+
+  // Keeps SettingDefinitions[].LockedOptions in sync on the server. Called by
+  // UEFModularSettingsMultiSelect::OnOptionLockChanged; no-op off-authority.
+  void UpdateDefinitionLockedOptions(FGameplayTag Tag, const TArray<FString> &InLockedOptions);
 
   // Save all settings to disk (local player only). Uses coalescing timer to
   // batch rapid changes into a single write.
@@ -195,11 +216,30 @@ protected:
   UFUNCTION(Server, Reliable, WithValidation)
   void ServerUpdateSetting(FGameplayTag Tag, const FString &NewValue);
 
+public:
+  // Called by UEFModularSettingsMultiSelect::SetOptionLocked to forward
+  // client-side lock changes to the authoritative instance.
+  UFUNCTION(Server, Reliable, WithValidation)
+  void ServerSetOptionLocked(FGameplayTag Tag, const FString &OptionValue, bool bLocked);
+
+protected:
+
   // Get the save slot name for player settings
   FString GetPlayerSettingsSaveSlotName() const;
 
+public:
   // Check if this component belongs to the local player
   bool IsLocalPlayerComponent() const;
+
+  // Runs RefreshValues() on every setting when this is the local player's
+  // component. Settings whose RefreshValues reads machine-local data (PlayFab
+  // inventory, audio devices) need an explicit trigger on the owning machine —
+  // clients otherwise only refresh as a side effect of applying saved values,
+  // which never happens on a fresh machine. Idempotent; safe to call from
+  // every creation/identification path.
+  void RefreshLocalPlayerSettings();
+
+protected:
 
 private:
   UFUNCTION()
