@@ -82,10 +82,6 @@ public:
 	UFUNCTION(BlueprintPure, Category = "StateMachine")
 	bool HasDefaultState() const { return DefaultStateClass != nullptr; }
 
-	/** True if a brain state is registered (the implicit base state used when no default is set). */
-	UFUNCTION(BlueprintPure, Category = "StateMachine")
-	bool HasBrainState() const;
-
 	// -----------------------------------------------------------------
 	// State Transitions
 	// -----------------------------------------------------------------
@@ -150,6 +146,10 @@ public:
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
 protected:
+	/** Registered state to enter on Start(). Any state class can be selected. */
+	UPROPERTY(EditAnywhere, Category = "StateMachine")
+	TSubclassOf<UEGState> DefaultStateClass;
+
 	UPROPERTY(EditAnywhere, Instanced, Category = "StateMachine")
 	TArray<TObjectPtr<UEGState>> StateDefinitions;
 
@@ -211,8 +211,6 @@ private:
 	UPROPERTY()
 	TArray<TObjectPtr<UEGState>> StateStack;
 
-	UPROPERTY(Transient)
-	TObjectPtr<UClass> DefaultStateClass;
 	bool bIsRunning = false;
 
 	TWeakObjectPtr<AActor> StateContextActor;
@@ -244,7 +242,6 @@ private:
 
 	FName GetStateClassId(const UEGState* State) const;
 	FName FindStateClassId(const UEGState* State) const;
-	UEGState* FindBrainState() const;
 	bool IsStateCurrentOrStacked(const UEGState* State) const;
 	void DrawDebugStateInfo() const;
 

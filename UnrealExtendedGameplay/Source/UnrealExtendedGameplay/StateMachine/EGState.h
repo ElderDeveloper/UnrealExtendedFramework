@@ -78,9 +78,6 @@ public:
 	UFUNCTION(BlueprintNativeEvent, Category = "EG|AI")
 	bool CanEnterState() const;
 
-	/** Whether this state is the root brain state the state machine should start automatically. */
-	virtual bool IsBrainState() const { return false; }
-
 	// -----------------------------------------------------------------
 	// State Machine Control
 	// -----------------------------------------------------------------

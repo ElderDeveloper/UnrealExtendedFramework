@@ -241,12 +241,7 @@ TSubclassOf<UEGState> UEGStateMachineComponent::GetCurrentStateClass() const
 
 void UEGStateMachineComponent::SetDefaultStateByClass(TSubclassOf<UEGState> StateClass)
 {
-	DefaultStateClass = StateClass.Get();
-}
-
-bool UEGStateMachineComponent::HasBrainState() const
-{
-	return FindBrainState() != nullptr;
+	DefaultStateClass = StateClass;
 }
 
 // -------------------------------------------------------------------------
@@ -257,7 +252,7 @@ void UEGStateMachineComponent::Start()
 {
 	if (bIsRunning) return;
 
-	// AI brains are host-authoritative: the host is the only machine that runs
+	// State machines are host-authoritative: the host is the only machine that runs
 	// AI. Clients receive these actors as ordinary replicated pawns
 	// (CharacterMovement, montages) and must NOT run a second, divergent AI
 	// simulation — doing so desyncs enemy position/attack timing from the
@@ -270,22 +265,16 @@ void UEGStateMachineComponent::Start()
 		return;
 	}
 
-	UEGState* BrainState = FindBrainState();
-	if (!BrainState && !DefaultStateClass)
+	if (!DefaultStateClass)
 	{
-		UE_LOG(LogEGStateMachine, Warning, TEXT("EGStateMachine: No brain or default state registered on '%s'. Startup aborted."),
+		UE_LOG(LogEGStateMachine, Warning, TEXT("EGStateMachine: No default startup state selected on '%s'. Startup aborted."),
 			GetOwner() ? *GetOwner()->GetName() : TEXT("???"));
 		return;
 	}
 
 	bIsRunning = true;
 	SetComponentTickEnabled(true);
-	// An explicitly-set DefaultStateClass is a deliberate runtime override and
-	// takes priority over the implicit brain base. When no default is set, fall
-	// back to the brain so ambient owners run their schedule.
-	const bool bStartedState = DefaultStateClass
-		? SwitchStateByClass(DefaultStateClass.Get())
-		: (BrainState ? SwitchStateByClass(BrainState->GetClass()) : true);
+	const bool bStartedState = SwitchStateByClass(DefaultStateClass);
 	if (!bStartedState)
 	{
 		bIsRunning = false;
@@ -605,7 +594,7 @@ bool UEGStateMachineComponent::UnregisterStateByClassId(FName StateClassId)
 		RegisteredStateInstances.Remove(StateInstance);
 	}
 	StateDefinitions.Remove(StateInstance);
-	if (DefaultStateClass == (StateInstance ? StateInstance->GetClass() : nullptr))
+	if (DefaultStateClass.Get() == (StateInstance ? StateInstance->GetClass() : nullptr))
 	{
 		DefaultStateClass = nullptr;
 	}
@@ -700,31 +689,6 @@ FName UEGStateMachineComponent::FindStateClassId(const UEGState* State) const
 		}
 	}
 	return GetStateClassId(State);
-}
-
-UEGState* UEGStateMachineComponent::FindBrainState() const
-{
-	UEGState* BrainState = nullptr;
-	for (UEGState* State : RegisteredStateInstances)
-	{
-		if (!State || !State->IsBrainState())
-		{
-			continue;
-		}
-
-		if (BrainState)
-		{
-			UE_LOG(LogEGStateMachine, Error, TEXT("EGStateMachine: Multiple brain states registered on '%s' ('%s' and '%s'). Startup aborted."),
-				GetOwner() ? *GetOwner()->GetName() : TEXT("???"),
-				*GetNameSafe(BrainState->GetClass()),
-				*GetNameSafe(State->GetClass()));
-			return nullptr;
-		}
-
-		BrainState = State;
-	}
-
-	return BrainState;
 }
 
 // -------------------------------------------------------------------------
