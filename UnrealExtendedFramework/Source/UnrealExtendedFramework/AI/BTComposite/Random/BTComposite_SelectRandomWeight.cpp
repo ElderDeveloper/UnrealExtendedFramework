@@ -21,14 +21,14 @@ int32 UBTComposite_SelectRandomWeight::GetNextChildHandler(FBehaviorTreeSearchDa
     UE_LOG(LogTemp, Warning, TEXT("PrevChild: %d, ReturnToParent: %d, NotInitialized: %d"),
         PrevChild, BTSpecialChild::ReturnToParent, BTSpecialChild::NotInitialized);
 
-    // Geçerli bir child çalýþýp bittiyse parent'a dön
+    // GeÃ§erli bir child Ã§alÄ±ÅŸÄ±p bittiyse parent'a dÃ¶n
     if (PrevChild >= 0)
     {
         UE_LOG(LogTemp, Warning, TEXT("Child %d finished, returning to parent"), PrevChild);
         return BTSpecialChild::ReturnToParent;
     }
 
-    // Ýlk çalýþma - random child seç
+    // Ä°lk Ã§alÄ±ÅŸma - random child seÃ§
     ResizeArrays();
     DecayedChildWeights = ChildWeights;
 

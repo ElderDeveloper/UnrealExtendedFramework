@@ -18,7 +18,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnEGStateChanged, FName, OldState,
  * objects and ticks the active one.
  *
  * Features:
- * - Data-driven state configuration via StateDefinitions (EditDefaultsOnly)
+ * - Data-driven state configuration via StateDefinitions
  * - Single active state with OnEnter / OnTick / OnExit lifecycle
  * - Push/Pop stack for interrupt states (dialogue, knockdown)
  * - Auto-registers and auto-starts from editor-configured data
@@ -42,7 +42,7 @@ public:
 	// State Registration
 	// -----------------------------------------------------------------
 
-	/** Add an instanced default state definition to StateDefinitions. Safe to call from native constructors. */
+	/** Add an instanced state definition to StateDefinitions. Safe to call from native constructors. */
 	UEGState* AddStateDefinition(UEGState* StateInstance);
 
 	UFUNCTION(BlueprintCallable, Category = "StateMachine")
@@ -54,6 +54,7 @@ public:
 	UFUNCTION(BlueprintPure, Category = "StateMachine")
 	UEGState* GetStateByClass(TSubclassOf<UEGState> StateClass) const;
 
+	/** Select the state entered by Start(). The class must be registered before startup. */
 	UFUNCTION(BlueprintCallable, Category = "StateMachine")
 	void SetDefaultStateByClass(TSubclassOf<UEGState> StateClass);
 
@@ -78,6 +79,10 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "StateMachine")
 	bool IsRunning() const;
+
+	/** Clear interrupts and restore the configured default state. Starts the machine if needed. */
+	UFUNCTION(BlueprintCallable, Category = "StateMachine")
+	bool ResetToDefaultState();
 
 	UFUNCTION(BlueprintPure, Category = "StateMachine")
 	bool HasDefaultState() const { return DefaultStateClass != nullptr; }

@@ -65,7 +65,7 @@ void UEPFContentDeliverySubsystem::DownloadContentAsString(const FString& Key)
 			TSharedRef<IHttpRequest, ESPMode::ThreadSafe> HttpRequest = FHttpModule::Get().CreateRequest();
 			HttpRequest->SetVerb(TEXT("GET"));
 			HttpRequest->SetURL(Url);
-			HttpRequest->OnProcessRequestComplete().BindLambda(
+			HttpRequest->OnProcessRequestComplete().BindWeakLambda(this,
 				[this](FHttpRequestPtr Request, FHttpResponsePtr HttpResponse, bool bConnectedSuccessfully)
 				{
 					if (bConnectedSuccessfully && HttpResponse.IsValid() && EHttpResponseCodes::IsOk(HttpResponse->GetResponseCode()))

@@ -19,6 +19,7 @@
 #include "Shared/ESteamSettings.h"
 
 #include "Misc/ConfigCacheIni.h"
+#include "UObject/UObjectGlobals.h"
 
 #define LOCTEXT_NAMESPACE "OnlineSubsystemExtendedSteam"
 
@@ -29,27 +30,55 @@ namespace
 	{
 		return TEXT("OnlineSubsystemExtendedSteam");
 	}
+
+	/** The section UESteamSettings serialises to. Mirrors ESteamSettingsConfig in the shared module. */
+	const TCHAR* GetSettingsConfigSection()
+	{
+		return TEXT("/Script/ExtendedSteamShared.ESteamSettings");
+	}
 }
 
 void FOnlineSubsystemExtendedSteam::ReadConfig()
 {
-	const UESteamSettings* Settings = UESteamSettings::Get();
+	// Deliberately not UESteamSettings::Get() first.
+	//
+	// Naming this subsystem as [OnlineSubsystem] NativePlatformService has the engine create it during
+	// module loading, before the UObject system exists — GetDefault<> then hands back something that is
+	// not a CDO and the first member read faults. Everything needed here is Config = Game, so the ini it
+	// loads from answers just as well and answers at any time. Same approach the shared module already
+	// takes for the PostConfigInit path (FExtendedSteamSharedModule::GetConfiguredAppId).
+	// Defaults must mirror the UPROPERTY initialisers in UESteamSettings.
+	ResolvedAppId = 480;
+	bRelaunchInSteam = false;
+	if (GConfig)
+	{
+		GConfig->GetInt(GetSettingsConfigSection(), TEXT("SteamAppId"), ResolvedAppId, GGameIni);
+		GConfig->GetBool(GetSettingsConfigSection(), TEXT("bRelaunchInSteam"), bRelaunchInSteam, GGameIni);
+	}
 
-	// App id: [OnlineSubsystemExtendedSteam] SteamDevAppId wins when present and positive,
-	// otherwise fall back to the project settings app id.
-	ResolvedAppId = Settings->SteamAppId;
+	// Once the CDO exists it is authoritative: it also carries a value changed at runtime or in the
+	// editor before the ini has been written back.
+	if (UObjectInitialized())
+	{
+		if (const UESteamSettings* Settings = UESteamSettings::Get())
+		{
+			ResolvedAppId = Settings->SteamAppId;
+			bRelaunchInSteam = Settings->bRelaunchInSteam;
+		}
+	}
+
+	// App id: [OnlineSubsystemExtendedSteam] SteamDevAppId wins when present and positive.
 	int32 ConfigAppId = 0;
-	if (GConfig->GetInt(GetOSSConfigSection(), TEXT("SteamDevAppId"), ConfigAppId, GEngineIni) && ConfigAppId > 0)
+	if (GConfig && GConfig->GetInt(GetOSSConfigSection(), TEXT("SteamDevAppId"), ConfigAppId, GEngineIni) && ConfigAppId > 0)
 	{
 		ResolvedAppId = ConfigAppId;
 	}
 
-	// bRelaunchInSteam: UESteamSettings also declares this flag; the OSS ini key wins when present.
-	// The actual relaunch (shipping only) is executed by FExtendedSteamSharedModule during Steam
-	// client init — this subsystem only resolves and exposes the authoritative config value.
-	bRelaunchInSteam = Settings->bRelaunchInSteam;
+	// bRelaunchInSteam: the OSS ini key wins when present. The actual relaunch (shipping only) is
+	// executed by FExtendedSteamSharedModule during Steam client init — this subsystem only resolves
+	// and exposes the authoritative config value.
 	bool bConfigRelaunch = false;
-	if (GConfig->GetBool(GetOSSConfigSection(), TEXT("bRelaunchInSteam"), bConfigRelaunch, GEngineIni))
+	if (GConfig && GConfig->GetBool(GetOSSConfigSection(), TEXT("bRelaunchInSteam"), bConfigRelaunch, GEngineIni))
 	{
 		bRelaunchInSteam = bConfigRelaunch;
 	}
@@ -159,7 +188,13 @@ bool FOnlineSubsystemExtendedSteam::Tick(float DeltaTime)
 
 FString FOnlineSubsystemExtendedSteam::GetAppId() const
 {
-	return LexToString(ResolvedAppId > 0 ? ResolvedAppId : UESteamSettings::Get()->SteamAppId);
+	// ResolvedAppId is always set by ReadConfig, so the CDO is only a belt-and-braces fallback -- and it
+	// is guarded because this is reachable from the early, pre-UObject path too.
+	if (ResolvedAppId > 0)
+	{
+		return LexToString(ResolvedAppId);
+	}
+	return LexToString(UObjectInitialized() ? UESteamSettings::Get()->SteamAppId : 480);
 }
 
 FText FOnlineSubsystemExtendedSteam::GetOnlineServiceName() const

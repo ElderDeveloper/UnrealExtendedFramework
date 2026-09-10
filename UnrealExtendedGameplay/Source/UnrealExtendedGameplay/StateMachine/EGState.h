@@ -79,6 +79,18 @@ public:
 	bool CanEnterState() const;
 
 	// -----------------------------------------------------------------
+	// Debug Description
+	// -----------------------------------------------------------------
+
+	/**
+	 * Return the complete visual-debug description for this state.
+	 * The concrete state class is always included. Subclasses can add details through
+	 * GetAdditionalStateDebugString without replacing that base identity.
+	 */
+	UFUNCTION(BlueprintPure, Category = "EG|AI|Debug")
+	FString GetStateDebugString() const;
+
+	// -----------------------------------------------------------------
 	// State Machine Control
 	// -----------------------------------------------------------------
 
@@ -126,6 +138,10 @@ protected:
 	// -----------------------------------------------------------------
 	// Debug — per-owner visual debug log
 	// -----------------------------------------------------------------
+
+	/** Optional state-specific text appended after the concrete state class name. */
+	UFUNCTION(BlueprintNativeEvent, BlueprintPure, Category = "EG|AI|Debug")
+	FString GetAdditionalStateDebugString() const;
 
 	/**
 	 * Emit a debug line to the owning state machine's visual log.

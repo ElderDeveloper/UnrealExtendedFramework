@@ -621,11 +621,20 @@ struct UNREALEXTENDEDQUEST_API FEGQuestSnapshotArray : public FFastArraySerializ
 {
 	GENERATED_BODY()
 
+	FEGQuestSnapshotArray() = default;
+	explicit FEGQuestSnapshotArray(UEGQuestComponent* InOwnerComponent)
+		: OwnerComponent(InOwnerComponent)
+	{
+	}
+
 	UPROPERTY()
 	TArray<FEGQuestViewSnapshot> Items;
 
-	/** Client-side notification sink. Set by the owning component; never replicated (outer keeps it alive). */
-	UEGQuestComponent* OwnerComponent = nullptr;
+	/** Client-side notification sink. Transient so an archetype/CDO pointer is never copied into a live component. */
+	UPROPERTY(NotReplicated, Transient)
+	TObjectPtr<UEGQuestComponent> OwnerComponent = nullptr;
+
+	void SetOwnerComponent(UEGQuestComponent* InOwnerComponent) { OwnerComponent = InOwnerComponent; }
 
 	void PostReplicatedAdd(const TArrayView<int32>& AddedIndices, int32 FinalSize);
 	void PostReplicatedChange(const TArrayView<int32>& ChangedIndices, int32 FinalSize);

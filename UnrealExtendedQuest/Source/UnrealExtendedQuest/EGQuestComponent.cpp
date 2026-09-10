@@ -78,11 +78,22 @@ void FEGQuestSnapshotArray::PreReplicatedRemove(const TArrayView<int32>& Removed
 //
 
 UEGQuestComponent::UEGQuestComponent()
+	: SharedQuestSnapshots(this)
+	, PrivateQuestSnapshots(this)
 {
 	SetIsReplicatedByDefault(true);
 	PrimaryComponentTick.bCanEverTick = false;
-	SharedQuestSnapshots.OwnerComponent = this;
-	PrivateQuestSnapshots.OwnerComponent = this;
+}
+
+void UEGQuestComponent::PostInitProperties()
+{
+	Super::PostInitProperties();
+
+	// Blueprint-derived owners may initialize a native default subobject from an archetype after its
+	// constructor has run. Rebind here so Fast Array callbacks always notify this live component,
+	// never the component template or CDO that supplied its defaults.
+	SharedQuestSnapshots.SetOwnerComponent(this);
+	PrivateQuestSnapshots.SetOwnerComponent(this);
 }
 
 FEGQuestOperationResult UEGQuestComponent::ExecuteOrQueue(TFunction<FEGQuestOperationResult()>&& Input, FGuid RequestedRunId)
@@ -2208,6 +2219,38 @@ FEGQuestOperationResult UEGQuestComponent::SetObjectiveRequiredCountNow(FGuid In
 	// Inside a resolution scope the surrounding flow settles; a plain call settles here.
 	if (bNowSatisfied) SettleTrack(Instance, FindTrackNameForObjective(Instance, ObjectiveGuid));
 	// The override plus any immediate resolution/settlement is one input transaction.
+	if (FEGQuestRunRecord* Committed = FindMutableRunRecord(Instance))
+	{
+		Committed->Revision = BeforeRevision + 1;
+		MarkRunDirty(Instance);
+	}
+	BroadcastUpdated(Instance);
+	return FEGQuestOperationResult::Applied(Instance, BeforeRevision, GetRunRevision(Instance));
+}
+
+FEGQuestOperationResult UEGQuestComponent::SetObjectiveCount(FGuid Instance, FGuid ObjectiveGuid, int32 NewCount)
+{
+	return ExecuteOrQueue([this, Instance, ObjectiveGuid, NewCount]() { return SetObjectiveCountNow(Instance, ObjectiveGuid, NewCount); }, Instance);
+}
+
+FEGQuestOperationResult UEGQuestComponent::SetObjectiveCountNow(FGuid Instance, FGuid ObjectiveGuid, int32 NewCount)
+{
+	const int32 BeforeRevision = GetRunRevision(Instance);
+	if (!HasQuestAuthority()) return MakeRejectedResult(Instance, TEXT("NoAuthority"));
+	if (NewCount < 0) return MakeRejectedResult(Instance, TEXT("InvalidCount"));
+	const FEGQuestSnapshotObjective* Line = FindMutableObjectiveState(Instance, ObjectiveGuid);
+	if (!Line) return MakeRejectedResult(Instance, TEXT("StaleObjective"));
+	if (Line->IsResolved()) return MakeRejectedResult(Instance, TEXT("ObjectiveAlreadyResolved"));
+
+	// Expressed as a delta so the whole mutation - presentation refresh, milestones, telemetry,
+	// the run-actor notification - stays in the one place that owns it.
+	const int32 Delta = NewCount - Line->Count;
+	if (Delta == 0) return FEGQuestOperationResult::NoChange(Instance, BeforeRevision, TEXT("CountUnchanged"));
+	if (!ApplyObjectiveProgress(Instance, ObjectiveGuid, Delta, /*bFailProgress*/ false))
+	{
+		return FEGQuestOperationResult::NoChange(Instance, BeforeRevision, TEXT("CountUnchanged"));
+	}
+
 	if (FEGQuestRunRecord* Committed = FindMutableRunRecord(Instance))
 	{
 		Committed->Revision = BeforeRevision + 1;

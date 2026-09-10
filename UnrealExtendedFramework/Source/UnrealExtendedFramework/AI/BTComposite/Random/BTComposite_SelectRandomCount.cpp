@@ -18,7 +18,7 @@ int32 UBTComposite_SelectRandomCount::GetNextChildHandler(FBehaviorTreeSearchDat
     int32 Count = BB->GetValueAsInt(ConsecutiveCountKey.SelectedKeyName);
     int32 Threshold = BB->GetValueAsInt(CurrentThresholdKey.SelectedKeyName);
 
-    // --- DURUM 1: EQS (Çocuk) BÝTTÝ ---
+    // --- DURUM 1: EQS (Ã‡ocuk) BÄ°TTÄ° ---
     if (PrevChild != BTSpecialChild::NotInitialized)
     {
         Count++;
@@ -39,7 +39,7 @@ int32 UBTComposite_SelectRandomCount::GetNextChildHandler(FBehaviorTreeSearchDat
         return BTSpecialChild::ReturnToParent;
     }
 
-    // --- DURUM 2: DÜÐÜME GÝRÝÞ (ZAR ATMA VE SEÇÝM) ---
+    // --- DURUM 2: DÃœÄžÃœME GÄ°RÄ°Åž (ZAR ATMA VE SEÃ‡Ä°M) ---
     if (Threshold <= 0)
     {
         int32 Min = MinRepeat.IsValidIndex(CurrentIdx) ? MinRepeat[CurrentIdx] : 2;
@@ -69,7 +69,7 @@ FString UBTComposite_SelectRandomCount::GetStaticDescription() const
 
     for (int32 i = 0; i < Count; i++)
     {
-        // Fonksiyon yerine doðrudan dizi kontrolü yaparak okuyoruz
+        // Fonksiyon yerine doÄŸrudan dizi kontrolÃ¼ yaparak okuyoruz
         int32 Min = MinRepeat.IsValidIndex(i) ? MinRepeat[i] : 2;
         int32 Max = MaxRepeat.IsValidIndex(i) ? MaxRepeat[i] : 5;
 

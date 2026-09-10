@@ -130,7 +130,7 @@ The core plugin supplies the shared runtime and editor foundation used across th
 
 Composable components and actors for common action-game needs:
 
-- **AI state machine** — replicated stack-based state machine (`UEGStateMachineComponent`, `UEGState`, `UEGBrainState`) with per-actor instanced states, a required brain state that owns the decision loop, declarative transition policy, state-scoped timers, opt-in client mirroring, a world debug overlay, and a gameplay debugger category. See [`UnrealExtendedGameplay/Docs/EGStateMachine.md`](UnrealExtendedGameplay/Docs/EGStateMachine.md).
+- **AI state machine** — replicated stack-based state machine (`UEGStateMachineComponent`, `UEGState`) with per-actor instanced states, an explicit default state, declarative transition policy, opt-in client mirroring, and a world debug overlay.
 - Area damage actors and data-driven enemy spawning.
 - Sight, hearing, faction sense, stimuli sources, and procedural patrol generation.
 - Damage reactions and stat components.

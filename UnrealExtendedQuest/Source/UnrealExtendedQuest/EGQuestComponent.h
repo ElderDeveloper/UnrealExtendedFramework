@@ -77,6 +77,7 @@ class UNREALEXTENDEDQUEST_API UEGQuestComponent : public UActorComponent
 
 public:
 	UEGQuestComponent();
+	virtual void PostInitProperties() override;
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
@@ -210,6 +211,19 @@ public:
 	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "Quest")
 	FEGQuestOperationResult SetObjectiveRequiredCountByEventTag(FGuid QuestInstanceGuid, FGameplayTag EventTag, int32 RequiredCount);
 
+	/**
+	 * Writes one objective's progress count directly, as an absolute value rather than a delta.
+	 *
+	 * For an objective whose progress is a live GAUGE rather than a tally - how many players are
+	 * standing in a zone right now - which a counting tracker cannot express, because events only
+	 * ever add. The value may therefore go down as well as up.
+	 *
+	 * It does NOT resolve the objective when the count reaches its target: nothing evaluated a
+	 * tracker here, so the caller that owns the gauge decides, with CompleteActiveObjective.
+	 */
+	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "Quest")
+	FEGQuestOperationResult SetObjectiveCount(FGuid QuestInstanceGuid, FGuid ObjectiveGuid, int32 NewCount);
+
 	/** Reads one objective's checklist line. Only objectives of the active stage are known. */
 	UFUNCTION(BlueprintPure, Category = "Quest")
 	bool FindObjectiveSnapshot(FGuid QuestInstanceGuid, FGuid ObjectiveGuid, FEGQuestSnapshotObjective& OutObjective) const;
@@ -329,6 +343,7 @@ private:
 	FEGQuestOperationResult SetTrackedQuestNow(FGuid QuestInstanceGuid);
 	FEGQuestOperationResult DebugJumpToStageNow(FGuid QuestInstanceGuid, FGuid StageGuid);
 	FEGQuestOperationResult SetObjectiveRequiredCountNow(FGuid QuestInstanceGuid, FGuid ObjectiveGuid, int32 RequiredCount);
+	FEGQuestOperationResult SetObjectiveCountNow(FGuid QuestInstanceGuid, FGuid ObjectiveGuid, int32 NewCount);
 	FEGQuestOperationResult SetObjectiveRequiredCountByEventTagNow(FGuid QuestInstanceGuid, FGameplayTag EventTag, int32 RequiredCount);
 	FEGQuestOperationResult ExecuteOrQueue(TFunction<FEGQuestOperationResult()>&& Input, FGuid RequestedRunId = {});
 	void QueuePostCommit(TFunction<void()>&& Callback);

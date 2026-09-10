@@ -18,7 +18,7 @@ public:
     UPROPERTY(EditAnywhere, Category = "Repeat Settings")
     TArray<int32> MaxRepeat;
 
-    // Blackboard'da oluþturman gereken deðiþkenler (Integer)
+    // Blackboard'da oluÅŸturman gereken deÄŸiÅŸkenler (Integer)
     UPROPERTY(EditAnywhere, Category = "Blackboard")
     FBlackboardKeySelector CurrentChildIndexKey;
 

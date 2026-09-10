@@ -35,6 +35,12 @@ void UEGStateMachineComponent::BeginPlay()
 	{
 		Start();
 	}
+
+	// Debug drawing must remain available even when startup fails or auto-start is disabled.
+	if (bDebugDraw)
+	{
+		SetComponentTickEnabled(true);
+	}
 }
 
 void UEGStateMachineComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
@@ -225,8 +231,20 @@ UEGState* UEGStateMachineComponent::GetStateByClass(TSubclassOf<UEGState> StateC
 		return nullptr;
 	}
 
-	UEGState* const* FoundState = RegisteredStatesByClass.Find(StateClass.Get());
-	return FoundState ? *FoundState : nullptr;
+	if (UEGState* const* FoundState = RegisteredStatesByClass.Find(StateClass.Get()))
+	{
+		return *FoundState;
+	}
+
+	for (const TPair<UClass*, UEGState*>& Pair : RegisteredStatesByClass)
+	{
+		if (Pair.Key && Pair.Key->IsChildOf(StateClass))
+		{
+			return Pair.Value;
+		}
+	}
+
+	return nullptr;
 }
 
 TSubclassOf<UEGState> UEGStateMachineComponent::GetCurrentStateClass() const
@@ -278,7 +296,7 @@ void UEGStateMachineComponent::Start()
 	if (!bStartedState)
 	{
 		bIsRunning = false;
-		SetComponentTickEnabled(false);
+		SetComponentTickEnabled(bDebugDraw);
 	}
 
 	UpdateReplicatedState();
@@ -298,7 +316,7 @@ void UEGStateMachineComponent::Stop()
 	bIsRunning = false;
 	StateStack.Empty();
 	StateContextActor.Reset();
-	SetComponentTickEnabled(false);
+	SetComponentTickEnabled(bDebugDraw);
 
 	UpdateReplicatedState();
 }
@@ -306,6 +324,31 @@ void UEGStateMachineComponent::Stop()
 bool UEGStateMachineComponent::IsRunning() const
 {
 	return HasStateMachineAuthority() ? bIsRunning : bReplicatedIsRunning;
+}
+
+bool UEGStateMachineComponent::ResetToDefaultState()
+{
+	if (!HasStateMachineAuthority() || !DefaultStateClass)
+	{
+		return false;
+	}
+
+	if (!bIsRunning)
+	{
+		Start();
+		return bIsRunning
+			&& CurrentState
+			&& CurrentState->GetClass() == DefaultStateClass.Get();
+	}
+
+	if (CurrentState
+		&& CurrentState->GetClass() == DefaultStateClass.Get()
+		&& StateStack.Num() == 0)
+	{
+		return true;
+	}
+
+	return SwitchStateByClass(DefaultStateClass);
 }
 
 // -------------------------------------------------------------------------
@@ -345,12 +388,11 @@ bool UEGStateMachineComponent::SwitchStateByClass(TSubclassOf<UEGState> StateCla
 	}
 
 	StateStack.Empty();
+	if (bClearDebugLogOnStateChange) { DebugLogEntries.Empty(); }
 
 	CurrentState = NextState;
 	CurrentStateClassId = StateClassId;
 	CurrentState->OnEnter();
-
-	if (bClearDebugLogOnStateChange) { DebugLogEntries.Empty(); }
 
 	UpdateReplicatedState();
 
@@ -376,6 +418,8 @@ bool UEGStateMachineComponent::PushStateByClass(TSubclassOf<UEGState> StateClass
 	UEGState* NextState = GetStateByClass(StateClass);
 	if (!NextState)
 	{
+		UE_LOG(LogEGStateMachine, Warning, TEXT("EGStateMachine: Cannot push unregistered state class '%s'."),
+			*GetNameSafe(StateClass.Get()));
 		return false;
 	}
 
@@ -414,12 +458,11 @@ bool UEGStateMachineComponent::PushStateByClass(TSubclassOf<UEGState> StateClass
 			StateStack.Push(CurrentState);
 		}
 	}
+	if (bClearDebugLogOnStateChange) { DebugLogEntries.Empty(); }
 
 	CurrentState = NextState;
 	CurrentStateClassId = StateClassId;
 	CurrentState->OnEnter();
-
-	if (bClearDebugLogOnStateChange) { DebugLogEntries.Empty(); }
 
 	UpdateReplicatedState();
 
@@ -482,12 +525,11 @@ bool UEGStateMachineComponent::ForcePushStateByClass(TSubclassOf<UEGState> State
 			StateStack.Push(CurrentState);
 		}
 	}
+	if (bClearDebugLogOnStateChange) { DebugLogEntries.Empty(); }
 
 	CurrentState = NextState;
 	CurrentStateClassId = StateClassId;
 	CurrentState->OnEnter();
-
-	if (bClearDebugLogOnStateChange) { DebugLogEntries.Empty(); }
 
 	UpdateReplicatedState();
 
@@ -515,6 +557,13 @@ bool UEGStateMachineComponent::IsCurrentStateClass(TSubclassOf<UEGState> StateCl
 
 void UEGStateMachineComponent::PopState()
 {
+	// The configured default is the root. Popping with no parent must preserve or restore it.
+	if (bIsRunning && StateStack.Num() == 0 && DefaultStateClass)
+	{
+		ResetToDefaultState();
+		return;
+	}
+
 	if (!CurrentState && StateStack.Num() == 0)
 	{
 		return;
@@ -535,9 +584,8 @@ void UEGStateMachineComponent::PopState()
 		{
 			CurrentState = PreviousState;
 			CurrentStateClassId = FindStateClassId(CurrentState);
-			CurrentState->OnResume();
-
 			if (bClearDebugLogOnStateChange) { DebugLogEntries.Empty(); }
+			CurrentState->OnResume();
 		}
 		else
 		{
@@ -699,7 +747,8 @@ void UEGStateMachineComponent::DebugLog(const FString& Message)
 {
 	if (!bDebugDraw) { return; }
 
-	DebugLogEntries.Add(Message);
+	const float TimeSeconds = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
+	DebugLogEntries.Add(FString::Printf(TEXT("[%6.1fs] %s"), TimeSeconds, *Message));
 
 	// Ring-buffer eviction
 	while (DebugLogEntries.Num() > DebugLogMaxEntries)
@@ -718,34 +767,43 @@ void UEGStateMachineComponent::DrawDebugStateInfo() const
 {
 #if ENABLE_DRAW_DEBUG
 	const AActor* Owner = GetOwner();
-	if (!Owner || CurrentStateClassId.IsNone()) return;
+	if (!Owner) return;
 
 	const FVector DrawLocation = Owner->GetActorLocation() + FVector(0.f, 25.f, DebugTextOffset);
+	FString DebugText = TEXT("State order (root -> active):");
 
-	FString DebugText = CurrentStateClassId.IsNone() ? TEXT("None") : CurrentStateClassId.ToString();
-	if (StateStack.Num() > 0)
+	for (int32 StateIndex = 0; StateIndex < StateStack.Num(); ++StateIndex)
 	{
-		DebugText += FString::Printf(TEXT(" [Stack: %d]"), StateStack.Num());
-		for (int32 i = StateStack.Num() - 1; i >= 0; --i)
-		{
-			DebugText += FString::Printf(TEXT("\n  (%s)"), *FindStateClassId(StateStack[i]).ToString());
-		}
+		const UEGState* StackedState = StateStack[StateIndex];
+		const FString StateText = StackedState
+			? StackedState->GetStateDebugString()
+			: TEXT("Invalid state");
+		DebugText += FString::Printf(TEXT("\n  [%d] %s [PAUSED]"), StateIndex, *StateText);
 	}
 
-	DrawDebugString(GetWorld(), DrawLocation, DebugText, nullptr, DebugActiveColor, 0.f, true, 1.2f);
+	if (CurrentState)
+	{
+		DebugText += FString::Printf(
+			TEXT("\n  [%d] %s [ACTIVE]"),
+			StateStack.Num(),
+			*CurrentState->GetStateDebugString());
+	}
+	else
+	{
+		DebugText += TEXT("\n  [NONE] State machine has no active state");
+	}
 
-	// Render debug log entries below the state name
+	// Append events to the same string so multiline state details cannot overlap a second draw call.
 	if (DebugLogEntries.Num() > 0)
 	{
-		FString LogText;
+		DebugText += TEXT("\n  Recent events:");
 		for (int32 i = 0; i < DebugLogEntries.Num(); ++i)
 		{
-			if (i > 0) { LogText += TEXT("\n"); }
-			LogText += DebugLogEntries[i];
+			DebugText += FString::Printf(TEXT("\n    %s"), *DebugLogEntries[i]);
 		}
-
-		const FVector LogLocation = DrawLocation - FVector(0.f, 0.f, 18.f);
-		DrawDebugString(GetWorld(), LogLocation, LogText, nullptr, FColor::Cyan, 0.f, true, 0.85f);
 	}
+
+	const FColor StateColor = CurrentState ? DebugActiveColor : DebugPausedColor;
+	DrawDebugString(GetWorld(), DrawLocation, DebugText, nullptr, StateColor, 0.f, true, 1.0f);
 #endif
 }

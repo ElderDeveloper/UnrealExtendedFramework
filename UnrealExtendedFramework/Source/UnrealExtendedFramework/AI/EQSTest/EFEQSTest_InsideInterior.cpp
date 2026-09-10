@@ -16,56 +16,53 @@ UEFEQSTest_InsideInterior::UEFEQSTest_InsideInterior(const FObjectInitializer& O
 
 void UEFEQSTest_InsideInterior::RunTest(FEnvQueryInstance& QueryInstance) const
 {
+	BoolValue.BindData(QueryInstance.Owner.Get(), QueryInstance.QueryID);
+	const bool bWantsInside = BoolValue.GetValue();
+
 	TArray<AActor*> ContextActors;
 	QueryInstance.PrepareContext(InteriorContext, ContextActors);
 
 	TArray<UBoxComponent*> InteriorBoxes;
 	for (AActor* ContextActor : ContextActors)
 	{
-		if (!ContextActor) continue;
-
-		if (UBoxComponent* FallbackBox = ContextActor->FindComponentByClass<UBoxComponent>())
+		if (!IsValid(ContextActor))
 		{
-			InteriorBoxes.Add(FallbackBox);
-		}
-	}
-
-	const bool bWantsInside = BoolValue.GetValue();
-
-	for (FEnvQueryInstance::ItemIterator It(this, QueryInstance); It; ++It)
-	{
-		// If we couldn't find any interior boxes, instantly fail the point
-		if (InteriorBoxes.IsEmpty())
-		{
-			It.SetScore(TestPurpose, FilterType, false, 0.0f);
 			continue;
 		}
 
-		const FVector ItemLocation = GetItemLocation(QueryInstance, It.GetIndex());
-		bool bIsInsideAny = false;
-
-		for (const UBoxComponent* InteriorBox : InteriorBoxes)
+		if (UBoxComponent* InteriorBox = ContextActor->FindComponentByClass<UBoxComponent>())
 		{
-			if (!InteriorBox) continue;
+			InteriorBoxes.Add(InteriorBox);
+		}
+	}
 
-			// Transform world location to box component's local space
-			const FVector LocalPoint = InteriorBox->GetComponentTransform().InverseTransformPosition(ItemLocation);
-			const FVector BoxExtent = InteriorBox->GetUnscaledBoxExtent();
-
-			if (FMath::Abs(LocalPoint.X) <= BoxExtent.X &&
-				FMath::Abs(LocalPoint.Y) <= BoxExtent.Y &&
-				FMath::Abs(LocalPoint.Z) <= BoxExtent.Z)
+	for (FEnvQueryInstance::ItemIterator It(this, QueryInstance); It; ++It)
+	{
+		bool bIsInsideAny = false;
+		if (!InteriorBoxes.IsEmpty())
+		{
+			const FVector ItemLocation = GetItemLocation(QueryInstance, It.GetIndex());
+			for (const UBoxComponent* InteriorBox : InteriorBoxes)
 			{
-				bIsInsideAny = true;
-				break;
+				if (!InteriorBox)
+				{
+					continue;
+				}
+
+				// Local space already includes component scale, so compare against the unscaled extent.
+				// Interior volumes are XY footprints; skip Z so navmesh-projected points still count.
+				const FVector LocalPoint = InteriorBox->GetComponentTransform().InverseTransformPosition(ItemLocation);
+				const FVector BoxExtent = InteriorBox->GetUnscaledBoxExtent();
+				if (FMath::Abs(LocalPoint.X) <= BoxExtent.X &&
+					FMath::Abs(LocalPoint.Y) <= BoxExtent.Y)
+				{
+					bIsInsideAny = true;
+					break;
+				}
 			}
 		}
 
-		// Calculate if point meets our desired condition (Inside == bWantsInside)
-		const bool bConditionMet = (bIsInsideAny == bWantsInside);
-
-		// If condition is met, give score of 1.0f, else 0.0f
-		It.SetScore(TestPurpose, FilterType, bConditionMet, bConditionMet ? 1.0f : 0.0f);
+		It.SetScore(TestPurpose, FilterType, bIsInsideAny, bWantsInside);
 	}
 }
 
@@ -76,5 +73,5 @@ FText UEFEQSTest_InsideInterior::GetDescriptionTitle() const
 
 FText UEFEQSTest_InsideInterior::GetDescriptionDetails() const
 {
-	return FText::FromString(TEXT("Checks whether item locations are inside a context actor box volume"));
+	return DescribeBoolTestParams(TEXT("inside box interior"));
 }

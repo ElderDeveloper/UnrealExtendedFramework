@@ -18,6 +18,20 @@ void UEGState::OnPause_Implementation() {}
 void UEGState::OnResume_Implementation() {}
 bool UEGState::CanEnterState_Implementation() const { return true; }
 
+FString UEGState::GetStateDebugString() const
+{
+	const FString StateClassName = GetNameSafe(GetClass());
+	const FString AdditionalText = GetAdditionalStateDebugString();
+	return AdditionalText.IsEmpty()
+		? StateClassName
+		: FString::Printf(TEXT("%s | %s"), *StateClassName, *AdditionalText);
+}
+
+FString UEGState::GetAdditionalStateDebugString_Implementation() const
+{
+	return FString();
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // State Machine Control
 // ─────────────────────────────────────────────────────────────────────────────

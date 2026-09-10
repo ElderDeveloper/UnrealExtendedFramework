@@ -294,7 +294,9 @@ void UEPFSubsystem::ExecuteRequest(
 		}
 	}
 
-	HttpRequest->OnProcessRequestComplete().BindLambda(
+	// Weak-gated: the HttpManager keeps the request alive past PIE shutdown, so a plain [this]
+	// lambda would call into this subsystem after its GameInstance destroyed it.
+	HttpRequest->OnProcessRequestComplete().BindWeakLambda(this,
 		[this, ApiPath, RequestBodyString, AuthMode, OnComplete, RetryAttempt](FHttpRequestPtr Request, FHttpResponsePtr Response, bool bConnectedSuccessfully)
 		{
 			HandleHttpResponse(Request, Response, bConnectedSuccessfully, ApiPath, RequestBodyString, AuthMode, OnComplete, RetryAttempt);

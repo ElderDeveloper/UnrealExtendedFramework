@@ -1015,7 +1015,7 @@ namespace ExtendedAtlassianWorkspacePrivate
 		bool bAcceptingDrop = false;
 	};
 
-	/** Mouse-interactive 528 Ã— 288 annotation plane from the reference composer. */
+	/** Mouse-interactive 528 × 288 annotation plane from the reference composer. */
 	class SCaptureAnnotationSurface final : public SLeafWidget
 	{
 	public:
