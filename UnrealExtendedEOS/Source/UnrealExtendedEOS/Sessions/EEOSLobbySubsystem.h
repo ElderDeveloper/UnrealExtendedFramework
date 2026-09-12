@@ -179,6 +179,12 @@ public:
 	UFUNCTION(BlueprintPure, Category = "EOS|Lobbies")
 	FString GetCurrentLobbyId() const;
 
+	/** The engine session name this subsystem's lobby lives under. Game code needs it to
+	 *  resolve a connect string for the lobby host: GetResolvedConnectString defaults to
+	 *  "GameSession", which is the sessions flow, not this one. */
+	UFUNCTION(BlueprintPure, Category = "EOS|Lobbies")
+	static FName GetLobbySessionName();
+
 	// ── Delegates ────────────────────────────────────────────────────────────
 
 	UPROPERTY(BlueprintAssignable, Category = "EOS|Lobbies")
