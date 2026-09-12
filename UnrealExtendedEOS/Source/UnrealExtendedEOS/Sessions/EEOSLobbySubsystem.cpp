@@ -995,6 +995,11 @@ FString UEEOSLobbySubsystem::GetCurrentLobbyId() const
 	return CurrentLobbyId;
 }
 
+FName UEEOSLobbySubsystem::GetLobbySessionName()
+{
+	return LOBBY_SESSION_NAME;
+}
+
 // ── Callbacks ────────────────────────────────────────────────────────────────
 
 void UEEOSLobbySubsystem::HandleCreateSessionComplete(FName InSessionName, bool bWasSuccessful)
@@ -1097,9 +1102,20 @@ void UEEOSLobbySubsystem::HandleFindSessionsComplete(bool bWasSuccessful)
 		{
 			FEEOSSessionSearchResult Result;
 			Result.SessionId = SearchResult.GetSessionIdStr();
+			Result.OwnerName = SearchResult.Session.OwningUserName;
 			Result.CurrentPlayers = SearchResult.Session.SessionSettings.NumPublicConnections - SearchResult.Session.NumOpenPublicConnections;
 			Result.MaxPlayers = SearchResult.Session.SessionSettings.NumPublicConnections;
 			Result.Ping = SearchResult.PingInMs;
+
+			// Attributes set through SetLobbyAttribute are advertised ViaOnlineService and
+			// come back on the search result's settings. Without copying them out here the
+			// game sees anonymous rows: the lobby's name, join code and build tag are all
+			// carried as attributes and would be dropped on the floor.
+			for (const TPair<FName, FOnlineSessionSetting>& Setting : SearchResult.Session.SessionSettings.Settings)
+			{
+				Result.Settings.Add(Setting.Key, Setting.Value.Data.ToString());
+			}
+
 			Results.Add(Result);
 		}
 	}
