@@ -39,7 +39,7 @@ protected:
 	virtual void HandleSteamClientShutdown() {}
 
 	/**
-	 * The Extended Steam online subsystem ("EXTENDEDSTEAM"), or null when it is not enabled.
+	 * The Extended Steam online subsystem (ESTEAM_SUBSYSTEM, "STEAM"), or null when it is not enabled.
 	 * Not memoized on failure: the OSS may load after this subsystem initializes.
 	 */
 	IOnlineSubsystem* GetSteamOnlineSubsystem() const;

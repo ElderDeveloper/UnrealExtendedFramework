@@ -89,7 +89,6 @@ public class UnrealExtendedFramework : ModuleRules
 				"Slate",
 				"SlateCore",
 				"UMG",
-				"PreLoadScreen",
 				"RenderCore",
 				"ApplicationCore",
 				"AIModule",
@@ -127,7 +126,9 @@ public class UnrealExtendedFramework : ModuleRules
 				"ApplicationCore", "AnimGraphRuntime", "Niagara",
 				"PhysicsCore",
 				"RHI",
-				"Voice"
+				"Voice",
+				// Systems/Loading: blocking loading screen during map travel (cpp-only include).
+				"MoviePlayer"
 			}
 			);
 		

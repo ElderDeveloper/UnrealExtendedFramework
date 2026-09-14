@@ -7,7 +7,7 @@
 #include "OnlineSubsystemModule.h"
 
 /**
- * Factory the OnlineSubsystem module calls to create "EXTENDEDSTEAM" instances.
+ * Factory the OnlineSubsystem module calls to create ESTEAM_SUBSYSTEM ("STEAM") instances.
  *
  * Singleton semantics, like the platform OSS factories: the Steam client is a per-process
  * resource, so only one live subsystem instance is allowed. Repeat creation requests (e.g.
@@ -70,7 +70,7 @@ private:
 };
 
 /**
- * Registers the "EXTENDEDSTEAM" platform service with the engine's OnlineSubsystem module.
+ * Registers the ESTEAM_SUBSYSTEM ("STEAM") platform service with the engine's OnlineSubsystem module.
  * Loads at the Default phase (per .uplugin), safely after OnlineSubsystem (also Default,
  * pulled in as a plugin dependency) and after ExtendedSteamShared (PreDefault).
  */

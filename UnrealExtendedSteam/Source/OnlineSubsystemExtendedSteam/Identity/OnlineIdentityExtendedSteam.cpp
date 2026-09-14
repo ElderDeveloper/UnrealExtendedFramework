@@ -230,6 +230,48 @@ FString FOnlineIdentityExtendedSteam::GetAuthToken(int32 LocalUserNum) const
 	return FString();
 }
 
+void FOnlineIdentityExtendedSteam::GetLinkedAccountAuthToken(int32 LocalUserNum, const FString& TokenType, const FOnGetLinkedAccountAuthTokenCompleteDelegate& Delegate) const
+{
+	if (TokenType.IsEmpty() || TokenType == TEXT("Session"))
+	{
+		FExternalAuthToken AuthToken;
+		AuthToken.TokenString = GetAuthToken(LocalUserNum);
+		Delegate.ExecuteIfBound(LocalUserNum, AuthToken.HasTokenString(), AuthToken);
+		return;
+	}
+
+	if (TokenType.StartsWith(TEXT("WebApi")) && LocalUserNum == 0 && Subsystem != nullptr)
+	{
+		if (const FOnlineAuthExtendedSteamPtr Auth = Subsystem->GetAuthInterfaceExtended())
+		{
+			// "WebApi:<identity>" binds the ticket to that service; bare "WebApi" uses the EOS Dev
+			// Portal default. The identity must match the Steam identity-provider entry there.
+			FString ServiceIdentity;
+			if (!TokenType.Split(TEXT(":"), nullptr, &ServiceIdentity) || ServiceIdentity.IsEmpty())
+			{
+				ServiceIdentity = TEXT("epiconlineservices");
+			}
+
+			// The handle is never cancelled on purpose: the backend validates the ticket after this
+			// returns, and cancelling early invalidates it mid-flight. Steam drops it at app exit.
+			Auth->GetAuthTicketForWebApi(ServiceIdentity, FOnExtendedSteamWebApiTicket::CreateLambda(
+				[LocalUserNum, Delegate](bool bSuccess, FString HexTicket)
+				{
+					FExternalAuthToken AuthToken;
+					if (bSuccess)
+					{
+						AuthToken.TokenString = MoveTemp(HexTicket);
+					}
+					Delegate.ExecuteIfBound(LocalUserNum, AuthToken.HasTokenString(), AuthToken);
+				}));
+			return;
+		}
+	}
+
+	UE_LOG(LogExtendedSteam, Warning, TEXT("GetLinkedAccountAuthToken: unsupported TokenType '%s' for user %d"), *TokenType, LocalUserNum);
+	Delegate.ExecuteIfBound(LocalUserNum, false, FExternalAuthToken());
+}
+
 void FOnlineIdentityExtendedSteam::RevokeAuthToken(const FUniqueNetId& LocalUserId, const FOnRevokeAuthTokenCompleteDelegate& Delegate)
 {
 	// Steam session tickets are revoked per-handle (CancelAuthTicket); a blanket revoke is not supported.

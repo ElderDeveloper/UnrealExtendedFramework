@@ -5,9 +5,18 @@
 #include "CoreMinimal.h"
 #include "ESteamTypes.generated.h"
 
-/** Online subsystem service name for the Extended Steam OSS implementation. */
+/**
+ * Online subsystem service name for the Extended Steam OSS implementation.
+ *
+ * "STEAM" on purpose, the same name the engine's own OnlineSubsystemSteam registers: OnlineSubsystemEOS
+ * maps a platform token to an EOS credential type by SUBSYSTEM NAME (UserManagerEOS.cpp
+ * ToEOS_EExternalCredentialType), and only the literal STEAM_SUBSYSTEM yields
+ * EOS_ECT_STEAM_SESSION_TICKET — anything else is sent as an OpenID token and the Connect login
+ * fails. The two Steam OSS plugins cannot be enabled together anyway (two Steamworks initialisers
+ * in one process), so the name is free.
+ */
 #ifndef ESTEAM_SUBSYSTEM
-	#define ESTEAM_SUBSYSTEM FName(TEXT("EXTENDEDSTEAM"))
+	#define ESTEAM_SUBSYSTEM FName(TEXT("STEAM"))
 #endif
 
 /** Authentication mode for the Steam game server API. */

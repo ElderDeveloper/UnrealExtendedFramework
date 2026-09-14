@@ -15,7 +15,7 @@ using FUniqueNetIdExtendedSteamRef = TSharedRef<const FUniqueNetIdExtendedSteam>
 using FUniqueNetIdExtendedSteamPtr = TSharedPtr<const FUniqueNetIdExtendedSteam>;
 
 /**
- * Unique net id wrapping a 64-bit CSteamID for the "EXTENDEDSTEAM" service.
+ * Unique net id wrapping a 64-bit CSteamID for the ESTEAM_SUBSYSTEM ("STEAM") service.
  *
  * Deliberately independent of the engine's OnlineSubsystemSteam plugin (whose FUniqueNetIdSteam
  * is internal to it). String form is the decimal uint64 (SteamID64), byte form is the raw
@@ -209,6 +209,14 @@ public:
 	virtual FString GetPlayerNickname(int32 LocalUserNum) const override;
 	virtual FString GetPlayerNickname(const FUniqueNetId& UserId) const override;
 	virtual FString GetAuthToken(int32 LocalUserNum) const override;
+	/**
+	 * Async platform ticket for linked-account logins — what OnlineSubsystemEOS calls
+	 * (FUserManagerEOS::GetPlatformAuthToken) when this OSS is the NativePlatformService.
+	 * TokenType follows the engine Steam OSS: "Session"/empty = GetAuthSessionTicket (synchronous),
+	 * "WebApi[:<identity>]" = GetAuthTicketForWebApi (identity defaults to "epiconlineservices",
+	 * which is what EOS_ECT_STEAM_SESSION_TICKET requires). "App" tickets are not supported.
+	 */
+	virtual void GetLinkedAccountAuthToken(int32 LocalUserNum, const FString& TokenType, const FOnGetLinkedAccountAuthTokenCompleteDelegate& Delegate) const override;
 	virtual void RevokeAuthToken(const FUniqueNetId& LocalUserId, const FOnRevokeAuthTokenCompleteDelegate& Delegate) override;
 	virtual void GetUserPrivilege(const FUniqueNetId& LocalUserId, EUserPrivileges::Type Privilege, const FOnGetUserPrivilegeCompleteDelegate& Delegate, EShowPrivilegeResolveUI ShowResolveUI = EShowPrivilegeResolveUI::Default) override;
 	virtual FPlatformUserId GetPlatformUserIdFromUniqueNetId(const FUniqueNetId& UniqueNetId) const override;
