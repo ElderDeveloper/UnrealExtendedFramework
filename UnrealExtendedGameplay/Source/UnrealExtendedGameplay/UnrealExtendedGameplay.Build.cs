@@ -42,6 +42,7 @@ public class UnrealExtendedGameplay : ModuleRules
 				"PhysicsCore",
 				"AIModule",
 				"GameplayTags",
+				"GameplayTasks",
 				"NavigationSystem"
 				// ... add other public dependencies that you statically link with here ...
 			}
