@@ -22,7 +22,7 @@
 
 DEFINE_LOG_CATEGORY(LogQuestJsonParser);
 
-bool GetTextFromObject(const TSharedRef<FJsonObject>& Obj, FText& TextOut)
+static bool GetTextFromObject(const TSharedRef<FJsonObject>& Obj, FText& TextOut)
 {
 	// get the prioritized culture name list
 	const FCultureRef CurrentCulture = FInternationalization::Get().GetCurrentCulture();
@@ -43,7 +43,7 @@ bool GetTextFromObject(const TSharedRef<FJsonObject>& Obj, FText& TextOut)
 	return false;
 }
 
-FString GetStringForJsonType(const EJson Type)
+static FString GetStringForJsonType(const EJson Type)
 {
 	switch (Type)
 	{
