@@ -28,7 +28,7 @@ void UEPFMatchmakingSubsystem::CreateTicket(const FString& QueueName, const TMap
 	UEPFAuthSubsystem* Auth = GetGameInstance()->GetSubsystem<UEPFAuthSubsystem>();
 	if (!Auth || Auth->GetEntityId().IsEmpty())
 	{
-		UE_LOG(LogExtendedPlayFab, Warning, TEXT("EPFMatchmakingSubsystem::CreateTicket — Not logged in or no entity token"));
+		EF_LOG(ExtendedPlayFab, Warning, TEXT("EPFMatchmakingSubsystem::CreateTicket — Not logged in or no entity token"));
 		OnTicketCreated.Broadcast(FEPFResult::Failure(TEXT("Not logged in or missing entity token")), TEXT(""));
 		return;
 	}
@@ -74,7 +74,7 @@ void UEPFMatchmakingSubsystem::CreateTicket(const FString& QueueName, const TMap
 				LastResult = FEPFMatchmakingResult();
 				LastResult.TicketId = TicketId;
 				LastResult.Status = EEPFMatchmakingStatus::WaitingForMatch;
-				UE_LOG(LogExtendedPlayFab, Log, TEXT("EPFMatchmaking — Ticket created: %s"), *TicketId);
+				EF_LOG(ExtendedPlayFab, Log, TEXT("EPFMatchmaking — Ticket created: %s"), *TicketId);
 			}
 			OnTicketCreated.Broadcast(Result, TicketId);
 		})
@@ -229,7 +229,7 @@ void UEPFMatchmakingSubsystem::StartPolling(const FString& QueueName, const FStr
 			true,
 			0.0f // immediate first tick
 		);
-		UE_LOG(LogExtendedPlayFab, Log, TEXT("EPFMatchmaking — Polling started (every %.1fs)"), PollIntervalSeconds);
+		EF_LOG(ExtendedPlayFab, Log, TEXT("EPFMatchmaking — Polling started (every %.1fs)"), PollIntervalSeconds);
 	}
 }
 
@@ -242,7 +242,7 @@ void UEPFMatchmakingSubsystem::StopPolling()
 			World->GetTimerManager().ClearTimer(PollTimerHandle);
 		}
 		PollTimerHandle.Invalidate();
-		UE_LOG(LogExtendedPlayFab, Log, TEXT("EPFMatchmaking — Polling stopped"));
+		EF_LOG(ExtendedPlayFab, Log, TEXT("EPFMatchmaking — Polling stopped"));
 	}
 	PollingQueueName.Empty();
 	PollingTicketId.Empty();

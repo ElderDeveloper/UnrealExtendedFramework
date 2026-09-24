@@ -4,16 +4,14 @@
 
 #define LOCTEXT_NAMESPACE "FUnrealExtendedPlayFabModule"
 
-DEFINE_LOG_CATEGORY(LogExtendedPlayFab);
-
 void FUnrealExtendedPlayFabModule::StartupModule()
 {
-	UE_LOG(LogExtendedPlayFab, Log, TEXT("UnrealExtendedPlayFab module started"));
+	EF_LOG(ExtendedPlayFab, Log, TEXT("UnrealExtendedPlayFab module started"));
 }
 
 void FUnrealExtendedPlayFabModule::ShutdownModule()
 {
-	UE_LOG(LogExtendedPlayFab, Log, TEXT("UnrealExtendedPlayFab module shutdown"));
+	EF_LOG(ExtendedPlayFab, Log, TEXT("UnrealExtendedPlayFab module shutdown"));
 }
 
 #undef LOCTEXT_NAMESPACE

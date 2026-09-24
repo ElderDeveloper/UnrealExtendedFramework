@@ -42,7 +42,7 @@ void UEPFConnectionMonitor::StartMonitoring(float IntervalSeconds)
 		}
 	}
 
-	UE_LOG(LogExtendedPlayFab, Log, TEXT("EPFConnectionMonitor — Started monitoring (interval: %.0fs)"), Interval);
+	EF_LOG(ExtendedPlayFab, Log, TEXT("EPFConnectionMonitor — Started monitoring (interval: %.0fs)"), Interval);
 }
 
 void UEPFConnectionMonitor::StopMonitoring()
@@ -59,7 +59,7 @@ void UEPFConnectionMonitor::StopMonitoring()
 		}
 	}
 
-	UE_LOG(LogExtendedPlayFab, Log, TEXT("EPFConnectionMonitor — Stopped monitoring"));
+	EF_LOG(ExtendedPlayFab, Log, TEXT("EPFConnectionMonitor — Stopped monitoring"));
 }
 
 void UEPFConnectionMonitor::Ping()
@@ -119,7 +119,7 @@ void UEPFConnectionMonitor::HandlePingResponse(bool bSuccess, TSharedPtr<FJsonOb
 		if (!bIsConnected)
 		{
 			bIsConnected = true;
-			UE_LOG(LogExtendedPlayFab, Log, TEXT("EPFConnectionMonitor — Connection RESTORED"));
+			EF_LOG(ExtendedPlayFab, Log, TEXT("EPFConnectionMonitor — Connection RESTORED"));
 			OnConnectionRestored.Broadcast();
 		}
 	}
@@ -130,12 +130,12 @@ void UEPFConnectionMonitor::HandlePingResponse(bool bSuccess, TSharedPtr<FJsonOb
 		if (bIsConnected && ConsecutiveFailures >= FailureThreshold)
 		{
 			bIsConnected = false;
-			UE_LOG(LogExtendedPlayFab, Warning, TEXT("EPFConnectionMonitor — Connection LOST (%d consecutive failures)"), ConsecutiveFailures);
+			EF_LOG(ExtendedPlayFab, Warning, TEXT("EPFConnectionMonitor — Connection LOST (%d consecutive failures)"), ConsecutiveFailures);
 			OnConnectionLost.Broadcast();
 		}
 		else if (bIsConnected)
 		{
-			UE_LOG(LogExtendedPlayFab, Verbose, TEXT("EPFConnectionMonitor — Ping failed (%d/%d before declaring lost)"), ConsecutiveFailures, FailureThreshold);
+			EF_LOG(ExtendedPlayFab, Verbose, TEXT("EPFConnectionMonitor — Ping failed (%d/%d before declaring lost)"), ConsecutiveFailures, FailureThreshold);
 		}
 	}
 }

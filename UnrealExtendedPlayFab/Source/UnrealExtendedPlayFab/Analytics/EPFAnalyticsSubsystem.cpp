@@ -106,7 +106,7 @@ void UEPFAnalyticsSubsystem::SetAutoAnalyticsEnabled(bool bEnabled)
 		UnregisterAutoTrackingHooks();
 	}
 
-	UE_LOG(LogExtendedPlayFab, Log, TEXT("EPFAnalyticsSubsystem — Auto analytics %s"),
+	EF_LOG(ExtendedPlayFab, Log, TEXT("EPFAnalyticsSubsystem — Auto analytics %s"),
 		bEnabled ? TEXT("enabled") : TEXT("disabled"));
 }
 
@@ -259,7 +259,7 @@ void UEPFAnalyticsSubsystem::RegisterAutoTrackingHooks()
 		);
 	}
 
-	UE_LOG(LogExtendedPlayFab, Log, TEXT("EPFAnalyticsSubsystem — Auto-tracking hooks registered"));
+	EF_LOG(ExtendedPlayFab, Log, TEXT("EPFAnalyticsSubsystem — Auto-tracking hooks registered"));
 }
 
 void UEPFAnalyticsSubsystem::UnregisterAutoTrackingHooks()
@@ -307,7 +307,7 @@ void UEPFAnalyticsSubsystem::UnregisterAutoTrackingHooks()
 	InputDeviceHandle   = FDelegateHandle();
 	FpsTickerHandle     = FTSTicker::FDelegateHandle();
 
-	UE_LOG(LogExtendedPlayFab, Log, TEXT("EPFAnalyticsSubsystem — Auto-tracking hooks unregistered"));
+	EF_LOG(ExtendedPlayFab, Log, TEXT("EPFAnalyticsSubsystem — Auto-tracking hooks unregistered"));
 }
 
 // ── Auto-Tracking Callbacks ───────────────────────────────────────────────────
@@ -405,7 +405,7 @@ void UEPFAnalyticsSubsystem::DispatchOrQueue(const FString& EventName, const TMa
 	if (OfflineQueue.Num() >= QueueLimit)
 	{
 		OfflineQueue.RemoveAt(0);
-		UE_LOG(LogExtendedPlayFab, Warning,
+		EF_LOG(ExtendedPlayFab, Warning,
 			TEXT("EPFAnalyticsSubsystem — Offline queue full (%d), dropping oldest event"), QueueLimit);
 	}
 
@@ -417,7 +417,7 @@ void UEPFAnalyticsSubsystem::DispatchOrQueue(const FString& EventName, const TMa
 
 	SaveQueueToDisk();
 
-	UE_LOG(LogExtendedPlayFab, Verbose,
+	EF_LOG(ExtendedPlayFab, Verbose,
 		TEXT("EPFAnalyticsSubsystem — Queued offline event '%s' (%d in queue)"), *EventName, OfflineQueue.Num());
 }
 
@@ -476,11 +476,11 @@ void UEPFAnalyticsSubsystem::WriteTelemetryEvent(
 			if (Result.bSuccess)
 			{
 				EventsLoggedCount++;
-				UE_LOG(LogExtendedPlayFab, Verbose, TEXT("EPFAnalyticsSubsystem — Telemetry event logged: %s"), *EventName);
+				EF_LOG(ExtendedPlayFab, Verbose, TEXT("EPFAnalyticsSubsystem — Telemetry event logged: %s"), *EventName);
 			}
 			else
 			{
-				UE_LOG(LogExtendedPlayFab, Warning, TEXT("EPFAnalyticsSubsystem — Failed to log telemetry event: %s"), *EventName);
+				EF_LOG(ExtendedPlayFab, Warning, TEXT("EPFAnalyticsSubsystem — Failed to log telemetry event: %s"), *EventName);
 			}
 
 			OnEventLogged.Broadcast(Result);
@@ -499,12 +499,12 @@ void UEPFAnalyticsSubsystem::FlushOfflineQueue()
 
 	if (GetEntityToken().IsEmpty())
 	{
-		UE_LOG(LogExtendedPlayFab, Warning,
+		EF_LOG(ExtendedPlayFab, Warning,
 			TEXT("EPFAnalyticsSubsystem — FlushOfflineQueue called without an entity token; skipping."));
 		return;
 	}
 
-	UE_LOG(LogExtendedPlayFab, Log,
+	EF_LOG(ExtendedPlayFab, Log,
 		TEXT("EPFAnalyticsSubsystem — Flushing %d offline events"), OfflineQueue.Num());
 
 	// Snapshot and clear so any new events during flush go to a fresh queue.
@@ -527,7 +527,7 @@ void UEPFAnalyticsSubsystem::ClearOfflineQueue()
 	OfflineQueue.Reset();
 	SaveQueueToDisk();
 
-	UE_LOG(LogExtendedPlayFab, Log,
+	EF_LOG(ExtendedPlayFab, Log,
 		TEXT("EPFAnalyticsSubsystem — Cleared offline queue (%d events discarded)"), Dropped);
 }
 
@@ -569,7 +569,7 @@ void UEPFAnalyticsSubsystem::SaveQueueToDisk() const
 		IFileManager::Get().MakeDirectory(*FPaths::GetPath(FilePath), true);
 		if (!FFileHelper::SaveStringToFile(JsonString, *FilePath))
 		{
-			UE_LOG(LogExtendedPlayFab, Warning,
+			EF_LOG(ExtendedPlayFab, Warning,
 				TEXT("EPFAnalyticsSubsystem — Failed to save offline queue to: %s"), *FilePath);
 		}
 	}
@@ -587,7 +587,7 @@ void UEPFAnalyticsSubsystem::LoadQueueFromDisk()
 	FString JsonString;
 	if (!FFileHelper::LoadFileToString(JsonString, *FilePath))
 	{
-		UE_LOG(LogExtendedPlayFab, Warning,
+		EF_LOG(ExtendedPlayFab, Warning,
 			TEXT("EPFAnalyticsSubsystem — Failed to read offline queue from: %s"), *FilePath);
 		return;
 	}
@@ -596,7 +596,7 @@ void UEPFAnalyticsSubsystem::LoadQueueFromDisk()
 	const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(JsonString);
 	if (!FJsonSerializer::Deserialize(Reader, Root) || !Root.IsValid())
 	{
-		UE_LOG(LogExtendedPlayFab, Warning,
+		EF_LOG(ExtendedPlayFab, Warning,
 			TEXT("EPFAnalyticsSubsystem — Offline queue file is corrupt and will be discarded."));
 		IFileManager::Get().Delete(*FilePath);
 		return;
@@ -642,7 +642,7 @@ void UEPFAnalyticsSubsystem::LoadQueueFromDisk()
 
 	if (OfflineQueue.Num() > 0)
 	{
-		UE_LOG(LogExtendedPlayFab, Log,
+		EF_LOG(ExtendedPlayFab, Log,
 			TEXT("EPFAnalyticsSubsystem — Loaded %d offline events from disk"), OfflineQueue.Num());
 	}
 }

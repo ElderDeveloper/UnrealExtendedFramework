@@ -277,17 +277,17 @@ void UEPFInventorySubsystem::FetchInventoryPage(const FString& ContinuationToken
 
 				if (!NextToken.IsEmpty())
 				{
-					UE_LOG(LogExtendedPlayFab, Warning,
+					EF_LOG(ExtendedPlayFab, Warning,
 						TEXT("EPFInventorySubsystem — Stopped paging inventory at %d pages; results are truncated."),
 						MaxInventoryPages);
 				}
 
-				UE_LOG(LogExtendedPlayFab, Log, TEXT("EPFInventorySubsystem — Fetched %d inventory items"), CachedInventory.Num());
+				EF_LOG(ExtendedPlayFab, Log, TEXT("EPFInventorySubsystem — Fetched %d inventory items"), CachedInventory.Num());
 				OnInventoryReceived.Broadcast(Result, CachedInventory);
 			}
 			else
 			{
-				UE_LOG(LogExtendedPlayFab, Warning, TEXT("EPFInventorySubsystem — Failed to fetch inventory"));
+				EF_LOG(ExtendedPlayFab, Warning, TEXT("EPFInventorySubsystem — Failed to fetch inventory"));
 				OnInventoryReceived.Broadcast(Result, CachedInventory);
 			}
 		})
@@ -361,17 +361,17 @@ void UEPFInventorySubsystem::FetchCatalogPage(const FString& StoreId, const FStr
 
 				if (!NextToken.IsEmpty())
 				{
-					UE_LOG(LogExtendedPlayFab, Warning,
+					EF_LOG(ExtendedPlayFab, Warning,
 						TEXT("EPFInventorySubsystem — Stopped paging catalog at %d pages; results are truncated."),
 						MaxInventoryPages);
 				}
 
-				UE_LOG(LogExtendedPlayFab, Log, TEXT("EPFInventorySubsystem — Fetched %d catalog definitions"), CachedCatalog.Num());
+				EF_LOG(ExtendedPlayFab, Log, TEXT("EPFInventorySubsystem — Fetched %d catalog definitions"), CachedCatalog.Num());
 				OnCatalogReceived.Broadcast(Result, CachedCatalog);
 			}
 			else
 			{
-				UE_LOG(LogExtendedPlayFab, Warning, TEXT("EPFInventorySubsystem — Failed to fetch catalog"));
+				EF_LOG(ExtendedPlayFab, Warning, TEXT("EPFInventorySubsystem — Failed to fetch catalog"));
 				OnCatalogReceived.Broadcast(Result, CachedCatalog);
 			}
 		})
@@ -387,19 +387,19 @@ void UEPFInventorySubsystem::PurchaseItem(const FString& ItemId, const FString& 
 {
 	if (ItemId.IsEmpty())
 	{
-		UE_LOG(LogExtendedPlayFab, Warning, TEXT("EPFInventorySubsystem::PurchaseItem — ItemId cannot be empty"));
+		EF_LOG(ExtendedPlayFab, Warning, TEXT("EPFInventorySubsystem::PurchaseItem — ItemId cannot be empty"));
 		OnItemPurchased.Broadcast(FEPFResult::Failure(TEXT("ItemId cannot be empty")), TEXT(""));
 		return;
 	}
 	if (CurrencyCode.IsEmpty())
 	{
-		UE_LOG(LogExtendedPlayFab, Warning, TEXT("EPFInventorySubsystem::PurchaseItem — CurrencyCode cannot be empty"));
+		EF_LOG(ExtendedPlayFab, Warning, TEXT("EPFInventorySubsystem::PurchaseItem — CurrencyCode cannot be empty"));
 		OnItemPurchased.Broadcast(FEPFResult::Failure(TEXT("CurrencyCode cannot be empty")), TEXT(""));
 		return;
 	}
 	if (Price < 0)
 	{
-		UE_LOG(LogExtendedPlayFab, Warning, TEXT("EPFInventorySubsystem::PurchaseItem — Price cannot be negative"));
+		EF_LOG(ExtendedPlayFab, Warning, TEXT("EPFInventorySubsystem::PurchaseItem — Price cannot be negative"));
 		OnItemPurchased.Broadcast(FEPFResult::Failure(TEXT("Price cannot be negative")), TEXT(""));
 		return;
 	}
@@ -434,7 +434,7 @@ void UEPFInventorySubsystem::PurchaseItem(const FString& ItemId, const FString& 
 			FString InstanceId;
 			if (Result.bSuccess)
 			{
-				UE_LOG(LogExtendedPlayFab, Log, TEXT("EPFInventorySubsystem — Purchased item, instance: %s"), *InstanceId);
+				EF_LOG(ExtendedPlayFab, Log, TEXT("EPFInventorySubsystem — Purchased item, instance: %s"), *InstanceId);
 			}
 			OnItemPurchased.Broadcast(Result, InstanceId);
 		})
@@ -450,13 +450,13 @@ void UEPFInventorySubsystem::ConsumeItem(const FString& ItemInstanceId, int32 Co
 {
 	if (ItemInstanceId.IsEmpty())
 	{
-		UE_LOG(LogExtendedPlayFab, Warning, TEXT("EPFInventorySubsystem::ConsumeItem — ItemInstanceId cannot be empty"));
+		EF_LOG(ExtendedPlayFab, Warning, TEXT("EPFInventorySubsystem::ConsumeItem — ItemInstanceId cannot be empty"));
 		OnItemConsumed.Broadcast(FEPFResult::Failure(TEXT("ItemInstanceId cannot be empty")), -1);
 		return;
 	}
 	if (ConsumeCount <= 0)
 	{
-		UE_LOG(LogExtendedPlayFab, Warning, TEXT("EPFInventorySubsystem::ConsumeItem — ConsumeCount must be positive"));
+		EF_LOG(ExtendedPlayFab, Warning, TEXT("EPFInventorySubsystem::ConsumeItem — ConsumeCount must be positive"));
 		OnItemConsumed.Broadcast(FEPFResult::Failure(TEXT("ConsumeCount must be positive")), -1);
 		return;
 	}
@@ -501,7 +501,7 @@ void UEPFInventorySubsystem::ConsumeItem(const FString& ItemInstanceId, int32 Co
 						break;
 					}
 				}
-				UE_LOG(LogExtendedPlayFab, Log, TEXT("EPFInventorySubsystem — Consumed item, remaining: %d"), RemainingUses);
+				EF_LOG(ExtendedPlayFab, Log, TEXT("EPFInventorySubsystem — Consumed item, remaining: %d"), RemainingUses);
 			}
 			OnItemConsumed.Broadcast(Result, RemainingUses);
 		})

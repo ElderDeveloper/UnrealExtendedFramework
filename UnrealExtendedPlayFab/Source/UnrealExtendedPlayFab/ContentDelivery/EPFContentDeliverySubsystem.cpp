@@ -28,7 +28,7 @@ void UEPFContentDeliverySubsystem::GetContentDownloadUrl(const FString& Key, boo
 			if (Result.bSuccess && Response.IsValid())
 			{
 				Url = Response->GetStringField(TEXT("URL"));
-				UE_LOG(LogExtendedPlayFab, Log, TEXT("EPFContentDelivery — URL: %s"), *Url);
+				EF_LOG(ExtendedPlayFab, Log, TEXT("EPFContentDelivery — URL: %s"), *Url);
 			}
 			OnContentUrlReceived.Broadcast(Result, Url);
 		}));

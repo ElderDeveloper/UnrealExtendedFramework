@@ -3,14 +3,18 @@
 #include "UnrealExtendedFrameworkEditor.h"
 
 #if WITH_EDITOR
+#include "Framework/Application/SlateApplication.h"
+#include "HAL/FileManager.h"
 #include "K2Node_DynamicCast.h"
 #include "SGraphNode.h"
 #include "SourceCodeNavigation.h"
+#include "Subsystems/AssetEditorSubsystem.h"
 #include "UnrealEdGlobals.h"
 #include "Editor/UnrealEdEngine.h"
 #include "KismetNodes/SGraphNodeK2Base.h"
 #include "Preferences/UnrealEdOptions.h"
 #include "Localization/EELocalizationWorkbenchFeature.h"
+#include "LogViewer/EELogViewerFeature.h"
 #include "UILab/EEUILabFeature.h"
 #include "WorkspaceMenuStructure.h"
 #include "WorkspaceMenuStructureModule.h"
@@ -120,6 +124,9 @@ void FUnrealExtendedFrameworkEditorModule::RegisterEditorFeatures()
 
     LocalizationWorkbenchFeature = MakeUnique<FEELocalizationWorkbenchFeature>();
     LocalizationWorkbenchFeature->Register(ExtendedFrameworkGroup);
+
+    LogViewerFeature = MakeUnique<FEELogViewerFeature>();
+    LogViewerFeature->Register(ExtendedFrameworkGroup);
 }
 
 
@@ -135,6 +142,12 @@ void FUnrealExtendedFrameworkEditorModule::UnregisterEditorFeatures()
     {
         LocalizationWorkbenchFeature->Unregister();
         LocalizationWorkbenchFeature.Reset();
+    }
+
+    if (LogViewerFeature)
+    {
+        LogViewerFeature->Unregister();
+        LogViewerFeature.Reset();
     }
 }
 #endif // WITH_EDITOR

@@ -4,6 +4,8 @@
 
 #include "CoreMinimal.h"
 #include "Framework/Application/IInputProcessor.h"
+#include "Framework/Commands/UICommandList.h"
+#include "InputCoreTypes.h"
 #include "Modules/ModuleManager.h"
 
 
@@ -30,6 +32,7 @@ private:
 #if WITH_EDITOR
 class FEEUILabFeature;
 class FEELocalizationWorkbenchFeature;
+class FEELogViewerFeature;
 #endif
 
 class FUnrealExtendedFrameworkEditorModule : public IModuleInterface
@@ -46,11 +49,12 @@ public:
 
 private:
 #if WITH_EDITOR
-	/** Registers the Extended Framework editor feature tabs (UI Lab, Localization Workbench). */
+	/** Registers the Extended Framework editor feature tabs (UI Lab, Localization Workbench, Extended Log). */
 	void RegisterEditorFeatures();
 	void UnregisterEditorFeatures();
 
 	TUniquePtr<FEEUILabFeature> UILabFeature;
 	TUniquePtr<FEELocalizationWorkbenchFeature> LocalizationWorkbenchFeature;
+	TUniquePtr<FEELogViewerFeature> LogViewerFeature;
 #endif
 };

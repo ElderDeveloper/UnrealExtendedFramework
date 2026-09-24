@@ -83,7 +83,7 @@ void UEPFIdLookupSubsystem::SendIdLookupRequest(const FString& Endpoint, const F
 						}
 					}
 				}
-				UE_LOG(LogExtendedPlayFab, Log, TEXT("EPFIdLookup — %d mappings found"), Mappings.Num());
+				EF_LOG(ExtendedPlayFab, Log, TEXT("EPFIdLookup — %d mappings found"), Mappings.Num());
 			}
 			OnIdLookupComplete.Broadcast(Result, Mappings);
 		}));

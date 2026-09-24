@@ -18,7 +18,7 @@ void UEPFReportingSubsystem::ReportPlayer(const FString& ReporteePlayFabId, cons
 	SendPlayFabRequestDetailed(TEXT("/Client/ReportPlayer"), Body, true,
 		FOnPlayFabResponseDetailed::CreateLambda([this, ReporteePlayFabId](const FEPFResult& Result, TSharedPtr<FJsonObject>)
 		{
-			if (Result.bSuccess) UE_LOG(LogExtendedPlayFab, Log, TEXT("EPFReporting — Player reported: %s"), *ReporteePlayFabId);
+			if (Result.bSuccess) EF_LOG(ExtendedPlayFab, Log, TEXT("EPFReporting — Player reported: %s"), *ReporteePlayFabId);
 			OnPlayerReported.Broadcast(Result);
 		}));
 }

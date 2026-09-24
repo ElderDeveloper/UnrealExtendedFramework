@@ -46,13 +46,13 @@ void UEPFCurrencySubsystem::AddCurrency(const FString& CurrencyCode, int32 Amoun
 {
 	if (CurrencyCode.IsEmpty())
 	{
-		UE_LOG(LogExtendedPlayFab, Warning, TEXT("EPFCurrencySubsystem::AddCurrency — CurrencyCode cannot be empty"));
+		EF_LOG(ExtendedPlayFab, Warning, TEXT("EPFCurrencySubsystem::AddCurrency — CurrencyCode cannot be empty"));
 		OnCurrencyModified.Broadcast(FEPFResult::Failure(TEXT("CurrencyCode cannot be empty")), CurrencyCode);
 		return;
 	}
 	if (Amount <= 0)
 	{
-		UE_LOG(LogExtendedPlayFab, Warning, TEXT("EPFCurrencySubsystem::AddCurrency — Amount must be positive, got %d"), Amount);
+		EF_LOG(ExtendedPlayFab, Warning, TEXT("EPFCurrencySubsystem::AddCurrency — Amount must be positive, got %d"), Amount);
 		OnCurrencyModified.Broadcast(FEPFResult::Failure(TEXT("Amount must be positive")), CurrencyCode);
 		return;
 	}
@@ -80,7 +80,7 @@ void UEPFCurrencySubsystem::AddCurrency(const FString& CurrencyCode, int32 Amoun
 			{
 				const int32 NewBalance = FMath::Max(GetCachedBalance(CurrencyCode), 0) + Amount;
 				CachedBalances.Add(CurrencyCode, NewBalance);
-				UE_LOG(LogExtendedPlayFab, Log, TEXT("EPFCurrencySubsystem — Added %s, new balance: %d"), *CurrencyCode, NewBalance);
+				EF_LOG(ExtendedPlayFab, Log, TEXT("EPFCurrencySubsystem — Added %s, new balance: %d"), *CurrencyCode, NewBalance);
 			}
 			OnCurrencyModified.Broadcast(Result, CurrencyCode);
 		})
@@ -91,13 +91,13 @@ void UEPFCurrencySubsystem::SubtractCurrency(const FString& CurrencyCode, int32 
 {
 	if (CurrencyCode.IsEmpty())
 	{
-		UE_LOG(LogExtendedPlayFab, Warning, TEXT("EPFCurrencySubsystem::SubtractCurrency — CurrencyCode cannot be empty"));
+		EF_LOG(ExtendedPlayFab, Warning, TEXT("EPFCurrencySubsystem::SubtractCurrency — CurrencyCode cannot be empty"));
 		OnCurrencyModified.Broadcast(FEPFResult::Failure(TEXT("CurrencyCode cannot be empty")), CurrencyCode);
 		return;
 	}
 	if (Amount <= 0)
 	{
-		UE_LOG(LogExtendedPlayFab, Warning, TEXT("EPFCurrencySubsystem::SubtractCurrency — Amount must be positive, got %d"), Amount);
+		EF_LOG(ExtendedPlayFab, Warning, TEXT("EPFCurrencySubsystem::SubtractCurrency — Amount must be positive, got %d"), Amount);
 		OnCurrencyModified.Broadcast(FEPFResult::Failure(TEXT("Amount must be positive")), CurrencyCode);
 		return;
 	}
@@ -126,7 +126,7 @@ void UEPFCurrencySubsystem::SubtractCurrency(const FString& CurrencyCode, int32 
 			{
 				const int32 NewBalance = FMath::Max(FMath::Max(GetCachedBalance(CurrencyCode), 0) - Amount, 0);
 				CachedBalances.Add(CurrencyCode, NewBalance);
-				UE_LOG(LogExtendedPlayFab, Log, TEXT("EPFCurrencySubsystem — Subtracted %s, new balance: %d"), *CurrencyCode, NewBalance);
+				EF_LOG(ExtendedPlayFab, Log, TEXT("EPFCurrencySubsystem — Subtracted %s, new balance: %d"), *CurrencyCode, NewBalance);
 			}
 			OnCurrencyModified.Broadcast(Result, CurrencyCode);
 		})
@@ -184,14 +184,14 @@ void UEPFCurrencySubsystem::ParseCurrencyResponse(const FEPFResult& Result, TSha
 				}
 			}
 		}
-		UE_LOG(LogExtendedPlayFab, Log, TEXT("EPFCurrencySubsystem — Fetched %d currency balances"), CachedBalances.Num());
+		EF_LOG(ExtendedPlayFab, Log, TEXT("EPFCurrencySubsystem — Fetched %d currency balances"), CachedBalances.Num());
 
 		TArray<FEPFCurrencyBalance> Balances = GetAllCachedBalances();
 		OnBalancesReceived.Broadcast(Result, Balances);
 	}
 	else
 	{
-		UE_LOG(LogExtendedPlayFab, Warning, TEXT("EPFCurrencySubsystem — Failed to fetch balances"));
+		EF_LOG(ExtendedPlayFab, Warning, TEXT("EPFCurrencySubsystem — Failed to fetch balances"));
 		TArray<FEPFCurrencyBalance> Empty;
 		OnBalancesReceived.Broadcast(Result, Empty);
 	}

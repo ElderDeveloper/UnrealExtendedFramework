@@ -47,7 +47,7 @@ void UEPFSegmentsSubsystem::GetPlayerSegments()
 						}
 					}
 				}
-				UE_LOG(LogExtendedPlayFab, Log, TEXT("EPFSegments — Found %d segments"), CachedSegments.Num());
+				EF_LOG(ExtendedPlayFab, Log, TEXT("EPFSegments — Found %d segments"), CachedSegments.Num());
 			}
 			OnSegmentsReceived.Broadcast(Result, CachedSegments);
 		})
@@ -87,7 +87,7 @@ void UEPFSegmentsSubsystem::GetPlayerTags(const FString& Namespace)
 						}
 					}
 				}
-				UE_LOG(LogExtendedPlayFab, Log, TEXT("EPFSegments — Found %d tags"), CachedTags.Num());
+				EF_LOG(ExtendedPlayFab, Log, TEXT("EPFSegments — Found %d tags"), CachedTags.Num());
 			}
 			OnPlayerTagsReceived.Broadcast(Result, CachedTags);
 		})

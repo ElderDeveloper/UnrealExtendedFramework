@@ -49,12 +49,12 @@ void UEPFTitleDataSubsystem::GetTitleData(const TArray<FString>& Keys)
 						}
 					}
 				}
-				UE_LOG(LogExtendedPlayFab, Log, TEXT("EPFTitleDataSubsystem — Received %d keys"), CachedData.Num());
+				EF_LOG(ExtendedPlayFab, Log, TEXT("EPFTitleDataSubsystem — Received %d keys"), CachedData.Num());
 				OnTitleDataReceived.Broadcast(Result);
 			}
 			else
 			{
-				UE_LOG(LogExtendedPlayFab, Warning, TEXT("EPFTitleDataSubsystem — Failed to fetch title data"));
+				EF_LOG(ExtendedPlayFab, Warning, TEXT("EPFTitleDataSubsystem — Failed to fetch title data"));
 				OnTitleDataReceived.Broadcast(Result);
 			}
 		})
@@ -71,7 +71,7 @@ void UEPFTitleDataSubsystem::GetTitleInternalData(const TArray<FString>& Keys)
 	// ⚠ /Client/GetTitleInternalData does NOT exist in the PlayFab Client API.
 	// Internal data is server-only (/Server/GetTitleInternalData requires a developer secret key).
 	// To read internal title data from a client, route the call through a CloudScript function.
-	UE_LOG(LogExtendedPlayFab, Error, TEXT(
+	EF_LOG(ExtendedPlayFab, Error, TEXT(
 		"UEPFTitleDataSubsystem::GetTitleInternalData — This endpoint is not accessible from the "
 		"client API. Use a CloudScript (Azure Function) to read internal title data and return it "
 		"to the client instead."));

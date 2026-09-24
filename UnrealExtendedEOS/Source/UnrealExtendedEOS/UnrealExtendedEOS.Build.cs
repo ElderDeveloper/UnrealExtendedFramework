@@ -32,6 +32,7 @@ public class UnrealExtendedEOS : ModuleRules
 				"Core",
 				"Engine",
 				"InputCore",
+				"EnhancedInput",
 				"OnlineSubsystem",
 				"OnlineSubsystemUtils",
 				"DeveloperSettings",
@@ -59,7 +60,11 @@ public class UnrealExtendedEOS : ModuleRules
 				"Sockets",
 				"OnlineSubsystemEOS",
 				"VoiceChat",
-				"UnrealExtendedFramework"
+				"UnrealExtendedFramework",
+				// The voice component's local capture test (Unreal's own microphone stream).
+				"AudioCapture",
+				"AudioCaptureCore",
+				"AudioMixer"
 			}
 			);
 		

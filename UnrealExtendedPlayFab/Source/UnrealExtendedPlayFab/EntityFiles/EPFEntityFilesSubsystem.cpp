@@ -57,7 +57,7 @@ void UEPFEntityFilesSubsystem::GetObjects(const FString& EntityId, const FString
 						}
 					}
 				}
-				UE_LOG(LogExtendedPlayFab, Log, TEXT("EPFEntityFiles — %d objects received"), CachedObjects.Num());
+				EF_LOG(ExtendedPlayFab, Log, TEXT("EPFEntityFiles — %d objects received"), CachedObjects.Num());
 			}
 			OnObjectsReceived.Broadcast(Result, CachedObjects);
 		}));
@@ -100,7 +100,7 @@ void UEPFEntityFilesSubsystem::SetObjects(const FString& EntityId, const TMap<FS
 	SendPlayFabRequestDetailed(TEXT("/Object/SetObjects"), Body, EEPFAuthMode::EntityToken,
 		FOnPlayFabResponseDetailed::CreateLambda([this](const FEPFResult& Result, TSharedPtr<FJsonObject>)
 		{
-			if (Result.bSuccess) UE_LOG(LogExtendedPlayFab, Log, TEXT("EPFEntityFiles — Objects updated"));
+			if (Result.bSuccess) EF_LOG(ExtendedPlayFab, Log, TEXT("EPFEntityFiles — Objects updated"));
 			OnObjectsUpdated.Broadcast(Result);
 		}));
 }

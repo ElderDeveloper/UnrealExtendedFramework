@@ -24,7 +24,9 @@ public class UnrealExtendedPlayFab : ModuleRules
 				"HTTP",
 				"Json",
 				"JsonUtilities",
-				"DeveloperSettings"
+				"DeveloperSettings",
+				// Public: UnrealExtendedPlayFab.h includes EFLog.h, so anything including it needs the path.
+				"UnrealExtendedFrameworkLog"
 			}
 			);
 

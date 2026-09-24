@@ -72,6 +72,12 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "EOS|Lobbies")
 	bool JoinLobby(int32 SearchResultIndex);
 
+	/**
+	 * Join a lobby from an invite or other result that is not in the last search list.
+	 * Same completion contract as JoinLobby: OnLobbyJoined fires once unless an join is already in flight.
+	 */
+	bool JoinLobbyResult(const FOnlineSessionSearchResult& SearchResult);
+
 	/** Leave the current lobby (any member). Completion: OnLobbyDestroyed (exactly once).
 	 *  @return false if rejected (a lobby create/destroy is already in flight — no delegate
 	 *  will fire) or failed pre-flight (not in a lobby / EOS unavailable / interface missing —

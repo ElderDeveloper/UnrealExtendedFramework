@@ -96,7 +96,7 @@ void UEPFTradingSubsystem::OpenTrade(const TArray<FString>& OfferedItemInstanceI
 					TradeId = Trade.TradeId;
 					CachedTrades.Add(Trade);
 				}
-				UE_LOG(LogExtendedPlayFab, Log, TEXT("EPFTrading — Trade opened: %s"), *TradeId);
+				EF_LOG(ExtendedPlayFab, Log, TEXT("EPFTrading — Trade opened: %s"), *TradeId);
 			}
 			OnTradeOpened.Broadcast(Result, TradeId);
 		}));
@@ -131,7 +131,7 @@ void UEPFTradingSubsystem::AcceptTrade(const FString& TradeId, const FString& Of
 				{
 					Trade = ParseTradeJson(*TradeObj);
 				}
-				UE_LOG(LogExtendedPlayFab, Log, TEXT("EPFTrading — Trade accepted: %s"), *Trade.TradeId);
+				EF_LOG(ExtendedPlayFab, Log, TEXT("EPFTrading — Trade accepted: %s"), *Trade.TradeId);
 			}
 			OnTradeAccepted.Broadcast(Result, Trade);
 		}));
@@ -153,7 +153,7 @@ void UEPFTradingSubsystem::CancelTrade(const FString& TradeId)
 			if (Result.bSuccess)
 			{
 				CachedTrades.RemoveAll([&](const FEPFTradeInfo& T) { return T.TradeId == TradeId; });
-				UE_LOG(LogExtendedPlayFab, Log, TEXT("EPFTrading — Trade canceled: %s"), *TradeId);
+				EF_LOG(ExtendedPlayFab, Log, TEXT("EPFTrading — Trade canceled: %s"), *TradeId);
 			}
 			OnTradeCanceled.Broadcast(Result);
 		}));
@@ -195,7 +195,7 @@ void UEPFTradingSubsystem::GetPlayerTrades()
 					}
 				}
 
-				UE_LOG(LogExtendedPlayFab, Log, TEXT("EPFTrading — %d active trades"), CachedTrades.Num());
+				EF_LOG(ExtendedPlayFab, Log, TEXT("EPFTrading — %d active trades"), CachedTrades.Num());
 			}
 			OnTradesReceived.Broadcast(Result, CachedTrades);
 		}));

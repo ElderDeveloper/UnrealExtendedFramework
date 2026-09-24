@@ -121,7 +121,7 @@ void UEPFPlayerProfileSubsystem::GetPlayerProfile(const FString& PlayFabId)
 					}
 				}
 				CachedProfile = Profile;
-				UE_LOG(LogExtendedPlayFab, Log, TEXT("EPFPlayerProfile — Profile received for %s"), *Profile.PlayFabId);
+				EF_LOG(ExtendedPlayFab, Log, TEXT("EPFPlayerProfile — Profile received for %s"), *Profile.PlayFabId);
 			}
 			OnProfileReceived.Broadcast(Result, Profile);
 		})
@@ -243,7 +243,7 @@ void UEPFPlayerProfileSubsystem::GetPlayerCombinedInfo(bool bGetStats, bool bGet
 					}
 				}
 				CachedProfile = Profile;
-				UE_LOG(LogExtendedPlayFab, Log, TEXT("EPFPlayerProfile — Combined info: %d stats, %d data keys"),
+				EF_LOG(ExtendedPlayFab, Log, TEXT("EPFPlayerProfile — Combined info: %d stats, %d data keys"),
 					Profile.Statistics.Num(), Profile.PlayerData.Num());
 			}
 			OnCombinedInfoReceived.Broadcast(Result, Profile);
@@ -325,7 +325,7 @@ void UEPFPlayerProfileSubsystem::GetAccountInfo(const FString& PlayFabId)
 					const TSharedPtr<FJsonObject>* AppleInfo = nullptr;
 					if ((*AccInfo)->TryGetObjectField(TEXT("AppleAccountInfo"), AppleInfo)) Info.LinkedAccounts.Add(TEXT("Apple"));
 
-					UE_LOG(LogExtendedPlayFab, Log, TEXT("EPFPlayerProfile — AccountInfo: %s (%d linked)"), *Info.PlayFabId, Info.LinkedAccounts.Num());
+					EF_LOG(ExtendedPlayFab, Log, TEXT("EPFPlayerProfile — AccountInfo: %s (%d linked)"), *Info.PlayFabId, Info.LinkedAccounts.Num());
 				}
 			}
 			OnAccountInfoReceived.Broadcast(Result, Info);

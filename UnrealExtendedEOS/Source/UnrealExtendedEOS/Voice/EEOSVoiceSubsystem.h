@@ -10,6 +10,8 @@
 #include "EEOSVoiceSubsystem.generated.h"
 
 class IVoiceChatUser;
+class IEOSPlatformHandle;
+struct FEEOSVoiceCaptureState;
 class FUniqueNetId;
 struct FVoiceChatResult;
 
@@ -19,21 +21,22 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnEOSVoiceRoomJoinFailed, const FS
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnEOSPlayerTalking, const FString&, UserId, bool, bIsTalking);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnEOSVoicePlayerJoinedRoom, const FString&, RoomName, const FString&, UserId);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnEOSVoicePlayerLeftRoom, const FString&, RoomName, const FString&, UserId);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnEOSVoiceAudioDevicesChanged);
 
 /**
- * Manages EOS voice chat rooms, per-player audio, transmit modes, and device management.
- *
- * DESIGN: voice rides lobby-managed RTC rooms. Lobbies created with CreateLobby(bUseVoiceChat=true)
- * set bUseLobbiesVoiceChatIfAvailable; the engine's EOS Online Subsystem then joins/leaves the
- * lobby's RTC room automatically as lobby membership changes. There is no RTCAdmin token backend,
- * so JoinVoiceRoom cannot create rooms — it only confirms membership of a room the lobby already
- * placed us in. Actual room entry/exit is driven by JoinLobby/LeaveLobby/DestroyLobby.
- *
- * The local voice user is resolved through IOnlineSubsystemEOS::GetVoiceChatUserInterface(), which
- * creates and logs the user in with the local Product User Id once EOS identity login has completed.
- * A standalone IVoiceChat fallback exists but cannot see lobby RTC rooms (it runs its own EOS
- * platform instance) — it is best-effort only.
- */
+	* Manages EOS voice chat rooms, per-player audio, transmit modes, and device management.
+	*
+	* DESIGN: voice rides lobby-managed RTC rooms. Lobbies created with CreateLobby(bUseVoiceChat=true)
+	* set bUseLobbiesVoiceChatIfAvailable; the engine's EOS Online Subsystem then joins/leaves the
+	* lobby's RTC room automatically as lobby membership changes. There is no RTCAdmin token backend,
+	* so custom JoinVoiceRoom calls must receive credentials from the caller's trusted server.
+	* Lobby room entry/exit is driven by JoinLobby/LeaveLobby/DestroyLobby.
+	*
+	* The local voice user is resolved through IOnlineSubsystemEOS::GetVoiceChatUserInterface(), which
+	* creates and logs the user in with the local Product User Id once EOS identity login has completed.
+	* A standalone IVoiceChat fallback exists but cannot see lobby RTC rooms (it runs its own EOS
+	* platform instance) — it is best-effort only.
+	*/
 UCLASS()
 class UNREALEXTENDEDEOS_API UEEOSVoiceSubsystem : public UEEOSSubsystem
 {
@@ -46,27 +49,11 @@ public:
 
 	// ── Room Management ──────────────────────────────────────────────────────
 
-	/**
-	 * Confirm membership of a lobby-managed voice room.
-	 * If the room is already an active channel on the voice user (the lobby auto-joined it),
-	 * broadcasts OnVoiceRoomJoined synchronously. Otherwise broadcasts OnVoiceRoomJoinFailed:
-	 * rooms come from lobby membership (CreateLobby with bUseVoiceChat), not from manual joins.
-	 * @return true if the room was confirmed (OnVoiceRoomJoined broadcast). False when rejected
-	 * or unconfirmed: voice disabled in settings (log only), or no voice user / room not an
-	 * active channel (OnVoiceRoomJoinFailed broadcast — a dedicated failure delegate, so
-	 * legitimate OnVoiceRoomJoined waiters never receive a foreign failure).
-	 */
+	/** Confirms an active channel, or joins a custom channel with trusted-server credentials.
+		* True means accepted, not completed. Observe OnVoiceRoomJoined/OnVoiceRoomJoinFailed. */
 	UFUNCTION(BlueprintCallable, Category = "EOS|Voice")
-	bool JoinVoiceRoom(const FString& RoomName);
-
-	/**
-	 * Leave a specific voice channel by name. NOTE: lobby-managed RTC rooms cannot be left this
-	 * way — the engine rejects LeaveChannel for lobby rooms (NotPermitted); leave the lobby
-	 * instead. OnVoiceRoomLeft broadcasts from the channel-exited event, never optimistically.
-	 * @return true if a leave was started (completion arrives via OnVoiceRoomLeft) or a stale
-	 * mirror entry was cleared synchronously. False when rejected: not in the room (log only,
-	 * nothing broadcast).
-	 */
+	bool JoinVoiceRoom(const FString& RoomName, const FString& ChannelCredentials = TEXT(""));
+	/** Leaves a custom channel joined by this subsystem. Lobby-owned channels reject this request. */
 	UFUNCTION(BlueprintCallable, Category = "EOS|Voice")
 	bool LeaveVoiceRoom(const FString& RoomName);
 
@@ -85,9 +72,20 @@ public:
 	void UnmutePlayer(const FString& UserId);
 
 	/** Set the volume for a specific player (0.0 to 2.0). Manual calls may be overridden by
-	 *  component proximity aggregation — see SetPlayerVolumeContribution. */
+	 *  component proximity aggregation — see SetPlayerVolumeContribution. For a per-player
+	 *  slider use SetPlayerVolumeScale, which proximity does not overwrite. */
 	UFUNCTION(BlueprintCallable, Category = "EOS|Voice")
 	void SetPlayerVolume(const FString& UserId, float Volume);
+
+	/**
+	 * Local listener gain for one player (0.0 to 2.0), multiplied into the proximity aggregate
+	 * (or into full volume when no component contributes). 1.0 removes the scale.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "EOS|Voice")
+	void SetPlayerVolumeScale(const FString& UserId, float Scale);
+
+	UFUNCTION(BlueprintPure, Category = "EOS|Voice")
+	float GetPlayerVolumeScale(const FString& UserId) const;
 
 	/** Get the volume for a specific player */
 	UFUNCTION(BlueprintPure, Category = "EOS|Voice")
@@ -107,7 +105,7 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "EOS|Voice")
 	void SetOutputVolume(float Volume);
 
-	/** Set the input (microphone) volume */
+	/** Set the input (microphone) volume: 0 silent, 1 unchanged, 2 the most EOS boosts (the engine's own range). */
 	UFUNCTION(BlueprintCallable, Category = "EOS|Voice")
 	void SetInputVolume(float Volume);
 
@@ -120,9 +118,11 @@ public:
 	void SetLocalMuted(bool bMuted);
 
 	// ── Transmit Modes ───────────────────────────────────────────────────────
-	// NOTE: while any voice chat components are registered, the subsystem composes the transmit
-	// set from the components' rooms (TransmitToSpecificChannels). Manual calls below apply
-	// immediately but are overwritten on the next component recompute.
+	// NOTE: nothing is transmitted until something asks. A voice user starts with an empty transmit
+	// set (the engine's own default of every channel never applies). While any voice chat components
+	// are registered, the subsystem composes the transmit set from the components' rooms
+	// (TransmitToSpecificChannels). Manual calls below apply immediately but are overwritten on the
+	// next component recompute.
 
 	/** Transmit voice to all joined rooms */
 	UFUNCTION(BlueprintCallable, Category = "EOS|Voice")
@@ -180,6 +180,10 @@ public:
 	UFUNCTION(BlueprintPure, Category = "EOS|Voice")
 	bool IsLocalMuted() const;
 
+	/** Product User Id the local voice user is logged in as. Empty until the voice user has logged in. */
+	UFUNCTION(BlueprintPure, Category = "EOS|Voice")
+	FString GetLocalVoicePlayerName() const;
+
 	/** Get all players in a specific voice room */
 	UFUNCTION(BlueprintCallable, Category = "EOS|Voice")
 	TArray<FString> GetPlayersInRoom(const FString& RoomName) const;
@@ -190,6 +194,32 @@ public:
 
 	/** Get the cached IVoiceChatUser instance (may be null if voice is not available) */
 	IVoiceChatUser* GetCachedVoiceChatUser() const;
+
+	/**
+	 * True when the resolved user is the standalone IVoiceChat fallback.
+	 * That user cannot see lobby RTC rooms and must not be treated as a lobby connection.
+	 */
+	UFUNCTION(BlueprintPure, Category = "EOS|Voice")
+	bool IsUsingStandaloneVoiceUser() const;
+
+	/** True when the engine-owned OSS voice user is logged in. This is the lobby RTC user. */
+	UFUNCTION(BlueprintPure, Category = "EOS|Voice")
+	bool HasLobbyVoiceUser() const;
+
+	/**
+	 * Open-mic gate. While enabled, captured samples below the threshold are zeroed so silence
+	 * is not transmitted. The EOS SDK has no project-facing noise-gate setting; this is the
+	 * capture-path gate. bIsSpeaking from the send callback also holds the gate open.
+	 */
+	void SetLocalSpeechGate(bool bSilenceWhenInactive, float RmsThreshold, float ReleaseSeconds);
+	void RegisterCaptureState(const UObject* Source, const TSharedPtr<FEEOSVoiceCaptureState, ESPMode::ThreadSafe>& State);
+	void UnregisterCaptureState(const UObject* Source);
+
+	/** Zeros outgoing samples while still measuring the microphone. Test mode cannot leave audio transmitting. */
+	void SetMicrophoneTestMode(bool bEnabled);
+
+	bool IsLocalSpeechActive() const;
+	float GetLocalCaptureLevel() const;
 
 	// ── Component Aggregation (C++ API for UEEOSVoiceChatComponent) ──────────
 
@@ -235,6 +265,8 @@ public:
 	/** JoinVoiceRoom could not confirm the room (not a lobby-managed channel we are in). */
 	UPROPERTY(BlueprintAssignable, Category = "EOS|Voice")
 	FOnEOSVoiceRoomJoinFailed OnVoiceRoomJoinFailed;
+	UPROPERTY(BlueprintAssignable, Category = "EOS|Voice")
+	FOnEOSVoiceRoomJoinFailed OnVoiceRoomLeaveFailed;
 
 	UPROPERTY(BlueprintAssignable, Category = "EOS|Voice")
 	FOnEOSPlayerTalking OnPlayerTalking;
@@ -244,6 +276,14 @@ public:
 
 	UPROPERTY(BlueprintAssignable, Category = "EOS|Voice")
 	FOnEOSVoicePlayerLeftRoom OnPlayerLeftRoom;
+
+	/**
+	 * The backend's input/output device lists changed: a device was plugged or unplugged, the system
+	 * default moved, or EOS finished its first enumeration after login (the lists are empty before
+	 * that). Re-resolve saved device ids here instead of polling. Broadcast on the game thread.
+	 */
+	UPROPERTY(BlueprintAssignable, Category = "EOS|Voice")
+	FOnEOSVoiceAudioDevicesChanged OnAudioDevicesChanged;
 
 private:
 
@@ -277,6 +317,12 @@ private:
 	void HandlePlayerAdded(const FString& ChannelName, const FString& PlayerName);
 	void HandlePlayerRemoved(const FString& ChannelName, const FString& PlayerName);
 	void HandlePlayerTalkingUpdated(const FString& ChannelName, const FString& PlayerName, bool bIsTalking);
+	void HandleCapturedAudio(const FString& ChannelName, TArrayView<int16> PcmSamples, int SampleRate, int Channels);
+	void HandleAudioAboutToSend(const FString& ChannelName, TArrayView<const int16> PcmSamples, int SampleRate, int Channels, bool bIsSpeaking);
+	void HandleAvailableAudioDevicesChanged();
+
+	/** Mute state reaches EOS and the log only when it changes; callers may re-assert it freely. */
+	void SetPlayerMutedIfChanged(const FString& UserId, bool bMuted);
 
 	/** Apply configured defaults (volumes, start-muted) through the subsystem's own wrappers. */
 	void ApplyVoiceDefaults();
@@ -285,6 +331,21 @@ private:
 
 	/** Re-apply the transmit set: union of transmit-registered rooms that are actually joined. */
 	void RecomputeTransmitChannels();
+
+	/**
+	 * Re-send the current transmit mode, whatever it is, to every joined channel. The engine calls
+	 * EOS_RTCAudio_UpdateSending only when its transmit mode changes, so this steps through another
+	 * mode and back. Needed because the SDK turns sending on by itself when it joins a lobby's RTC
+	 * room, while the engine goes on believing sending is off and never corrects it.
+	 */
+	void ReapplyTransmitState();
+
+	/** A lobby RTC room finished connecting for LocalUserId (a Product User Id string). */
+	void HandleLobbyRTCRoomConnected(const FString& LocalUserId);
+
+	/** Watch the OSS platform for lobby RTC rooms connecting. OSS voice user only: a standalone user has no lobby rooms. */
+	void BindLobbyRTCNotification();
+	void UnbindLobbyRTCNotification();
 
 	/** Purge + re-apply the max-wins aggregate volume for one player (1.0 restore when none remain). */
 	void ApplyAggregatedVolumeForPlayer(const FString& UserId);
@@ -308,7 +369,16 @@ private:
 
 	/** Mirror of joined channels, updated from channel joined/exited events. */
 	TSet<FString> JoinedRooms;
+	TSet<FString> ManagedRooms;
+	TSet<FString> PendingJoins;
+	TSet<FString> PendingLeaves;
+	uint64 VoiceUserGeneration = 0;
+	bool bTearingDownVoiceUser = false;
+	TMap<FString, TSet<FString>> TalkingRoomsByPlayer;
+	FCriticalSection CaptureStatesMutex;
+	TMap<FObjectKey, TSharedPtr<FEEOSVoiceCaptureState, ESPMode::ThreadSafe>> CaptureStates;
 	bool bLocalMuted = false;
+	bool bLocalMuteApplied = false;
 	float CurrentInputVolume = 1.0f;
 
 	/** Cached voice chat user. OSS route: an engine-owned wrapper (never Login/Logout/Release it).
@@ -336,6 +406,24 @@ private:
 	FDelegateHandle PlayerAddedHandle;
 	FDelegateHandle PlayerRemovedHandle;
 	FDelegateHandle PlayerTalkingHandle;
+	FDelegateHandle CaptureReadHandle;
+	FDelegateHandle CaptureSentHandle;
+	FDelegateHandle AudioDevicesChangedHandle;
+
+	/** EOS_Lobby_AddNotifyRTCRoomConnectionChanged id, and the platform it lives on (a gone platform took it along). */
+	uint64 LobbyRTCConnectionNotifyId = 0;
+	TWeakPtr<IEOSPlatformHandle, ESPMode::ThreadSafe> LobbyRTCPlatform;
+	friend struct FEEOSVoiceLobbyRTCCallbacks;
+
+	friend class FDOPVoiceRuntimeRegressionTest;
+
+	bool bSilenceWhenInactive = false;
+	bool bMicrophoneTest = false;
+	float SpeechRmsThreshold = 0.02f;
+	float SpeechReleaseSeconds = 0.28f;
+	volatile bool bLocalSpeechActive = false;
+	volatile float LocalCaptureLevel = 0.0f;
+	volatile double SpeechHoldUntilSeconds = 0.0;
 
 	// Delegate handle on the identity interface (login status → resolve/teardown voice user)
 	FDelegateHandle IdentityStatusChangedHandle;
@@ -346,6 +434,8 @@ private:
 
 	// Per-source, per-player volume contributions (max-wins aggregation)
 	TMap<FObjectKey, TMap<FString, float>> VolumeContributions;
+	/** Listener gain per player, multiplied into the aggregate. Absent means 1.0. */
+	TMap<FString, float> PlayerVolumeScales;
 	/** Last volume actually pushed per player, so unchanged aggregates skip the SDK call. */
 	TMap<FString, float> AppliedPlayerVolumes;
 

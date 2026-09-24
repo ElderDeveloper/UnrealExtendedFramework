@@ -21,7 +21,7 @@ void UEPFPushSubsystem::RegisterForIOSPush(const FString& DeviceToken, bool bSen
 	SendPlayFabRequestDetailed(TEXT("/Client/RegisterForIOSPushNotification"), Body, true,
 		FOnPlayFabResponseDetailed::CreateLambda([this](const FEPFResult& Result, TSharedPtr<FJsonObject>)
 		{
-			if (Result.bSuccess) UE_LOG(LogExtendedPlayFab, Log, TEXT("EPFPush — iOS push registered"));
+			if (Result.bSuccess) EF_LOG(ExtendedPlayFab, Log, TEXT("EPFPush — iOS push registered"));
 			OnPushRegistered.Broadcast(Result);
 		}));
 }
@@ -40,7 +40,7 @@ void UEPFPushSubsystem::RegisterForAndroidPush(const FString& DeviceToken, bool 
 	SendPlayFabRequestDetailed(TEXT("/Client/AndroidDevicePushNotificationRegistration"), Body, true,
 		FOnPlayFabResponseDetailed::CreateLambda([this](const FEPFResult& Result, TSharedPtr<FJsonObject>)
 		{
-			if (Result.bSuccess) UE_LOG(LogExtendedPlayFab, Log, TEXT("EPFPush — Android push registered"));
+			if (Result.bSuccess) EF_LOG(ExtendedPlayFab, Log, TEXT("EPFPush — Android push registered"));
 			OnPushRegistered.Broadcast(Result);
 		}));
 }
@@ -60,7 +60,7 @@ void UEPFPushSubsystem::SendPushNotification(const FString& RecipientPlayFabId, 
 	SendPlayFabRequestDetailed(TEXT("/Client/SendPushNotification"), Body, true,
 		FOnPlayFabResponseDetailed::CreateLambda([this](const FEPFResult& Result, TSharedPtr<FJsonObject>)
 		{
-			if (Result.bSuccess) UE_LOG(LogExtendedPlayFab, Log, TEXT("EPFPush — Push notification sent"));
+			if (Result.bSuccess) EF_LOG(ExtendedPlayFab, Log, TEXT("EPFPush — Push notification sent"));
 			OnPushSent.Broadcast(Result);
 		}));
 }

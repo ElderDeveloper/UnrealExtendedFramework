@@ -44,7 +44,7 @@ bool FEPFSettingsDefaultsTest::RunTest(const FString& Parameters)
 	if (!TestNotNull(TEXT("Settings singleton should exist"), Settings)) return false;
 
 	TestTrue(TEXT("bCreateAccountOnFirstLogin should default to true"), Settings->bCreateAccountOnFirstLogin);
-	TestFalse(TEXT("bEnableVerboseLogging should default to false"), Settings->bEnableVerboseLogging);
+	TestTrue(TEXT("LoggedBodyMaxChars should never be negative"), Settings->LoggedBodyMaxChars >= 0);
 	TestTrue(TEXT("bIncludeSdkHeader should default to true"), Settings->bIncludeSdkHeader);
 
 	return true;

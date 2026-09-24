@@ -16,7 +16,7 @@ void UEPFAdvertisingSubsystem::AttributeInstall(const FString& AdvertisingIdType
 	SendPlayFabRequestDetailed(TEXT("/Client/AttributeInstall"), Body, true,
 		FOnPlayFabResponseDetailed::CreateLambda([this](const FEPFResult& Result, TSharedPtr<FJsonObject>)
 		{
-			if (Result.bSuccess) UE_LOG(LogExtendedPlayFab, Log, TEXT("EPFAdvertising — Install attributed"));
+			if (Result.bSuccess) EF_LOG(ExtendedPlayFab, Log, TEXT("EPFAdvertising — Install attributed"));
 			OnInstallAttributed.Broadcast(Result);
 		}));
 }
@@ -56,7 +56,7 @@ void UEPFAdvertisingSubsystem::GetAdPlacements(const FString& AppId, const FStri
 						}
 					}
 				}
-				UE_LOG(LogExtendedPlayFab, Log, TEXT("EPFAdvertising — %d ad placements"), Placements.Num());
+				EF_LOG(ExtendedPlayFab, Log, TEXT("EPFAdvertising — %d ad placements"), Placements.Num());
 			}
 			OnAdPlacementsReceived.Broadcast(Result, Placements);
 		}));
@@ -87,7 +87,7 @@ void UEPFAdvertisingSubsystem::RewardAdActivity(const FString& PlacementId, cons
 	SendPlayFabRequestDetailed(TEXT("/Client/RewardAdActivity"), Body, true,
 		FOnPlayFabResponseDetailed::CreateLambda([this](const FEPFResult& Result, TSharedPtr<FJsonObject>)
 		{
-			if (Result.bSuccess) UE_LOG(LogExtendedPlayFab, Log, TEXT("EPFAdvertising — Ad activity rewarded"));
+			if (Result.bSuccess) EF_LOG(ExtendedPlayFab, Log, TEXT("EPFAdvertising — Ad activity rewarded"));
 			OnAdActivityRewarded.Broadcast(Result);
 		}));
 }

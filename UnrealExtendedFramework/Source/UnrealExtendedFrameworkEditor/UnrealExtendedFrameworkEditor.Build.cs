@@ -65,7 +65,12 @@ public class UnrealExtendedFrameworkEditor : ModuleRules
 				"LocalizationCommandletExecution",
 				"LocalizationService",
 				"InternationalizationSettings",
-				"SourceControl"
+				"SourceControl",
+
+				// Extended Log window
+				"UnrealExtendedFrameworkLog",
+				"DirectoryWatcher",
+				"MainFrame"
 			});
 		}
 

@@ -1,6 +1,7 @@
 // Copyright Kemal Erdem YILMAZ. All Rights Reserved.
 
 #include "EPFSubsystem.h"
+#include "EPFLogFormatting.h"
 #include "EPFSettings.h"
 #include "UnrealExtendedPlayFab.h"
 #include "Auth/EPFAuthSubsystem.h"
@@ -125,7 +126,7 @@ bool UEPFSubsystem::IsConfigured() const
 
 void UEPFSubsystem::LogNotConfigured(const FString& FunctionName) const
 {
-	UE_LOG(LogExtendedPlayFab, Error, TEXT("EPFSubsystem::%s - PlayFab TitleId is not configured. Set it in Project Settings -> Extended Framework -> PlayFab."), *FunctionName);
+	EF_LOG(ExtendedPlayFab, Error, TEXT("EPFSubsystem::%s - PlayFab TitleId is not configured. Set it in Project Settings -> Extended Framework -> PlayFab."), *FunctionName);
 }
 
 void UEPFSubsystem::SetSharedAuthContext(const FEPFAuthContext& InAuthContext)
@@ -207,7 +208,7 @@ void UEPFSubsystem::SendPlayFabRequestDetailed(
 	if (bMissingSession || bMissingEntity || bMissingSecret)
 	{
 		const TCHAR* MissingAuthLabel = bMissingEntity ? TEXT("entity token") : (bMissingSecret ? TEXT("developer secret key") : TEXT("session ticket"));
-		UE_LOG(LogExtendedPlayFab, Warning, TEXT("EPFSubsystem::SendPlayFabRequest - Missing %s. Endpoint: %s"), MissingAuthLabel, *ApiPath);
+		EF_LOG(ExtendedPlayFab, Warning, TEXT("EPFSubsystem::SendPlayFabRequest - Missing %s. Endpoint: %s"), MissingAuthLabel, *ApiPath);
 		LastError = FEPFError::Failure(FString::Printf(TEXT("Missing %s"), MissingAuthLabel), TEXT("MissingAuthentication"));
 		if (OnComplete.IsBound())
 		{
@@ -224,7 +225,7 @@ void UEPFSubsystem::SendPlayFabRequestDetailed(
 
 	if (RequestsThisSecond >= MaxRequestsPerSecond)
 	{
-		UE_LOG(LogExtendedPlayFab, Verbose, TEXT("EPFSubsystem - Rate limited, queueing request: %s"), *ApiPath);
+		EF_LOG(ExtendedPlayFab, Verbose, TEXT("EPFSubsystem - Rate limited, queueing request: %s"), *ApiPath);
 		FPendingRequest Pending;
 		Pending.ApiPath = ApiPath;
 		Pending.RequestBodyString = RequestBodyString;
@@ -276,11 +277,10 @@ void UEPFSubsystem::ExecuteRequest(
 
 	HttpRequest->SetContentAsString(RequestBodyString);
 
-	if (Settings->bEnableVerboseLogging)
-	{
-		UE_LOG(LogExtendedPlayFab, Log, TEXT("PlayFab Request -> %s (attempt %d)"), *Url, RetryAttempt + 1);
-		UE_LOG(LogExtendedPlayFab, Log, TEXT("  Body: %s"), *RequestBodyString);
-	}
+	// One entry per call, body included, credentials redacted. Verbose, so it costs nothing (not even
+	// the redaction) until the category is raised.
+	EF_LOG(ExtendedPlayFab, Verbose, TEXT("PlayFab Request -> %s (attempt %d)\n%s"),
+		*Url, RetryAttempt + 1, *EPFLogFormatting::FormatBodyForLog(RequestBodyString, Settings->LoggedBodyMaxChars));
 
 	RequestsThisSecond++;
 	if (!RateLimitResetHandle.IsValid())
@@ -324,7 +324,7 @@ void UEPFSubsystem::HandleHttpResponse(
 		if (RetryAttempt < MaxRetries)
 		{
 			const float Delay = BaseRetryDelaySec * FMath::Pow(2.0f, static_cast<float>(RetryAttempt));
-			UE_LOG(LogExtendedPlayFab, Warning, TEXT("PlayFab Connection Failed - Retrying %s in %.1fs (attempt %d/%d)"), *ApiPath, Delay, RetryAttempt + 1, MaxRetries);
+			EF_LOG(ExtendedPlayFab, Warning, TEXT("PlayFab Connection Failed - Retrying %s in %.1fs (attempt %d/%d)"), *ApiPath, Delay, RetryAttempt + 1, MaxRetries);
 
 			if (UGameInstance* GI = GetGameInstance())
 			{
@@ -347,7 +347,7 @@ void UEPFSubsystem::HandleHttpResponse(
 
 		Error = FEPFError::Failure(TEXT("Unable to contact PlayFab"), TEXT("ConnectionFailure"), 503);
 		LastError = Error;
-		UE_LOG(LogExtendedPlayFab, Error, TEXT("PlayFab Request Failed - No response for %s after %d attempts"), *ApiPath, MaxRetries);
+		EF_LOG(ExtendedPlayFab, Error, TEXT("PlayFab Request Failed - No response for %s after %d attempts"), *ApiPath, MaxRetries);
 		if (OnComplete.IsBound())
 		{
 			OnComplete.Execute(FEPFResult::Failure(Error), nullptr);
@@ -360,17 +360,14 @@ void UEPFSubsystem::HandleHttpResponse(
 	const FString ResponseBody = Response->GetContentAsString();
 	const int32 ResponseCode = Response->GetResponseCode();
 
-	if (Settings->bEnableVerboseLogging)
-	{
-		UE_LOG(LogExtendedPlayFab, Log, TEXT("PlayFab Response <- %s [%d]"), *ApiPath, ResponseCode);
-		UE_LOG(LogExtendedPlayFab, Log, TEXT("  Body: %s"), *ResponseBody);
-	}
+	EF_LOG(ExtendedPlayFab, Verbose, TEXT("PlayFab Response <- %s [%d]\n%s"),
+		*ApiPath, ResponseCode, *EPFLogFormatting::FormatBodyForLog(ResponseBody, Settings->LoggedBodyMaxChars));
 
 	if ((ResponseCode >= 500 || ResponseCode == 429) && RetryAttempt < MaxRetries)
 	{
 		const float Delay = BaseRetryDelaySec * FMath::Pow(2.0f, static_cast<float>(RetryAttempt));
 		const TCHAR* Reason = ResponseCode == 429 ? TEXT("Rate Limited") : TEXT("Server Error");
-		UE_LOG(LogExtendedPlayFab, Warning, TEXT("PlayFab %s [%d] - Retrying %s in %.1fs (attempt %d/%d)"), Reason, ResponseCode, *ApiPath, Delay, RetryAttempt + 1, MaxRetries);
+		EF_LOG(ExtendedPlayFab, Warning, TEXT("PlayFab %s [%d] - Retrying %s in %.1fs (attempt %d/%d)"), Reason, ResponseCode, *ApiPath, Delay, RetryAttempt + 1, MaxRetries);
 
 		if (UGameInstance* GI = GetGameInstance())
 		{
@@ -398,7 +395,7 @@ void UEPFSubsystem::HandleHttpResponse(
 		Error = FEPFError::Failure(TEXT("Failed to parse PlayFab response JSON"), TEXT("InvalidJson"), ResponseCode);
 		Error.RawResponse = ResponseBody;
 		LastError = Error;
-		UE_LOG(LogExtendedPlayFab, Error, TEXT("PlayFab Response - Failed to parse JSON for %s"), *ApiPath);
+		EF_LOG(ExtendedPlayFab, Error, TEXT("PlayFab Response - Failed to parse JSON for %s"), *ApiPath);
 		if (OnComplete.IsBound())
 		{
 			OnComplete.Execute(FEPFResult::Failure(Error), nullptr);
@@ -454,7 +451,7 @@ void UEPFSubsystem::HandleHttpResponse(
 	Error.RawResponse = ResponseBody;
 	LastError = Error;
 
-	UE_LOG(LogExtendedPlayFab, Warning, TEXT("PlayFab Error [%s] %s - %s"), *ApiPath, *Error.ErrorCode, *Error.ErrorMessage);
+	EF_LOG(ExtendedPlayFab, Warning, TEXT("PlayFab Error [%s] %s - %s"), *ApiPath, *Error.ErrorCode, *Error.ErrorMessage);
 
 	if (TryReauthenticateAndReplay(ApiPath, RequestBodyString, AuthMode, OnComplete, RetryAttempt, PlayFabCode, ErrorCode, Error, JsonResponse))
 	{
@@ -530,7 +527,7 @@ bool UEPFSubsystem::TryReauthenticateAndReplay(
 	// rejects every token cannot bounce one request between re-auth and replay forever.
 	if (RetryAttempt >= MaxRetries)
 	{
-		UE_LOG(LogExtendedPlayFab, Warning, TEXT("PlayFab %s still rejected after re-authentication; giving up."), *ApiPath);
+		EF_LOG(ExtendedPlayFab, Warning, TEXT("PlayFab %s still rejected after re-authentication; giving up."), *ApiPath);
 		return false;
 	}
 
@@ -547,7 +544,7 @@ bool UEPFSubsystem::TryReauthenticateAndReplay(
 		return false;
 	}
 
-	UE_LOG(LogExtendedPlayFab, Log, TEXT("PlayFab session rejected on %s; re-authenticating and replaying."), *ApiPath);
+	EF_LOG(ExtendedPlayFab, Log, TEXT("PlayFab session rejected on %s; re-authenticating and replaying."), *ApiPath);
 
 	// The handle has to outlive this scope so the waiter can unregister itself from inside its
 	// own broadcast, which UE multicast delegates support.
@@ -594,7 +591,7 @@ void UEPFSubsystem::ProcessRequestQueue()
 		FPendingRequest Pending = MoveTemp(PendingRequestQueue[0]);
 		PendingRequestQueue.RemoveAt(0);
 
-		UE_LOG(LogExtendedPlayFab, Verbose, TEXT("EPFSubsystem - Processing queued request: %s"), *Pending.ApiPath);
+		EF_LOG(ExtendedPlayFab, Verbose, TEXT("EPFSubsystem - Processing queued request: %s"), *Pending.ApiPath);
 		ExecuteRequest(Pending.ApiPath, Pending.RequestBodyString, Pending.AuthMode, Pending.OnComplete, 0);
 	}
 }

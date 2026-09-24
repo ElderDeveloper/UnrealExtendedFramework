@@ -364,6 +364,55 @@ bool UEEOSLobbySubsystem::JoinLobby(int32 SearchResultIndex)
 	return true;
 }
 
+bool UEEOSLobbySubsystem::JoinLobbyResult(const FOnlineSessionSearchResult& SearchResult)
+{
+	if (JoinLobbyCompleteHandle.IsValid())
+	{
+		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSLobbySubsystem::JoinLobbyResult — A join-lobby operation is already in flight; rejecting new call (no delegate will fire)"));
+		return false;
+	}
+
+	if (!IsEOSAvailable())
+	{
+		LogEOSUnavailable(TEXT("JoinLobbyResult"));
+		OnLobbyJoined.Broadcast(false, TEXT(""));
+		return false;
+	}
+
+	if (!SearchResult.IsValid())
+	{
+		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSLobbySubsystem::JoinLobbyResult — Search result is invalid"));
+		OnLobbyJoined.Broadcast(false, TEXT(""));
+		return false;
+	}
+
+	IOnlineSubsystem* EOSSub = GetEOSOnlineSubsystem();
+	IOnlineSessionPtr SessionInterface = EOSSub->GetSessionInterface();
+	if (!SessionInterface.IsValid())
+	{
+		OnLobbyJoined.Broadcast(false, TEXT(""));
+		return false;
+	}
+
+	JoinLobbyCompleteHandle = SessionInterface->AddOnJoinSessionCompleteDelegate_Handle(
+		FOnJoinSessionCompleteDelegate::CreateUObject(this, &UEEOSLobbySubsystem::HandleJoinSessionComplete));
+
+	FOnlineSessionSearchResult SearchResultCopy = SearchResult;
+	SearchResultCopy.Session.SessionSettings.bUsesPresence = true;
+	SearchResultCopy.Session.SessionSettings.bUseLobbiesIfAvailable = true;
+
+	if (!SessionInterface->JoinSession(0, LOBBY_SESSION_NAME, SearchResultCopy))
+	{
+		SessionInterface->ClearOnJoinSessionCompleteDelegate_Handle(JoinLobbyCompleteHandle);
+		JoinLobbyCompleteHandle.Reset();
+		OnLobbyJoined.Broadcast(false, TEXT(""));
+		return false;
+	}
+
+	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSLobbySubsystem::JoinLobbyResult — Joining lobby from an external result"));
+	return true;
+}
+
 bool UEEOSLobbySubsystem::LeaveLobby()
 {
 	// In-flight rejections come first and never broadcast. Also covers CreateLobby's

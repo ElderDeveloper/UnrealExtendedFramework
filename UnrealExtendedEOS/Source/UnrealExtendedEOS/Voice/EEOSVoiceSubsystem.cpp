@@ -1,15 +1,45 @@
 // Copyright Kemal Erdem YILMAZ. All Rights Reserved.
 
 #include "EEOSVoiceSubsystem.h"
+#include "EEOSVoiceCaptureState.h"
 #include "Shared/EEOSSettings.h"
 #include "Shared/EEOSBlueprintLibrary.h"
 #include "OnlineSubsystem.h"
 #include "OnlineSubsystemNames.h"
 #include "Interfaces/OnlineIdentityInterface.h"
 #include "Interfaces/OnlineSessionInterface.h"
+#include "OnlineSessionSettings.h"
 #include "IOnlineSubsystemEOS.h"
 #include "VoiceChat.h"
+#include "Async/Async.h"
 #include "UnrealExtendedEOS.h"
+
+#if WITH_EOS_SDK
+#include "IEOSSDKManager.h"
+#include "eos_lobby.h"
+#include "eos_sdk.h"
+
+/** EOS calls back on the game thread, from the platform tick. */
+struct FEEOSVoiceLobbyRTCCallbacks
+{
+	static void EOS_CALL OnRoomConnectionChanged(const EOS_Lobby_RTCRoomConnectionChangedCallbackInfo* Data)
+	{
+		if (!Data || !Data->ClientData || Data->bIsConnected != EOS_TRUE)
+		{
+			return;
+		}
+
+		FString LocalUserId;
+		char Buffer[EOS_PRODUCTUSERID_MAX_LENGTH + 1] = {};
+		int32_t BufferLength = sizeof(Buffer);
+		if (Data->LocalUserId && EOS_ProductUserId_ToString(Data->LocalUserId, Buffer, &BufferLength) == EOS_EResult::EOS_Success)
+		{
+			LocalUserId = UTF8_TO_TCHAR(Buffer);
+		}
+		static_cast<UEEOSVoiceSubsystem*>(Data->ClientData)->HandleLobbyRTCRoomConnected(LocalUserId);
+	}
+};
+#endif
 
 namespace
 {
@@ -96,11 +126,13 @@ void UEEOSVoiceSubsystem::Deinitialize()
 	// (engine: NotPermitted, "lobby rooms can only be removed with RemoveLobbyRoom") and the
 	// standalone path's Logout leaves all channels internally.
 	TearDownVoiceUser();
+	{ FScopeLock Lock(&CaptureStatesMutex); CaptureStates.Empty(); }
 
 	JoinedRooms.Empty();
 	RoomRefCounts.Empty();
 	RoomTransmitRefCounts.Empty();
 	VolumeContributions.Empty();
+	PlayerVolumeScales.Empty();
 	AppliedPlayerVolumes.Empty();
 
 	Super::Deinitialize();
@@ -109,6 +141,122 @@ void UEEOSVoiceSubsystem::Deinitialize()
 IVoiceChatUser* UEEOSVoiceSubsystem::GetCachedVoiceChatUser() const
 {
 	return CachedVoiceChatUser;
+}
+
+bool UEEOSVoiceSubsystem::IsUsingStandaloneVoiceUser() const
+{
+	return bOwnsVoiceUser && CachedVoiceChatUser != nullptr;
+}
+
+bool UEEOSVoiceSubsystem::HasLobbyVoiceUser() const
+{
+	return CachedVoiceChatUser != nullptr && !bOwnsVoiceUser && bVoiceUserLoggedIn;
+}
+
+void UEEOSVoiceSubsystem::SetLocalSpeechGate(const bool bInSilenceWhenInactive, const float RmsThreshold, const float ReleaseSeconds)
+{
+	bSilenceWhenInactive = bInSilenceWhenInactive;
+	SpeechRmsThreshold = FMath::Clamp(RmsThreshold, 0.0f, 1.0f);
+	SpeechReleaseSeconds = FMath::Clamp(ReleaseSeconds, 0.05f, 2.0f);
+}
+
+void UEEOSVoiceSubsystem::SetMicrophoneTestMode(const bool bEnabled)
+{
+	if (bMicrophoneTest == bEnabled)
+	{
+		return;
+	}
+	bMicrophoneTest = bEnabled;
+	// Clear test activity only on a mode transition, never on each policy refresh.
+	bLocalSpeechActive = false;
+	SpeechHoldUntilSeconds = 0.0;
+}
+
+bool UEEOSVoiceSubsystem::IsLocalSpeechActive() const
+{
+	return bLocalSpeechActive;
+}
+
+float UEEOSVoiceSubsystem::GetLocalCaptureLevel() const
+{
+	return LocalCaptureLevel;
+}
+
+void UEEOSVoiceSubsystem::HandleCapturedAudio(const FString& ChannelName, TArrayView<int16> PcmSamples, int SampleRate, int Channels)
+{
+	double Sum = 0.0;
+	for (const int16 Sample : PcmSamples)
+	{
+		const double Normalized = static_cast<double>(Sample) / 32768.0;
+		Sum += Normalized * Normalized;
+	}
+
+	const float Rms = PcmSamples.Num() > 0 ? static_cast<float>(FMath::Sqrt(Sum / static_cast<double>(PcmSamples.Num()))) : 0.0f;
+	LocalCaptureLevel = Rms;
+
+	// Snapshot only shared capture state. No component UObject access on this audio thread.
+	TArray<TSharedPtr<FEEOSVoiceCaptureState, ESPMode::ThreadSafe>> States;
+	{
+		FScopeLock Lock(&CaptureStatesMutex);
+		CaptureStates.GenerateValueArray(States);
+	}
+	if (!States.IsEmpty())
+	{
+		bool bPass = false;
+		bool bTestCapture = false;
+		bool bAnySpeech = false;
+		const double CaptureTime = FPlatformTime::Seconds();
+		for (const auto& State : States)
+		{
+			{
+				FScopeLock Lock(&State->Mutex);
+				bTestCapture |= State->bTest;
+			}
+			bPass |= State->Process(ChannelName, Rms, CaptureTime);
+			bAnySpeech |= State->IsTalking();
+			// Before the gate below zeroes anything: a replay take keeps what the key captured.
+			State->Record(ChannelName, PcmSamples, SampleRate, Channels);
+		}
+		bLocalSpeechActive = bAnySpeech && !bTestCapture;
+		if (!bPass || bTestCapture)
+			for (int16& Sample : PcmSamples) Sample = 0;
+		return;
+	}
+
+	const double Now = FPlatformTime::Seconds();
+	if (Rms >= SpeechRmsThreshold)
+	{
+		SpeechHoldUntilSeconds = Now + static_cast<double>(SpeechReleaseSeconds);
+		bLocalSpeechActive = true;
+	}
+	else if (Now >= SpeechHoldUntilSeconds)
+	{
+		bLocalSpeechActive = false;
+	}
+
+	if (bMicrophoneTest || (bSilenceWhenInactive && !bLocalSpeechActive))
+	{
+		for (int16& Sample : PcmSamples)
+		{
+			Sample = 0;
+		}
+	}
+}
+
+void UEEOSVoiceSubsystem::HandleAudioAboutToSend(const FString& /*ChannelName*/, TArrayView<const int16> /*PcmSamples*/, int /*SampleRate*/, int /*Channels*/, const bool bIsSpeaking)
+{
+	{
+		FScopeLock Lock(&CaptureStatesMutex);
+		if (!CaptureStates.IsEmpty()) return;
+	}
+	if (!bIsSpeaking)
+	{
+		return;
+	}
+
+	const double Now = FPlatformTime::Seconds();
+	SpeechHoldUntilSeconds = Now + static_cast<double>(SpeechReleaseSeconds);
+	bLocalSpeechActive = true;
 }
 
 // ── Voice user resolution ────────────────────────────────────────────────────
@@ -315,6 +463,8 @@ void UEEOSVoiceSubsystem::BindVoiceUserDelegates()
 	PlayerAddedHandle   = CachedVoiceChatUser->OnVoiceChatPlayerAdded().AddUObject(this, &UEEOSVoiceSubsystem::HandlePlayerAdded);
 	PlayerRemovedHandle = CachedVoiceChatUser->OnVoiceChatPlayerRemoved().AddUObject(this, &UEEOSVoiceSubsystem::HandlePlayerRemoved);
 	PlayerTalkingHandle = CachedVoiceChatUser->OnVoiceChatPlayerTalkingUpdated().AddUObject(this, &UEEOSVoiceSubsystem::HandlePlayerTalkingUpdated);
+	AudioDevicesChangedHandle = CachedVoiceChatUser->OnVoiceChatAvailableAudioDevicesChanged().AddUObject(this, &UEEOSVoiceSubsystem::HandleAvailableAudioDevicesChanged);
+	BindLobbyRTCNotification();
 }
 
 void UEEOSVoiceSubsystem::UnbindVoiceUserDelegates()
@@ -331,6 +481,18 @@ void UEEOSVoiceSubsystem::UnbindVoiceUserDelegates()
 	CachedVoiceChatUser->OnVoiceChatPlayerAdded().Remove(PlayerAddedHandle);
 	CachedVoiceChatUser->OnVoiceChatPlayerRemoved().Remove(PlayerRemovedHandle);
 	CachedVoiceChatUser->OnVoiceChatPlayerTalkingUpdated().Remove(PlayerTalkingHandle);
+	CachedVoiceChatUser->OnVoiceChatAvailableAudioDevicesChanged().Remove(AudioDevicesChangedHandle);
+
+	if (CaptureReadHandle.IsValid())
+	{
+		CachedVoiceChatUser->UnregisterOnVoiceChatAfterCaptureAudioReadDelegate(CaptureReadHandle);
+		CaptureReadHandle.Reset();
+	}
+	if (CaptureSentHandle.IsValid())
+	{
+		CachedVoiceChatUser->UnregisterOnVoiceChatBeforeCaptureAudioSentDelegate(CaptureSentHandle);
+		CaptureSentHandle.Reset();
+	}
 
 	LoggedInHandle.Reset();
 	LoggedOutHandle.Reset();
@@ -339,10 +501,26 @@ void UEEOSVoiceSubsystem::UnbindVoiceUserDelegates()
 	PlayerAddedHandle.Reset();
 	PlayerRemovedHandle.Reset();
 	PlayerTalkingHandle.Reset();
+	AudioDevicesChangedHandle.Reset();
 }
 
 void UEEOSVoiceSubsystem::TearDownVoiceUser()
 {
+	// First and unconditionally: the notification holds this object as its client data, and the
+	// early return below (voice user already forgotten) must not leave it registered.
+	UnbindLobbyRTCNotification();
+
+	TGuardValue<bool> TeardownGuard(bTearingDownVoiceUser, true);
+	bLocalMuteApplied = false;
+	++VoiceUserGeneration;
+	const TSet<FString> JoinsToFail = MoveTemp(PendingJoins);
+	const TSet<FString> LeavesToFail = MoveTemp(PendingLeaves);
+	PendingJoins.Reset();
+	PendingLeaves.Reset();
+	ManagedRooms.Reset();
+	TalkingRoomsByPlayer.Reset();
+	for (const FString& Room : JoinsToFail) OnVoiceRoomJoinFailed.Broadcast(Room, TEXT("Voice user disconnected."));
+	for (const FString& Room : LeavesToFail) OnVoiceRoomLeaveFailed.Broadcast(Room, TEXT("Voice user disconnected."));
 	if (!CachedVoiceChatUser)
 	{
 		bVoiceUserLoggedIn = false;
@@ -451,15 +629,25 @@ void UEEOSVoiceSubsystem::HandleVoiceChatLoggedIn(const FString& PlayerName)
 		return;
 	}
 	bVoiceUserLoggedIn = true;
+	bLocalMuteApplied = false;
 
 	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSVoiceSubsystem: Voice chat user logged in as '%s'"), *PlayerName);
 	ApplyVoiceDefaults();
+
+	if (CachedVoiceChatUser && !CaptureReadHandle.IsValid())
+	{
+		CaptureReadHandle = CachedVoiceChatUser->RegisterOnVoiceChatAfterCaptureAudioReadDelegate(
+			FOnVoiceChatAfterCaptureAudioReadDelegate2::FDelegate::CreateUObject(this, &UEEOSVoiceSubsystem::HandleCapturedAudio));
+		CaptureSentHandle = CachedVoiceChatUser->RegisterOnVoiceChatBeforeCaptureAudioSentDelegate(
+			FOnVoiceChatBeforeCaptureAudioSentDelegate2::FDelegate::CreateUObject(this, &UEEOSVoiceSubsystem::HandleAudioAboutToSend));
+	}
 }
 
 void UEEOSVoiceSubsystem::HandleVoiceChatLoggedOut(const FString& PlayerName)
 {
 	bVoiceUserLoggedIn = false;
 	bDefaultsApplied = false;
+	bLocalMuteApplied = false;
 	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSVoiceSubsystem: Voice chat user '%s' logged out"), *PlayerName);
 }
 
@@ -477,6 +665,12 @@ void UEEOSVoiceSubsystem::HandleChannelJoined(const FString& ChannelName)
 void UEEOSVoiceSubsystem::HandleChannelExited(const FString& ChannelName, const FVoiceChatResult& Reason)
 {
 	JoinedRooms.Remove(ChannelName);
+	ManagedRooms.Remove(ChannelName);
+	PendingLeaves.Remove(ChannelName);
+	for (auto& Player : TalkingRoomsByPlayer)
+	{
+		if (Player.Value.Remove(ChannelName) && Player.Value.IsEmpty()) OnPlayerTalking.Broadcast(Player.Key, false);
+	}
 	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSVoiceSubsystem: Left voice room '%s'%s%s"), *ChannelName,
 		Reason.IsSuccess() ? TEXT("") : TEXT(" — "), Reason.IsSuccess() ? TEXT("") : *Reason.ErrorDesc);
 
@@ -492,14 +686,41 @@ void UEEOSVoiceSubsystem::HandlePlayerAdded(const FString& ChannelName, const FS
 
 void UEEOSVoiceSubsystem::HandlePlayerRemoved(const FString& ChannelName, const FString& PlayerName)
 {
+	if (TSet<FString>* Rooms = TalkingRoomsByPlayer.Find(PlayerName))
+	{
+		if (Rooms->Remove(ChannelName) && Rooms->IsEmpty()) OnPlayerTalking.Broadcast(PlayerName, false);
+	}
 	OnPlayerLeftRoom.Broadcast(ChannelName, PlayerName);
 }
 
 void UEEOSVoiceSubsystem::HandlePlayerTalkingUpdated(const FString& ChannelName, const FString& PlayerName, bool bIsTalking)
 {
-	// NOTE: the engine reports talking per channel; a player sharing multiple rooms with us
-	// fires once per room.
-	OnPlayerTalking.Broadcast(PlayerName, bIsTalking);
+	TSet<FString>& Rooms = TalkingRoomsByPlayer.FindOrAdd(PlayerName);
+	const bool bWasTalking = !Rooms.IsEmpty();
+	if (bIsTalking) Rooms.Add(ChannelName); else Rooms.Remove(ChannelName);
+	const bool bNowTalking = !Rooms.IsEmpty();
+	if (bNowTalking != bWasTalking || !bIsTalking) OnPlayerTalking.Broadcast(PlayerName, bNowTalking);
+}
+
+void UEEOSVoiceSubsystem::HandleAvailableAudioDevicesChanged()
+{
+	// EOS delivers this through its platform tick, which is the game thread today. Dynamic
+	// delegates must not broadcast from anywhere else, so hop over if that ever changes.
+	if (!IsInGameThread())
+	{
+		AsyncTask(ENamedThreads::GameThread, [WeakThis = TWeakObjectPtr<UEEOSVoiceSubsystem>(this)]()
+		{
+			if (UEEOSVoiceSubsystem* Self = WeakThis.Get())
+			{
+				Self->HandleAvailableAudioDevicesChanged();
+			}
+		});
+		return;
+	}
+
+	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSVoiceSubsystem: Audio devices changed (%d input, %d output)"),
+		GetInputDevices().Num(), GetOutputDevices().Num());
+	OnAudioDevicesChanged.Broadcast();
 }
 
 void UEEOSVoiceSubsystem::ApplyVoiceDefaults()
@@ -509,6 +730,19 @@ void UEEOSVoiceSubsystem::ApplyVoiceDefaults()
 		return;
 	}
 	bDefaultsApplied = true;
+
+	// IVoiceChatUser starts in TransmitMode::All, and nothing in the engine changes that when it joins
+	// a lobby RTC room. Left alone, every channel joined before a voice point registered would carry
+	// the raw microphone. Start closed: components open it through RecomputeTransmitChannels, and a
+	// game without components opens it with one of the TransmitTo* calls.
+	if (IsTransmitCompositionActive())
+	{
+		RecomputeTransmitChannels();
+	}
+	else
+	{
+		CachedVoiceChatUser->TransmitToNoChannels();
+	}
 
 	// Apply the configured voice defaults now that the user is live. Routed through the
 	// subsystem's own wrappers so their cached state (CurrentInputVolume, bLocalMuted) stays
@@ -523,81 +757,72 @@ void UEEOSVoiceSubsystem::ApplyVoiceDefaults()
 
 // ── Room Management ──────────────────────────────────────────────────────────
 
-bool UEEOSVoiceSubsystem::JoinVoiceRoom(const FString& RoomName)
+
+bool UEEOSVoiceSubsystem::JoinVoiceRoom(const FString& RoomName, const FString& ChannelCredentials)
 {
-	const UEEOSSettings* Settings = GetEOSSettings();
-	if (Settings && !Settings->bEnableVoiceChat)
+	auto Fail = [this, &RoomName](const FString& Error)
 	{
-		UE_LOG(LogExtendedEOS, Log, TEXT("EEOSVoiceSubsystem::JoinVoiceRoom — skipped, voice chat disabled in settings"));
-		return false;
-	}
-
-	if (!CachedVoiceChatUser)
-	{
-		// Late resolution attempt (the OSS/identity may have come up after Initialize).
-		ResolveVoiceUser();
-	}
-
-	if (!CachedVoiceChatUser)
-	{
-		const FString Error = TEXT("No voice chat user available — EOS identity is not logged in, or voice is unavailable at the engine level");
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSVoiceSubsystem::JoinVoiceRoom('%s') — %s"), *RoomName, *Error);
 		OnVoiceRoomJoinFailed.Broadcast(RoomName, Error);
 		return false;
-	}
-
+	};
+	if (bTearingDownVoiceUser) return Fail(TEXT("Voice user is disconnecting."));
+	const UEEOSSettings* Settings = GetEOSSettings();
+	if (RoomName.IsEmpty()) return Fail(TEXT("Room name is empty."));
+	if (Settings && !Settings->bEnableVoiceChat) return Fail(TEXT("Voice chat is disabled."));
+	if (!CachedVoiceChatUser) ResolveVoiceUser();
+	if (!CachedVoiceChatUser || !bVoiceUserLoggedIn) return Fail(TEXT("Voice user is not logged in."));
+	if (PendingLeaves.Contains(RoomName)) return Fail(TEXT("The room is still leaving."));
 	if (CachedVoiceChatUser->GetChannels().Contains(RoomName))
 	{
-		// The channel is live already (the lobby auto-joined its RTC room) — synchronous success.
 		JoinedRooms.Add(RoomName);
-		UE_LOG(LogExtendedEOS, Log, TEXT("EEOSVoiceSubsystem: Room '%s' confirmed (lobby-managed channel is active)"), *RoomName);
 		OnVoiceRoomJoined.Broadcast(RoomName);
 		return true;
 	}
-
-	// No token backend exists, so a manual JoinChannel can never succeed (the engine rejects
-	// empty channel credentials). Rooms come from lobby membership only.
-	const FString Error = FString::Printf(
-		TEXT("Voice room '%s' is not an active channel. Rooms are lobby-managed RTC rooms: create or join a lobby with bUseVoiceChat=true and the engine joins its RTC room automatically (see GetLobbyVoiceRoomName). Manual channel joins require RTC room tokens, which this module does not provision."),
-		*RoomName);
-	UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSVoiceSubsystem::JoinVoiceRoom — %s"), *Error);
-	OnVoiceRoomJoinFailed.Broadcast(RoomName, Error);
-	return false;
+	if (PendingJoins.Contains(RoomName)) return true;
+	if (ChannelCredentials.IsEmpty())
+		return Fail(TEXT("Custom rooms require trusted-server credentials. Lobby rooms are joined through lobby membership."));
+	PendingJoins.Add(RoomName);
+	ManagedRooms.Add(RoomName);
+	const uint64 Generation = VoiceUserGeneration;
+	CachedVoiceChatUser->JoinChannel(RoomName, ChannelCredentials, EVoiceChatChannelType::NonPositional,
+		FOnVoiceChatChannelJoinCompleteDelegate::CreateWeakLambda(this,
+			[this, Generation](const FString& ChannelName, const FVoiceChatResult& Result)
+			{
+				if (Generation != VoiceUserGeneration) return;
+				PendingJoins.Remove(ChannelName);
+				if (!Result.IsSuccess())
+				{
+					ManagedRooms.Remove(ChannelName);
+					OnVoiceRoomJoinFailed.Broadcast(ChannelName, Result.ErrorDesc);
+				}
+				// Successful membership is published by HandleChannelJoined, not optimistically.
+			}));
+	return true;
 }
 
 bool UEEOSVoiceSubsystem::LeaveVoiceRoom(const FString& RoomName)
 {
-	if (!CachedVoiceChatUser)
+	auto Fail = [this, &RoomName](const FString& Error)
 	{
-		// No live user — clear any stale mirror entry (a synchronously completed "leave").
-		if (JoinedRooms.Remove(RoomName) > 0)
-		{
-			OnVoiceRoomLeft.Broadcast(RoomName);
-			return true;
-		}
+		OnVoiceRoomLeaveFailed.Broadcast(RoomName, Error);
 		return false;
-	}
-
-	if (!CachedVoiceChatUser->GetChannels().Contains(RoomName))
-	{
-		// Rejected: log only, nothing broadcast — the bool return carries the rejection.
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSVoiceSubsystem::LeaveVoiceRoom — Not in room '%s'"), *RoomName);
-		return false;
-	}
-
-	// State updates and OnVoiceRoomLeft broadcast from the channel-exited event, never
-	// optimistically. NOTE: lobby-managed rooms reject LeaveChannel (NotPermitted) — the
-	// only way out of a lobby's RTC room is leaving the lobby.
+	};
+	if (bTearingDownVoiceUser) return Fail(TEXT("Voice user is disconnecting."));
+	if (PendingJoins.Contains(RoomName)) return Fail(TEXT("The join is still pending. Wait for its completion before leaving."));
+	if (!CachedVoiceChatUser || !CachedVoiceChatUser->GetChannels().Contains(RoomName))
+		return Fail(TEXT("The local user is not in this room."));
+	if (!ManagedRooms.Contains(RoomName))
+		return Fail(TEXT("This channel is managed externally. Lobby RTC channels leave with lobby membership; remove the component binding to stop using it locally."));
+	if (PendingLeaves.Contains(RoomName)) return true;
+	PendingLeaves.Add(RoomName);
+	const uint64 Generation = VoiceUserGeneration;
 	CachedVoiceChatUser->LeaveChannel(RoomName,
 		FOnVoiceChatChannelLeaveCompleteDelegate::CreateWeakLambda(this,
-			[this](const FString& ChannelName, const FVoiceChatResult& Result)
+			[this, Generation](const FString& ChannelName, const FVoiceChatResult& Result)
 			{
-				if (!Result.IsSuccess())
-				{
-					UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSVoiceSubsystem: Failed to leave room '%s' — %s. Lobby RTC rooms can only be exited by leaving the lobby (LeaveLobby/DestroyLobby)."),
-						*ChannelName, *Result.ErrorDesc);
-				}
-				// Success is observed via OnVoiceChatChannelExited → HandleChannelExited.
+				if (Generation != VoiceUserGeneration) return;
+				PendingLeaves.Remove(ChannelName);
+				if (!Result.IsSuccess()) OnVoiceRoomLeaveFailed.Broadcast(ChannelName, Result.ErrorDesc);
 			}));
 	return true;
 }
@@ -669,8 +894,8 @@ void UEEOSVoiceSubsystem::UnregisterVoiceRoomUser(const FString& RoomName, bool 
 	}
 	else if (CachedVoiceChatUser)
 	{
-		// No components remain — restore the engine default (transmit to all joined channels).
-		CachedVoiceChatUser->TransmitToAllChannels();
+		// No components remain: never reopen transmission during teardown.
+		CachedVoiceChatUser->TransmitToNoChannels();
 	}
 }
 
@@ -781,10 +1006,11 @@ void UEEOSVoiceSubsystem::ApplyAggregatedVolumeForPlayerInternal(const FString& 
 		}
 	}
 
+	const float* Scale = PlayerVolumeScales.Find(UserId);
 	const float* Applied = AppliedPlayerVolumes.Find(UserId);
-	if (MaxVolume < 0.f)
+	if (MaxVolume < 0.f && !Scale)
 	{
-		// No contributions left — restore 1.0, but only if we ever overrode this player.
+		// No contributions or scale left — restore 1.0, but only if we ever overrode this player.
 		if (Applied)
 		{
 			CachedVoiceChatUser->SetPlayerVolume(UserId, 1.0f);
@@ -793,13 +1019,49 @@ void UEEOSVoiceSubsystem::ApplyAggregatedVolumeForPlayerInternal(const FString& 
 		return;
 	}
 
-	if (Applied && FMath::IsNearlyEqual(*Applied, MaxVolume, 0.001f))
+	const float Target = FMath::Clamp((MaxVolume < 0.f ? 1.0f : MaxVolume) * (Scale ? *Scale : 1.0f), 0.f, 2.f);
+	if (Applied && FMath::IsNearlyEqual(*Applied, Target, 0.001f))
 	{
 		return; // unchanged — skip the SDK call (proximity timers tick frequently)
 	}
 
-	CachedVoiceChatUser->SetPlayerVolume(UserId, MaxVolume);
-	AppliedPlayerVolumes.Add(UserId, MaxVolume);
+	CachedVoiceChatUser->SetPlayerVolume(UserId, Target);
+	AppliedPlayerVolumes.Add(UserId, Target);
+}
+
+void UEEOSVoiceSubsystem::SetPlayerVolumeScale(const FString& UserId, float Scale)
+{
+	if (UserId.IsEmpty())
+	{
+		return;
+	}
+
+	Scale = FMath::Clamp(Scale, 0.f, 2.f);
+	const float* Existing = PlayerVolumeScales.Find(UserId);
+	if (FMath::IsNearlyEqual(Scale, 1.0f))
+	{
+		if (!Existing)
+		{
+			return;
+		}
+		PlayerVolumeScales.Remove(UserId);
+	}
+	else
+	{
+		if (Existing && FMath::IsNearlyEqual(*Existing, Scale))
+		{
+			return;
+		}
+		PlayerVolumeScales.Add(UserId, Scale);
+	}
+
+	ApplyAggregatedVolumeForPlayer(UserId);
+}
+
+float UEEOSVoiceSubsystem::GetPlayerVolumeScale(const FString& UserId) const
+{
+	const float* Scale = PlayerVolumeScales.Find(UserId);
+	return Scale ? *Scale : 1.0f;
 }
 
 void UEEOSVoiceSubsystem::RecomputeTransmitChannels()
@@ -826,6 +1088,112 @@ void UEEOSVoiceSubsystem::RecomputeTransmitChannels()
 	UE_LOG(LogExtendedEOS, Verbose, TEXT("EEOSVoiceSubsystem: Transmit set recomposed (%d room(s))"), TransmitUnion.Num());
 }
 
+void UEEOSVoiceSubsystem::ReapplyTransmitState()
+{
+	if (!CachedVoiceChatUser)
+	{
+		return;
+	}
+
+	// Whatever the mode is, including one a game set by hand, it is restored exactly; only the
+	// detour through another mode is new, and that detour never turns sending on anywhere.
+	const EVoiceChatTransmitMode Mode = CachedVoiceChatUser->GetTransmitMode();
+	if (Mode == EVoiceChatTransmitMode::None)
+	{
+		CachedVoiceChatUser->TransmitToSpecificChannels(TSet<FString>());
+		CachedVoiceChatUser->TransmitToNoChannels();
+		return;
+	}
+
+	const TSet<FString> Channels = CachedVoiceChatUser->GetTransmitChannels();
+	CachedVoiceChatUser->TransmitToNoChannels();
+	if (Mode == EVoiceChatTransmitMode::All)
+	{
+		CachedVoiceChatUser->TransmitToAllChannels();
+	}
+	else
+	{
+		CachedVoiceChatUser->TransmitToSpecificChannels(Channels);
+	}
+}
+
+void UEEOSVoiceSubsystem::HandleLobbyRTCRoomConnected(const FString& LocalUserId)
+{
+	if (!CachedVoiceChatUser || !bVoiceUserLoggedIn)
+	{
+		return; // login applies the transmit state itself (ApplyVoiceDefaults)
+	}
+
+	// The notification covers every local user on the platform.
+	if (!LocalUserId.IsEmpty() && !LocalUserId.Equals(CachedVoiceChatUser->GetLoggedInPlayerName(), ESearchCase::IgnoreCase))
+	{
+		return;
+	}
+
+	// The SDK joins a lobby's RTC room sending, whatever the engine last asked for, and the engine
+	// sends nothing more until its transmit mode changes. Left alone that is an open microphone until
+	// the first push-to-talk press. This fires again after a reconnect, which rejoins the same way.
+	ReapplyTransmitState();
+	const EVoiceChatTransmitMode Mode = CachedVoiceChatUser->GetTransmitMode();
+	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSVoiceSubsystem: Lobby RTC room connected - transmit state re-applied (%s)"),
+		Mode == EVoiceChatTransmitMode::None ? TEXT("none")
+		: Mode == EVoiceChatTransmitMode::All ? TEXT("all channels")
+		: *FString::Printf(TEXT("%d channel(s)"), CachedVoiceChatUser->GetTransmitChannels().Num()));
+}
+
+void UEEOSVoiceSubsystem::BindLobbyRTCNotification()
+{
+#if WITH_EOS_SDK
+	if (LobbyRTCConnectionNotifyId != 0 || bOwnsVoiceUser)
+	{
+		return;
+	}
+
+	// The OSS's own platform, not the first active one: with several PIE clients in one process each
+	// OSS instance has its own platform and its own lobbies.
+	IOnlineSubsystem* EOSSub = GetEOSOnlineSubsystem();
+	const IEOSPlatformHandlePtr Platform = EOSSub ? static_cast<IOnlineSubsystemEOS*>(EOSSub)->GetEOSPlatformHandle() : nullptr;
+	const EOS_HLobby Lobby = Platform.IsValid() ? EOS_Platform_GetLobbyInterface(*Platform) : nullptr;
+	if (!Lobby)
+	{
+		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSVoiceSubsystem: No EOS lobby interface - a lobby RTC room may send the microphone until the first transmit change"));
+		return;
+	}
+
+	EOS_Lobby_AddNotifyRTCRoomConnectionChangedOptions Options = {};
+	Options.ApiVersion = EOS_LOBBY_ADDNOTIFYRTCROOMCONNECTIONCHANGED_API_LATEST;
+	LobbyRTCConnectionNotifyId = EOS_Lobby_AddNotifyRTCRoomConnectionChanged(Lobby, &Options, this, &FEEOSVoiceLobbyRTCCallbacks::OnRoomConnectionChanged);
+	if (LobbyRTCConnectionNotifyId == EOS_INVALID_NOTIFICATIONID)
+	{
+		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSVoiceSubsystem: EOS_Lobby_AddNotifyRTCRoomConnectionChanged failed - a lobby RTC room may send the microphone until the first transmit change"));
+		LobbyRTCConnectionNotifyId = 0;
+		return;
+	}
+	LobbyRTCPlatform = Platform;
+#endif
+}
+
+void UEEOSVoiceSubsystem::UnbindLobbyRTCNotification()
+{
+#if WITH_EOS_SDK
+	if (LobbyRTCConnectionNotifyId == 0)
+	{
+		return;
+	}
+
+	// A platform that is already released took its notifications with it.
+	if (const IEOSPlatformHandlePtr Platform = LobbyRTCPlatform.Pin())
+	{
+		if (const EOS_HLobby Lobby = EOS_Platform_GetLobbyInterface(*Platform))
+		{
+			EOS_Lobby_RemoveNotifyRTCRoomConnectionChanged(Lobby, LobbyRTCConnectionNotifyId);
+		}
+	}
+	LobbyRTCConnectionNotifyId = 0;
+	LobbyRTCPlatform.Reset();
+#endif
+}
+
 bool UEEOSVoiceSubsystem::IsTransmitCompositionActive() const
 {
 	for (const TPair<FString, int32>& Pair : RoomRefCounts)
@@ -842,26 +1210,32 @@ bool UEEOSVoiceSubsystem::IsTransmitCompositionActive() const
 
 void UEEOSVoiceSubsystem::MutePlayer(const FString& UserId)
 {
-	if (!CachedVoiceChatUser)
-	{
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSVoiceSubsystem::MutePlayer — No voice chat user"));
-		return;
-	}
-
-	CachedVoiceChatUser->SetPlayerMuted(UserId, true);
-	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSVoiceSubsystem: Muted '%s'"), *UserId);
+	SetPlayerMutedIfChanged(UserId, true);
 }
 
 void UEEOSVoiceSubsystem::UnmutePlayer(const FString& UserId)
 {
-	if (!CachedVoiceChatUser)
+	SetPlayerMutedIfChanged(UserId, false);
+}
+
+void UEEOSVoiceSubsystem::SetPlayerMutedIfChanged(const FString& UserId, const bool bMuted)
+{
+	// The engine refuses (with a warning) while logged out, and games commonly re-assert mute state
+	// on every policy pass, so a missing user is not worth more than a verbose line.
+	if (!CachedVoiceChatUser || !bVoiceUserLoggedIn || UserId.IsEmpty())
 	{
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSVoiceSubsystem::UnmutePlayer — No voice chat user"));
+		UE_LOG(LogExtendedEOS, Verbose, TEXT("EEOSVoiceSubsystem: %s '%s' skipped — no logged-in voice user"),
+			bMuted ? TEXT("Mute") : TEXT("Unmute"), *UserId);
 		return;
 	}
 
-	CachedVoiceChatUser->SetPlayerMuted(UserId, false);
-	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSVoiceSubsystem: Unmuted '%s'"), *UserId);
+	if (CachedVoiceChatUser->IsPlayerMuted(UserId) == bMuted)
+	{
+		return;
+	}
+
+	CachedVoiceChatUser->SetPlayerMuted(UserId, bMuted);
+	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSVoiceSubsystem: %s '%s'"), bMuted ? TEXT("Muted") : TEXT("Unmuted"), *UserId);
 }
 
 void UEEOSVoiceSubsystem::SetPlayerVolume(const FString& UserId, float Volume)
@@ -914,7 +1288,9 @@ void UEEOSVoiceSubsystem::SetOutputVolume(float Volume)
 
 void UEEOSVoiceSubsystem::SetInputVolume(float Volume)
 {
-	Volume = FMath::Clamp(Volume, 0.f, 1.f);
+	// 0..2 as FEOSVoiceChatUser::SetAudioInputVolume takes it (EOS volume = Volume * 50, 50 = unchanged).
+	// Clamping at 1 made any boost impossible.
+	Volume = FMath::Clamp(Volume, 0.f, 2.f);
 	CurrentInputVolume = Volume;
 
 	if (CachedVoiceChatUser)
@@ -931,11 +1307,13 @@ float UEEOSVoiceSubsystem::GetInputVolume() const
 
 void UEEOSVoiceSubsystem::SetLocalMuted(bool bMuted)
 {
+	const bool bNeedsApply = CachedVoiceChatUser && (!bLocalMuteApplied || bLocalMuted != bMuted);
 	bLocalMuted = bMuted;
 
-	if (CachedVoiceChatUser)
+	if (bNeedsApply)
 	{
 		CachedVoiceChatUser->SetAudioInputDeviceMuted(bMuted);
+		bLocalMuteApplied = true;
 		UE_LOG(LogExtendedEOS, Log, TEXT("EEOSVoiceSubsystem: Local muted = %s"), bMuted ? TEXT("true") : TEXT("false"));
 	}
 }
@@ -1066,6 +1444,25 @@ FString UEEOSVoiceSubsystem::GetLobbyVoiceRoomName() const
 		return FString();
 	}
 
+	// EOS dereferences SessionInfo without checking it. A named session is published
+	// before async lobby creation/join has populated that shared pointer.
+	const FNamedOnlineSession* LobbySession = Sessions->GetNamedSession(GVoiceLobbySessionName);
+	if (!LobbySession || !LobbySession->SessionInfo.IsValid()
+		|| !LobbySession->SessionInfo->IsValid()
+		|| !LobbySession->SessionSettings.bUseLobbiesIfAvailable
+		|| LobbySession->SessionState == EOnlineSessionState::Creating
+		|| LobbySession->SessionState == EOnlineSessionState::Destroying)
+	{
+		return FString();
+	}
+
+	const IOnlineIdentityPtr Identity = EOSSub->GetIdentityInterface();
+	if (!Identity.IsValid() || Identity->GetLoginStatus(0) != ELoginStatus::LoggedIn
+		|| !Identity->GetUniquePlayerId(0).IsValid())
+	{
+		return FString();
+	}
+
 	return Sessions->GetVoiceChatRoomName(0, GVoiceLobbySessionName);
 }
 
@@ -1090,6 +1487,11 @@ bool UEEOSVoiceSubsystem::IsLocalMuted() const
 	return bLocalMuted;
 }
 
+FString UEEOSVoiceSubsystem::GetLocalVoicePlayerName() const
+{
+	return CachedVoiceChatUser && bVoiceUserLoggedIn ? CachedVoiceChatUser->GetLoggedInPlayerName() : FString();
+}
+
 TArray<FString> UEEOSVoiceSubsystem::GetPlayersInRoom(const FString& RoomName) const
 {
 	TArray<FString> Players;
@@ -1105,4 +1507,17 @@ TArray<FString> UEEOSVoiceSubsystem::GetPlayersInRoom(const FString& RoomName) c
 TArray<FString> UEEOSVoiceSubsystem::GetJoinedRooms() const
 {
 	return GetActiveVoiceRooms();
+}
+
+void UEEOSVoiceSubsystem::RegisterCaptureState(const UObject* Source, const TSharedPtr<FEEOSVoiceCaptureState, ESPMode::ThreadSafe>& State)
+{
+	if (!Source || !State) return;
+	FScopeLock Lock(&CaptureStatesMutex);
+	CaptureStates.Add(FObjectKey(Source), State);
+}
+
+void UEEOSVoiceSubsystem::UnregisterCaptureState(const UObject* Source)
+{
+	FScopeLock Lock(&CaptureStatesMutex);
+	CaptureStates.Remove(FObjectKey(Source));
 }

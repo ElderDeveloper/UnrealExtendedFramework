@@ -29,7 +29,7 @@ void UEPFAccountLinkingSubsystem::LinkSteamAccount(const FString& SteamTicket, b
 	SendPlayFabRequestDetailed(TEXT("/Client/LinkSteamAccount"), Body, true,
 		FOnPlayFabResponseDetailed::CreateLambda([this](const FEPFResult& Result, TSharedPtr<FJsonObject>)
 		{
-			if (Result.bSuccess) UE_LOG(LogExtendedPlayFab, Log, TEXT("EPFAccountLinking — Steam linked"));
+			if (Result.bSuccess) EF_LOG(ExtendedPlayFab, Log, TEXT("EPFAccountLinking — Steam linked"));
 			OnAccountLinked.Broadcast(Result, TEXT("Steam"));
 		}));
 }
@@ -48,7 +48,7 @@ void UEPFAccountLinkingSubsystem::LinkCustomId(const FString& CustomId, bool bFo
 	SendPlayFabRequestDetailed(TEXT("/Client/LinkCustomID"), Body, true,
 		FOnPlayFabResponseDetailed::CreateLambda([this](const FEPFResult& Result, TSharedPtr<FJsonObject>)
 		{
-			if (Result.bSuccess) UE_LOG(LogExtendedPlayFab, Log, TEXT("EPFAccountLinking — CustomId linked"));
+			if (Result.bSuccess) EF_LOG(ExtendedPlayFab, Log, TEXT("EPFAccountLinking — CustomId linked"));
 			OnAccountLinked.Broadcast(Result, TEXT("CustomId"));
 		}));
 }
@@ -68,7 +68,7 @@ void UEPFAccountLinkingSubsystem::LinkDeviceId(bool bForceLink)
 	SendPlayFabRequestDetailed(TEXT("/Client/LinkCustomID"), Body, true,
 		FOnPlayFabResponseDetailed::CreateLambda([this](const FEPFResult& Result, TSharedPtr<FJsonObject>)
 		{
-			if (Result.bSuccess) UE_LOG(LogExtendedPlayFab, Log, TEXT("EPFAccountLinking — DeviceId linked"));
+			if (Result.bSuccess) EF_LOG(ExtendedPlayFab, Log, TEXT("EPFAccountLinking — DeviceId linked"));
 			OnAccountLinked.Broadcast(Result, TEXT("DeviceId"));
 		}));
 }
@@ -83,7 +83,7 @@ void UEPFAccountLinkingSubsystem::UnlinkSteamAccount()
 	SendPlayFabRequestDetailed(TEXT("/Client/UnlinkSteamAccount"), Body, true,
 		FOnPlayFabResponseDetailed::CreateLambda([this](const FEPFResult& Result, TSharedPtr<FJsonObject>)
 		{
-			if (Result.bSuccess) UE_LOG(LogExtendedPlayFab, Log, TEXT("EPFAccountLinking — Steam unlinked"));
+			if (Result.bSuccess) EF_LOG(ExtendedPlayFab, Log, TEXT("EPFAccountLinking — Steam unlinked"));
 			OnAccountUnlinked.Broadcast(Result, TEXT("Steam"));
 		}));
 }
@@ -99,7 +99,7 @@ void UEPFAccountLinkingSubsystem::UnlinkCustomId(const FString& CustomId)
 	SendPlayFabRequestDetailed(TEXT("/Client/UnlinkCustomID"), Body, true,
 		FOnPlayFabResponseDetailed::CreateLambda([this](const FEPFResult& Result, TSharedPtr<FJsonObject>)
 		{
-			if (Result.bSuccess) UE_LOG(LogExtendedPlayFab, Log, TEXT("EPFAccountLinking — CustomId unlinked"));
+			if (Result.bSuccess) EF_LOG(ExtendedPlayFab, Log, TEXT("EPFAccountLinking — CustomId unlinked"));
 			OnAccountUnlinked.Broadcast(Result, TEXT("CustomId"));
 		}));
 }

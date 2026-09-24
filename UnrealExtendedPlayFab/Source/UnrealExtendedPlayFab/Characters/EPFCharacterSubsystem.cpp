@@ -36,7 +36,7 @@ void UEPFCharacterSubsystem::GetAllCharacters()
 						}
 					}
 				}
-				UE_LOG(LogExtendedPlayFab, Log, TEXT("EPFCharacter — %d characters"), CachedCharacters.Num());
+				EF_LOG(ExtendedPlayFab, Log, TEXT("EPFCharacter — %d characters"), CachedCharacters.Num());
 			}
 			OnCharactersReceived.Broadcast(Result, CachedCharacters);
 		}));
@@ -62,7 +62,7 @@ void UEPFCharacterSubsystem::GrantCharacter(const FString& CharacterName, const 
 				CharId = Response->GetStringField(TEXT("CharacterId"));
 				FEPFCharacter C; C.CharacterId = CharId; C.CharacterName = CharacterName;
 				CachedCharacters.Add(C);
-				UE_LOG(LogExtendedPlayFab, Log, TEXT("EPFCharacter — Granted: %s (%s)"), *CharacterName, *CharId);
+				EF_LOG(ExtendedPlayFab, Log, TEXT("EPFCharacter — Granted: %s (%s)"), *CharacterName, *CharId);
 			}
 			OnCharacterGranted.Broadcast(Result, CharId);
 		}));

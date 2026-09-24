@@ -61,10 +61,15 @@ public:
 
 	// ── Debug ────────────────────────────────────────────────────────────────
 
-	/** If true, log all PlayFab HTTP requests and responses */
+	/**
+	 * Longest request or response body written to the log, in characters (0 = no limit). Bodies go
+	 * to the ExtendedPlayFab category at Verbose, one entry per call, with credentials redacted: raise
+	 * that category to Verbose (Extended Log tab right-click > Verbosity, "EF.Log.Verbosity
+	 * ExtendedPlayFab Verbose", or Project Settings > Extended Log) to write them.
+	 */
 	UPROPERTY(config, EditAnywhere, BlueprintReadOnly, Category = "Debug",
-		meta = (DisplayName = "Enable Verbose Logging"))
-	bool bEnableVerboseLogging = false;
+		meta = (DisplayName = "Logged Body Max Chars", ClampMin = "0", UIMin = "0"))
+	int32 LoggedBodyMaxChars = 4096;
 
 	/** If true, sends an identifying SDK header with each request. */
 	UPROPERTY(config, EditAnywhere, BlueprintReadOnly, Category = "Debug",

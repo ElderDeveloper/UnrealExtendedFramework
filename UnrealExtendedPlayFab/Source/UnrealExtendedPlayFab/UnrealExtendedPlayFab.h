@@ -3,9 +3,11 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "EFLog.h"
 #include "Modules/ModuleManager.h"
 
-DECLARE_LOG_CATEGORY_EXTERN(LogExtendedPlayFab, Log, All);
+// PlayFab logging goes through EF_LOG(ExtendedPlayFab, ...) into Saved/Logs/Extended/ExtendedPlayFab.log
+// (Window > Log > Extended Log), not the Output Log.
 
 class FUnrealExtendedPlayFabModule : public IModuleInterface
 {

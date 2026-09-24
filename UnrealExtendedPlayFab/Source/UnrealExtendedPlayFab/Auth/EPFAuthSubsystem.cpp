@@ -144,7 +144,7 @@ void UEPFAuthSubsystem::RequestCredentialsAndLogin(const TCHAR* Reason)
 {
 	if (!CredentialProvider.IsBound())
 	{
-		UE_LOG(LogExtendedPlayFab, Warning,
+		EF_LOG(ExtendedPlayFab, Warning,
 			TEXT("EPFAuthSubsystem — %s requested but no credential provider is registered. "
 				 "Call SetCredentialProvider from a module that can mint one (Steam/EOS/custom id)."), Reason);
 		return;
@@ -152,7 +152,7 @@ void UEPFAuthSubsystem::RequestCredentialsAndLogin(const TCHAR* Reason)
 
 	if (bCredentialRequestInFlight)
 	{
-		UE_LOG(LogExtendedPlayFab, Warning, TEXT("EPFAuthSubsystem — %s ignored: a credential request is already in flight."), Reason);
+		EF_LOG(ExtendedPlayFab, Warning, TEXT("EPFAuthSubsystem — %s ignored: a credential request is already in flight."), Reason);
 		return;
 	}
 
@@ -165,7 +165,7 @@ void UEPFAuthSubsystem::RequestCredentialsAndLogin(const TCHAR* Reason)
 			CredentialRequestTimeoutSeconds, false);
 	}
 
-	UE_LOG(LogExtendedPlayFab, Log, TEXT("EPFAuthSubsystem — Requesting credentials for %s..."), Reason);
+	EF_LOG(ExtendedPlayFab, Log, TEXT("EPFAuthSubsystem — Requesting credentials for %s..."), Reason);
 	CredentialProvider.Execute(FEPFCredentialsReady::CreateUObject(this, &UEPFAuthSubsystem::HandleProvidedCredentials));
 }
 
@@ -182,7 +182,7 @@ void UEPFAuthSubsystem::HandleProvidedCredentials(bool bSuccess, const FEPFLogin
 
 	if (!bSuccess || Credentials.Method == LM_None)
 	{
-		UE_LOG(LogExtendedPlayFab, Warning, TEXT("EPFAuthSubsystem — Credential provider returned no usable credential."));
+		EF_LOG(ExtendedPlayFab, Warning, TEXT("EPFAuthSubsystem — Credential provider returned no usable credential."));
 		CompleteReauth(false);
 		OnLoginComplete.Broadcast(FEPFResult::Failure(TEXT("Credential provider returned no usable credential")), TEXT(""));
 		return;
@@ -217,7 +217,7 @@ void UEPFAuthSubsystem::OnCredentialRequestTimeout()
 {
 	FinishCredentialRequest();
 
-	UE_LOG(LogExtendedPlayFab, Warning,
+	EF_LOG(ExtendedPlayFab, Warning,
 		TEXT("EPFAuthSubsystem — Credential provider did not answer within %.0f seconds."), CredentialRequestTimeoutSeconds);
 	CompleteReauth(false);
 	OnLoginComplete.Broadcast(FEPFResult::Failure(TEXT("Credential provider timed out")), TEXT(""));
@@ -264,7 +264,7 @@ void UEPFAuthSubsystem::NotifySessionRejected()
 
 	if (!CanReauthenticate())
 	{
-		UE_LOG(LogExtendedPlayFab, Warning,
+		EF_LOG(ExtendedPlayFab, Warning,
 			TEXT("EPFAuthSubsystem — Session rejected but no way to re-authenticate (no credential provider, no reusable stored credential)."));
 
 		// Broadcast directly rather than via CompleteReauth: nothing is in flight, and that
@@ -274,7 +274,7 @@ void UEPFAuthSubsystem::NotifySessionRejected()
 		return;
 	}
 
-	UE_LOG(LogExtendedPlayFab, Log, TEXT("EPFAuthSubsystem — Session rejected; re-authenticating..."));
+	EF_LOG(ExtendedPlayFab, Log, TEXT("EPFAuthSubsystem — Session rejected; re-authenticating..."));
 
 	bReauthInFlight = true;
 	if (UGameInstance* GI = GetGameInstance())
@@ -289,7 +289,7 @@ void UEPFAuthSubsystem::NotifySessionRejected()
 
 void UEPFAuthSubsystem::OnReauthTimeout()
 {
-	UE_LOG(LogExtendedPlayFab, Warning,
+	EF_LOG(ExtendedPlayFab, Warning,
 		TEXT("EPFAuthSubsystem — Re-authentication did not settle within %.0f seconds."), ReauthTimeoutSeconds);
 	CompleteReauth(false);
 }
@@ -309,7 +309,7 @@ void UEPFAuthSubsystem::CompleteReauth(bool bSuccess)
 		GI->GetTimerManager().ClearTimer(ReauthTimeoutTimer);
 	}
 
-	UE_LOG(LogExtendedPlayFab, Log, TEXT("EPFAuthSubsystem — Re-authentication %s."), bSuccess ? TEXT("succeeded") : TEXT("failed"));
+	EF_LOG(ExtendedPlayFab, Log, TEXT("EPFAuthSubsystem — Re-authentication %s."), bSuccess ? TEXT("succeeded") : TEXT("failed"));
 	OnReauthFinished.Broadcast(bSuccess);
 }
 
@@ -368,7 +368,7 @@ void UEPFAuthSubsystem::LoginWithSteam(const FString& SteamTicket)
 		FOnPlayFabResponseDetailed::CreateUObject(this, &UEPFAuthSubsystem::HandleLoginResponse)
 	);
 
-	UE_LOG(LogExtendedPlayFab, Log, TEXT("EPFAuthSubsystem::LoginWithSteam — Logging in..."));
+	EF_LOG(ExtendedPlayFab, Log, TEXT("EPFAuthSubsystem::LoginWithSteam — Logging in..."));
 }
 
 void UEPFAuthSubsystem::LoginWithCustomId(const FString& CustomId)
@@ -398,7 +398,7 @@ void UEPFAuthSubsystem::LoginWithCustomId(const FString& CustomId)
 		FOnPlayFabResponseDetailed::CreateUObject(this, &UEPFAuthSubsystem::HandleLoginResponse)
 	);
 
-	UE_LOG(LogExtendedPlayFab, Log, TEXT("EPFAuthSubsystem::LoginWithCustomId — Logging in as '%s'..."), *CustomId);
+	EF_LOG(ExtendedPlayFab, Log, TEXT("EPFAuthSubsystem::LoginWithCustomId — Logging in as '%s'..."), *CustomId);
 }
 
 void UEPFAuthSubsystem::LoginWithDeviceId()
@@ -426,14 +426,14 @@ void UEPFAuthSubsystem::LoginWithDeviceId()
 	SavedCredential1 = PersistedLoginId;
 	SavedCredential2.Empty();
 
-	UE_LOG(
-		LogExtendedPlayFab,
+	EF_LOG(
+		ExtendedPlayFab,
 		Log,
 		TEXT("EPFAuthSubsystem::LoginWithDeviceId — Platform device ID: %s"),
 		PlatformDeviceId.IsEmpty() ? TEXT("<empty>") : *PlatformDeviceId
 	);
-	UE_LOG(
-		LogExtendedPlayFab,
+	EF_LOG(
+		ExtendedPlayFab,
 		Log,
 		TEXT("EPFAuthSubsystem::LoginWithDeviceId — Persisted login ID (%s, source=%s): %s"),
 		bLoadedPersistedLoginId ? TEXT("loaded") : TEXT("created"),
@@ -443,15 +443,15 @@ void UEPFAuthSubsystem::LoginWithDeviceId()
 
 	if (PlatformDeviceId.IsEmpty())
 	{
-		UE_LOG(LogExtendedPlayFab, Warning, TEXT("EPFAuthSubsystem::LoginWithDeviceId — Platform device ID is empty; using persisted local ID for PlayFab login."));
+		EF_LOG(ExtendedPlayFab, Warning, TEXT("EPFAuthSubsystem::LoginWithDeviceId — Platform device ID is empty; using persisted local ID for PlayFab login."));
 	}
 	else if (PlatformDeviceId == PersistedLoginId)
 	{
-		UE_LOG(LogExtendedPlayFab, Log, TEXT("EPFAuthSubsystem::LoginWithDeviceId — Platform device ID matches the persisted PlayFab login ID."));
+		EF_LOG(ExtendedPlayFab, Log, TEXT("EPFAuthSubsystem::LoginWithDeviceId — Platform device ID matches the persisted PlayFab login ID."));
 	}
 	else
 	{
-		UE_LOG(LogExtendedPlayFab, Log, TEXT("EPFAuthSubsystem::LoginWithDeviceId — Platform device ID differs from the persisted PlayFab login ID."));
+		EF_LOG(ExtendedPlayFab, Log, TEXT("EPFAuthSubsystem::LoginWithDeviceId — Platform device ID differs from the persisted PlayFab login ID."));
 	}
 }
 
@@ -482,7 +482,7 @@ void UEPFAuthSubsystem::LoginWithEmail(const FString& Email, const FString& Pass
 		FOnPlayFabResponseDetailed::CreateUObject(this, &UEPFAuthSubsystem::HandleLoginResponse)
 	);
 
-	UE_LOG(LogExtendedPlayFab, Log, TEXT("EPFAuthSubsystem::LoginWithEmail — Logging in with email..."));
+	EF_LOG(ExtendedPlayFab, Log, TEXT("EPFAuthSubsystem::LoginWithEmail — Logging in with email..."));
 }
 
 void UEPFAuthSubsystem::LoginWithPlayFab(const FString& Username, const FString& Password)
@@ -512,7 +512,7 @@ void UEPFAuthSubsystem::LoginWithPlayFab(const FString& Username, const FString&
 		FOnPlayFabResponseDetailed::CreateUObject(this, &UEPFAuthSubsystem::HandleLoginResponse)
 	);
 
-	UE_LOG(LogExtendedPlayFab, Log, TEXT("EPFAuthSubsystem::LoginWithPlayFab — Logging in as '%s'..."), *Username);
+	EF_LOG(ExtendedPlayFab, Log, TEXT("EPFAuthSubsystem::LoginWithPlayFab — Logging in as '%s'..."), *Username);
 }
 
 void UEPFAuthSubsystem::RegisterUser(const FString& Username, const FString& Email, const FString& Password)
@@ -566,13 +566,13 @@ void UEPFAuthSubsystem::RegisterUser(const FString& Username, const FString& Ema
 
 				SetSharedAuthContext(AuthContext);
 
-				UE_LOG(LogExtendedPlayFab, Log, TEXT("EPFAuthSubsystem — Registration successful. PlayFabId: %s"), *PlayFabId);
+				EF_LOG(ExtendedPlayFab, Log, TEXT("EPFAuthSubsystem — Registration successful. PlayFabId: %s"), *PlayFabId);
 			}
 			OnRegistrationComplete.Broadcast(Result, PlayFabId);
 		})
 	);
 
-	UE_LOG(LogExtendedPlayFab, Log, TEXT("EPFAuthSubsystem::RegisterUser — Registering '%s'..."), *Username);
+	EF_LOG(ExtendedPlayFab, Log, TEXT("EPFAuthSubsystem::RegisterUser — Registering '%s'..."), *Username);
 }
 
 void UEPFAuthSubsystem::AddUsernamePassword(const FString& Username, const FString& Email, const FString& Password)
@@ -587,7 +587,7 @@ void UEPFAuthSubsystem::AddUsernamePassword(const FString& Username, const FStri
 	SendPlayFabRequestDetailed(TEXT("/Client/AddUsernamePassword"), Body, EEPFAuthMode::SessionTicket,
 		FOnPlayFabResponseDetailed::CreateLambda([this](const FEPFResult& Result, TSharedPtr<FJsonObject>)
 		{
-			if (Result.bSuccess) UE_LOG(LogExtendedPlayFab, Log, TEXT("EPFAuthSubsystem — Username/password added"));
+			if (Result.bSuccess) EF_LOG(ExtendedPlayFab, Log, TEXT("EPFAuthSubsystem — Username/password added"));
 			OnUsernamePasswordAdded.Broadcast(Result);
 		}));
 }
@@ -610,7 +610,7 @@ void UEPFAuthSubsystem::SendAccountRecoveryEmail(const FString& Email)
 	SendPlayFabRequestDetailed(TEXT("/Client/SendAccountRecoveryEmail"), Body, EEPFAuthMode::None,
 		FOnPlayFabResponseDetailed::CreateLambda([this](const FEPFResult& Result, TSharedPtr<FJsonObject>)
 		{
-			if (Result.bSuccess) UE_LOG(LogExtendedPlayFab, Log, TEXT("EPFAuthSubsystem — Recovery email sent"));
+			if (Result.bSuccess) EF_LOG(ExtendedPlayFab, Log, TEXT("EPFAuthSubsystem — Recovery email sent"));
 			OnAccountRecoveryEmailSent.Broadcast(Result);
 		}));
 }
@@ -628,11 +628,11 @@ void UEPFAuthSubsystem::UpdateDisplayName(const FString& DisplayName)
 		{
 			if (Result.bSuccess) 			{
 				CachedDisplayName = DisplayName;
-				UE_LOG(LogExtendedPlayFab, Log, TEXT("EPFAuthSubsystem — Display name updated to '%s'"), *DisplayName);
+				EF_LOG(ExtendedPlayFab, Log, TEXT("EPFAuthSubsystem — Display name updated to '%s'"), *DisplayName);
 			}
 			else
 			{
-				UE_LOG(LogExtendedPlayFab, Warning, TEXT("EPFAuthSubsystem — Failed to update display name to '%s'"), *DisplayName);
+				EF_LOG(ExtendedPlayFab, Warning, TEXT("EPFAuthSubsystem — Failed to update display name to '%s'"), *DisplayName);
 			}
 			OnDisplayNameUpdated.Broadcast(Result, Result.bSuccess ? DisplayName : TEXT(""));
 		})
@@ -648,7 +648,7 @@ void UEPFAuthSubsystem::Logout()
 	CachedEntityToken.Empty();
 	bNewlyCreated = false;
 
-	UE_LOG(LogExtendedPlayFab, Log, TEXT("EPFAuthSubsystem::Logout — Session cleared"));
+	EF_LOG(ExtendedPlayFab, Log, TEXT("EPFAuthSubsystem::Logout — Session cleared"));
 	OnLogoutComplete.Broadcast();
 }
 
@@ -706,7 +706,7 @@ void UEPFAuthSubsystem::HandleLoginResponse(const FEPFResult& Result, TSharedPtr
 			}
 		}
 
-		UE_LOG(LogExtendedPlayFab, Log, TEXT("EPFAuthSubsystem — Login successful. PlayFabId: %s, NewlyCreated: %s"),
+		EF_LOG(ExtendedPlayFab, Log, TEXT("EPFAuthSubsystem — Login successful. PlayFabId: %s, NewlyCreated: %s"),
 			*AuthContext.PlayFabId, bNewlyCreated ? TEXT("true") : TEXT("false"));
 
 		// Parse Entity Token for Entity API (Groups, Matchmaking)
@@ -723,7 +723,7 @@ void UEPFAuthSubsystem::HandleLoginResponse(const FEPFResult& Result, TSharedPtr
 				AuthContext.EntityId = CachedEntityId;
 				AuthContext.EntityType = CachedEntityType;
 			}
-			UE_LOG(LogExtendedPlayFab, Log, TEXT("EPFAuthSubsystem — Entity: %s (%s)"), *CachedEntityId, *CachedEntityType);
+			EF_LOG(ExtendedPlayFab, Log, TEXT("EPFAuthSubsystem — Entity: %s (%s)"), *CachedEntityId, *CachedEntityType);
 		}
 
 		SetSharedAuthContext(AuthContext);
@@ -744,8 +744,8 @@ void UEPFAuthSubsystem::HandleLoginResponse(const FEPFResult& Result, TSharedPtr
 			: (JsonResponse.IsValid() ? JsonResponse->GetStringField(TEXT("errorMessage")) : TEXT("Unknown error"));
 		const FString LoginIdentifierLabel = GetLoginIdentifierLabel(LastLoginMethod);
 		const FString LoginIdentifierValue = GetLoginIdentifierValueForLog(LastLoginMethod, SavedCredential1);
-		UE_LOG(
-			LogExtendedPlayFab,
+		EF_LOG(
+			ExtendedPlayFab,
 			Warning,
 			TEXT("EPFAuthSubsystem — Login failed [%s] %s=%s: %s"),
 			GetLoginMethodName(LastLoginMethod),
@@ -801,7 +801,7 @@ void UEPFAuthSubsystem::StartSessionRefreshTimer()
 		true     // looping
 	);
 
-	UE_LOG(LogExtendedPlayFab, Log, TEXT("EPFAuthSubsystem — Session refresh timer started (30 min interval)"));
+	EF_LOG(ExtendedPlayFab, Log, TEXT("EPFAuthSubsystem — Session refresh timer started (30 min interval)"));
 }
 
 void UEPFAuthSubsystem::RefreshSession()
@@ -819,14 +819,14 @@ void UEPFAuthSubsystem::RefreshSession()
 
 	if (LastLoginMethod == LM_None)
 	{
-		UE_LOG(LogExtendedPlayFab, Warning, TEXT("EPFAuthSubsystem::RefreshSession — No stored login method, cannot refresh"));
+		EF_LOG(ExtendedPlayFab, Warning, TEXT("EPFAuthSubsystem::RefreshSession — No stored login method, cannot refresh"));
 		return;
 	}
 
 	const FString LoginIdentifierLabel = GetLoginIdentifierLabel(LastLoginMethod);
 	const FString LoginIdentifierValue = GetLoginIdentifierValueForLog(LastLoginMethod, SavedCredential1);
-	UE_LOG(
-		LogExtendedPlayFab,
+	EF_LOG(
+		ExtendedPlayFab,
 		Log,
 		TEXT("EPFAuthSubsystem::RefreshSession — Silently re-authenticating with %s [%s=%s]..."),
 		GetLoginMethodName(LastLoginMethod),

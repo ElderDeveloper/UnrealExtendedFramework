@@ -39,7 +39,7 @@ void UEPFGroupsSubsystem::CreateGroup(const FString& GroupName)
 {
 	if (GroupName.IsEmpty())
 	{
-		UE_LOG(LogExtendedPlayFab, Warning, TEXT("EPFGroupsSubsystem::CreateGroup — GroupName cannot be empty"));
+		EF_LOG(ExtendedPlayFab, Warning, TEXT("EPFGroupsSubsystem::CreateGroup — GroupName cannot be empty"));
 		OnGroupCreated.Broadcast(FEPFResult::Failure(TEXT("GroupName cannot be empty")), TEXT(""));
 		return;
 	}
@@ -61,7 +61,7 @@ void UEPFGroupsSubsystem::CreateGroup(const FString& GroupName)
 				{
 					GroupId = (*GroupObj)->GetStringField(TEXT("Id"));
 				}
-				UE_LOG(LogExtendedPlayFab, Log, TEXT("EPFGroupsSubsystem — Created group: %s"), *GroupId);
+				EF_LOG(ExtendedPlayFab, Log, TEXT("EPFGroupsSubsystem — Created group: %s"), *GroupId);
 			}
 			OnGroupCreated.Broadcast(Result, GroupId);
 		})
@@ -86,7 +86,7 @@ void UEPFGroupsSubsystem::DeleteGroup(const FString& GroupId)
 		{
 			if (Result.bSuccess) 			{
 				CachedMemberships.RemoveAll([&](const FEPFGroupInfo& G) { return G.GroupId == GroupId; });
-				UE_LOG(LogExtendedPlayFab, Log, TEXT("EPFGroupsSubsystem — Deleted group: %s"), *GroupId);
+				EF_LOG(ExtendedPlayFab, Log, TEXT("EPFGroupsSubsystem — Deleted group: %s"), *GroupId);
 			}
 			OnGroupDeleted.Broadcast(Result);
 		})
@@ -166,7 +166,7 @@ void UEPFGroupsSubsystem::ListMembership()
 						}
 					}
 				}
-				UE_LOG(LogExtendedPlayFab, Log, TEXT("EPFGroupsSubsystem — Found %d group memberships"), CachedMemberships.Num());
+				EF_LOG(ExtendedPlayFab, Log, TEXT("EPFGroupsSubsystem — Found %d group memberships"), CachedMemberships.Num());
 			}
 			OnGroupsListed.Broadcast(Result, CachedMemberships);
 		})
@@ -227,7 +227,7 @@ void UEPFGroupsSubsystem::ListGroupMembers(const FString& GroupId)
 						}
 					}
 				}
-				UE_LOG(LogExtendedPlayFab, Log, TEXT("EPFGroupsSubsystem — Found %d members"), Members.Num());
+				EF_LOG(ExtendedPlayFab, Log, TEXT("EPFGroupsSubsystem — Found %d members"), Members.Num());
 			}
 			OnGroupMembersReceived.Broadcast(Result, Members);
 		})

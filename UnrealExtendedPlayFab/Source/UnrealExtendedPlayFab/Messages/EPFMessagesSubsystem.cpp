@@ -64,7 +64,7 @@ void UEPFMessagesSubsystem::FetchMessages()
 				}
 				PreviousUnreadCount = CurrentUnread;
 
-				UE_LOG(LogExtendedPlayFab, Log, TEXT("EPFMessages — Fetched %d messages (%d unread)"), CachedMessages.Num(), CurrentUnread);
+				EF_LOG(ExtendedPlayFab, Log, TEXT("EPFMessages — Fetched %d messages (%d unread)"), CachedMessages.Num(), CurrentUnread);
 			}
 			OnMessagesReceived.Broadcast(Result, CachedMessages);
 		})
@@ -182,7 +182,7 @@ void UEPFMessagesSubsystem::StartPolling(float IntervalSeconds)
 			true,
 			0.0f
 		);
-		UE_LOG(LogExtendedPlayFab, Log, TEXT("EPFMessages — Polling started (every %.0fs)"), Interval);
+		EF_LOG(ExtendedPlayFab, Log, TEXT("EPFMessages — Polling started (every %.0fs)"), Interval);
 	}
 }
 

@@ -49,12 +49,12 @@ void UEPFTitleNewsSubsystem::GetTitleNews(int32 Count)
 						}
 					}
 				}
-				UE_LOG(LogExtendedPlayFab, Log, TEXT("EPFTitleNewsSubsystem — Received %d news items"), CachedNews.Num());
+				EF_LOG(ExtendedPlayFab, Log, TEXT("EPFTitleNewsSubsystem — Received %d news items"), CachedNews.Num());
 				OnTitleNewsReceived.Broadcast(Result, CachedNews);
 			}
 			else
 			{
-				UE_LOG(LogExtendedPlayFab, Warning, TEXT("EPFTitleNewsSubsystem — Failed to fetch title news"));
+				EF_LOG(ExtendedPlayFab, Warning, TEXT("EPFTitleNewsSubsystem — Failed to fetch title news"));
 				OnTitleNewsReceived.Broadcast(Result, CachedNews);
 			}
 		})

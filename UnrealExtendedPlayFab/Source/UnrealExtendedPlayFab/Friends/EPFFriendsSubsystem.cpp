@@ -84,7 +84,7 @@ void UEPFFriendsSubsystem::GetFriendsList(bool bIncludeSteamFriends, bool bInclu
 						}
 					}
 				}
-				UE_LOG(LogExtendedPlayFab, Log, TEXT("EPFFriends — Found %d friends"), CachedFriends.Num());
+				EF_LOG(ExtendedPlayFab, Log, TEXT("EPFFriends — Found %d friends"), CachedFriends.Num());
 			}
 			OnFriendsReceived.Broadcast(Result, CachedFriends);
 		})
@@ -104,7 +104,7 @@ void UEPFFriendsSubsystem::AddFriend(const FString& FriendPlayFabId)
 	SendPlayFabRequestDetailed(TEXT("/Client/AddFriend"), Body, EEPFAuthMode::SessionTicket,
 		FOnPlayFabResponseDetailed::CreateLambda([this](const FEPFResult& Result, TSharedPtr<FJsonObject>)
 		{
-			if (Result.bSuccess) UE_LOG(LogExtendedPlayFab, Log, TEXT("EPFFriends — Friend added"));
+			if (Result.bSuccess) EF_LOG(ExtendedPlayFab, Log, TEXT("EPFFriends — Friend added"));
 			OnFriendAdded.Broadcast(Result);
 		}));
 }
