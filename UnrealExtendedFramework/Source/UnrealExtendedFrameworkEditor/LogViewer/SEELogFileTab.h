@@ -106,8 +106,8 @@ private:
 	TSharedRef<SWidget> BuildViewMenu();
 	void ToggleLevel(int32 Bucket);
 	bool IsLevelShown(int32 Bucket) const;
-	void ToggleColumn(FName ColumnId);
-	bool IsColumnShown(FName ColumnId) const;
+	void ToggleColumn(FName InColumnId);
+	bool IsColumnShown(FName InColumnId) const;
 	void ToggleSource(int32 SourceIndex);
 	bool IsSourceShownAt(int32 SourceIndex) const;
 

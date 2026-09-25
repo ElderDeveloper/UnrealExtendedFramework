@@ -25,12 +25,26 @@
 
 #define LOCTEXT_NAMESPACE "QuestGraph"
 
-// Unique QuestGraph Object version id, generated with random
-const FGuid FEGQuestGraphObjectVersion::GUID(0x2B8E5105, 0x6F66348F, 0x2A8A0B25, 0x9047A071);
+// Quest versions must be independent of DlgSystem's serialization versions.
+const FGuid FEGQuestGraphObjectVersion::GUID(0x5E79C874, 0x717B43CB, 0x9D79CED5, 0xD9E13ACB);
 // Register Quest custom version with Core
 FDevVersionRegistration GRegisterQuestGraphObjectVersion(FEGQuestGraphObjectVersion::GUID,
 														  FEGQuestGraphObjectVersion::LatestVersion, TEXT("Dev-QuestGraph"));
 
+
+// Older quest assets used DlgSystem's GUID. Read it only as a fallback; never
+// register it here, since DlgSystem still owns that version identifier.
+static int32 GetQuestLinkerVersion(const UEGQuestGraph* Quest)
+{
+	const int32 QuestVersion = Quest->GetLinkerCustomVersion(FEGQuestGraphObjectVersion::GUID);
+	if (QuestVersion != INDEX_NONE)
+	{
+		return QuestVersion;
+	}
+
+	static const FGuid LegacyQuestVersionGUID(0x2B8E5105, 0x6F66348F, 0x2A8A0B25, 0x9047A071);
+	return Quest->GetLinkerCustomVersion(LegacyQuestVersionGUID);
+}
 
 // Update quest up to the ConvertedNodesToUObject version
 void UpdateQuestToVersion_ConvertedNodesToUObject(UEGQuestGraph* Quest)
@@ -114,7 +128,7 @@ void UEGQuestGraph::Serialize(FArchive& Ar)
 void UEGQuestGraph::PostLoad()
 {
 	Super::PostLoad();
-	const int32 QuestVersion = GetLinkerCustomVersion(FEGQuestGraphObjectVersion::GUID);
+	const int32 QuestVersion = GetQuestLinkerVersion(this);
 	// Old files, UEGQuestNode used to be a FEGQuestNode
 	if (QuestVersion < FEGQuestGraphObjectVersion::ConvertedNodesToUObject)
 	{
@@ -227,7 +241,7 @@ void UEGQuestGraph::PostInitProperties()
 		return;
 	}
 
-	const int32 QuestVersion = GetLinkerCustomVersion(FEGQuestGraphObjectVersion::GUID);
+	const int32 QuestVersion = GetQuestLinkerVersion(this);
 
 #if WITH_EDITOR
 	// Wait for the editor module to be set by the editor in UEGQuestEdGraph constructor

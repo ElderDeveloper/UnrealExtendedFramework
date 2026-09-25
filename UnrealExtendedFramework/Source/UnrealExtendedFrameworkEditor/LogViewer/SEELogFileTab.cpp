@@ -161,7 +161,7 @@ public:
 		{
 			Text = Row->Kind == EEELogRowKind::Line ? FText::FromString(LexToString(Row->Verbosity)) : FText::GetEmpty();
 		}
-		else if (ColumnName == ColumnSource)
+		else if (ColumnName == EELogFileTabPrivate::ColumnSource)
 		{
 			if (!Row->SourcePath.IsEmpty())
 			{
@@ -262,7 +262,7 @@ void SEELogFileTab::Construct(const FArguments& InArgs)
 				+ SHeaderRow::Column(ColumnFrame).DefaultLabel(LOCTEXT("ColumnFrame", "Frame")).ManualWidth(72.0f)
 				+ SHeaderRow::Column(ColumnInstance).DefaultLabel(LOCTEXT("ColumnInstance", "Instance")).ManualWidth(84.0f)
 				+ SHeaderRow::Column(ColumnLevel).DefaultLabel(LOCTEXT("ColumnLevel", "Level")).ManualWidth(74.0f)
-				+ SHeaderRow::Column(ColumnSource).DefaultLabel(LOCTEXT("ColumnSource", "Source")).ManualWidth(200.0f)
+				+ SHeaderRow::Column(EELogFileTabPrivate::ColumnSource).DefaultLabel(LOCTEXT("ColumnSource", "Source")).ManualWidth(200.0f)
 				+ SHeaderRow::Column(ColumnMessage).DefaultLabel(LOCTEXT("ColumnMessage", "Message")).FillWidth(1.0f).ShouldGenerateWidget(true)
 			)
 		]
@@ -565,18 +565,18 @@ TSharedRef<SWidget> SEELogFileTab::BuildViewMenu()
 	return Menu.MakeWidget();
 }
 
-void SEELogFileTab::ToggleColumn(FName ColumnId)
+void SEELogFileTab::ToggleColumn(FName InColumnId)
 {
 	if (HeaderRow.IsValid())
 	{
 		// The header reports the change through OnHiddenColumnsListChanged, which saves and shares it.
-		HeaderRow->SetShowGeneratedColumn(ColumnId, !HeaderRow->IsColumnVisible(ColumnId));
+		HeaderRow->SetShowGeneratedColumn(InColumnId, !HeaderRow->IsColumnVisible(InColumnId));
 	}
 }
 
-bool SEELogFileTab::IsColumnShown(FName ColumnId) const
+bool SEELogFileTab::IsColumnShown(FName InColumnId) const
 {
-	return HeaderRow.IsValid() && HeaderRow->IsColumnVisible(ColumnId);
+	return HeaderRow.IsValid() && HeaderRow->IsColumnVisible(InColumnId);
 }
 
 void SEELogFileTab::ToggleLevel(int32 Bucket)
