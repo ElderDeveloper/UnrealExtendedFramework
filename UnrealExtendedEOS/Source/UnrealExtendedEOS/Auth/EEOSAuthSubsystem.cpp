@@ -13,6 +13,7 @@
 
 #if WITH_EOS_SDK
 #include "IEOSSDKManager.h"
+#include "OnlineSubsystemEOSTypesPublic.h"
 #include "eos_connect.h"
 #include "eos_auth.h"
 #include "eos_sdk.h"
@@ -958,7 +959,25 @@ FString UEEOSAuthSubsystem::GetDisplayName() const
 	IOnlineIdentityPtr IdentityInterface = EOSSub->GetIdentityInterface();
 	if (!IdentityInterface.IsValid()) return FString();
 
-	return IdentityInterface->GetPlayerNickname(0);
+	// Only an Epic account has an EOS display name. A Connect-only login (a Steam ticket, a device id)
+	// has none: EOS returns an empty nickname and warns on every call. Use the platform's own name then.
+	bool bHasEpicAccount = true;
+#if WITH_EOS_SDK
+	const FUniqueNetIdPtr UserId = IdentityInterface->GetUniquePlayerId(0);
+	if (UserId.IsValid() && UserId->GetType() == EOSSub->GetSubsystemName())
+	{
+		bHasEpicAccount = EOS_EpicAccountId_IsValid(StaticCastSharedPtr<const IUniqueNetIdEOS>(UserId)->GetEpicAccountId()) == EOS_TRUE;
+	}
+#endif
+	if (bHasEpicAccount)
+	{
+		const FString Nickname = IdentityInterface->GetPlayerNickname(0);
+		if (!Nickname.IsEmpty()) return Nickname;
+	}
+
+	IOnlineSubsystem* PlatformSub = IOnlineSubsystem::GetByPlatform();
+	IOnlineIdentityPtr PlatformIdentity = PlatformSub && PlatformSub != EOSSub ? PlatformSub->GetIdentityInterface() : nullptr;
+	return PlatformIdentity.IsValid() ? PlatformIdentity->GetPlayerNickname(0) : FString();
 }
 
 bool UEEOSAuthSubsystem::IsLoggedIn() const
