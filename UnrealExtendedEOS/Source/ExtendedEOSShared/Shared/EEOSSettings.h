@@ -125,6 +125,18 @@ public:
 		meta = (DisplayName = "Use Lobbies by Default"))
 	bool bUseLobbiesByDefault = false;
 
+	/**
+	 * Whether a lobby created by UEEOSLobbySubsystem::CreateLobby survives its owner
+	 * leaving. On: EOS promotes another member to owner and the lobby stays open —
+	 * for games that can hand authority to another player. Off: the lobby closes
+	 * when the owner leaves, crashes or disconnects — for games where only the
+	 * owner can ever hold authority (the owner's save, the owner's server).
+	 * Fixed at creation; EOS cannot change it on a live lobby.
+	 */
+	UPROPERTY(config, EditAnywhere, BlueprintReadOnly, Category = "Sessions",
+		meta = (DisplayName = "Allow Lobby Host Migration"))
+	bool bAllowLobbyHostMigration = true;
+
 	/** Preferred deployment region (empty = auto) */
 	UPROPERTY(config, EditAnywhere, BlueprintReadOnly, Category = "Sessions",
 		meta = (DisplayName = "Preferred Region"))

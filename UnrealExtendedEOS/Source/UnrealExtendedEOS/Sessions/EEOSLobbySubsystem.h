@@ -219,6 +219,10 @@ public:
 
 private:
 
+	/** Leave (or, as owner, destroy) a lobby still held at shutdown, ticking the EOS
+	 *  platform for up to MaxSeconds so the request reaches the backend. */
+	void FlushLobbyExitForShutdown(float MaxSeconds);
+
 	FString CurrentLobbyId;
 	bool bInLobby = false;
 	TMap<FString, FString> CachedLobbyAttributes;

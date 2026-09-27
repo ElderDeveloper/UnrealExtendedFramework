@@ -4,6 +4,8 @@
 #include "EEOSSearchCoordinator.h"
 #include "OnlineSubsystemUtils.h"
 #include "OnlineSessionSettings.h"
+#include "Online/OnlineSessionNames.h"
+#include "Shared/EEOSSettings.h"
 #include "UnrealExtendedEOS.h"
 #include "Shared/EEOSBlueprintLibrary.h"
 #include "Engine/GameInstance.h"
@@ -32,8 +34,50 @@ void UEEOSLobbySubsystem::Initialize(FSubsystemCollectionBase& Collection)
 	}
 }
 
+void UEEOSLobbySubsystem::FlushLobbyExitForShutdown(float MaxSeconds)
+{
+	// A lobby still held when the process exits stays advertised until the backend
+	// times its owner out, and with host migration EOS hands it to a member who is
+	// not running a server. Leave now, and pump the platform so the leave actually
+	// reaches the backend: nothing ticks EOS once shutdown has begun.
+	if (bInLobby && !DestroyLobbyCompleteHandle.IsValid())
+	{
+		if (IsLobbyOwner())
+		{
+			DestroyLobby();
+		}
+		else
+		{
+			LeaveLobby();
+		}
+	}
+
+	if (!DestroyLobbyCompleteHandle.IsValid())
+	{
+		return;
+	}
+
+	EOS_HPlatform Platform = GetPlatformHandle();
+	if (!Platform)
+	{
+		return;
+	}
+
+	const double Deadline = FPlatformTime::Seconds() + MaxSeconds;
+	while (DestroyLobbyCompleteHandle.IsValid() && FPlatformTime::Seconds() < Deadline)
+	{
+		EOS_Platform_Tick(Platform);
+		FPlatformProcess::Sleep(0.01f);
+	}
+
+	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSLobbySubsystem — Lobby exit at shutdown %s."),
+		DestroyLobbyCompleteHandle.IsValid() ? TEXT("did not complete in time") : TEXT("completed"));
+}
+
 void UEEOSLobbySubsystem::Deinitialize()
 {
+	FlushLobbyExitForShutdown(2.0f);
+
 	if (NotificationRetryTickerHandle.IsValid())
 	{
 		FTSTicker::GetCoreTicker().RemoveTicker(NotificationRetryTickerHandle);
@@ -222,6 +266,13 @@ bool UEEOSLobbySubsystem::CreateLobby(int32 MaxMembers, bool bIsPublic, bool bUs
 	Settings.bAllowInvites = true;
 	Settings.bUseLobbiesIfAvailable = true;
 	Settings.bUseLobbiesVoiceChatIfAvailable = bUseVoiceChat;
+
+	// OnlineSubsystemEOS reads SETTING_HOST_MIGRATION at create and passes its
+	// inverse to EOS_Lobby_CreateLobby as bDisableHostMigration (it defaults to on).
+	const UEEOSSettings* EOSSettings = GetEOSSettings();
+	const bool bAllowHostMigration = !EOSSettings || EOSSettings->bAllowLobbyHostMigration;
+	Settings.Set(SETTING_HOST_MIGRATION, bAllowHostMigration, EOnlineDataAdvertisementType::DontAdvertise);
+
 	PendingCreateLobbySettings = Settings;
 
 	// If a lobby session already exists, DestroySession is async — an immediate CreateSession
@@ -242,7 +293,7 @@ bool UEEOSLobbySubsystem::CreateLobby(int32 MaxMembers, bool bIsPublic, bool bUs
 		FOnCreateSessionCompleteDelegate::CreateUObject(this, &UEEOSLobbySubsystem::HandleCreateSessionComplete));
 
 	SessionInterface->CreateSession(0, LOBBY_SESSION_NAME, PendingCreateLobbySettings);
-	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSLobbySubsystem::CreateLobby — Creating lobby with %d max members (Voice=%d)"), MaxMembers, bUseVoiceChat);
+	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSLobbySubsystem::CreateLobby — Creating lobby with %d max members (Voice=%d, HostMigration=%d)"), MaxMembers, bUseVoiceChat, bAllowHostMigration);
 	return true;
 }
 
