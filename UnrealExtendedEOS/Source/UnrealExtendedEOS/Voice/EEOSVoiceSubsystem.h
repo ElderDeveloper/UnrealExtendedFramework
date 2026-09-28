@@ -95,6 +95,9 @@ public:
 	UFUNCTION(BlueprintPure, Category = "EOS|Voice")
 	bool IsPlayerTalking(const FString& UserId) const;
 
+	/** True while EOS reports UserId (a Product User Id) speaking in RoomName. */
+	bool IsPlayerTalkingInRoom(const FString& UserId, const FString& RoomName) const;
+
 	/** Check if a specific player is muted */
 	UFUNCTION(BlueprintPure, Category = "EOS|Voice")
 	bool IsPlayerMuted(const FString& UserId) const;

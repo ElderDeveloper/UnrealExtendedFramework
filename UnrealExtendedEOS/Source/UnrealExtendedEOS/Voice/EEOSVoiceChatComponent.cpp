@@ -1180,10 +1180,32 @@ void UEEOSVoiceChatComponent::RefreshCaptureState()
 
 bool UEEOSVoiceChatComponent::IsTalking() const
 {
+	if (!GetLocalVoiceController())
+	{
+		// Another player's voice point: there is no microphone here to measure, so it is EOS's own
+		// speaking state for that player, in a room this component uses. A fixture no player owns has
+		// no user id and never talks.
+		return IsPlayerTalkingInJoinedRooms(GetOwnerUserId());
+	}
 	if (!CaptureState) return false;
 	// The local capture test reports speech on its own stream: no room or transmit permission needed.
 	if (LocalCapture) return CaptureState->IsTalking();
-	return bIsActive && WantsTransmit() && CaptureState->IsTalking();
+	if (!bIsActive || !WantsTransmit()) return false;
+	// Our own speech gate, or EOS's speaking flag for this user (EOS raises it only while sending).
+	if (CaptureState->IsTalking()) return true;
+	const UEEOSVoiceSubsystem* Voice = GetVoiceSubsystem();
+	return Voice && IsPlayerTalkingInJoinedRooms(Voice->GetLocalVoicePlayerName());
+}
+
+bool UEEOSVoiceChatComponent::IsPlayerTalkingInJoinedRooms(const FString& UserId) const
+{
+	const UEEOSVoiceSubsystem* Voice = GetVoiceSubsystem();
+	if (!Voice || UserId.IsEmpty()) return false;
+	for (const FString& Room : GetJoinedRooms())
+	{
+		if (Voice->IsPlayerTalkingInRoom(UserId, Room)) return true;
+	}
+	return false;
 }
 
 float UEEOSVoiceChatComponent::GetCaptureLevel() const

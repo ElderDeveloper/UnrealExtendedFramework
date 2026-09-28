@@ -1256,6 +1256,12 @@ float UEEOSVoiceSubsystem::GetPlayerVolume(const FString& UserId) const
 	return 1.0f;
 }
 
+bool UEEOSVoiceSubsystem::IsPlayerTalkingInRoom(const FString& UserId, const FString& RoomName) const
+{
+	const TSet<FString>* Rooms = TalkingRoomsByPlayer.Find(UserId);
+	return Rooms && Rooms->Contains(RoomName);
+}
+
 bool UEEOSVoiceSubsystem::IsPlayerTalking(const FString& UserId) const
 {
 	if (CachedVoiceChatUser)

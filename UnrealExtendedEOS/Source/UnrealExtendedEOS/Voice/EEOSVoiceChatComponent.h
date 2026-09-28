@@ -192,6 +192,10 @@ public:
 	bool IsMicrophoneMuted() const { return bMicrophoneMuted; }
 	UFUNCTION(BlueprintCallable, Category = "Voice|Microphone")
 	void SetMicrophoneTest(bool bEnabled);
+	/**
+	 * On the local player's voice point: speech detected while allowed to transmit (or on the local
+	 * capture test). On anyone else's: EOS reports that player speaking in one of this component's rooms.
+	 */
 	UFUNCTION(BlueprintPure, Category = "Voice|Microphone")
 	bool IsTalking() const;
 	UFUNCTION(BlueprintPure, Category = "Voice|Microphone")
@@ -433,6 +437,8 @@ private:
 	void ConfirmActive();
 	/** Push MicrophoneVolume to the voice user, if this is the live local source. */
 	void ApplyMicrophoneVolume();
+	/** EOS reports UserId speaking in one of this component's joined rooms. */
+	bool IsPlayerTalkingInJoinedRooms(const FString& UserId) const;
 	void StartProximityTimer();
 	void StopProximityTimer();
 	void UpdateProximityVolumes();
