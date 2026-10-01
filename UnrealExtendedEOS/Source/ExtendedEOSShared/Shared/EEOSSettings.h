@@ -137,6 +137,11 @@ public:
 		meta = (DisplayName = "Allow Lobby Host Migration"))
 	bool bAllowLobbyHostMigration = true;
 
+	/** Leave a non-owned lobby when game connection/travel fails in its GameInstance.
+	 *  Disable for persistent social lobbies that should survive game disconnections. */
+	UPROPERTY(config, EditAnywhere, BlueprintReadOnly, Category = "Sessions")
+	bool bLeaveLobbyOnConnectionFailure = true;
+
 	/** Preferred deployment region (empty = auto) */
 	UPROPERTY(config, EditAnywhere, BlueprintReadOnly, Category = "Sessions",
 		meta = (DisplayName = "Preferred Region"))

@@ -7,6 +7,8 @@
 #include "Interfaces/OnlineSessionInterface.h"
 #include "OnlineSessionSettings.h"
 #include "Containers/Ticker.h"
+#include "Engine/EngineBaseTypes.h"
+#include "EEOSLobbyJoinRequest.h"
 #include "EEOSLobbySubsystem.generated.h"
 
 class UEEOSSearchCoordinator;
@@ -45,7 +47,7 @@ public:
 
 	/** Create a new lobby. If a lobby already exists it is destroyed first and the create
 	 *  runs from the destroy completion. Completion: OnLobbyCreated (exactly once).
-	 *  @return false if rejected (a lobby create/destroy is already in flight — no delegate
+	 *  @return false if rejected (a lobby membership operation is already in flight — no delegate
 	 *  will fire) or failed pre-flight (EOS unavailable / interface missing — these DO
 	 *  broadcast OnLobbyCreated(false)); true if the create started. */
 	UFUNCTION(BlueprintCallable, Category = "EOS|Lobbies")
@@ -65,8 +67,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "EOS|Lobbies")
 	bool FindLobbiesFiltered(int32 MaxResults, const TMap<FString, FString>& SearchFilters);
 
-	/** Join a lobby from search results.
-	 *  @return false if rejected (a join-lobby is already in flight — no delegate will fire)
+	/** Join a lobby from search results. An existing lobby is left first; the target
+	 *  result is retained until leaving finishes. Membership operations cannot overlap.
+	 *  @return false if rejected (a membership operation is already in flight — no delegate will fire)
 	 *  or failed pre-flight (EOS unavailable / invalid index / interface missing — these DO
 	 *  broadcast OnLobbyJoined(false)); true if the join started (OnLobbyJoined fires once). */
 	UFUNCTION(BlueprintCallable, Category = "EOS|Lobbies")
@@ -74,12 +77,12 @@ public:
 
 	/**
 	 * Join a lobby from an invite or other result that is not in the last search list.
-	 * Same completion contract as JoinLobby: OnLobbyJoined fires once unless an join is already in flight.
+	 * Same leave-then-join path and completion contract as JoinLobby.
 	 */
 	bool JoinLobbyResult(const FOnlineSessionSearchResult& SearchResult);
 
 	/** Leave the current lobby (any member). Completion: OnLobbyDestroyed (exactly once).
-	 *  @return false if rejected (a lobby create/destroy is already in flight — no delegate
+	 *  @return false if rejected (a lobby membership operation is already in flight — no delegate
 	 *  will fire) or failed pre-flight (not in a lobby / EOS unavailable / interface missing —
 	 *  these DO broadcast OnLobbyDestroyed(false)); true if the leave started. */
 	UFUNCTION(BlueprintCallable, Category = "EOS|Lobbies")
@@ -87,7 +90,7 @@ public:
 
 	/** Destroy the current lobby (owner only — non-owners should call LeaveLobby).
 	 *  Completion: OnLobbyDestroyed (exactly once).
-	 *  @return false if rejected (a lobby create/destroy is already in flight — no delegate
+	 *  @return false if rejected (a lobby membership operation is already in flight — no delegate
 	 *  will fire) or failed pre-flight (not in a lobby / not the owner / EOS unavailable /
 	 *  interface missing — these DO broadcast OnLobbyDestroyed(false)); true if the destroy
 	 *  started. */
@@ -191,6 +194,10 @@ public:
 	UFUNCTION(BlueprintPure, Category = "EOS|Lobbies")
 	static FName GetLobbySessionName();
 
+	/** Last join error, including pre-flight and leave-before-join failures. */
+	UFUNCTION(BlueprintPure, Category = "EOS|Lobbies")
+	FString GetLastLobbyJoinError() const { return LastLobbyJoinError; }
+
 	// ── Delegates ────────────────────────────────────────────────────────────
 
 	UPROPERTY(BlueprintAssignable, Category = "EOS|Lobbies")
@@ -241,6 +248,12 @@ private:
 	FDelegateHandle DestroyForCreateLobbyHandle;
 	FDelegateHandle FindLobbiesCompleteHandle;
 	FDelegateHandle JoinLobbyCompleteHandle;
+	FDelegateHandle DestroyForJoinLobbyHandle;
+	FEEOSLobbyJoinRequest JoinRequest;
+	FString LastLobbyJoinError;
+	bool bShuttingDown = false;
+	FDelegateHandle NetworkFailureHandle;
+	FDelegateHandle TravelFailureHandle;
 	FDelegateHandle DestroyLobbyCompleteHandle;
 	FDelegateHandle UpdateLobbyCompleteHandle;
 
@@ -304,6 +317,17 @@ private:
 	void HandleCreateSessionComplete(FName InSessionName, bool bWasSuccessful);
 	void HandleDestroyThenCreateLobbyComplete(FName InSessionName, bool bWasSuccessful);
 	void HandleFindSessionsComplete(bool bWasSuccessful);
+	bool IsMembershipOperationInFlight() const;
+	bool BeginJoinLobby(const FOnlineSessionSearchResult& SearchResult);
+	bool StartJoiningLobby();
+	void FinishJoiningLobby(bool bSuccess, const FString& Error);
+	void RefreshLobbyState(const FNamedOnlineSession* Session);
+	void HandleDestroyThenJoinLobbyComplete(FName InSessionName, bool bWasSuccessful);
+	void HandleNetworkFailure(UWorld* World, UNetDriver* NetDriver, ENetworkFailure::Type FailureType, const FString& Error);
+	void HandleTravelFailure(UWorld* World, ETravelFailure::Type FailureType, const FString& Error);
+	bool ShouldLeaveAfterConnectionFailure(const UGameInstance* FailureGameInstance) const;
+	friend struct FEEOSLobbyTestAccess;
+
 	void HandleJoinSessionComplete(FName InSessionName, EOnJoinSessionCompleteResult::Type Result);
 	void HandleDestroySessionComplete(FName InSessionName, bool bWasSuccessful);
 	void HandleLifetimeSessionDestroyed(FName InSessionName, bool bWasSuccessful);
