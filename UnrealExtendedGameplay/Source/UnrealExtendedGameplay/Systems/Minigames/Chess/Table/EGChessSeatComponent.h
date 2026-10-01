@@ -56,12 +56,12 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Chess", meta = (Units = "cm"))
 	float FallbackEntryDistance = 60.0f;
 
-	/** Created by the table. */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Chess")
+	/** Table-owned sibling; edit it in the table's component tree, not inline on both seats. */
+	UPROPERTY(BlueprintReadOnly, Category = "Chess")
 	TObjectPtr<UStaticMeshComponent> Chair = nullptr;
 
 	/** Aimed by designers; never activated. The player's local camera copies it. */
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Chess")
+	UPROPERTY(BlueprintReadOnly, Category = "Chess")
 	TObjectPtr<UCameraComponent> BoardCamera = nullptr;
 
 	// -----------------------------------------------------------------
