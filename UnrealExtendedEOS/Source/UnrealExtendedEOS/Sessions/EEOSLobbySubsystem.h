@@ -9,6 +9,7 @@
 #include "Containers/Ticker.h"
 #include "Engine/EngineBaseTypes.h"
 #include "EEOSLobbyJoinRequest.h"
+#include "EEOSLobbyExitRequest.h"
 #include "EEOSLobbySubsystem.generated.h"
 
 class UEEOSSearchCoordinator;
@@ -20,6 +21,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnEOSLobbyMemberJoined, const FStri
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnEOSLobbyMemberLeft, const FString&, MemberId);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnEOSLobbyAttributeChanged, const FString&, Key, const FString&, Value);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnEOSLobbyOwnerChanged, const FString&, NewOwnerId);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnEOSLobbyPromotionComplete, bool, bSuccess, const FString&, MemberId);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnEOSLobbyDestroyed, bool, bSuccess, const FString&, LobbyId);
 
 /**
@@ -43,9 +45,15 @@ public:
 	virtual void Initialize(FSubsystemCollectionBase& Collection) override;
 	virtual void Deinitialize() override;
 
+	/** Cancel continuations and drain lobby exit before GameInstance teardown. C++ shutdown only. */
+	bool ShutdownLobby(float MaxSeconds = 2.0f);
+
+	UFUNCTION(BlueprintPure, Category = "EOS|Lobbies")
+	bool IsLobbyOperationInFlight() const { return IsMembershipOperationInFlight(); }
+
 	// ── Create / Join / Leave ────────────────────────────────────────────────
 
-	/** Create a new lobby. If a lobby already exists it is destroyed first and the create
+	/** Create a new lobby. If a lobby already exists its owner deletes it (other members leave) first and the create
 	 *  runs from the destroy completion. Completion: OnLobbyCreated (exactly once).
 	 *  @return false if rejected (a lobby membership operation is already in flight — no delegate
 	 *  will fire) or failed pre-flight (EOS unavailable / interface missing — these DO
@@ -67,7 +75,7 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "EOS|Lobbies")
 	bool FindLobbiesFiltered(int32 MaxResults, const TMap<FString, FString>& SearchFilters);
 
-	/** Join a lobby from search results. An existing lobby is left first; the target
+	/** Join a lobby from search results. An existing owned lobby is deleted; other members leave first. The target
 	 *  result is retained until leaving finishes. Membership operations cannot overlap.
 	 *  @return false if rejected (a membership operation is already in flight — no delegate will fire)
 	 *  or failed pre-flight (EOS unavailable / invalid index / interface missing — these DO
@@ -89,7 +97,8 @@ public:
 	bool LeaveLobby();
 
 	/** Destroy the current lobby (owner only — non-owners should call LeaveLobby).
-	 *  Completion: OnLobbyDestroyed (exactly once).
+	 *  Uses EOS_Lobby_DestroyLobby, removing it for every member regardless of host migration.
+	 *  Completion: OnLobbyDestroyed after local session/voice cleanup (exactly once).
 	 *  @return false if rejected (a lobby membership operation is already in flight — no delegate
 	 *  will fire) or failed pre-flight (not in a lobby / not the owner / EOS unavailable /
 	 *  interface missing — these DO broadcast OnLobbyDestroyed(false)); true if the destroy
@@ -156,9 +165,11 @@ public:
 	bool KickMember(const FString& MemberId);
 
 	/** Promote a member to lobby owner (owner only; EOS_Lobby_PromoteMember).
-	 *  OnLobbyOwnerChanged broadcasts on SDK success.
+	 *  Transfers EOS ownership only; it does not migrate a gameplay server.
+	 *  OnLobbyPromotionComplete reports SDK success/failure once. OnLobbyOwnerChanged fires
+	 *  when the native owner changes, including remote/automatic promotion, without duplicates.
 	 *  @return false if the request could not be issued (EOS unavailable / not in a lobby /
-	 *  not the owner / unparsable ids); no delegate fires for a false return. */
+	 *  not the owner / transfer disabled / unparsable ids); no delegate fires for a false return. */
 	UFUNCTION(BlueprintCallable, Category = "EOS|Lobbies")
 	bool PromoteMember(const FString& MemberId);
 
@@ -222,13 +233,12 @@ public:
 	FOnEOSLobbyOwnerChanged OnLobbyOwnerChanged;
 
 	UPROPERTY(BlueprintAssignable, Category = "EOS|Lobbies")
+	FOnEOSLobbyPromotionComplete OnLobbyPromotionComplete;
+
+	UPROPERTY(BlueprintAssignable, Category = "EOS|Lobbies")
 	FOnEOSLobbyDestroyed OnLobbyDestroyed;
 
 private:
-
-	/** Leave (or, as owner, destroy) a lobby still held at shutdown, ticking the EOS
-	 *  platform for up to MaxSeconds so the request reaches the backend. */
-	void FlushLobbyExitForShutdown(float MaxSeconds);
 
 	FString CurrentLobbyId;
 	bool bInLobby = false;
@@ -245,11 +255,21 @@ private:
 	// ANY find-completion received while our find handle is bound is OUR terminal event.
 
 	FDelegateHandle CreateLobbyCompleteHandle;
-	FDelegateHandle DestroyForCreateLobbyHandle;
 	FDelegateHandle FindLobbiesCompleteHandle;
 	FDelegateHandle JoinLobbyCompleteHandle;
-	FDelegateHandle DestroyForJoinLobbyHandle;
 	FEEOSLobbyJoinRequest JoinRequest;
+	FEEOSLobbyExitRequest ExitRequest;
+	EOS_HPlatform ExitPlatform = nullptr;
+	uint64 ExitClosedNotificationId = 0;
+	int32 ExpectedNativeExitCompletions = 0;
+	int32 NativeExitCompletions = 0;
+	FString CachedLobbyOwnerId;
+	uint64 PromotionToken = 0;
+	FString PromotionLobbyId;
+	bool bPromotionPending = false;
+	bool bShutdownFlushed = false;
+	bool bDeinitialized = false;
+	FTSTicker::FDelegateHandle LobbyOwnerTickerHandle;
 	FString LastLobbyJoinError;
 	bool bShuttingDown = false;
 	FDelegateHandle NetworkFailureHandle;
@@ -315,14 +335,24 @@ private:
 	FString ResetLobbyState();
 
 	void HandleCreateSessionComplete(FName InSessionName, bool bWasSuccessful);
-	void HandleDestroyThenCreateLobbyComplete(FName InSessionName, bool bWasSuccessful);
 	void HandleFindSessionsComplete(bool bWasSuccessful);
 	bool IsMembershipOperationInFlight() const;
+	bool StartLobbyExit(const IOnlineSessionPtr& Sessions, bool bDeleteBackend, FEEOSLobbyExitRequest::EContinuation Continuation);
+	void HandleBackendLobbyDeleted(uint64 Token, const FString& LobbyId, bool bDeleted);
+	void FinishLobbyExit(bool bNativeSuccess);
+	void ObserveBackendLobbyClosed(const FString& LobbyId);
+	void RemoveExitCloseNotification();
+	void StartNativeLobbyCleanup(const IOnlineSessionPtr& Sessions);
+	void HandlePromotionComplete(uint64 Token, const FString& LobbyId, const FString& MemberId, bool bSuccess);
+	bool TickLobbyOwner(float DeltaTime);
+	void RefreshLobbyOwner();
+	bool UpdateCachedLobbyOwner(const FString& OwnerId);
+	bool ShouldHandleLocalMemberRemoval() const;
+	void ReconcileRemoteLobbyExit(const FNamedOnlineSession* Session, bool bWasSuccessful);
 	bool BeginJoinLobby(const FOnlineSessionSearchResult& SearchResult);
 	bool StartJoiningLobby();
 	void FinishJoiningLobby(bool bSuccess, const FString& Error);
 	void RefreshLobbyState(const FNamedOnlineSession* Session);
-	void HandleDestroyThenJoinLobbyComplete(FName InSessionName, bool bWasSuccessful);
 	void HandleNetworkFailure(UWorld* World, UNetDriver* NetDriver, ENetworkFailure::Type FailureType, const FString& Error);
 	void HandleTravelFailure(UWorld* World, ETravelFailure::Type FailureType, const FString& Error);
 	bool ShouldLeaveAfterConnectionFailure(const UGameInstance* FailureGameInstance) const;

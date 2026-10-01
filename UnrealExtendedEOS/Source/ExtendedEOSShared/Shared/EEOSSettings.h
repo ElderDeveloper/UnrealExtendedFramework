@@ -137,6 +137,11 @@ public:
 		meta = (DisplayName = "Allow Lobby Host Migration"))
 	bool bAllowLobbyHostMigration = true;
 
+	/** Allow explicit EOS ownership transfer. This does not move a gameplay listen server;
+	 *  disable it for games without a server handoff. Independent of automatic host migration. */
+	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Lobbies")
+	bool bAllowLobbyOwnerTransfer = true;
+
 	/** Leave a non-owned lobby when game connection/travel fails in its GameInstance.
 	 *  Disable for persistent social lobbies that should survive game disconnections. */
 	UPROPERTY(config, EditAnywhere, BlueprintReadOnly, Category = "Sessions")

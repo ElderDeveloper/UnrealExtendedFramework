@@ -7,6 +7,7 @@
 #include "OnlineSubsystemTypes.h"
 #include "Shared/EEOSSettings.h"
 #include "Misc/ScopeExit.h"
+#include "EEOSLobbyLifecycleTestObserver.h"
 
 // Session fixtures never enter the OSS or EOS SDK; no live account or temporary world.
 namespace
@@ -43,6 +44,16 @@ struct FEEOSLobbyTestAccess
 	{
 		Subsystem->RefreshLobbyState(Session);
 	}
+	static FEEOSLobbyExitRequest& Exit(UEEOSLobbySubsystem* S) { return S->ExitRequest; }
+	static bool LocalRemovalAllowed(UEEOSLobbySubsystem* S) { return S->ShouldHandleLocalMemberRemoval(); }
+	static void RemoteExit(UEEOSLobbySubsystem* S, const FNamedOnlineSession* Native, bool bSuccess) { S->ReconcileRemoteLobbyExit(Native, bSuccess); }
+	static bool Owner(UEEOSLobbySubsystem* S, const FString& Id) { return S->UpdateCachedLobbyOwner(Id); }
+	static void Promotion(UEEOSLobbySubsystem* S, uint64 Token, const FString& LobbyId, const FString& Member, bool bSuccess)
+	{ S->HandlePromotionComplete(Token, LobbyId, Member, bSuccess); }
+	static void BeginPromotion(UEEOSLobbySubsystem* S, uint64 Token, const FString& LobbyId)
+	{ S->bPromotionPending = true; S->PromotionToken = Token; S->PromotionLobbyId = LobbyId; }
+	static void ExpectNativeExits(UEEOSLobbySubsystem* S, int32 Count) { S->ExpectedNativeExitCompletions = Count; S->NativeExitCompletions = 0; }
+	static void NativeExit(UEEOSLobbySubsystem* S, bool bSuccess) { S->HandleDestroySessionComplete(S->GetLobbySessionName(), bSuccess); }
 	static FEEOSLobbyJoinRequest& Request(UEEOSLobbySubsystem* Subsystem) { return Subsystem->JoinRequest; }
 	static bool ShouldRecover(UEEOSLobbySubsystem* Subsystem, const UGameInstance* GameInstance)
 	{
@@ -162,6 +173,9 @@ bool FEEOSLobbyMembershipGuardTest::RunTest(const FString& Parameters)
 		TestFalse(TEXT("Create rejected during membership transition"), Lobby->CreateLobby());
 		TestFalse(TEXT("Leave rejected during membership transition"), Lobby->LeaveLobby());
 		TestFalse(TEXT("Destroy rejected during membership transition"), Lobby->DestroyLobby());
+		TestFalse(TEXT("Transfer rejected during membership transition"), Lobby->PromoteMember(TEXT("member")));
+		TestFalse(TEXT("Kick rejected during membership transition"), Lobby->KickMember(TEXT("member")));
+		TestFalse(TEXT("Attribute update rejected during membership transition"), Lobby->SetLobbyAttribute(TEXT("name"), TEXT("value")));
 		FNamedOnlineSession Existing(UEEOSLobbySubsystem::GetLobbySessionName(), MakeLobbyResult(TEXT("old")).Session);
 		Existing.SessionState = EOnlineSessionState::Pending;
 		FEEOSLobbyTestAccess::Refresh(Lobby, &Existing);
@@ -201,5 +215,209 @@ bool FEEOSLobbyConnectionRecoveryScopeTest::RunTest(const FString& Parameters)
 	FEEOSLobbyTestAccess::Request(Lobby).Reset();
 	FEEOSLobbyTestAccess::SetShuttingDown(Lobby, true);
 	TestFalse(TEXT("No recovery operations during shutdown"), FEEOSLobbyTestAccess::ShouldRecover(Lobby, GI));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEEOSLobbyDeleteOrderingTest,
+	"UnrealExtendedEOS.Lobbies.Lifecycle.DeleteAndNativeCleanupOrder",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FEEOSLobbyDeleteOrderingTest::RunTest(const FString&)
+{
+	for (const bool bNativeFirst : {false, true})
+	{
+		FEEOSLobbyExitRequest Exit;
+		TestTrue(TEXT("Delete accepted"), Exit.Begin(TEXT("hosted"), true, FEEOSLobbyExitRequest::EContinuation::None));
+		TestFalse(TEXT("Another close cannot overlap"), Exit.Begin(TEXT("other"), true, FEEOSLobbyExitRequest::EContinuation::None));
+		TestFalse(TEXT("Native closure alone cannot complete backend deletion"), Exit.Succeeded(true, !bNativeFirst));
+		TestTrue(TEXT("Backend result accepted for exact request"), Exit.CompleteBackend(Exit.GetToken(), TEXT("hosted"), true));
+		TestFalse(TEXT("Duplicate SDK result ignored"), Exit.CompleteBackend(Exit.GetToken(), TEXT("hosted"), true));
+		TestFalse(TEXT("Deleted backend still requires native session/voice cleanup"), Exit.Succeeded(true, true));
+		TestTrue(TEXT("Failed native leave of an already deleted room still completes successfully"), Exit.Succeeded(false, false));
+		Exit.Reset();
+		TestFalse(TEXT("Duplicate native completion cannot finish an idle request"), Exit.Succeeded(true, false));
+	}
+	FEEOSLobbyExitRequest Leave;
+	Leave.Begin(TEXT("member"), false, FEEOSLobbyExitRequest::EContinuation::None);
+	TestFalse(TEXT("Ordinary failed leave is not reported as successful"), Leave.Succeeded(false, false));
+	TestTrue(TEXT("Successful leave with local removal succeeds"), Leave.Succeeded(true, false));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEEOSLobbyDeleteFailureTest,
+	"UnrealExtendedEOS.Lobbies.Lifecycle.DeleteFailureAndStaleCompletion",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FEEOSLobbyDeleteFailureTest::RunTest(const FString&)
+{
+	FEEOSLobbyExitRequest Exit;
+	Exit.Begin(TEXT("old"), true, FEEOSLobbyExitRequest::EContinuation::None);
+	const uint64 OldToken = Exit.GetToken();
+	Exit.CompleteBackend(OldToken, TEXT("old"), false);
+	TestFalse(TEXT("Backend deletion failure cannot erase remaining membership"), Exit.Succeeded(true, true));
+	TestFalse(TEXT("Native leave success cannot conceal backend deletion failure"), Exit.Succeeded(true, false));
+	Exit.Reset();
+	Exit.Begin(TEXT("new"), true, FEEOSLobbyExitRequest::EContinuation::None);
+	TestFalse(TEXT("Stale SDK result cannot delete a replacement lobby"), Exit.CompleteBackend(OldToken, TEXT("old"), true));
+	TestFalse(TEXT("Correct token with wrong lobby cannot complete"), Exit.CompleteBackend(Exit.GetToken(), TEXT("old"), true));
+	TestTrue(TEXT("Replacement is still waiting for its own result"), Exit.IsBackendPending());
+	Exit.Reset();
+	Exit.Begin(TEXT("old"), true, FEEOSLobbyExitRequest::EContinuation::None);
+	TestFalse(TEXT("Reusing a lobby id does not reuse its operation token"), Exit.CompleteBackend(OldToken, TEXT("old"), true));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEEOSLobbyRemoteClosureTest,
+	"UnrealExtendedEOS.Lobbies.Lifecycle.RemoteClosureReconcilesFailureOnce",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FEEOSLobbyRemoteClosureTest::RunTest(const FString&)
+{
+	UGameInstance* GI = NewObject<UGameInstance>();
+	UEEOSLobbySubsystem* Lobby = NewObject<UEEOSLobbySubsystem>(GI);
+	UEEOSLobbyLifecycleTestObserver* Observer = NewObject<UEEOSLobbyLifecycleTestObserver>(GI);
+	Lobby->OnLobbyDestroyed.AddDynamic(Observer, &UEEOSLobbyLifecycleTestObserver::Destroyed);
+	FNamedOnlineSession Native(Lobby->GetLobbySessionName(), MakeLobbyResult(TEXT("remote")).Session);
+	Native.SessionState = EOnlineSessionState::Pending;
+	FEEOSLobbyTestAccess::Refresh(Lobby, &Native);
+	FEEOSLobbyTestAccess::RemoteExit(Lobby, &Native, false);
+	TestTrue(TEXT("Failure retains a surviving native lobby"), Lobby->IsInLobby());
+	TestEqual(TEXT("No departure notification while membership remains"), Observer->DestroyCount, 0);
+	FEEOSLobbyTestAccess::RemoteExit(Lobby, nullptr, false);
+	TestFalse(TEXT("Native removal clears membership even with failed EOS leave"), Lobby->IsInLobby());
+	TestEqual(TEXT("One remote departure event"), Observer->DestroyCount, 1);
+	TestFalse(TEXT("SDK failure remains available to callers"), Observer->bLastSuccess);
+	TestEqual(TEXT("Event identifies the departed lobby"), Observer->LastId, FString(TEXT("remote")));
+	FEEOSLobbyTestAccess::RemoteExit(Lobby, nullptr, true);
+	TestEqual(TEXT("Duplicate native callback cannot emit a second departure"), Observer->DestroyCount, 1);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEEOSLobbyRemovalSwitchTest,
+	"UnrealExtendedEOS.Lobbies.Lifecycle.SwitchSuppressesLocalRemoval",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FEEOSLobbyRemovalSwitchTest::RunTest(const FString&)
+{
+	UGameInstance* GI = NewObject<UGameInstance>();
+	UEEOSLobbySubsystem* Lobby = NewObject<UEEOSLobbySubsystem>(GI);
+	UEEOSLobbyLifecycleTestObserver* Observer = NewObject<UEEOSLobbyLifecycleTestObserver>(GI);
+	Lobby->OnLobbyDestroyed.AddDynamic(Observer, &UEEOSLobbyLifecycleTestObserver::Destroyed);
+	FNamedOnlineSession Native(Lobby->GetLobbySessionName(), MakeLobbyResult(TEXT("old")).Session);
+	Native.SessionState = EOnlineSessionState::Pending;
+	for (bool bLeaving : {false, true})
+	{
+		FEEOSLobbyTestAccess::Refresh(Lobby, &Native);
+		FEEOSLobbyTestAccess::Request(Lobby).Begin(MakeLobbyResult(TEXT("target")), bLeaving);
+		TestFalse(TEXT("Local left callback cannot clear admission during either switch phase"), FEEOSLobbyTestAccess::LocalRemovalAllowed(Lobby));
+		FEEOSLobbyTestAccess::RemoteExit(Lobby, nullptr, false);
+		TestTrue(TEXT("Scoped join completion owns the cache during a switch"), Lobby->IsInLobby());
+		TestEqual(TEXT("No unrelated destroy completion leaks into the new join"), Observer->DestroyCount, 0);
+		FEEOSLobbyTestAccess::Request(Lobby).Reset();
+	}
+	TestTrue(TEXT("Unsolicited local removal is handled when idle"), FEEOSLobbyTestAccess::LocalRemovalAllowed(Lobby));
+	FEEOSLobbyTestAccess::Exit(Lobby).Begin(TEXT("old"), true, FEEOSLobbyExitRequest::EContinuation::Create);
+	TestFalse(TEXT("Create's backend-delete phase also owns local removal"), FEEOSLobbyTestAccess::LocalRemovalAllowed(Lobby));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEEOSLobbyPromotionTest,
+	"UnrealExtendedEOS.Lobbies.Lifecycle.PromotionSerializationAndOwnerDeduplication",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FEEOSLobbyPromotionTest::RunTest(const FString&)
+{
+	UGameInstance* GI = NewObject<UGameInstance>();
+	UEEOSLobbySubsystem* Lobby = NewObject<UEEOSLobbySubsystem>(GI);
+	UEEOSLobbyLifecycleTestObserver* Observer = NewObject<UEEOSLobbyLifecycleTestObserver>(GI);
+	Lobby->OnLobbyPromotionComplete.AddDynamic(Observer, &UEEOSLobbyLifecycleTestObserver::Promoted);
+	FNamedOnlineSession Native(Lobby->GetLobbySessionName(), MakeLobbyResult(TEXT("room")).Session);
+	Native.SessionState = EOnlineSessionState::Pending;
+	FEEOSLobbyTestAccess::Refresh(Lobby, &Native);
+	TestFalse(TEXT("Initial owner is a baseline, not a transfer"), FEEOSLobbyTestAccess::Owner(Lobby, TEXT("host")));
+	TestTrue(TEXT("Remote/automatic promotion changes owner"), FEEOSLobbyTestAccess::Owner(Lobby, TEXT("promoted")));
+	TestFalse(TEXT("SDK/update/ticker duplicate owner is suppressed"), FEEOSLobbyTestAccess::Owner(Lobby, TEXT("promoted")));
+	TestFalse(TEXT("Incomplete owner resolution cannot replace cached owner"), FEEOSLobbyTestAccess::Owner(Lobby, TEXT("")));
+	FEEOSLobbyTestAccess::BeginPromotion(Lobby, 7, TEXT("room"));
+	TestTrue(TEXT("Promotion holds the membership operation slot"), Lobby->IsLobbyOperationInFlight());
+	TestFalse(TEXT("Cannot transfer twice concurrently"), Lobby->PromoteMember(TEXT("next")));
+	TestFalse(TEXT("Cannot switch during transfer"), Lobby->JoinLobbyResult(MakeLobbyResult(TEXT("other"))));
+	FEEOSLobbyTestAccess::Promotion(Lobby, 6, TEXT("room"), TEXT("promoted"), true);
+	TestEqual(TEXT("Stale promotion token cannot notify"), Observer->PromotionCount, 0);
+	TestTrue(TEXT("Stale callback cannot release the current operation"), Lobby->IsLobbyOperationInFlight());
+	FEEOSLobbyTestAccess::Promotion(Lobby, 7, TEXT("room"), TEXT("promoted"), false);
+	TestEqual(TEXT("Transfer failure gets an explicit completion"), Observer->PromotionCount, 1);
+	TestFalse(TEXT("Failure reported accurately"), Observer->bLastSuccess);
+	TestFalse(TEXT("Failed transfer releases the guard"), Lobby->IsLobbyOperationInFlight());
+	FEEOSLobbyTestAccess::BeginPromotion(Lobby, 8, TEXT("room"));
+	FEEOSLobbyTestAccess::Refresh(Lobby, nullptr);
+	FEEOSLobbyTestAccess::Promotion(Lobby, 8, TEXT("room"), TEXT("promoted"), true);
+	TestEqual(TEXT("Old-room completion cannot notify after remote closure"), Observer->PromotionCount, 1);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEEOSLobbyShutdownContinuationTest,
+	"UnrealExtendedEOS.Lobbies.Lifecycle.ShutdownCancelsContinuations",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FEEOSLobbyShutdownContinuationTest::RunTest(const FString&)
+{
+	UGameInstance* GI = NewObject<UGameInstance>();
+	UEEOSLobbySubsystem* Lobby = NewObject<UEEOSLobbySubsystem>(GI);
+	UEEOSLobbyLifecycleTestObserver* Observer = NewObject<UEEOSLobbyLifecycleTestObserver>(GI);
+	Lobby->OnLobbyCreated.AddDynamic(Observer, &UEEOSLobbyLifecycleTestObserver::Created);
+	Lobby->OnLobbyJoined.AddDynamic(Observer, &UEEOSLobbyLifecycleTestObserver::Joined);
+	Lobby->OnLobbyDestroyed.AddDynamic(Observer, &UEEOSLobbyLifecycleTestObserver::Destroyed);
+	FEEOSLobbyTestAccess::SetShuttingDown(Lobby, true);
+	for (auto Continuation : {FEEOSLobbyExitRequest::EContinuation::Create, FEEOSLobbyExitRequest::EContinuation::Join})
+	{
+		FEEOSLobbyTestAccess::Request(Lobby).Begin(MakeLobbyResult(TEXT("target")), true);
+		auto& Exit = FEEOSLobbyTestAccess::Exit(Lobby);
+		Exit.Begin(TEXT("old"), true, Continuation);
+		Exit.CompleteBackend(Exit.GetToken(), TEXT("old"), true);
+		FEEOSLobbyTestAccess::NativeExit(Lobby, false);
+		TestFalse(TEXT("Shutdown consumes the exit without starting the staged operation"), Lobby->IsLobbyOperationInFlight());
+		TestEqual(TEXT("No create gameplay callback during teardown"), Observer->CreateCount, 0);
+		TestEqual(TEXT("No join travel callback during teardown"), Observer->JoinCount, 0);
+		TestEqual(TEXT("No close UI callback during teardown"), Observer->DestroyCount, 0);
+	}
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEEOSLobbyDuplicateNativeCleanupTest,
+	"UnrealExtendedEOS.Lobbies.Lifecycle.DuplicateNativeCleanupCannotConsumeTarget",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FEEOSLobbyDuplicateNativeCleanupTest::RunTest(const FString&)
+{
+	UGameInstance* GI = NewObject<UGameInstance>();
+	UEEOSLobbySubsystem* Lobby = NewObject<UEEOSLobbySubsystem>(GI);
+	UEEOSLobbyLifecycleTestObserver* Observer = NewObject<UEEOSLobbyLifecycleTestObserver>(GI);
+	Lobby->OnLobbyJoined.AddDynamic(Observer, &UEEOSLobbyLifecycleTestObserver::Joined);
+	FEEOSLobbyTestAccess::SetShuttingDown(Lobby, true); // Finish without entering a real OSS.
+	FEEOSLobbyTestAccess::Request(Lobby).Begin(MakeLobbyResult(TEXT("target")), true);
+	auto& Exit = FEEOSLobbyTestAccess::Exit(Lobby);
+	Exit.Begin(TEXT("old"), true, FEEOSLobbyExitRequest::EContinuation::Join);
+	Exit.CompleteBackend(Exit.GetToken(), TEXT("old"), true);
+	FEEOSLobbyTestAccess::ExpectNativeExits(Lobby, 2); // local cleanup + racing CLOSED cleanup
+	FEEOSLobbyTestAccess::NativeExit(Lobby, false);
+	TestTrue(TEXT("First leave cannot release the old lobby's operation guard"), Lobby->IsLobbyOperationInFlight());
+	TestTrue(TEXT("Target remains staged until both old callbacks drain"), FEEOSLobbyTestAccess::Request(Lobby).IsLeaving());
+	TestEqual(TEXT("No target completion after the first callback"), Observer->JoinCount, 0);
+	FEEOSLobbyTestAccess::NativeExit(Lobby, false);
+	TestFalse(TEXT("Second old callback permits terminal cleanup"), Lobby->IsLobbyOperationInFlight());
+	TestEqual(TEXT("Shutdown still cannot dispatch target travel"), Observer->JoinCount, 0);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEEOSLobbyTransferPolicyTest,
+	"UnrealExtendedEOS.Lobbies.Lifecycle.DisabledTransferDoesNotStartOrComplete",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+bool FEEOSLobbyTransferPolicyTest::RunTest(const FString&)
+{
+	UEEOSSettings* Settings = GetMutableDefault<UEEOSSettings>();
+	const bool bPrevious = Settings->bAllowLobbyOwnerTransfer;
+	ON_SCOPE_EXIT { Settings->bAllowLobbyOwnerTransfer = bPrevious; };
+	Settings->bAllowLobbyOwnerTransfer = false;
+	UGameInstance* GI = NewObject<UGameInstance>();
+	UEEOSLobbySubsystem* Lobby = NewObject<UEEOSLobbySubsystem>(GI);
+	UEEOSLobbyLifecycleTestObserver* Observer = NewObject<UEEOSLobbyLifecycleTestObserver>(GI);
+	Lobby->OnLobbyPromotionComplete.AddDynamic(Observer, &UEEOSLobbyLifecycleTestObserver::Promoted);
+	TestFalse(TEXT("Policy rejects ownership transfer before native/SDK calls"), Lobby->PromoteMember(TEXT("member")));
+	TestFalse(TEXT("Policy rejection leaves no pending operation"), Lobby->IsLobbyOperationInFlight());
+	TestEqual(TEXT("Rejected transfer cannot consume another caller's completion"), Observer->PromotionCount, 0);
 	return true;
 }

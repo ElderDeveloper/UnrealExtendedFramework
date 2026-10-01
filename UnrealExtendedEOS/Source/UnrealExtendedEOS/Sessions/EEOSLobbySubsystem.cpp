@@ -3,6 +3,7 @@
 #include "EEOSLobbySubsystem.h"
 #include "EEOSSearchCoordinator.h"
 #include "OnlineSubsystemUtils.h"
+#include "OnlineSubsystemImpl.h"
 #include "OnlineSessionSettings.h"
 #include "Online/OnlineSessionNames.h"
 #include "Shared/EEOSSettings.h"
@@ -22,10 +23,80 @@ static const FName LOBBY_SESSION_NAME = TEXT("EOS_Lobby");
 /** Owner tag this subsystem uses with the shared UEEOSSearchCoordinator. */
 static const FName LobbySearchOwner(TEXT("EEOSLobbySubsystem"));
 
+namespace
+{
+// EOS ticks on the game thread normally. Inline completion is required while shutdown pumps it.
+template<typename F> void OnLobbyGameThread(F&& Completion)
+{
+	if (IsInGameThread()) Completion();
+	else AsyncTask(ENamedThreads::GameThread, Forward<F>(Completion));
+}
+
+void CleanupNamedLobby(const IOnlineSessionPtr& Sessions, const FString& LobbyId)
+{
+	const FNamedOnlineSession* Session = Sessions.IsValid() ? Sessions->GetNamedSession(LOBBY_SESSION_NAME) : nullptr;
+	if (Session && Session->SessionInfo.IsValid() && Session->GetSessionIdStr() == LobbyId
+		&& Session->SessionState != EOnlineSessionState::Destroying)
+	{
+		Sessions->DestroySession(LOBBY_SESSION_NAME); // also removes the lobby RTC room/analytics
+	}
+}
+
+/** A timed-out create/join can finish after the GameInstance died in a persistent editor OSS.
+	* Keep only interface/identity state, never the dead subsystem, and close that exact late lobby. */
+struct FEEOSLateLobbyCleanup : TSharedFromThis<FEEOSLateLobbyCleanup>
+{
+	IOnlineSessionPtr Sessions;
+	EOS_HPlatform Platform = nullptr;
+	FUniqueNetIdPtr LocalUser;
+	FDelegateHandle CreateHandle, JoinHandle;
+	void Arm(bool bCreatePending, bool bJoinPending)
+	{
+		const TSharedRef<FEEOSLateLobbyCleanup> Self = AsShared();
+		if (bCreatePending) CreateHandle = Sessions->AddOnCreateSessionCompleteDelegate_Handle(
+			FOnCreateSessionCompleteDelegate::CreateLambda([Self](FName Name, bool) { if (Name == LOBBY_SESSION_NAME) Self->Complete(); }));
+		if (bJoinPending) JoinHandle = Sessions->AddOnJoinSessionCompleteDelegate_Handle(
+			FOnJoinSessionCompleteDelegate::CreateLambda([Self](FName Name, EOnJoinSessionCompleteResult::Type) { if (Name == LOBBY_SESSION_NAME) Self->Complete(); }));
+	}
+	void Complete()
+	{
+		// Hold Self while removing the delegates that own this cleanup object.
+		const TSharedRef<FEEOSLateLobbyCleanup> Self = AsShared();
+		Sessions->ClearOnCreateSessionCompleteDelegate_Handle(CreateHandle);
+		Sessions->ClearOnJoinSessionCompleteDelegate_Handle(JoinHandle);
+		const FNamedOnlineSession* Session = Sessions->GetNamedSession(LOBBY_SESSION_NAME);
+		if (!Session || !Session->SessionInfo.IsValid() || !Session->SessionInfo->IsValid()) return;
+		const FString LobbyId = Session->GetSessionIdStr();
+		const FString Puid = LocalUser.IsValid() ? UEEOSBlueprintLibrary::ExtractProductUserId(LocalUser->ToString()) : FString();
+		const bool bOwner = LocalUser.IsValid() && Session->OwningUserId.IsValid() && *LocalUser == *Session->OwningUserId;
+		EOS_HLobby Lobby = Platform ? EOS_Platform_GetLobbyInterface(Platform) : nullptr;
+		if (!bOwner || !Lobby || Puid.IsEmpty()) { CleanupNamedLobby(Sessions, LobbyId); return; }
+		const FTCHARToUTF8 Utf8Id(*LobbyId);
+		EOS_Lobby_DestroyLobbyOptions Options = {};
+		Options.ApiVersion = EOS_LOBBY_DESTROYLOBBY_API_LATEST;
+		Options.LobbyId = Utf8Id.Get();
+		Options.LocalUserId = EOS_ProductUserId_FromString(TCHAR_TO_ANSI(*Puid));
+		struct FContext { IOnlineSessionPtr Sessions; FString LobbyId; };
+		EOS_Lobby_DestroyLobby(Lobby, &Options, new FContext{Sessions, LobbyId},
+			[](const EOS_Lobby_DestroyLobbyCallbackInfo* Data)
+			{
+				// Retrying callbacks retain ClientData until the SDK reports a terminal result.
+				if (!EOS_EResult_IsOperationComplete(Data->ResultCode)) return;
+				TUniquePtr<FContext> Context(static_cast<FContext*>(Data->ClientData));
+				OnLobbyGameThread([Sessions = Context->Sessions, Id = Context->LobbyId]() { CleanupNamedLobby(Sessions, Id); });
+			});
+	}
+};
+}
+
 void UEEOSLobbySubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
 	Super::Initialize(Collection);
 	bShuttingDown = false;
+	bShutdownFlushed = false;
+	bDeinitialized = false;
+	LobbyOwnerTickerHandle = FTSTicker::GetCoreTicker().AddTicker(
+		FTickerDelegate::CreateUObject(this, &UEEOSLobbySubsystem::TickLobbyOwner), 0.25f);
 	if (GEngine)
 	{
 		NetworkFailureHandle = GEngine->OnNetworkFailure().AddUObject(this, &UEEOSLobbySubsystem::HandleNetworkFailure);
@@ -43,50 +114,59 @@ void UEEOSLobbySubsystem::Initialize(FSubsystemCollectionBase& Collection)
 	}
 }
 
-void UEEOSLobbySubsystem::FlushLobbyExitForShutdown(float MaxSeconds)
+bool UEEOSLobbySubsystem::ShutdownLobby(float MaxSeconds)
 {
-	// A lobby still held when the process exits stays advertised until the backend
-	// times its owner out, and with host migration EOS hands it to a member who is
-	// not running a server. Leave now, and pump the platform so the leave actually
-	// reaches the backend: nothing ticks EOS once shutdown has begun.
-	if (bInLobby && !DestroyLobbyCompleteHandle.IsValid())
-	{
-		if (IsLobbyOwner())
-		{
-			DestroyLobby();
-		}
-		else
-		{
-			LeaveLobby();
-		}
-	}
-
-	if (!DestroyLobbyCompleteHandle.IsValid())
-	{
-		return;
-	}
-
+	bShuttingDown = true; // No create/join continuation or gameplay broadcast may escape the drain.
+	if (bShutdownFlushed) return !IsMembershipOperationInFlight() && !bInLobby;
+	bShutdownFlushed = true;
+	IOnlineSubsystem* EOSSub = GetEOSOnlineSubsystem();
+	const IOnlineSessionPtr Sessions = EOSSub ? EOSSub->GetSessionInterface() : IOnlineSessionPtr();
 	EOS_HPlatform Platform = GetPlatformHandle();
-	if (!Platform)
+	if (!Sessions.IsValid()) return !IsMembershipOperationInFlight() && !bInLobby;
+	bool bExitAttempted = ExitRequest.IsActive();
+	const double Deadline = FPlatformTime::Seconds() + FMath::Max(0.0f, MaxSeconds);
+	do
 	{
-		return;
-	}
-
-	const double Deadline = FPlatformTime::Seconds() + MaxSeconds;
-	while (DestroyLobbyCompleteHandle.IsValid() && FPlatformTime::Seconds() < Deadline)
-	{
+		const FNamedOnlineSession* Session = Sessions->GetNamedSession(LOBBY_SESSION_NAME);
+		RefreshLobbyState(Session);
+		if (!IsMembershipOperationInFlight() && Session && !bExitAttempted)
+		{
+			bExitAttempted = true;
+			StartLobbyExit(Sessions, IsLobbyOwner(), FEEOSLobbyExitRequest::EContinuation::None);
+		}
+		if (!IsMembershipOperationInFlight() && !Sessions->GetNamedSession(LOBBY_SESSION_NAME)) return true;
+		if (!Platform || FPlatformTime::Seconds() >= Deadline) break;
 		EOS_Platform_Tick(Platform);
+		// EOS callbacks also schedule native completions for the OSS's next tick. Pump its queue,
+		// without re-entering the editor/core ticker or other worlds.
+		static_cast<FOnlineSubsystemImpl*>(EOSSub)->FOnlineSubsystemImpl::Tick(0.01f);
 		FPlatformProcess::Sleep(0.01f);
+	} while (FPlatformTime::Seconds() < Deadline);
+	RefreshLobbyState(Sessions->GetNamedSession(LOBBY_SESSION_NAME));
+	const bool bComplete = !IsMembershipOperationInFlight() && !Sessions->GetNamedSession(LOBBY_SESSION_NAME);
+	if (!bComplete)
+	{
+		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSLobbySubsystem: Lobby shutdown timed out; late create/join cleanup retained (create=%d, join=%d, exit=%d, promotion=%d)."),
+			CreateLobbyCompleteHandle.IsValid(), JoinLobbyCompleteHandle.IsValid(), ExitRequest.IsActive(), bPromotionPending);
+		if (CreateLobbyCompleteHandle.IsValid() || JoinLobbyCompleteHandle.IsValid())
+		{
+			TSharedRef<FEEOSLateLobbyCleanup> Cleanup = MakeShared<FEEOSLateLobbyCleanup>();
+			Cleanup->Sessions = Sessions;
+			Cleanup->Platform = Platform;
+			const IOnlineIdentityPtr Identity = EOSSub->GetIdentityInterface();
+			Cleanup->LocalUser = Identity.IsValid() ? Identity->GetUniquePlayerId(0) : nullptr;
+			Cleanup->Arm(CreateLobbyCompleteHandle.IsValid(), JoinLobbyCompleteHandle.IsValid());
+		}
 	}
-
-	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSLobbySubsystem — Lobby exit at shutdown %s."),
-		DestroyLobbyCompleteHandle.IsValid() ? TEXT("did not complete in time") : TEXT("completed"));
+	return bComplete;
 }
 
 void UEEOSLobbySubsystem::Deinitialize()
 {
 	bShuttingDown = true;
-	FlushLobbyExitForShutdown(2.0f);
+	ShutdownLobby(2.0f);
+	if (LobbyOwnerTickerHandle.IsValid()) FTSTicker::GetCoreTicker().RemoveTicker(LobbyOwnerTickerHandle);
+	LobbyOwnerTickerHandle.Reset();
 	if (GEngine)
 	{
 		GEngine->OnNetworkFailure().Remove(NetworkFailureHandle);
@@ -109,10 +189,8 @@ void UEEOSLobbySubsystem::Deinitialize()
 		if (SessionInterface.IsValid())
 		{
 			if (CreateLobbyCompleteHandle.IsValid())	SessionInterface->ClearOnCreateSessionCompleteDelegate_Handle(CreateLobbyCompleteHandle);
-			if (DestroyForCreateLobbyHandle.IsValid())	SessionInterface->ClearOnDestroySessionCompleteDelegate_Handle(DestroyForCreateLobbyHandle);
 			if (FindLobbiesCompleteHandle.IsValid())	SessionInterface->ClearOnFindSessionsCompleteDelegate_Handle(FindLobbiesCompleteHandle);
 			if (JoinLobbyCompleteHandle.IsValid())		SessionInterface->ClearOnJoinSessionCompleteDelegate_Handle(JoinLobbyCompleteHandle);
-			if (DestroyForJoinLobbyHandle.IsValid()) SessionInterface->ClearOnDestroySessionCompleteDelegate_Handle(DestroyForJoinLobbyHandle);
 			if (DestroyLobbyCompleteHandle.IsValid())	SessionInterface->ClearOnDestroySessionCompleteDelegate_Handle(DestroyLobbyCompleteHandle);
 			if (UpdateLobbyCompleteHandle.IsValid())	SessionInterface->ClearOnUpdateSessionCompleteDelegate_Handle(UpdateLobbyCompleteHandle);
 
@@ -124,11 +202,14 @@ void UEEOSLobbySubsystem::Deinitialize()
 	}
 
 	CreateLobbyCompleteHandle.Reset();
-	DestroyForCreateLobbyHandle.Reset();
 	FindLobbiesCompleteHandle.Reset();
 	JoinLobbyCompleteHandle.Reset();
-	DestroyForJoinLobbyHandle.Reset();
 	JoinRequest.Reset();
+	RemoveExitCloseNotification();
+	ExitRequest.Reset();
+	bPromotionPending = false;
+	++PromotionToken;
+	PromotionLobbyId.Empty();
 	DestroyLobbyCompleteHandle.Reset();
 	UpdateLobbyCompleteHandle.Reset();
 	ParticipantJoinedHandle.Reset();
@@ -149,6 +230,7 @@ void UEEOSLobbySubsystem::Deinitialize()
 	CachedLobbyAttributes.Empty();
 	LobbySearch.Reset();
 	bInLobby = false;
+	bDeinitialized = true;
 	Super::Deinitialize();
 }
 
@@ -241,6 +323,7 @@ FString UEEOSLobbySubsystem::ResetLobbyState()
 	CurrentLobbyId.Empty();
 	bInLobby = false;
 	CachedLobbyAttributes.Empty();
+	CachedLobbyOwnerId.Empty();
 	PendingKickedPuids.Empty();
 	InFlightKickPuids.Empty();
 	return PreviousLobbyId;
@@ -260,7 +343,7 @@ bool UEEOSLobbySubsystem::CreateLobby(int32 MaxMembers, bool bIsPublic, bool bUs
 		return false;
 	}
 
-	if (!IsEOSAvailable())
+	if (bShuttingDown || !IsEOSAvailable())
 	{
 		LogEOSUnavailable(TEXT("CreateLobby"));
 		OnLobbyCreated.Broadcast(false, TEXT(""));
@@ -295,17 +378,14 @@ bool UEEOSLobbySubsystem::CreateLobby(int32 MaxMembers, bool bIsPublic, bool bUs
 
 	PendingCreateLobbySettings = Settings;
 
-	// If a lobby session already exists, DestroySession is async — an immediate CreateSession
-	// would be rejected by the engine with "session already exists". Chain the create inside
-	// the destroy completion instead (handle-scoped, name-filtered, self-clearing).
-	if (SessionInterface->GetNamedSession(LOBBY_SESSION_NAME) != nullptr)
+	if (SessionInterface->GetNamedSession(LOBBY_SESSION_NAME))
 	{
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSLobbySubsystem::CreateLobby — Lobby session already exists, destroying first"));
-
-		DestroyForCreateLobbyHandle = SessionInterface->AddOnDestroySessionCompleteDelegate_Handle(
-			FOnDestroySessionCompleteDelegate::CreateUObject(this, &UEEOSLobbySubsystem::HandleDestroyThenCreateLobbyComplete));
-
-		SessionInterface->DestroySession(LOBBY_SESSION_NAME);
+		RefreshLobbyState(SessionInterface->GetNamedSession(LOBBY_SESSION_NAME));
+		if (!StartLobbyExit(SessionInterface, IsLobbyOwner(), FEEOSLobbyExitRequest::EContinuation::Create))
+		{
+			OnLobbyCreated.Broadcast(false, CurrentLobbyId);
+			return false;
+		}
 		return true;
 	}
 
@@ -389,8 +469,7 @@ bool UEEOSLobbySubsystem::FindLobbiesFiltered(int32 MaxResults, const TMap<FStri
 
 bool UEEOSLobbySubsystem::IsMembershipOperationInFlight() const
 {
-	return CreateLobbyCompleteHandle.IsValid() || DestroyForCreateLobbyHandle.IsValid()
-		|| DestroyLobbyCompleteHandle.IsValid() || JoinRequest.IsActive();
+	return CreateLobbyCompleteHandle.IsValid() || ExitRequest.IsActive() || bPromotionPending || JoinRequest.IsActive();
 }
 
 bool UEEOSLobbySubsystem::JoinLobby(int32 SearchResultIndex)
@@ -459,14 +538,9 @@ bool UEEOSLobbySubsystem::BeginJoinLobby(const FOnlineSessionSearchResult& Searc
 		*Target.GetSessionIdStr(), *CurrentLobbyId, Existing ? int32(Existing->SessionState) : int32(EOnlineSessionState::NoSession), bInLobby);
 	if (!Existing) return StartJoiningLobby();
 
-	DestroyForJoinLobbyHandle = Sessions->AddOnDestroySessionCompleteDelegate_Handle(
-		FOnDestroySessionCompleteDelegate::CreateUObject(this, &UEEOSLobbySubsystem::HandleDestroyThenJoinLobbyComplete));
-	// EOS removes its named session only when this asynchronous leave completes.
-	if (!Sessions->DestroySession(LOBBY_SESSION_NAME) && JoinRequest.IsLeaving())
+	if (!StartLobbyExit(Sessions, IsLobbyOwner(), FEEOSLobbyExitRequest::EContinuation::Join))
 	{
-		Sessions->ClearOnDestroySessionCompleteDelegate_Handle(DestroyForJoinLobbyHandle);
-		DestroyForJoinLobbyHandle.Reset();
-		FinishJoiningLobby(false, TEXT("Could not start leaving the existing lobby."));
+		FinishJoiningLobby(false, TEXT("Could not start closing the existing lobby."));
 		return false;
 	}
 	return true;
@@ -495,28 +569,6 @@ bool UEEOSLobbySubsystem::StartJoiningLobby()
 	return true;
 }
 
-void UEEOSLobbySubsystem::HandleDestroyThenJoinLobbyComplete(FName InSessionName, bool bWasSuccessful)
-{
-	if (InSessionName != LOBBY_SESSION_NAME || !JoinRequest.IsLeaving()) return;
-	IOnlineSubsystem* EOSSub = GetEOSOnlineSubsystem();
-	const IOnlineSessionPtr Sessions = EOSSub ? EOSSub->GetSessionInterface() : IOnlineSessionPtr();
-	if (Sessions.IsValid()) Sessions->ClearOnDestroySessionCompleteDelegate_Handle(DestroyForJoinLobbyHandle);
-	DestroyForJoinLobbyHandle.Reset();
-	const FNamedOnlineSession* Existing = Sessions.IsValid() ? Sessions->GetNamedSession(LOBBY_SESSION_NAME) : nullptr;
-	RefreshLobbyState(Existing);
-	if (bShuttingDown)
-	{
-		JoinRequest.Reset();
-		return;
-	}
-	if (!JoinRequest.CompleteLeave(bWasSuccessful && Sessions.IsValid(), Existing != nullptr))
-	{
-		FinishJoiningLobby(false, TEXT("Existing lobby leave failed or its named session remains; the new join was not started."));
-		return;
-	}
-	StartJoiningLobby();
-}
-
 void UEEOSLobbySubsystem::RefreshLobbyState(const FNamedOnlineSession* Session)
 {
 	if (!Session || !Session->SessionInfo.IsValid() || !Session->SessionInfo->IsValid()
@@ -525,8 +577,10 @@ void UEEOSLobbySubsystem::RefreshLobbyState(const FNamedOnlineSession* Session)
 		ResetLobbyState();
 		return;
 	}
+	const bool bNewLobby = CurrentLobbyId != Session->GetSessionIdStr();
 	bInLobby = true;
 	CurrentLobbyId = Session->GetSessionIdStr();
+	if (bNewLobby) CachedLobbyOwnerId = Session->OwningUserId.IsValid() ? Session->OwningUserId->ToString() : FString();
 	RefreshCachedLobbyAttributes(Session->SessionSettings, false);
 }
 
@@ -581,7 +635,7 @@ void UEEOSLobbySubsystem::HandleTravelFailure(UWorld* World, ETravelFailure::Typ
 	const IOnlineSessionPtr Sessions = EOSSub ? EOSSub->GetSessionInterface() : IOnlineSessionPtr();
 	const FNamedOnlineSession* Session = Sessions.IsValid() ? Sessions->GetNamedSession(LOBBY_SESSION_NAME) : nullptr;
 	// Hosting a lobby is independent of an unrelated travel failure; recover clients only.
-	if (!Session || Session->bHosting) return;
+	if (!Session || World->GetNetMode() == NM_ListenServer || World->GetNetMode() == NM_DedicatedServer) return;
 	RefreshLobbyState(Session);
 	LastLobbyJoinError = FString::Printf(TEXT("Game connection failed (%s): %s"), ETravelFailure::ToString(FailureType), *Error);
 	UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSLobbySubsystem: %s; leaving lobby '%s' so another join can start"), *LastLobbyJoinError, *CurrentLobbyId);
@@ -590,110 +644,212 @@ void UEEOSLobbySubsystem::HandleTravelFailure(UWorld* World, ETravelFailure::Typ
 
 bool UEEOSLobbySubsystem::LeaveLobby()
 {
-	// In-flight rejections come first and never broadcast. Also covers CreateLobby's
-	// destroy-then-create chain — the lobby session is mid-transition and a second
-	// DestroySession would race the chain.
-	if (IsMembershipOperationInFlight())
+	if (IsMembershipOperationInFlight() || bShuttingDown)
 	{
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSLobbySubsystem::LeaveLobby — A lobby membership operation is already in flight; rejecting new call (no delegate will fire)"));
+		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSLobbySubsystem::LeaveLobby: membership operation pending or shutting down; rejected without completion"));
 		return false;
 	}
-
-	if (!IsEOSAvailable())
-	{
-		LogEOSUnavailable(TEXT("LeaveLobby"));
-		OnLobbyDestroyed.Broadcast(false, CurrentLobbyId);
-		return false;
-	}
-
 	IOnlineSubsystem* EOSSub = GetEOSOnlineSubsystem();
-	IOnlineSessionPtr SessionInterface = EOSSub->GetSessionInterface();
-	if (!SessionInterface.IsValid())
+	const IOnlineSessionPtr Sessions = EOSSub ? EOSSub->GetSessionInterface() : IOnlineSessionPtr();
+	if (!Sessions.IsValid() || !StartLobbyExit(Sessions, false, FEEOSLobbyExitRequest::EContinuation::None))
 	{
 		OnLobbyDestroyed.Broadcast(false, CurrentLobbyId);
 		return false;
 	}
-
-	const FNamedOnlineSession* Existing = SessionInterface->GetNamedSession(LOBBY_SESSION_NAME);
-	RefreshLobbyState(Existing);
-	if (!Existing)
-	{
-		OnLobbyDestroyed.Broadcast(false, TEXT(""));
-		return false;
-	}
-
-	// For lobby-backed sessions DestroySession maps to EOS_Lobby_LeaveLobby (the backend uses
-	// the host-migration setting to decide whether an owner's leave destroys the lobby), so
-	// this is the correct "leave" for any member. Local state is cleared ONLY in the
-	// completion, reconciling with the named session even when EOS reports a failed leave.
-	DestroyLobbyCompleteHandle = SessionInterface->AddOnDestroySessionCompleteDelegate_Handle(
-		FOnDestroySessionCompleteDelegate::CreateUObject(this, &UEEOSLobbySubsystem::HandleDestroySessionComplete));
-
-	if (!SessionInterface->DestroySession(LOBBY_SESSION_NAME) && DestroyLobbyCompleteHandle.IsValid())
-	{
-		SessionInterface->ClearOnDestroySessionCompleteDelegate_Handle(DestroyLobbyCompleteHandle);
-		DestroyLobbyCompleteHandle.Reset();
-		RefreshLobbyState(SessionInterface->GetNamedSession(LOBBY_SESSION_NAME));
-		OnLobbyDestroyed.Broadcast(false, CurrentLobbyId);
-		return false;
-	}
-	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSLobbySubsystem::LeaveLobby — Leaving lobby '%s'..."), *CurrentLobbyId);
 	return true;
 }
 
 bool UEEOSLobbySubsystem::DestroyLobby()
 {
-	// In-flight rejections come first and never broadcast (see LeaveLobby).
-	if (IsMembershipOperationInFlight())
+	if (IsMembershipOperationInFlight() || bShuttingDown)
 	{
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSLobbySubsystem::DestroyLobby — A lobby membership operation is already in flight; rejecting new call (no delegate will fire)"));
+		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSLobbySubsystem::DestroyLobby: membership operation pending or shutting down; rejected without completion"));
 		return false;
 	}
-
-	if (!IsEOSAvailable())
-	{
-		LogEOSUnavailable(TEXT("DestroyLobby"));
-		OnLobbyDestroyed.Broadcast(false, CurrentLobbyId);
-		return false;
-	}
-
 	IOnlineSubsystem* EOSSub = GetEOSOnlineSubsystem();
-	IOnlineSessionPtr SessionInterface = EOSSub->GetSessionInterface();
-	if (!SessionInterface.IsValid())
+	const IOnlineSessionPtr Sessions = EOSSub ? EOSSub->GetSessionInterface() : IOnlineSessionPtr();
+	if (Sessions.IsValid()) RefreshLobbyState(Sessions->GetNamedSession(LOBBY_SESSION_NAME));
+	if (!Sessions.IsValid() || !IsLobbyOwner() || !StartLobbyExit(Sessions, true, FEEOSLobbyExitRequest::EContinuation::None))
 	{
 		OnLobbyDestroyed.Broadcast(false, CurrentLobbyId);
 		return false;
 	}
-
-	RefreshLobbyState(SessionInterface->GetNamedSession(LOBBY_SESSION_NAME));
-
-	// Documented owner-only: non-owners leave, they don't destroy.
-	if (!IsLobbyOwner())
-	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSLobbySubsystem::DestroyLobby — Only the lobby owner can destroy the lobby; use LeaveLobby instead"));
-		OnLobbyDestroyed.Broadcast(false, CurrentLobbyId);
-		return false;
-	}
-
-	DestroyLobbyCompleteHandle = SessionInterface->AddOnDestroySessionCompleteDelegate_Handle(
-		FOnDestroySessionCompleteDelegate::CreateUObject(this, &UEEOSLobbySubsystem::HandleDestroySessionComplete));
-
-	if (!SessionInterface->DestroySession(LOBBY_SESSION_NAME) && DestroyLobbyCompleteHandle.IsValid())
-	{
-		SessionInterface->ClearOnDestroySessionCompleteDelegate_Handle(DestroyLobbyCompleteHandle);
-		DestroyLobbyCompleteHandle.Reset();
-		RefreshLobbyState(SessionInterface->GetNamedSession(LOBBY_SESSION_NAME));
-		OnLobbyDestroyed.Broadcast(false, CurrentLobbyId);
-		return false;
-	}
-	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSLobbySubsystem::DestroyLobby — Destroying lobby '%s'"), *CurrentLobbyId);
 	return true;
+}
+
+bool UEEOSLobbySubsystem::StartLobbyExit(const IOnlineSessionPtr& Sessions, bool bDeleteBackend, FEEOSLobbyExitRequest::EContinuation Continuation)
+{
+	const FNamedOnlineSession* Session = Sessions.IsValid() ? Sessions->GetNamedSession(LOBBY_SESSION_NAME) : nullptr;
+	RefreshLobbyState(Session);
+	if (!Session || !bInLobby || ExitRequest.IsActive() || Session->SessionState == EOnlineSessionState::Creating) return false;
+	EOS_HLobby Lobby = nullptr;
+	EOS_ProductUserId LocalPuid = nullptr;
+	if (bDeleteBackend)
+	{
+		const EOS_HPlatform Platform = GetPlatformHandle();
+		Lobby = Platform ? EOS_Platform_GetLobbyInterface(Platform) : nullptr;
+		IOnlineSubsystem* EOSSub = GetEOSOnlineSubsystem();
+		const IOnlineIdentityPtr Identity = EOSSub ? EOSSub->GetIdentityInterface() : IOnlineIdentityPtr();
+		const FUniqueNetIdPtr LocalId = Identity.IsValid() ? Identity->GetUniquePlayerId(0) : nullptr;
+		const FString Puid = LocalId.IsValid() ? UEEOSBlueprintLibrary::ExtractProductUserId(LocalId->ToString()) : FString();
+		LocalPuid = Puid.IsEmpty() ? nullptr : EOS_ProductUserId_FromString(TCHAR_TO_ANSI(*Puid));
+		if (!Lobby || !LocalPuid || !EOS_ProductUserId_IsValid(LocalPuid)) return false;
+	}
+	ExitRequest.Begin(CurrentLobbyId, bDeleteBackend, Continuation);
+	ExpectedNativeExitCompletions = 0;
+	NativeExitCompletions = 0;
+	if (bDeleteBackend)
+	{
+		ExitPlatform = GetPlatformHandle();
+		EOS_Lobby_AddNotifyLobbyMemberStatusReceivedOptions NotifyOptions = {};
+		NotifyOptions.ApiVersion = EOS_LOBBY_ADDNOTIFYLOBBYMEMBERSTATUSRECEIVED_API_LATEST;
+		ExitClosedNotificationId = EOS_Lobby_AddNotifyLobbyMemberStatusReceived(Lobby, &NotifyOptions, this,
+			[](const EOS_Lobby_LobbyMemberStatusReceivedCallbackInfo* Data)
+			{
+				if (Data->CurrentStatus != EOS_ELobbyMemberStatus::EOS_LMS_CLOSED) return;
+				const TWeakObjectPtr<UEEOSLobbySubsystem> Weak(static_cast<UEEOSLobbySubsystem*>(Data->ClientData));
+				const FString Id = UTF8_TO_TCHAR(Data->LobbyId);
+				OnLobbyGameThread([Weak, Id]() { if (UEEOSLobbySubsystem* Self = Weak.Get()) Self->ObserveBackendLobbyClosed(Id); });
+			});
+		if (ExitClosedNotificationId == EOS_INVALID_NOTIFICATIONID)
+		{
+			ExitRequest.Reset();
+			ExitPlatform = nullptr;
+			return false;
+		}
+	}
+	// Bind BEFORE deleting: EOS_LMS_CLOSED may cause native cleanup before the SDK result arrives.
+	DestroyLobbyCompleteHandle = Sessions->AddOnDestroySessionCompleteDelegate_Handle(
+		FOnDestroySessionCompleteDelegate::CreateUObject(this, &UEEOSLobbySubsystem::HandleDestroySessionComplete));
+	if (!bDeleteBackend)
+	{
+		StartNativeLobbyCleanup(Sessions);
+		return true;
+	}
+	struct FDeleteContext { TWeakObjectPtr<UEEOSLobbySubsystem> Self; IOnlineSessionPtr Sessions; FString LobbyId; uint64 Token; };
+	FDeleteContext* Context = new FDeleteContext{this, Sessions, CurrentLobbyId, ExitRequest.GetToken()};
+	const FTCHARToUTF8 Utf8Id(*CurrentLobbyId);
+	EOS_Lobby_DestroyLobbyOptions Options = {};
+	Options.ApiVersion = EOS_LOBBY_DESTROYLOBBY_API_LATEST;
+	Options.LobbyId = Utf8Id.Get();
+	Options.LocalUserId = LocalPuid;
+	EOS_Lobby_DestroyLobby(Lobby, &Options, Context, [](const EOS_Lobby_DestroyLobbyCallbackInfo* Data)
+	{
+		// Retrying callbacks retain ClientData until the SDK reports a terminal result.
+		if (!EOS_EResult_IsOperationComplete(Data->ResultCode)) return;
+		TUniquePtr<FDeleteContext> Ctx(static_cast<FDeleteContext*>(Data->ClientData));
+		const bool bDeleted = Data->ResultCode == EOS_EResult::EOS_Success || Data->ResultCode == EOS_EResult::EOS_NotFound;
+		if (!bDeleted) UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSLobbySubsystem: Backend lobby delete failed: %s"), ANSI_TO_TCHAR(EOS_EResult_ToString(Data->ResultCode)));
+		OnLobbyGameThread([Weak = Ctx->Self, Sessions = Ctx->Sessions, Id = Ctx->LobbyId, Token = Ctx->Token, bDeleted]()
+		{
+			UEEOSLobbySubsystem* Self = Weak.Get();
+			if (Self && Self->ExitRequest.Matches(Token, Id)) Self->HandleBackendLobbyDeleted(Token, Id, bDeleted);
+			else if (bDeleted || !Self || Self->bShuttingDown) CleanupNamedLobby(Sessions, Id); // shutdown timed out / subsystem gone
+		});
+	});
+	return true;
+}
+
+void UEEOSLobbySubsystem::HandleBackendLobbyDeleted(uint64 Token, const FString& LobbyId, bool bDeleted)
+{
+	if (!ExitRequest.CompleteBackend(Token, LobbyId, bDeleted)) return;
+	IOnlineSubsystem* EOSSub = GetEOSOnlineSubsystem();
+	const IOnlineSessionPtr Sessions = EOSSub ? EOSSub->GetSessionInterface() : IOnlineSessionPtr();
+	const FNamedOnlineSession* Session = Sessions.IsValid() ? Sessions->GetNamedSession(LOBBY_SESSION_NAME) : nullptr;
+	if (!bDeleted)
+	{
+		// Even when backend deletion fails, shutdown must release local membership/RTC.
+		if (bShuttingDown && Session)
+		{
+			StartNativeLobbyCleanup(Sessions);
+			return;
+		}
+		FinishLobbyExit(false);
+		return;
+	}
+	if (!Session || !Sessions.IsValid()) { FinishLobbyExit(false); return; }
+	if (!Session->SessionInfo.IsValid() || Session->GetSessionIdStr() != LobbyId) { FinishLobbyExit(false); return; }
+	// CLOSED can precede our SDK result. Its native cleanup owns that completion.
+	if (Session->SessionState == EOnlineSessionState::Destroying || ExpectedNativeExitCompletions > 0) return;
+	StartNativeLobbyCleanup(Sessions);
+}
+
+void UEEOSLobbySubsystem::ObserveBackendLobbyClosed(const FString& LobbyId)
+{
+	if (!ExitRequest.IsActive() || ExitRequest.GetLobbyId() != LobbyId) return;
+	IOnlineSubsystem* EOSSub = GetEOSOnlineSubsystem();
+	const IOnlineSessionPtr Sessions = EOSSub ? EOSSub->GetSessionInterface() : IOnlineSessionPtr();
+	const FNamedOnlineSession* Session = Sessions.IsValid() ? Sessions->GetNamedSession(LOBBY_SESSION_NAME) : nullptr;
+	// The native CLOSED handler issues a leave for each notification while this lobby
+	// remains named. Wait for ALL those callbacks before reusing EOS_Lobby for a target.
+	if (Session && Session->SessionInfo.IsValid() && Session->GetSessionIdStr() == LobbyId) ++ExpectedNativeExitCompletions;
+}
+
+void UEEOSLobbySubsystem::RemoveExitCloseNotification()
+{
+	if (ExitPlatform && ExitClosedNotificationId != EOS_INVALID_NOTIFICATIONID)
+	{
+		EOS_Lobby_RemoveNotifyLobbyMemberStatusReceived(EOS_Platform_GetLobbyInterface(ExitPlatform), ExitClosedNotificationId);
+	}
+	ExitClosedNotificationId = EOS_INVALID_NOTIFICATIONID;
+	ExitPlatform = nullptr;
+	ExpectedNativeExitCompletions = 0;
+	NativeExitCompletions = 0;
+}
+
+void UEEOSLobbySubsystem::StartNativeLobbyCleanup(const IOnlineSessionPtr& Sessions)
+{
+	const FNamedOnlineSession* Session = Sessions->GetNamedSession(LOBBY_SESSION_NAME);
+	if (!Session) { FinishLobbyExit(false); return; }
+	if (Session->SessionState == EOnlineSessionState::Destroying)
+	{
+		// An externally started leave has no CLOSED notification to account for it.
+		ExpectedNativeExitCompletions = FMath::Max(ExpectedNativeExitCompletions, 1);
+		return;
+	}
+	++ExpectedNativeExitCompletions;
+	if (!Sessions->DestroySession(LOBBY_SESSION_NAME))
+	{
+		--ExpectedNativeExitCompletions;
+		FinishLobbyExit(false);
+	}
+}
+
+void UEEOSLobbySubsystem::FinishLobbyExit(bool bNativeSuccess)
+{
+	if (!ExitRequest.IsActive() || ExitRequest.IsBackendPending() || NativeExitCompletions < ExpectedNativeExitCompletions) return;
+	IOnlineSubsystem* EOSSub = GetEOSOnlineSubsystem();
+	const IOnlineSessionPtr Sessions = EOSSub ? EOSSub->GetSessionInterface() : IOnlineSessionPtr();
+	if (Sessions.IsValid()) Sessions->ClearOnDestroySessionCompleteDelegate_Handle(DestroyLobbyCompleteHandle);
+	DestroyLobbyCompleteHandle.Reset();
+	const auto Continuation = ExitRequest.GetContinuation();
+	const FString ClosedId = ExitRequest.GetLobbyId();
+	const FNamedOnlineSession* Session = Sessions.IsValid() ? Sessions->GetNamedSession(LOBBY_SESSION_NAME) : nullptr;
+	const bool bSuccess = Sessions.IsValid() && ExitRequest.Succeeded(bNativeSuccess, Session != nullptr);
+	RefreshLobbyState(Session);
+	RemoveExitCloseNotification();
+	ExitRequest.Reset();
+	if (bShuttingDown) { JoinRequest.Reset(); return; }
+	if (Continuation == FEEOSLobbyExitRequest::EContinuation::Join)
+	{
+		if (!JoinRequest.CompleteLeave(bSuccess, Session != nullptr)) FinishJoiningLobby(false, TEXT("Existing lobby close failed; the new join was not started."));
+		else StartJoiningLobby();
+	}
+	else if (Continuation == FEEOSLobbyExitRequest::EContinuation::Create)
+	{
+		if (!bSuccess) { OnLobbyCreated.Broadcast(false, CurrentLobbyId); return; }
+		CreateLobbyCompleteHandle = Sessions->AddOnCreateSessionCompleteDelegate_Handle(
+			FOnCreateSessionCompleteDelegate::CreateUObject(this, &UEEOSLobbySubsystem::HandleCreateSessionComplete));
+		Sessions->CreateSession(0, LOBBY_SESSION_NAME, PendingCreateLobbySettings);
+	}
+	else OnLobbyDestroyed.Broadcast(bSuccess, ClosedId);
 }
 
 // ── Lobby Attributes ─────────────────────────────────────────────────────────
 
 bool UEEOSLobbySubsystem::SetLobbyAttribute(const FString& Key, const FString& Value)
 {
+	if (bShuttingDown || IsMembershipOperationInFlight()) return false;
 	// In-flight rejection first: a single UpdateSession may be pending at a time (the engine's
 	// update completion carries only the session name, so a second update would corrupt the
 	// first one's correlation).
@@ -766,6 +922,7 @@ TMap<FString, FString> UEEOSLobbySubsystem::GetAllLobbyAttributes() const
 
 bool UEEOSLobbySubsystem::SetMemberAttribute(const FString& Key, const FString& Value)
 {
+	if (bShuttingDown || IsMembershipOperationInFlight()) return false;
 	// In-flight rejection first (see SetLobbyAttribute).
 	if (UpdateLobbyCompleteHandle.IsValid())
 	{
@@ -916,6 +1073,7 @@ bool UEEOSLobbySubsystem::IsLobbyOwner() const
 
 bool UEEOSLobbySubsystem::KickMember(const FString& MemberId)
 {
+	if (bShuttingDown || IsMembershipOperationInFlight()) return false;
 	// The OSS path (UnregisterPlayer) never reaches the backend for lobby-backed sessions, so
 	// a real kick requires the raw SDK: EOS_Lobby_KickMember (owner-only per SDK docs).
 	if (!IsEOSAvailable())
@@ -995,20 +1153,23 @@ bool UEEOSLobbySubsystem::KickMember(const FString& MemberId)
 		TWeakObjectPtr<UEEOSLobbySubsystem> Self;
 		FString MemberId;
 		FString TargetPuid;
+		FString LobbyId;
 	};
-	FKickContext* Context = new FKickContext{ this, MemberId, TargetPUIDStr };
+	FKickContext* Context = new FKickContext{ this, MemberId, TargetPUIDStr, CurrentLobbyId };
 
 	EOS_Lobby_KickMember(LobbyHandle, &Options, Context,
 		[](const EOS_Lobby_KickMemberCallbackInfo* Data)
 		{
+			// Retrying callbacks retain ClientData until the SDK reports a terminal result.
+			if (!EOS_EResult_IsOperationComplete(Data->ResultCode)) return;
 			TUniquePtr<FKickContext> Ctx(static_cast<FKickContext*>(Data->ClientData));
 			if (!Ctx) return;
 
 			AsyncTask(ENamedThreads::GameThread,
-				[WeakSelf = Ctx->Self, KickedMemberId = MoveTemp(Ctx->MemberId), TargetPuid = MoveTemp(Ctx->TargetPuid), ResultCode = Data->ResultCode]()
+				[WeakSelf = Ctx->Self, KickedMemberId = MoveTemp(Ctx->MemberId), TargetPuid = MoveTemp(Ctx->TargetPuid), LobbyId = MoveTemp(Ctx->LobbyId), ResultCode = Data->ResultCode]()
 				{
 					UEEOSLobbySubsystem* Self = WeakSelf.Get();
-					if (!Self) return;
+					if (!Self || !Self->bInLobby || Self->CurrentLobbyId != LobbyId) return;
 
 					Self->InFlightKickPuids.Remove(TargetPuid);
 
@@ -1017,7 +1178,7 @@ bool UEEOSLobbySubsystem::KickMember(const FString& MemberId)
 						UE_LOG(LogExtendedEOS, Log, TEXT("EEOSLobbySubsystem::KickMember — Kicked '%s' from lobby"), *KickedMemberId);
 						// The PendingKickedPuids entry stays: it suppresses the duplicate
 						// engine participant-left (Kicked) notification, which removes it.
-						Self->OnLobbyMemberLeft.Broadcast(KickedMemberId);
+						if (!Self->bShuttingDown) Self->OnLobbyMemberLeft.Broadcast(KickedMemberId);
 					}
 					else
 					{
@@ -1041,6 +1202,12 @@ bool UEEOSLobbySubsystem::KickMember(const FString& MemberId)
 
 bool UEEOSLobbySubsystem::PromoteMember(const FString& MemberId)
 {
+	if (bShuttingDown || IsMembershipOperationInFlight()) return false;
+	if (const UEEOSSettings* Settings = GetEOSSettings(); Settings && !Settings->bAllowLobbyOwnerTransfer)
+	{
+		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSLobbySubsystem: Manual lobby ownership transfer is disabled; gameplay server handoff is required."));
+		return false;
+	}
 	// The old "LOBBY_OWNER" session-attribute write was fiction — ownership transfer requires
 	// the raw SDK: EOS_Lobby_PromoteMember (owner-only per SDK docs). The engine consumes the
 	// resulting EOS_LMS_PROMOTED notification internally and re-points the named session's
@@ -1094,6 +1261,9 @@ bool UEEOSLobbySubsystem::PromoteMember(const FString& MemberId)
 		return false;
 	}
 
+	bPromotionPending = true;
+	PromotionLobbyId = CurrentLobbyId;
+	const uint64 Token = ++PromotionToken;
 	const FTCHARToUTF8 Utf8LobbyId(*CurrentLobbyId);
 
 	EOS_Lobby_PromoteMemberOptions Options = {};
@@ -1106,32 +1276,28 @@ bool UEEOSLobbySubsystem::PromoteMember(const FString& MemberId)
 	{
 		TWeakObjectPtr<UEEOSLobbySubsystem> Self;
 		FString MemberId;
+		FString LobbyId;
+		uint64 Token;
+		IOnlineSessionPtr Sessions;
 	};
-	FPromoteContext* Context = new FPromoteContext{ this, MemberId };
+	FPromoteContext* Context = new FPromoteContext{ this, MemberId, CurrentLobbyId, Token, EOSSub->GetSessionInterface() };
 
 	EOS_Lobby_PromoteMember(LobbyHandle, &Options, Context,
 		[](const EOS_Lobby_PromoteMemberCallbackInfo* Data)
 		{
+			// Retrying callbacks retain ClientData until the SDK reports a terminal result.
+			if (!EOS_EResult_IsOperationComplete(Data->ResultCode)) return;
 			TUniquePtr<FPromoteContext> Ctx(static_cast<FPromoteContext*>(Data->ClientData));
 			if (!Ctx) return;
 
-			AsyncTask(ENamedThreads::GameThread,
-				[WeakSelf = Ctx->Self, PromotedMemberId = MoveTemp(Ctx->MemberId), ResultCode = Data->ResultCode]()
-				{
-					UEEOSLobbySubsystem* Self = WeakSelf.Get();
-					if (!Self) return;
-
-					if (ResultCode == EOS_EResult::EOS_Success)
-					{
-						UE_LOG(LogExtendedEOS, Log, TEXT("EEOSLobbySubsystem::PromoteMember — Promoted '%s' to lobby owner"), *PromotedMemberId);
-						Self->OnLobbyOwnerChanged.Broadcast(PromotedMemberId);
-					}
-					else
-					{
-						UE_LOG(LogExtendedEOS, Error, TEXT("EEOSLobbySubsystem::PromoteMember — EOS_Lobby_PromoteMember for '%s' failed: %s"),
-							*PromotedMemberId, ANSI_TO_TCHAR(EOS_EResult_ToString(ResultCode)));
-					}
-				});
+			if (Data->ResultCode != EOS_EResult::EOS_Success)
+				UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSLobbySubsystem: Lobby promotion failed: %s"), ANSI_TO_TCHAR(EOS_EResult_ToString(Data->ResultCode)));
+			OnLobbyGameThread([Weak = Ctx->Self, Sessions = Ctx->Sessions, Member = Ctx->MemberId, Id = Ctx->LobbyId, Token = Ctx->Token, Result = Data->ResultCode]()
+			{
+				UEEOSLobbySubsystem* Self = Weak.Get();
+				if (!Self || Self->bDeinitialized) CleanupNamedLobby(Sessions, Id);
+				else Self->HandlePromotionComplete(Token, Id, Member, Result == EOS_EResult::EOS_Success);
+			});
 		});
 
 	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSLobbySubsystem::PromoteMember — Promoting '%s'..."), *MemberId);
@@ -1142,6 +1308,7 @@ bool UEEOSLobbySubsystem::PromoteMember(const FString& MemberId)
 
 bool UEEOSLobbySubsystem::SetLobbyJoinable(bool bIsPublic)
 {
+	if (bShuttingDown || IsMembershipOperationInFlight()) return false;
 	// Routed through UpdateSession like the attribute setters, so it must share their single
 	// in-flight update slot: the engine's update completion carries only the session name, and
 	// a second concurrent update would be consumed as the first one's result.
@@ -1191,6 +1358,7 @@ bool UEEOSLobbySubsystem::SetLobbyJoinable(bool bIsPublic)
 
 bool UEEOSLobbySubsystem::InviteToLobby(const FString& UserId)
 {
+	if (bShuttingDown || IsMembershipOperationInFlight()) return false;
 	if (!IsEOSAvailable())
 	{
 		LogEOSUnavailable(TEXT("InviteToLobby"));
@@ -1238,73 +1406,13 @@ FName UEEOSLobbySubsystem::GetLobbySessionName()
 
 void UEEOSLobbySubsystem::HandleCreateSessionComplete(FName InSessionName, bool bWasSuccessful)
 {
-	// Interface-wide delegate: ignore completions for sessions that aren't our lobby
-	// (e.g. the Sessions subsystem's game session) — without clearing our handle or broadcasting.
-	if (InSessionName != LOBBY_SESSION_NAME) return;
-
-	IOnlineSessionPtr SessionInterface;
-	if (IOnlineSubsystem* EOSSub = GetEOSOnlineSubsystem())
-	{
-		SessionInterface = EOSSub->GetSessionInterface();
-	}
-	if (SessionInterface.IsValid())
-	{
-		SessionInterface->ClearOnCreateSessionCompleteDelegate_Handle(CreateLobbyCompleteHandle);
-	}
+	if (InSessionName != LOBBY_SESSION_NAME || !CreateLobbyCompleteHandle.IsValid()) return;
+	IOnlineSubsystem* EOSSub = GetEOSOnlineSubsystem();
+	const IOnlineSessionPtr Sessions = EOSSub ? EOSSub->GetSessionInterface() : IOnlineSessionPtr();
+	if (Sessions.IsValid()) Sessions->ClearOnCreateSessionCompleteDelegate_Handle(CreateLobbyCompleteHandle);
 	CreateLobbyCompleteHandle.Reset();
-
-	bInLobby = bWasSuccessful;
-	CurrentLobbyId.Empty();
-	if (bWasSuccessful && SessionInterface.IsValid())
-	{
-		// Store the real backend id: for a lobby-backed session GetSessionIdStr() is the EOS
-		// lobby id (the engine feeds this exact string to EOS_Lobby_* calls as EOS_LobbyId).
-		if (FNamedOnlineSession* Session = SessionInterface->GetNamedSession(LOBBY_SESSION_NAME))
-		{
-			CurrentLobbyId = Session->GetSessionIdStr();
-			RefreshCachedLobbyAttributes(Session->SessionSettings, /*bBroadcastChanges*/ false);
-		}
-		else
-		{
-			UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSLobbySubsystem: Create succeeded but named lobby session not found; lobby id unavailable"));
-		}
-	}
-
-	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSLobbySubsystem: Create lobby %s (id '%s')"), bWasSuccessful ? TEXT("succeeded") : TEXT("failed"), *CurrentLobbyId);
-	OnLobbyCreated.Broadcast(bWasSuccessful, CurrentLobbyId);
-}
-
-void UEEOSLobbySubsystem::HandleDestroyThenCreateLobbyComplete(FName InSessionName, bool bWasSuccessful)
-{
-	// One-shot continuation of CreateLobby's destroy-then-create chain. Ignore destroys of
-	// other sessions (e.g. the Sessions subsystem's game session) without clearing or broadcasting.
-	if (InSessionName != LOBBY_SESSION_NAME) return;
-
-	IOnlineSessionPtr SessionInterface;
-	if (IOnlineSubsystem* EOSSub = GetEOSOnlineSubsystem())
-	{
-		SessionInterface = EOSSub->GetSessionInterface();
-	}
-	if (SessionInterface.IsValid())
-	{
-		SessionInterface->ClearOnDestroySessionCompleteDelegate_Handle(DestroyForCreateLobbyHandle);
-	}
-	DestroyForCreateLobbyHandle.Reset();
-
-	if (!bWasSuccessful || !SessionInterface.IsValid())
-	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSLobbySubsystem::CreateLobby — Failed to destroy the existing lobby before re-creating"));
-		OnLobbyCreated.Broadcast(false, TEXT(""));
-		return;
-	}
-
-	// The old lobby is gone — reset local lobby state before creating the new one.
-	ResetLobbyState();
-
-	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSLobbySubsystem::CreateLobby — Old lobby destroyed, now creating the new lobby"));
-	CreateLobbyCompleteHandle = SessionInterface->AddOnCreateSessionCompleteDelegate_Handle(
-		FOnCreateSessionCompleteDelegate::CreateUObject(this, &UEEOSLobbySubsystem::HandleCreateSessionComplete));
-	SessionInterface->CreateSession(0, LOBBY_SESSION_NAME, PendingCreateLobbySettings);
+	RefreshLobbyState(Sessions.IsValid() ? Sessions->GetNamedSession(LOBBY_SESSION_NAME) : nullptr);
+	if (!bShuttingDown) OnLobbyCreated.Broadcast(bWasSuccessful && bInLobby, CurrentLobbyId);
 }
 
 void UEEOSLobbySubsystem::HandleFindSessionsComplete(bool bWasSuccessful)
@@ -1378,49 +1486,67 @@ void UEEOSLobbySubsystem::HandleJoinSessionComplete(FName InSessionName, EOnJoin
 
 void UEEOSLobbySubsystem::HandleDestroySessionComplete(FName InSessionName, bool bWasSuccessful)
 {
-	if (InSessionName != LOBBY_SESSION_NAME) return;
-
-	if (IOnlineSubsystem* EOSSub = GetEOSOnlineSubsystem())
-	{
-		IOnlineSessionPtr SessionInterface = EOSSub->GetSessionInterface();
-		if (SessionInterface.IsValid())
-		{
-			SessionInterface->ClearOnDestroySessionCompleteDelegate_Handle(DestroyLobbyCompleteHandle);
-		}
-	}
-	DestroyLobbyCompleteHandle.Reset();
-
-	const FString DestroyedId = CurrentLobbyId;
-	if (IOnlineSubsystem* EOSSub = GetEOSOnlineSubsystem())
-	{
-		const IOnlineSessionPtr Sessions = EOSSub->GetSessionInterface();
-		if (Sessions.IsValid()) RefreshLobbyState(Sessions->GetNamedSession(LOBBY_SESSION_NAME));
-	}
-
-	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSLobbySubsystem: Leave/destroy lobby %s"), bWasSuccessful ? TEXT("succeeded") : TEXT("failed"));
-	OnLobbyDestroyed.Broadcast(bWasSuccessful, DestroyedId);
+	if (InSessionName != LOBBY_SESSION_NAME || !ExitRequest.IsActive()) return;
+	++NativeExitCompletions;
+	// The delete result may follow native EOS_LMS_CLOSED cleanup. Keep the request/handle
+	// until both stages finish; a failed leave of an already deleted lobby is expected.
+	FinishLobbyExit(bWasSuccessful);
 }
 
 void UEEOSLobbySubsystem::HandleLifetimeSessionDestroyed(FName InSessionName, bool bWasSuccessful)
 {
-	// Subsystem-lifetime destroy listener: catches the engine tearing down the lobby session
-	// when the owner destroyed it remotely (or the backend closed it). Our own operations are
-	// consumed by their handle-scoped listeners, which take precedence.
-	if (InSessionName != LOBBY_SESSION_NAME) return;
+	if (InSessionName != LOBBY_SESSION_NAME || ExitRequest.IsActive() || JoinRequest.IsActive() || CreateLobbyCompleteHandle.IsValid()) return;
+	IOnlineSubsystem* EOSSub = GetEOSOnlineSubsystem();
+	const IOnlineSessionPtr Sessions = EOSSub ? EOSSub->GetSessionInterface() : IOnlineSessionPtr();
+	if (Sessions.IsValid()) ReconcileRemoteLobbyExit(Sessions->GetNamedSession(LOBBY_SESSION_NAME), bWasSuccessful);
+}
 
-	if (DestroyLobbyCompleteHandle.IsValid() || DestroyForCreateLobbyHandle.IsValid() || JoinRequest.IsActive())
+void UEEOSLobbySubsystem::ReconcileRemoteLobbyExit(const FNamedOnlineSession* Session, bool bWasSuccessful)
+{
+	if (ExitRequest.IsActive() || JoinRequest.IsActive() || CreateLobbyCompleteHandle.IsValid()) return;
+	const bool bHadMembership = bInLobby;
+	const FString ClosedId = CurrentLobbyId;
+	RefreshLobbyState(Session); // Unreal removes the local named lobby even on an EOS leave error.
+	if (bHadMembership && !bInLobby && !bShuttingDown) OnLobbyDestroyed.Broadcast(bWasSuccessful, ClosedId);
+}
+
+bool UEEOSLobbySubsystem::ShouldHandleLocalMemberRemoval() const
+{
+	return bInLobby && !ExitRequest.IsActive() && !JoinRequest.IsActive() && !CreateLobbyCompleteHandle.IsValid();
+}
+
+bool UEEOSLobbySubsystem::UpdateCachedLobbyOwner(const FString& OwnerId)
+{
+	if (OwnerId.IsEmpty() || CachedLobbyOwnerId == OwnerId) return false;
+	const bool bChanged = !CachedLobbyOwnerId.IsEmpty();
+	CachedLobbyOwnerId = OwnerId;
+	return bChanged;
+}
+
+void UEEOSLobbySubsystem::RefreshLobbyOwner()
+{
+	if (bInLobby && !bShuttingDown)
 	{
-		return; // an own leave/destroy op is in flight — its handler owns this completion
+		const FString OwnerId = GetLobbyOwner();
+		if (UpdateCachedLobbyOwner(OwnerId)) OnLobbyOwnerChanged.Broadcast(OwnerId);
 	}
+}
 
-	if (!bInLobby || !bWasSuccessful)
-	{
-		return; // nothing to reset (already reset elsewhere), or the session isn't actually gone
-	}
+bool UEEOSLobbySubsystem::TickLobbyOwner(float)
+{
+	if (!bShuttingDown && bInLobby && !ExitRequest.IsActive() && !JoinRequest.IsActive()) RefreshLobbyOwner();
+	return !bShuttingDown;
+}
 
-	UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSLobbySubsystem: Lobby session destroyed outside any local operation (remote closure) — resetting lobby state"));
-	const FString DestroyedId = ResetLobbyState();
-	OnLobbyDestroyed.Broadcast(true, DestroyedId);
+void UEEOSLobbySubsystem::HandlePromotionComplete(uint64 Token, const FString& LobbyId, const FString& MemberId, bool bSuccess)
+{
+	if (!bPromotionPending || PromotionToken != Token || PromotionLobbyId != LobbyId) return;
+	bPromotionPending = false;
+	PromotionLobbyId.Empty();
+	// Shutdown may drain this operation, but must not run game/UI listeners or transfer again.
+	if (bShuttingDown || CurrentLobbyId != LobbyId || !bInLobby) return;
+	RefreshLobbyOwner();
+	OnLobbyPromotionComplete.Broadcast(bSuccess, MemberId);
 }
 
 void UEEOSLobbySubsystem::HandleUpdateLobbySessionComplete(FName InSessionName, bool bWasSuccessful)
@@ -1525,7 +1651,7 @@ void UEEOSLobbySubsystem::HandleSessionParticipantLeft(FName InSessionName, cons
 	// runs our own leave/destroy path, so the lobby state must be reset here or bInLobby
 	// wedges true forever. Skipped while an own leave/destroy op is in flight — that op's
 	// completion owns the state transition.
-	if (bInLobby && !DestroyLobbyCompleteHandle.IsValid() && !DestroyForCreateLobbyHandle.IsValid())
+	if (ShouldHandleLocalMemberRemoval())
 	{
 		bool bIsLocalPlayer = false;
 		if (IOnlineSubsystem* EOSSub = GetEOSOnlineSubsystem())
@@ -1567,6 +1693,7 @@ void UEEOSLobbySubsystem::HandleSessionSettingsUpdated(FName InSessionName, cons
 	// changes here.
 	if (InSessionName != LOBBY_SESSION_NAME) return;
 
+	RefreshLobbyOwner();
 	RefreshCachedLobbyAttributes(UpdatedSettings, /*bBroadcastChanges*/ true);
 }
 
