@@ -45,6 +45,14 @@ struct UNREALEXTENDEDGAMEPLAY_API FEGInteractionPresentation
 
 	UPROPERTY(BlueprintReadWrite, Category = "Extended|Interaction")
 	TObjectPtr<UTexture2D> Icon = nullptr;
+
+	/**
+	 * Show the ordinary Text + Icon prompt even when the prompt widget is set to use its static icon
+	 * (which otherwise hides the text and keeps the icon authored on the widget). Leave it off to let
+	 * the widget decide, which is what an interactable that merely forwards its catalog icon wants.
+	 */
+	UPROPERTY(BlueprintReadWrite, Category = "Extended|Interaction")
+	bool bOverrideStaticIcon = false;
 };
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FEGInteractionFocusChanged, AActor*, FocusedActor, FText, InteractionText, UTexture2D*, Icon);

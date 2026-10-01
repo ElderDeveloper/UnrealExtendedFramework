@@ -38,9 +38,22 @@ void UEGInteractionPromptWidget::ShowPrompt_Implementation(const FText& InPrompt
 	CurrentPrompt = InPrompt;
 	SetVisibility(ESlateVisibility::SelfHitTestInvisible);
 
+	bShowingStaticIcon = bUseStaticIcon && !bPresentationOverridesStaticIcon;
+
 	if (InteractionText)
 	{
-		InteractionText->SetText(CurrentPrompt);
+		InteractionText->SetText(bShowingStaticIcon ? FText::GetEmpty() : CurrentPrompt);
+		InteractionText->SetVisibility(bShowingStaticIcon ? ESlateVisibility::Collapsed : ESlateVisibility::SelfHitTestInvisible);
+	}
+
+	if (bShowingStaticIcon)
+	{
+		// Keep the brush authored in the Designer: never write the interactable's texture here.
+		if (InteractionIcon)
+		{
+			InteractionIcon->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+		}
+		return;
 	}
 
 	if (InteractionIcon)
@@ -51,6 +64,12 @@ void UEGInteractionPromptWidget::ShowPrompt_Implementation(const FText& InPrompt
 			InteractionIcon->SetBrushFromTexture(InIcon);
 		}
 	}
+}
+
+void UEGInteractionPromptWidget::ShowPresentation(const FEGInteractionPresentation& Presentation)
+{
+	TGuardValue<bool> OverrideGuard(bPresentationOverridesStaticIcon, Presentation.bOverrideStaticIcon);
+	ShowPrompt(Presentation.Text, Presentation.Icon);
 }
 
 void UEGInteractionPromptWidget::SetHoldProgress_Implementation(float InProgress)

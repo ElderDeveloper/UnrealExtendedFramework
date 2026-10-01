@@ -41,8 +41,9 @@ public:
 	void OnHoldCompleted();
 	virtual void OnHoldCompleted_Implementation() {}
 
+	/** Seconds the input must be held. Reads the FEGInteractionDef_Hold; a subclass may derive it instead (from an animation, say). */
 	UFUNCTION(BlueprintPure, Category = "Extended|Interaction System")
-	float GetHoldTime() const;
+	virtual float GetHoldTime() const;
 
 	UFUNCTION(BlueprintPure, Category = "Extended|Interaction System")
 	float GetHoldProgress() const;

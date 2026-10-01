@@ -4,6 +4,7 @@
 
 #include "Blueprint/UserWidget.h"
 #include "CoreMinimal.h"
+#include "UnrealExtendedGameplay/Interaction/EGInteractionTypes.h"
 
 #include "EGInteractionPromptWidget.generated.h"
 
@@ -30,6 +31,17 @@ public:
 	UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category = "Extended|Interaction|UI")
 	void ShowPrompt(const FText& InPrompt, UTexture2D* InIcon);
 
+	/**
+	 * Show the prompt for an interactable's presentation. This is what the interaction component
+	 * calls; it lets an interactable that set bOverrideStaticIcon escape static-icon mode.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Extended|Interaction|UI")
+	void ShowPresentation(const FEGInteractionPresentation& Presentation);
+
+	/** True while the prompt on screen is in static-icon mode (no text, the authored icon). */
+	UFUNCTION(BlueprintPure, Category = "Extended|Interaction|UI")
+	bool IsShowingStaticIcon() const { return bShowingStaticIcon; }
+
 	/** Hide the prompt and reset hold progress. */
 	UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category = "Extended|Interaction|UI")
 	void HidePrompt();
@@ -54,6 +66,21 @@ protected:
 
 	UPROPERTY(BlueprintReadOnly, meta = (BindWidgetOptional), Category = "Extended|Interaction|UI")
 	TObjectPtr<UImage> HoldProgressImage;
+
+	/**
+	 * Show only InteractionIcon, with the texture authored on it in the Designer, for every
+	 * interactable: the prompt text is hidden and the interactable's own icon is ignored. An
+	 * interactable escapes this by setting bOverrideStaticIcon in its GetInteractionPresentation,
+	 * which gets the ordinary text + icon prompt.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Extended|Interaction|UI")
+	bool bUseStaticIcon = false;
+
+	UPROPERTY(Transient, BlueprintReadOnly, Category = "Extended|Interaction|UI")
+	bool bShowingStaticIcon = false;
+
+	/** Set by ShowPresentation for the duration of its ShowPrompt call. */
+	bool bPresentationOverridesStaticIcon = false;
 
 	/** Offset from the cursor, so the prompt does not sit under the pointer. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Extended|Interaction|UI")

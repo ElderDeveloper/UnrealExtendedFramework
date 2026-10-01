@@ -729,7 +729,8 @@ void UEGInteractionComponent::SetFocusedActor(AActor* NewFocusedActor, const FHi
 	const bool bActorChanged = FocusedActor.Get() != NewFocusedActor;
 	const bool bContextChanged = LastHitResult.GetComponent() != HitResult.GetComponent() || LastHitResult.BoneName != HitResult.BoneName;
 	const bool bTextChanged = !FocusedPresentation.Text.EqualTo(NewPresentation.Text);
-	const bool bIconChanged = FocusedPresentation.Icon != NewPresentation.Icon;
+	const bool bIconChanged = FocusedPresentation.Icon != NewPresentation.Icon
+		|| FocusedPresentation.bOverrideStaticIcon != NewPresentation.bOverrideStaticIcon;
 
 	if (bActorChanged && FocusedActor.IsValid())
 	{
@@ -788,7 +789,7 @@ void UEGInteractionComponent::NotifyFocusUpdated()
 	OnFocusChanged.Broadcast(FocusActor, FocusedPresentation.Text, FocusedPresentation.Icon);
 	if (PromptWidgetInstance && !bPromptSuppressed)
 	{
-		PromptWidgetInstance->ShowPrompt(FocusedPresentation.Text, FocusedPresentation.Icon);
+		PromptWidgetInstance->ShowPresentation(FocusedPresentation);
 	}
 }
 
