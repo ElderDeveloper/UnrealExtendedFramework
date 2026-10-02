@@ -34,6 +34,7 @@ public class ExtendedEOSShared : ModuleRules
 		PrivateDependencyModuleNames.AddRange(
 			new string[]
 			{
+				"UnrealExtendedFrameworkLog",
 				"EOSShared",
 				"EOSSDK"
 			}
