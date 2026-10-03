@@ -24,6 +24,7 @@ public class UnrealExtendedPerfSentinel : ModuleRules
 			"RenderCore",
 			"RHI",
 			"TraceLog",
+			"NetCore",
 			"UMG",
 			"ImageWrapper",
 			"Json",

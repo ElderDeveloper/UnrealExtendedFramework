@@ -176,10 +176,17 @@ void SPerfSentinelReportView::RefreshReport()
 	const int32 FindingCount = static_cast<int32>(ReadNumber(Summary, TEXT("finding_count")));
 	const double P99Ms = ReadNumber(Summary, TEXT("p99_frame_ms"));
 	const double HitchesPerMinute = ReadNumber(Summary, TEXT("hitches_per_minute"));
+	const TSharedPtr<FJsonObject>* MetricsPtr = nullptr;
+	bool bFrameMetricsAvailable = false;
+	if (Root->TryGetObjectField(TEXT("metrics"), MetricsPtr) && MetricsPtr && MetricsPtr->IsValid())
+	{
+		(*MetricsPtr)->TryGetBoolField(TEXT("frame_metrics_available"), bFrameMetricsAvailable);
+	}
 	StatusText->SetText(FText::Format(
 		LOCTEXT("Summary", "{0}  |  {1}  |  {2} findings  |  p99 {3} ms  |  {4} hitches/min\n{5}"),
 		FText::FromString(Scenario), FText::FromString(Status), FText::AsNumber(FindingCount),
-		FText::AsNumber(P99Ms), FText::AsNumber(HitchesPerMinute), FText::FromString(ReportPath)));
+		bFrameMetricsAvailable ? FText::AsNumber(P99Ms) : LOCTEXT("UnavailableFrameMetric", "unavailable"),
+		FText::AsNumber(HitchesPerMinute), FText::FromString(ReportPath)));
 
 	const TSharedPtr<FJsonObject>* CiPtr = nullptr;
 	if (Root->TryGetObjectField(TEXT("ci"), CiPtr) && CiPtr && CiPtr->IsValid())
@@ -213,6 +220,42 @@ void SPerfSentinelReportView::RefreshReport()
 			}
 			AddMessage(FText::FromString(FString::Printf(TEXT("Coverage warning: missing %s"), *FString::Join(Names, TEXT(", ")))));
 		}
+	}
+
+	const TSharedPtr<FJsonObject>* NetworkPtr = nullptr;
+	if (Root->TryGetObjectField(TEXT("network"), NetworkPtr) && NetworkPtr && NetworkPtr->IsValid())
+	{
+		const TSharedPtr<FJsonObject> Network = *NetworkPtr;
+		AddMessage(FText::FromString(FString::Printf(
+			TEXT("Network: %s | %.0f packet/status entries | %.0f socket bytes\nTrace-reported statuses: %.0f Delivered, %.0f Dropped, %.0f Unknown. Delivered does not confirm an ACK."),
+			*ReadString(Network, TEXT("status"), TEXT("not_available")), ReadNumber(Network, TEXT("packet_count")),
+			ReadNumber(Network, TEXT("total_socket_bytes")), ReadNumber(Network, TEXT("delivered_packets")),
+			ReadNumber(Network, TEXT("dropped_packets")), ReadNumber(Network, TEXT("unknown_packets")))));
+		const TSharedPtr<FJsonObject>* NetworkMetricsPtr = nullptr;
+		if (Network->TryGetObjectField(TEXT("metrics"), NetworkMetricsPtr) && NetworkMetricsPtr && NetworkMetricsPtr->IsValid())
+		{
+			for (const TCHAR* Metric : { TEXT("peak_outgoing_kib_per_second"), TEXT("peak_incoming_kib_per_second"),
+				TEXT("peak_rtt_ms"), TEXT("peak_loss_percent"), TEXT("peak_reliable_backlog") })
+			{
+				double Value = 0.0;
+				const bool bMeasured = (*NetworkMetricsPtr)->TryGetNumberField(Metric, Value);
+				AddMessage(FText::FromString(FString::Printf(TEXT("%s: %s"), Metric,
+					bMeasured ? *FString::Printf(TEXT("%.3f"), Value) : TEXT("unavailable"))));
+			}
+		}
+		const TArray<TSharedPtr<FJsonValue>>* ContentCosts = nullptr;
+		if (Network->TryGetArrayField(TEXT("top_content_costs"), ContentCosts) && ContentCosts)
+		{
+			AddMessage(LOCTEXT("PacketContentCosts", "Largest named serialized scopes (inclusive bits overlap; names do not prove RPC/property type):"));
+			for (int32 Index = 0; Index < FMath::Min(15, ContentCosts->Num()); ++Index)
+			{
+				const TSharedPtr<FJsonObject> Row = (*ContentCosts)[Index]->AsObject();
+				AddMessage(FText::FromString(FString::Printf(TEXT("%s [%s] | %.0f calls | %.0f exclusive bits | %.0f inclusive bits"),
+					*ReadString(Row, TEXT("name")), *ReadString(Row, TEXT("mode")), ReadNumber(Row, TEXT("event_count")),
+					ReadNumber(Row, TEXT("exclusive_bits")), ReadNumber(Row, TEXT("inclusive_bits")))));
+			}
+		}
+		AddMessage(LOCTEXT("NetworkEvidenceFiles", "The report folder contains network_summary.json, network CSV timelines/content costs/runtime samples, and evidence.sqlite. RTT and queue measurements require the runtime sampler; trace packet spacing cannot measure latency."));
 	}
 
 	const TArray<TSharedPtr<FJsonValue>>* Findings = nullptr;

@@ -11,6 +11,7 @@
 #include "Misc/App.h"
 #include "Misc/EngineVersion.h"
 #include "Misc/FileHelper.h"
+#include "Misc/Guid.h"
 #include "Misc/Paths.h"
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
@@ -203,6 +204,25 @@ bool FPerfSentinelPythonRunner::RunAnalysis(
 	{
 		OutResult.GeneratedFiles.Add(AnalysisLog);
 	}
+	const FString NetworkSummary = FPaths::Combine(MutableRequest.OutputReportDirectory, TEXT("network_summary.json"));
+	if (FPaths::FileExists(NetworkSummary))
+	{
+		OutResult.GeneratedFiles.Add(NetworkSummary);
+	}
+	const FString ScopeTotals = FPaths::Combine(MutableRequest.OutputReportDirectory, TEXT("timing_scope_totals.csv"));
+	if (FPaths::FileExists(ScopeTotals))
+	{
+		OutResult.GeneratedFiles.Add(ScopeTotals);
+	}
+	for (const TCHAR* CsvName : { TEXT("network_connections"), TEXT("network_time_bins"), TEXT("network_content_costs"),
+		TEXT("network_hitch_activity"), TEXT("network_packet_samples"), TEXT("runtime_network_samples"), TEXT("runtime_network_drivers") })
+	{
+		const FString CsvPath = FPaths::Combine(MutableRequest.OutputReportDirectory, TEXT("network_csv"), FString(CsvName) + TEXT(".csv"));
+		if (FPaths::FileExists(CsvPath))
+		{
+			OutResult.GeneratedFiles.Add(CsvPath);
+		}
+	}
 	if (!MutableRequest.NativeEvidencePath.IsEmpty() && FPaths::FileExists(MutableRequest.NativeEvidencePath))
 	{
 		OutResult.GeneratedFiles.Add(MutableRequest.NativeEvidencePath);
@@ -379,10 +399,12 @@ bool FPerfSentinelPythonRunner::RunNativeExtraction(
 		return false;
 	}
 
-	const FString NativeEvidencePath = FPaths::Combine(InOutRequest.OutputReportDirectory, TEXT("native_evidence.json"));
+	// A failed/terminated extractor must never reuse an earlier report's evidence.
+	const FString NativeEvidencePath = FPaths::Combine(InOutRequest.OutputReportDirectory,
+		FString::Printf(TEXT("native_evidence.%s.json"), *FGuid::NewGuid().ToString(EGuidFormats::Digits)));
 	const FString Executable = FPlatformProcess::ExecutablePath();
 	const FString Arguments = FString::Printf(
-		TEXT("%s -run=PerfSentinelAnalyze -Trace=%s -Out=%s -HitchThresholdMs=%s -unattended -nop4 -nosplash -NoLogTimes"),
+		TEXT("%s -run=PerfSentinelAnalyze -Trace=%s -Out=%s -HitchThresholdMs=%s -unattended -nop4 -nosplash -nullrhi -nosound -NoLogTimes"),
 		*QuoteArg(ProjectFile),
 		*QuoteArg(InOutRequest.InputTracePath),
 		*QuoteArg(NativeEvidencePath),
@@ -432,10 +454,13 @@ bool FPerfSentinelPythonRunner::RunNativeExtraction(
 		{
 			TSharedPtr<FJsonObject> NativeRoot;
 			const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(NativeJson);
+			FString EvidenceTrace;
 			bValidNativeEvidence = FJsonSerializer::Deserialize(Reader, NativeRoot)
 				&& NativeRoot.IsValid()
 				&& NativeRoot->HasTypedField<EJson::Number>(TEXT("schema_version"))
-				&& NativeRoot->HasTypedField<EJson::String>(TEXT("extractor"));
+				&& NativeRoot->HasTypedField<EJson::String>(TEXT("extractor"))
+				&& NativeRoot->TryGetStringField(TEXT("trace"), EvidenceTrace)
+				&& FPaths::IsSamePath(EvidenceTrace, InOutRequest.InputTracePath);
 		}
 	}
 

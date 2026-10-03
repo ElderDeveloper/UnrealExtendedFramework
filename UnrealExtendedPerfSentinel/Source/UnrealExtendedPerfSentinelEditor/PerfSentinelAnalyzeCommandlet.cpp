@@ -47,6 +47,14 @@ constexpr int32 MaxLoadRows = 50000;
 constexpr int32 MaxObjectClasses = 5000;
 constexpr int32 MaxStackFrames = 100000;
 constexpr int32 MaxStackSampleEvents = 100000;
+constexpr int32 MaxNetworkConnections = 1024;
+constexpr int32 MaxNetworkTimeBins = 20000;
+constexpr int32 MaxNetworkContentRows = 5000;
+constexpr int32 MaxNetworkContentTypesPerConnection = 20000;
+constexpr int64 MaxNetworkContentEvents = 20000000;
+constexpr int32 MaxNetworkPacketSamples = 10000;
+constexpr int32 MaxNetworkHitchRows = 20000;
+constexpr int32 MaxTimingScopeRowsPerKind = 5000;
 
 TSharedPtr<FJsonValue> JsonObjectValue(const TSharedRef<FJsonObject>& Object)
 {
@@ -78,6 +86,462 @@ struct FObjectClassSummary
 	uint64 SystemBytes = 0;
 	uint64 VideoBytes = 0;
 };
+
+#if !UE_VERSION_OLDER_THAN(5, 8, 0)
+struct FNetworkPacketTotals
+{
+	uint64 Packets = 0, Bytes = 0, ContentBits = 0;
+	uint64 Delivered = 0, Dropped = 0, Unknown = 0, GapPlaceholders = 0;
+	uint32 MaxBytes = 0;
+	void Add(const TraceServices::FNetProfilerPacket& Packet)
+	{
+		++Packets;
+		Bytes += Packet.TotalPacketSizeInBytes;
+		ContentBits += Packet.ContentSizeInBits;
+		MaxBytes = FMath::Max(MaxBytes, Packet.TotalPacketSizeInBytes);
+		if (Packet.DeliveryStatus == TraceServices::ENetProfilerDeliveryStatus::Dropped)
+		{
+			++Dropped;
+			// UE's analyzer synthesizes zero-byte incoming sequence-gap records.
+			// This signature is exposed as a candidate, never counted as wire bytes.
+			if (Packet.TotalPacketSizeInBytes == 0 && Packet.ContentSizeInBits == 0 && Packet.EventCount == 0)
+			{
+				++GapPlaceholders;
+			}
+		}
+		else if (Packet.DeliveryStatus == TraceServices::ENetProfilerDeliveryStatus::Delivered) { ++Delivered; }
+		else { ++Unknown; }
+	}
+	void Write(const TSharedRef<FJsonObject>& Item) const
+	{
+		Item->SetNumberField(TEXT("packet_count"), static_cast<double>(Packets));
+		Item->SetNumberField(TEXT("total_bytes"), static_cast<double>(Bytes));
+		Item->SetNumberField(TEXT("content_bits"), static_cast<double>(ContentBits));
+		Item->SetNumberField(TEXT("max_packet_bytes"), MaxBytes);
+		Item->SetNumberField(TEXT("delivered_packets"), static_cast<double>(Delivered));
+		Item->SetNumberField(TEXT("dropped_packets"), static_cast<double>(Dropped));
+		Item->SetNumberField(TEXT("unknown_packets"), static_cast<double>(Unknown));
+		Item->SetNumberField(TEXT("gap_placeholder_candidates"), static_cast<double>(GapPlaceholders));
+		if (Delivered + Dropped > 0)
+		{
+			Item->SetNumberField(TEXT("status_drop_ratio"), static_cast<double>(Dropped) / (Delivered + Dropped));
+		}
+	}
+};
+
+struct FNetworkScopeCost
+{
+	uint64 Count = 0, Inclusive = 0, Exclusive = 0;
+	uint32 MaxInclusive = 0, MaxExclusive = 0;
+};
+
+struct FNetworkScopeStackEntry
+{
+	uint32 EventType = 0;
+	uint32 Start = 0, End = 0;
+	uint64 ChildBits = 0;
+	bool bRetained = false;
+};
+
+void ExtractNetworkEvidence(const TraceServices::IAnalysisSession& Session, double SessionDuration,
+	const TArray<FHitchFrame>& HitchFrames, const TSharedRef<FJsonObject>& Root, const TSharedRef<FJsonObject>& Coverage)
+{
+	const TraceServices::INetProfilerProvider* Provider = TraceServices::ReadNetProfilerProvider(Session);
+	const uint32 Version = Provider ? Provider->GetNetTraceVersion() : 0;
+	// NetTraceAnalyzer does not maintain IAnalysisSession's duration in UE 5.8.
+	// A custom net-only capture therefore needs its own clock bounds. Derive
+	// them before computing rates, including finite connection/instance closes.
+	// Keep the global session duration separate so this never invents CPU/GPU time.
+	const bool bHasSessionSpan = FMath::IsFinite(SessionDuration) && SessionDuration > 0.0;
+	double NetworkSpanStart = bHasSessionSpan ? 0.0 : DBL_MAX;
+	double NetworkSpanEnd = bHasSessionSpan ? SessionDuration : 0.0;
+	uint64 TimedPacketCount = 0, PacketsBeyondSessionDuration = 0;
+	auto IncludeTimestamp = [&](double Time)
+	{
+		if (!FMath::IsFinite(Time) || Time < 0.0) { return; }
+		NetworkSpanStart = FMath::Min(NetworkSpanStart, Time);
+		NetworkSpanEnd = FMath::Max(NetworkSpanEnd, Time);
+	};
+	if (Provider && Version > 0)
+	{
+		Provider->ReadGameInstances([&](const TraceServices::FNetProfilerGameInstance& Instance)
+		{
+			IncludeTimestamp(Instance.LifeTime.Begin); IncludeTimestamp(Instance.LifeTime.End);
+			Provider->ReadConnections(Instance.GameInstanceIndex, [&](const TraceServices::FNetProfilerConnection& Connection)
+			{
+				IncludeTimestamp(Connection.LifeTime.Begin); IncludeTimestamp(Connection.LifeTime.End);
+				for (uint8 ModeValue = 0; ModeValue < TraceServices::ENetProfilerConnectionMode::Count; ++ModeValue)
+				{
+					const TraceServices::ENetProfilerConnectionMode Mode = static_cast<TraceServices::ENetProfilerConnectionMode>(ModeValue);
+					const uint32 PacketCount = Provider->GetPacketCount(Connection.ConnectionIndex, Mode);
+					if (PacketCount == 0) { continue; }
+					Provider->EnumeratePackets(Connection.ConnectionIndex, Mode, 0, PacketCount - 1,
+						[&](const TraceServices::FNetProfilerPacket& Packet)
+						{
+							if (!FMath::IsFinite(Packet.TimeStamp) || Packet.TimeStamp < 0.0) { return; }
+							IncludeTimestamp(Packet.TimeStamp); ++TimedPacketCount;
+							if (Packet.TimeStamp > SessionDuration) { ++PacketsBeyondSessionDuration; }
+						});
+				}
+			});
+		});
+	}
+	if (NetworkSpanStart == DBL_MAX) { NetworkSpanStart = 0.0; }
+	NetworkSpanEnd = FMath::Max(NetworkSpanStart, NetworkSpanEnd);
+	TArray<TSharedPtr<FJsonValue>> Connections, TimeBins, ContentCosts, PacketSamples, HitchActivity;
+	uint64 TotalPackets = 0, TotalContentEvents = 0, ProcessedContentEvents = 0;
+	uint64 ConnectionRowsSeen = 0, TimeBinsSeen = 0, ContentRowsSeen = 0, HitchRowsSeen = 0;
+	uint64 TimestampErrors = 0, HierarchyErrors = 0, UnretainedContentEvents = 0;
+	uint64 ValidBunches = 0, ReliableBunches = 0, ReliableBunchBits = 0;
+	uint64 ContentConnectionsTruncated = 0;
+	uint64 UnbinnedPackets = 0;
+	TArray<int32> OrderedHitchIndices;
+	for (int32 Index = 0; Index < HitchFrames.Num(); ++Index) { OrderedHitchIndices.Add(Index); }
+	OrderedHitchIndices.Sort([&](int32 A, int32 B) { return HitchFrames[A].Start < HitchFrames[B].Start; });
+	if (Provider && Version > 0)
+	{
+		Provider->ReadGameInstances([&](const TraceServices::FNetProfilerGameInstance& Instance)
+		{
+			Provider->ReadConnections(Instance.GameInstanceIndex, [&](const TraceServices::FNetProfilerConnection& Connection)
+			{
+				for (uint8 ModeValue = 0; ModeValue < TraceServices::ENetProfilerConnectionMode::Count; ++ModeValue)
+				{
+					const TraceServices::ENetProfilerConnectionMode Mode = static_cast<TraceServices::ENetProfilerConnectionMode>(ModeValue);
+					const uint32 PacketCount = Provider->GetPacketCount(Connection.ConnectionIndex, Mode);
+					// Retain established connections even if one direction has zero packets.
+					++ConnectionRowsSeen;
+					const FString Direction = Mode == TraceServices::ENetProfilerConnectionMode::Outgoing ? TEXT("outgoing") : TEXT("incoming");
+					const FString Identity = FString::Printf(TEXT("instance:%u/connection:%u/direction:%s"), Instance.GameInstanceIndex, Connection.ConnectionIndex, *Direction);
+					auto WriteIdentity = [&](const TSharedRef<FJsonObject>& Item)
+					{
+						Item->SetStringField(TEXT("identity"), Identity);
+						Item->SetNumberField(TEXT("instance_index"), Instance.GameInstanceIndex);
+						Item->SetNumberField(TEXT("instance_id"), Instance.GameInstanceId);
+						Item->SetNumberField(TEXT("connection_index"), Connection.ConnectionIndex);
+						Item->SetNumberField(TEXT("connection_id"), Connection.ConnectionId);
+						Item->SetStringField(TEXT("direction"), Direction);
+						Item->SetStringField(TEXT("mode"), Direction);
+					};
+					FNetworkPacketTotals Totals;
+					TMap<int64, FNetworkPacketTotals> Bins;
+					TMap<uint32, FNetworkScopeCost> Costs;
+					TArray<FNetworkPacketTotals> HitchTotals;
+					HitchTotals.SetNum(HitchFrames.Num());
+					double FirstPacket = DBL_MAX, LastPacket = -DBL_MAX;
+					uint64 ConnectionContentEvents = 0, ConnectionProcessedEvents = 0;
+					uint64 ConnectionValidBunches = 0, ConnectionReliableBunches = 0, ConnectionReliableBits = 0, PartialBunches = 0;
+					uint32 PacketIndex = 0, ConnectionSamples = 0;
+					bool bConnectionContentTruncated = false;
+					if (PacketCount > 0)
+					{
+						Provider->EnumeratePackets(Connection.ConnectionIndex, Mode, 0, PacketCount - 1,
+							[&](const TraceServices::FNetProfilerPacket& Packet)
+							{
+								Totals.Add(Packet);
+								TotalContentEvents += Packet.EventCount;
+								ConnectionContentEvents += Packet.EventCount;
+								const bool bValidTime = FMath::IsFinite(Packet.TimeStamp) && Packet.TimeStamp >= 0.0;
+								bool bInHitch = false;
+								if (bValidTime)
+								{
+									FirstPacket = FMath::Min(FirstPacket, Packet.TimeStamp);
+									LastPacket = FMath::Max(LastPacket, Packet.TimeStamp);
+									const int64 BinIndex = FMath::FloorToInt64(Packet.TimeStamp);
+									FNetworkPacketTotals* Bin = Bins.Find(BinIndex);
+									if (!Bin && TimeBins.Num() + Bins.Num() < MaxNetworkTimeBins) { Bin = &Bins.Add(BinIndex); }
+									if (Bin) { Bin->Add(Packet); } else { ++UnbinnedPackets; }
+									// Game-frame windows are disjoint. Binary search avoids
+									// comparing every packet with every retained hitch.
+									int32 Low = 0, High = OrderedHitchIndices.Num();
+									while (Low < High)
+									{
+										const int32 Middle = Low + (High - Low) / 2;
+										if (HitchFrames[OrderedHitchIndices[Middle]].Start <= Packet.TimeStamp) { Low = Middle + 1; }
+										else { High = Middle; }
+									}
+									if (Low > 0)
+									{
+										const int32 HitchIndex = OrderedHitchIndices[Low - 1];
+										if (Packet.TimeStamp < HitchFrames[HitchIndex].End) { HitchTotals[HitchIndex].Add(Packet); bInHitch = true; }
+									}
+								}
+								else { ++TimestampErrors; }
+								// A bounded diagnostic sample, not an unbiased latency/loss dataset.
+								if (bValidTime && PacketSamples.Num() < MaxNetworkPacketSamples && (ConnectionSamples < 16 || bInHitch))
+								{
+									TSharedRef<FJsonObject> Sample = MakeShared<FJsonObject>(); WriteIdentity(Sample);
+									Sample->SetNumberField(TEXT("packet_index"), PacketIndex);
+									Sample->SetNumberField(TEXT("sequence"), Packet.SequenceNumber);
+									Sample->SetNumberField(TEXT("time_seconds"), Packet.TimeStamp);
+									Sample->SetNumberField(TEXT("bytes"), Packet.TotalPacketSizeInBytes);
+									Sample->SetNumberField(TEXT("content_bits"), Packet.ContentSizeInBits);
+									Sample->SetNumberField(TEXT("content_event_count"), Packet.EventCount);
+									Sample->SetStringField(TEXT("delivery_status"), Packet.DeliveryStatus == TraceServices::ENetProfilerDeliveryStatus::Dropped ? TEXT("dropped") : Packet.DeliveryStatus == TraceServices::ENetProfilerDeliveryStatus::Delivered ? TEXT("delivered") : TEXT("unknown"));
+									Sample->SetStringField(TEXT("connection_state"), TraceServices::LexToString(Packet.ConnectionState));
+									Sample->SetBoolField(TEXT("in_hitch_window"), bInHitch);
+									PacketSamples.Add(JsonObjectValue(Sample)); ++ConnectionSamples;
+								}
+								++PacketIndex;
+								if (Packet.EventCount == 0) { return; }
+								if (ProcessedContentEvents >= MaxNetworkContentEvents) { bConnectionContentTruncated = true; return; }
+								TArray<FNetworkScopeStackEntry, TInlineAllocator<32>> Stack;
+								auto PopScope = [&]()
+								{
+									const FNetworkScopeStackEntry Entry = Stack.Pop(EAllowShrinking::No);
+									const uint32 Inclusive = Entry.End >= Entry.Start ? Entry.End - Entry.Start : 0;
+									if (Entry.ChildBits > Inclusive) { ++HierarchyErrors; }
+									const uint32 Exclusive = static_cast<uint32>(Inclusive - FMath::Min<uint64>(Entry.ChildBits, Inclusive));
+									if (Entry.bRetained)
+									{
+										FNetworkScopeCost& Cost = Costs.FindChecked(Entry.EventType);
+										Cost.Exclusive += Exclusive; Cost.MaxExclusive = FMath::Max(Cost.MaxExclusive, Exclusive);
+									}
+								};
+								Provider->EnumeratePacketContentEventsByIndex(Connection.ConnectionIndex, Mode, Packet.StartEventIndex, Packet.StartEventIndex + Packet.EventCount - 1,
+									[&](const TraceServices::FNetProfilerContentEvent& Event)
+									{
+										// Finish this packet even at the budget boundary so exclusive
+										// costs never include unprocessed children of a retained scope.
+										++ProcessedContentEvents; ++ConnectionProcessedEvents;
+										while (Stack.Num() > static_cast<int32>(Event.Level)) { PopScope(); }
+										if (Stack.Num() != Event.Level || Event.EndPos < Event.StartPos) { ++HierarchyErrors; }
+										const uint32 Bits = Event.EndPos >= Event.StartPos ? static_cast<uint32>(Event.EndPos - Event.StartPos) : 0;
+										FNetworkScopeCost* Cost = Costs.Find(Event.EventTypeIndex);
+										if (!Cost && Costs.Num() < MaxNetworkContentTypesPerConnection) { Cost = &Costs.Add(Event.EventTypeIndex); }
+										if (Cost) { ++Cost->Count; Cost->Inclusive += Bits; Cost->MaxInclusive = FMath::Max(Cost->MaxInclusive, Bits); }
+										else { ++UnretainedContentEvents; bConnectionContentTruncated = true; }
+										if (Stack.Num() > 0)
+										{
+											FNetworkScopeStackEntry& Parent = Stack.Last();
+											// Immediate children contribute once. Nested grandchildren
+											// are subtracted by their own parent, not every ancestor.
+											if (Event.StartPos >= Parent.Start && Event.EndPos <= Parent.End) { Parent.ChildBits += Bits; }
+											else { ++HierarchyErrors; }
+										}
+										Stack.Add({ Event.EventTypeIndex, static_cast<uint32>(Event.StartPos), static_cast<uint32>(Event.EndPos), 0, Cost != nullptr });
+										if (Event.BunchInfo.bIsValid)
+										{
+											++ConnectionValidBunches;
+											if (Event.BunchInfo.bReliable) { ++ConnectionReliableBunches; ConnectionReliableBits += Bits; }
+											if (Event.BunchInfo.bPartial) { ++PartialBunches; }
+										}
+									});
+								while (Stack.Num() > 0) { PopScope(); }
+							});
+					}
+					TotalPackets += Totals.Packets;
+					ValidBunches += ConnectionValidBunches; ReliableBunches += ConnectionReliableBunches; ReliableBunchBits += ConnectionReliableBits;
+					if (bConnectionContentTruncated) { ++ContentConnectionsTruncated; }
+					double CaptureStart = FMath::Clamp(FMath::IsFinite(Connection.LifeTime.Begin) ? Connection.LifeTime.Begin : NetworkSpanStart, NetworkSpanStart, NetworkSpanEnd);
+					double CaptureEnd = FMath::Clamp(FMath::IsFinite(Connection.LifeTime.End) ? Connection.LifeTime.End : NetworkSpanEnd, NetworkSpanStart, NetworkSpanEnd);
+					// A stale lifetime timestamp must not exclude its own observed packets.
+					if (FirstPacket != DBL_MAX) { CaptureStart = FMath::Min(CaptureStart, FirstPacket); CaptureEnd = FMath::Max(CaptureEnd, LastPacket); }
+					CaptureEnd = FMath::Max(CaptureStart, CaptureEnd);
+					if (Connections.Num() < MaxNetworkConnections)
+					{
+						TSharedRef<FJsonObject> Item = MakeShared<FJsonObject>(); WriteIdentity(Item); Totals.Write(Item);
+						Item->SetStringField(TEXT("instance"), Instance.InstanceName ? Instance.InstanceName : TEXT(""));
+						Item->SetBoolField(TEXT("server"), Instance.bIsServer);
+						Item->SetBoolField(TEXT("iris"), Instance.bIsUsingIrisReplication);
+						Item->SetStringField(TEXT("connection"), Connection.Name ? Connection.Name : TEXT(""));
+						Item->SetStringField(TEXT("address"), Connection.AddressString ? Connection.AddressString : TEXT(""));
+						Item->SetNumberField(TEXT("capture_start_seconds"), CaptureStart); Item->SetNumberField(TEXT("capture_end_seconds"), CaptureEnd);
+						Item->SetNumberField(TEXT("capture_duration_seconds"), CaptureEnd - CaptureStart);
+						Item->SetNumberField(TEXT("trace_duration_seconds"), SessionDuration);
+						Item->SetNumberField(TEXT("network_span_start_seconds"), NetworkSpanStart);
+						Item->SetNumberField(TEXT("network_span_end_seconds"), NetworkSpanEnd);
+						if (CaptureEnd > CaptureStart) { Item->SetNumberField(TEXT("mean_bytes_per_second"), static_cast<double>(Totals.Bytes) / (CaptureEnd - CaptureStart)); }
+						if (FirstPacket != DBL_MAX)
+						{
+							Item->SetNumberField(TEXT("first_packet_seconds"), FirstPacket); Item->SetNumberField(TEXT("last_packet_seconds"), LastPacket);
+							Item->SetNumberField(TEXT("observed_duration_seconds"), LastPacket - FirstPacket);
+						}
+						Item->SetNumberField(TEXT("content_event_count"), static_cast<double>(ConnectionContentEvents));
+						Item->SetNumberField(TEXT("content_events_processed"), static_cast<double>(ConnectionProcessedEvents));
+						Item->SetBoolField(TEXT("content_truncated"), bConnectionContentTruncated);
+						Item->SetBoolField(TEXT("bunch_metadata_available"), ConnectionValidBunches > 0);
+						Item->SetNumberField(TEXT("bunch_count"), static_cast<double>(ConnectionValidBunches));
+						Item->SetNumberField(TEXT("reliable_bunch_count"), static_cast<double>(ConnectionReliableBunches));
+						Item->SetNumberField(TEXT("reliable_bunch_bits"), static_cast<double>(ConnectionReliableBits));
+						Item->SetNumberField(TEXT("partial_bunch_count"), static_cast<double>(PartialBunches));
+						Connections.Add(JsonObjectValue(Item));
+					}
+					TArray<int64> BinIndices; Bins.GetKeys(BinIndices); BinIndices.Sort();
+					for (int64 BinIndex : BinIndices)
+					{
+						++TimeBinsSeen;
+						TSharedRef<FJsonObject> Item = MakeShared<FJsonObject>(); WriteIdentity(Item); Bins.FindChecked(BinIndex).Write(Item);
+						const double BinStart = static_cast<double>(BinIndex);
+						const double Start = FMath::Max(BinStart, NetworkSpanStart), End = FMath::Max(Start, FMath::Min(BinStart + 1.0, NetworkSpanEnd));
+						Item->SetNumberField(TEXT("start_seconds"), Start); Item->SetNumberField(TEXT("end_seconds"), End);
+						Item->SetNumberField(TEXT("duration_seconds"), End - Start);
+						Item->SetBoolField(TEXT("rate_available"), End > Start);
+						if (End > Start) { Item->SetNumberField(TEXT("bytes_per_second"), static_cast<double>(Bins.FindChecked(BinIndex).Bytes) / (End - Start)); }
+						TimeBins.Add(JsonObjectValue(Item));
+					}
+					TArray<uint32> CostTypes; Costs.GetKeys(CostTypes);
+					CostTypes.Sort([&](uint32 A, uint32 B) { return Costs.FindChecked(A).Inclusive > Costs.FindChecked(B).Inclusive; });
+					ContentRowsSeen += CostTypes.Num();
+					// Keep the largest named scopes globally, rather than letting the
+					// first connection consume every report row.
+					for (int32 CostIndex = 0; CostIndex < FMath::Min(CostTypes.Num(), MaxNetworkContentRows); ++CostIndex)
+					{
+						const uint32 TypeIndex = CostTypes[CostIndex]; const FNetworkScopeCost& Cost = Costs.FindChecked(TypeIndex);
+						TSharedRef<FJsonObject> Item = MakeShared<FJsonObject>(); WriteIdentity(Item);
+						Item->SetNumberField(TEXT("event_type_index"), TypeIndex);
+						Item->SetStringField(TEXT("name"), TEXT("<unknown>"));
+						if (TypeIndex < Provider->GetEventTypesCount())
+						{
+							Provider->ReadEventType(TypeIndex, [&](const TraceServices::FNetProfilerEventType& Type)
+							{
+								Item->SetStringField(TEXT("name"), Type.Name ? Type.Name : TEXT("<unnamed>"));
+								Item->SetNumberField(TEXT("level"), Type.Level); Item->SetNumberField(TEXT("scope_level"), Type.Level);
+							});
+						}
+						Item->SetNumberField(TEXT("event_count"), static_cast<double>(Cost.Count)); Item->SetNumberField(TEXT("instance_count"), static_cast<double>(Cost.Count));
+						Item->SetNumberField(TEXT("inclusive_bits"), static_cast<double>(Cost.Inclusive)); Item->SetNumberField(TEXT("exclusive_bits"), static_cast<double>(Cost.Exclusive));
+						Item->SetNumberField(TEXT("max_inclusive_bits"), Cost.MaxInclusive); Item->SetNumberField(TEXT("max_exclusive_bits"), Cost.MaxExclusive);
+						ContentCosts.Add(JsonObjectValue(Item));
+					}
+					ContentCosts.Sort([](const TSharedPtr<FJsonValue>& A, const TSharedPtr<FJsonValue>& B) { return A->AsObject()->GetNumberField(TEXT("inclusive_bits")) > B->AsObject()->GetNumberField(TEXT("inclusive_bits")); });
+					if (ContentCosts.Num() > MaxNetworkContentRows) { ContentCosts.SetNum(MaxNetworkContentRows, EAllowShrinking::No); }
+					for (int32 HitchIndex = 0; HitchIndex < HitchTotals.Num(); ++HitchIndex)
+					{
+						if (HitchTotals[HitchIndex].Packets == 0) { continue; }
+						++HitchRowsSeen;
+						if (HitchActivity.Num() >= MaxNetworkHitchRows) { continue; }
+						TSharedRef<FJsonObject> Item = MakeShared<FJsonObject>(); WriteIdentity(Item); HitchTotals[HitchIndex].Write(Item);
+						Item->SetNumberField(TEXT("frame_index"), static_cast<double>(HitchFrames[HitchIndex].Index));
+						Item->SetNumberField(TEXT("start_seconds"), HitchFrames[HitchIndex].Start); Item->SetNumberField(TEXT("end_seconds"), HitchFrames[HitchIndex].End);
+						HitchActivity.Add(JsonObjectValue(Item));
+					}
+				}
+			});
+		});
+	}
+	TSharedRef<FJsonObject> Summary = MakeShared<FJsonObject>();
+	Summary->SetBoolField(TEXT("provider_present"), Provider != nullptr);
+	Summary->SetNumberField(TEXT("net_trace_version"), Version);
+	Summary->SetBoolField(TEXT("packet_data_available"), TotalPackets > 0);
+	Summary->SetNumberField(TEXT("session_duration_seconds"), SessionDuration);
+	Summary->SetNumberField(TEXT("network_span_start_seconds"), NetworkSpanStart);
+	Summary->SetNumberField(TEXT("network_span_end_seconds"), NetworkSpanEnd);
+	Summary->SetNumberField(TEXT("network_span_duration_seconds"), NetworkSpanEnd - NetworkSpanStart);
+	Summary->SetNumberField(TEXT("timestamped_packets"), static_cast<double>(TimedPacketCount));
+	Summary->SetNumberField(TEXT("packet_timestamps_beyond_session_duration"), static_cast<double>(PacketsBeyondSessionDuration));
+	Summary->SetBoolField(TEXT("network_span_extends_session_duration"), NetworkSpanEnd > SessionDuration);
+	Summary->SetStringField(TEXT("network_span_semantics"), TEXT("Trace clock bounds include the global session interval when available, finite game-instance/connection lifetimes, and every finite nonnegative packet timestamp. Net-only traces can extend beyond the global analysis session duration. With no traced close/session end, the last network event is an observation bound, not proof of the capture stop time. Zero-duration spans retain counts but have no rate."));
+	Summary->SetNumberField(TEXT("packet_count"), static_cast<double>(TotalPackets));
+	Summary->SetNumberField(TEXT("content_event_count"), static_cast<double>(TotalContentEvents));
+	Summary->SetNumberField(TEXT("content_events_processed"), static_cast<double>(ProcessedContentEvents));
+	Summary->SetBoolField(TEXT("content_scan_truncated"), ProcessedContentEvents < TotalContentEvents || UnretainedContentEvents > 0);
+	Summary->SetNumberField(TEXT("content_scan_limit"), static_cast<double>(MaxNetworkContentEvents));
+	Summary->SetNumberField(TEXT("unretained_content_events"), static_cast<double>(UnretainedContentEvents));
+	Summary->SetNumberField(TEXT("content_connections_truncated"), static_cast<double>(ContentConnectionsTruncated));
+	Summary->SetNumberField(TEXT("invalid_timestamps"), static_cast<double>(TimestampErrors));
+	Summary->SetNumberField(TEXT("unbinned_packets"), static_cast<double>(UnbinnedPackets));
+	Summary->SetNumberField(TEXT("content_hierarchy_errors"), static_cast<double>(HierarchyErrors));
+	Summary->SetBoolField(TEXT("latency_available"), false); Summary->SetBoolField(TEXT("ack_confirmation_available"), false);
+	Summary->SetStringField(TEXT("latency_unavailable_reason"), TEXT("UE5.8 NetProfiler packets do not retain ACK timestamps or RTT; use captured connection/runtime counters for ping."));
+	Summary->SetStringField(TEXT("delivery_status_semantics"), TEXT("UE5.8 initially marks observed incoming/outgoing packets Delivered; outgoing Delivered is not ACK confirmation. Dropped is a traced drop or an incoming sequence-gap placeholder. Unknown stays distinct. status_drop_ratio is the traced dropped share of non-Unknown records."));
+	Summary->SetStringField(TEXT("packet_size_semantics"), TEXT("Traced UE packet bits rounded to bytes; transport/EOS/voice overhead is not guaranteed to be included. Gap placeholders contribute no known bytes."));
+	Summary->SetStringField(TEXT("external_transport_coverage"), TEXT("NetProfiler observes traced Unreal NetDriver connections. EOS lobby/social HTTP, relay overhead, voice RTC, Steam SDK and other external socket traffic can bypass NetDriver and are not a complete machine bandwidth total."));
+	Summary->SetStringField(TEXT("time_bin_semantics"), TEXT("Occupied one-second trace-clock bins clipped to network_span bounds. Rates divide by the actual clipped bin duration; a packet exactly on the final integer-second bound can have a zero-duration bin with rate_available=false. Incoming gap placeholders are timestamped at the next received packet. Drop status is attributed to the packet's original timestamp, not loss detection time."));
+	Summary->SetStringField(TEXT("content_semantics"), TEXT("Named NetTrace scope costs in bits. Inclusive scopes overlap their children and must not be summed as wire bytes. Exclusive costs subtract immediate children once. Names/levels are preserved without guessing RPC, property or actor categories."));
+	Summary->SetStringField(TEXT("packet_sample_policy"), TEXT("First 16 valid-timestamp packets per connection direction plus packets in retained hitch windows, bounded globally; diagnostic sample, not an unbiased population."));
+	Summary->SetStringField(TEXT("hitch_correlation_semantics"), TEXT("Packet timestamps overlap game-frame hitch windows; temporal correlation alone does not establish a network cause."));
+	Summary->SetBoolField(TEXT("bunch_metadata_available"), ValidBunches > 0);
+	Summary->SetNumberField(TEXT("bunch_count"), static_cast<double>(ValidBunches));
+	Summary->SetNumberField(TEXT("reliable_bunch_count"), static_cast<double>(ReliableBunches));
+	Summary->SetNumberField(TEXT("reliable_bunch_bits"), static_cast<double>(ReliableBunchBits));
+	Summary->SetBoolField(TEXT("retransmission_count_available"), false);
+	Summary->SetStringField(TEXT("reliable_bunch_semantics"), TEXT("Counts traced bunch scopes/fragments with valid reliability flags; not unique application RPCs or retransmissions. May be partial when content_scan_truncated."));
+	auto WriteLimit = [&](const TCHAR* Name, int64 Seen, int32 Exported, int32 Limit, bool bTruncated)
+	{
+		TSharedRef<FJsonObject> Item = MakeShared<FJsonObject>();
+		Item->SetNumberField(TEXT("rows_seen"), static_cast<double>(Seen)); Item->SetNumberField(TEXT("rows_exported"), Exported);
+		Item->SetNumberField(TEXT("limit"), Limit); Item->SetBoolField(TEXT("truncated"), bTruncated);
+		Summary->SetObjectField(Name, Item);
+	};
+	WriteLimit(TEXT("connections"), ConnectionRowsSeen, Connections.Num(), MaxNetworkConnections, ConnectionRowsSeen > static_cast<uint64>(Connections.Num()));
+	// Once the sparse-bin budget is full, unseen seconds are not tracked in memory.
+	WriteLimit(TEXT("time_bins"), TimeBinsSeen, TimeBins.Num(), MaxNetworkTimeBins, UnbinnedPackets > 0);
+	WriteLimit(TEXT("content_costs"), ContentRowsSeen, ContentCosts.Num(), MaxNetworkContentRows, ContentRowsSeen > static_cast<uint64>(ContentCosts.Num()) || UnretainedContentEvents > 0);
+	WriteLimit(TEXT("packet_samples"), TotalPackets, PacketSamples.Num(), MaxNetworkPacketSamples, TotalPackets > static_cast<uint64>(PacketSamples.Num()));
+	WriteLimit(TEXT("hitch_activity"), HitchRowsSeen, HitchActivity.Num(), MaxNetworkHitchRows, HitchRowsSeen > static_cast<uint64>(HitchActivity.Num()));
+	Root->SetArrayField(TEXT("network_connections"), Connections); Root->SetArrayField(TEXT("network_time_bins"), TimeBins);
+	Root->SetArrayField(TEXT("network_content_costs"), ContentCosts); Root->SetArrayField(TEXT("network_packet_samples"), PacketSamples);
+	Root->SetArrayField(TEXT("network_hitch_activity"), HitchActivity); Root->SetObjectField(TEXT("network_summary"), Summary);
+	TSharedRef<FJsonObject> NetworkCoverage = MakeCoverageEntry(TotalPackets > 0, TotalPackets);
+	NetworkCoverage->SetBoolField(TEXT("provider_present"), Provider != nullptr); NetworkCoverage->SetNumberField(TEXT("net_trace_version"), Version);
+	NetworkCoverage->SetStringField(TEXT("status"), TotalPackets > 0 ? TEXT("captured_packets") : Version > 0 ? TEXT("no_packets_observed") : TEXT("not_captured"));
+	Coverage->SetObjectField(TEXT("network"), NetworkCoverage);
+	Coverage->SetObjectField(TEXT("network_content"), MakeCoverageEntry(ProcessedContentEvents > 0, ProcessedContentEvents));
+	Coverage->SetObjectField(TEXT("network_bunches"), MakeCoverageEntry(ValidBunches > 0, ValidBunches));
+}
+
+void ExtractTimingScopeTotals(const TraceServices::ITimingProfilerProvider* Provider, double SessionDuration,
+	const TSharedRef<FJsonObject>& Root, const TSharedRef<FJsonObject>& Coverage)
+{
+	TArray<TSharedPtr<FJsonValue>> Totals;
+	TSharedRef<FJsonObject> Summary = MakeShared<FJsonObject>();
+	Summary->SetNumberField(TEXT("start_seconds"), 0.0); Summary->SetNumberField(TEXT("end_seconds"), SessionDuration);
+	Summary->SetNumberField(TEXT("duration_seconds"), SessionDuration);
+	Summary->SetNumberField(TEXT("rows_per_kind_limit"), MaxTimingScopeRowsPerKind);
+	Summary->SetStringField(TEXT("semantics"), TEXT("Whole-session instrumented timer aggregation across all CPU threads or GPU queues. Inclusive scopes overlap their children; exclusive scopes subtract children. Concurrent threads/queues may sum beyond wall time. Not total CPU utilization, a causal critical path, or a complete cost of uninstrumented SDK work."));
+	uint32 GpuQueueCount = 0;
+	if (Provider)
+	{
+		Provider->EnumerateGpuQueues([&](const TraceServices::FGpuQueueInfo& Queue) { (void)Queue; ++GpuQueueCount; });
+		for (int32 KindIndex = 0; KindIndex < 2; ++KindIndex)
+		{
+			const bool bCpu = KindIndex == 0;
+			TraceServices::FCreateAggregationParams Params;
+			Params.IntervalStart = 0.0; Params.IntervalEnd = SessionDuration;
+			Params.SortBy = TraceServices::FCreateAggregationParams::ESortBy::TotalInclusiveTime;
+			Params.SortOrder = TraceServices::FCreateAggregationParams::ESortOrder::Descending;
+			// One look-ahead row makes truncation explicit without serializing every timer.
+			Params.TableEntryLimit = MaxTimingScopeRowsPerKind + 1;
+			if (bCpu) { Params.CpuThreadFilter = [](uint32 ThreadId) { (void)ThreadId; return true; }; }
+			else if (GpuQueueCount > 0) { Params.GpuQueueFilter = [](uint32 QueueId) { (void)QueueId; return true; }; }
+			else
+			{
+				uint32 TimelineIndex = ~0u;
+				Params.bIncludeOldGpu1 = Provider->GetGpuTimelineIndex(TimelineIndex);
+				Params.bIncludeOldGpu2 = Provider->GetGpu2TimelineIndex(TimelineIndex);
+			}
+			TUniquePtr<TraceServices::ITable<TraceServices::FTimingProfilerAggregatedStats>> Table(Provider->CreateAggregation(Params));
+			const uint64 ReturnedRows = Table ? Table->GetRowCount() : 0;
+			Summary->SetNumberField(bCpu ? TEXT("cpu_rows_returned") : TEXT("gpu_rows_returned"), static_cast<double>(ReturnedRows));
+			Summary->SetBoolField(bCpu ? TEXT("cpu_truncated") : TEXT("gpu_truncated"), ReturnedRows > MaxTimingScopeRowsPerKind);
+			if (!Table) { continue; }
+			TUniquePtr<TraceServices::ITableReader<TraceServices::FTimingProfilerAggregatedStats>> Reader(Table->CreateReader());
+			for (int32 RowIndex = 0; Reader && Reader->IsValid() && RowIndex < MaxTimingScopeRowsPerKind; ++RowIndex, Reader->NextRow())
+			{
+				const TraceServices::FTimingProfilerAggregatedStats* Row = Reader->GetCurrentRow();
+				if (!Row || !Row->Timer || Row->InstanceCount == 0 || !FMath::IsFinite(Row->TotalInclusiveTime) || !FMath::IsFinite(Row->TotalExclusiveTime)) { continue; }
+				TSharedRef<FJsonObject> Item = MakeShared<FJsonObject>();
+				Item->SetStringField(TEXT("kind"), bCpu ? TEXT("cpu") : TEXT("gpu"));
+				Item->SetNumberField(TEXT("timer_id"), Row->Timer->Id);
+				Item->SetStringField(TEXT("timer"), Row->Timer->Name ? Row->Timer->Name : TEXT("<unnamed>"));
+				Item->SetStringField(TEXT("source_file"), Row->Timer->File ? Row->Timer->File : TEXT(""));
+				Item->SetNumberField(TEXT("line"), Row->Timer->Line);
+				Item->SetNumberField(TEXT("instance_count"), static_cast<double>(Row->InstanceCount));
+				Item->SetNumberField(TEXT("inclusive_ms"), Row->TotalInclusiveTime * 1000.0);
+				Item->SetNumberField(TEXT("exclusive_ms"), Row->TotalExclusiveTime * 1000.0);
+				Item->SetNumberField(TEXT("max_inclusive_ms"), Row->MaxInclusiveTime * 1000.0);
+				Item->SetNumberField(TEXT("max_exclusive_ms"), Row->MaxExclusiveTime * 1000.0);
+				Item->SetNumberField(TEXT("mean_inclusive_ms"), Row->AverageInclusiveTime * 1000.0);
+				Item->SetNumberField(TEXT("mean_exclusive_ms"), Row->AverageExclusiveTime * 1000.0);
+				Totals.Add(JsonObjectValue(Item));
+			}
+		}
+	}
+	Summary->SetNumberField(TEXT("gpu_queue_count"), GpuQueueCount);
+	Root->SetArrayField(TEXT("timing_scope_totals"), Totals); Root->SetObjectField(TEXT("timing_scope_summary"), Summary);
+	Coverage->SetObjectField(TEXT("timing_aggregate"), MakeCoverageEntry(Totals.Num() > 0, Totals.Num()));
+}
+#endif
 
 double ValidTaskDuration(double Start, double End)
 {
@@ -119,6 +583,12 @@ int32 UPerfSentinelAnalyzeCommandlet::Main(const FString& Params)
 
 	TracePath.TrimQuotesInline();
 	OutputPath.TrimQuotesInline();
+	if (TracePath.IsEmpty() || OutputPath.IsEmpty())
+	{
+		UE_LOG(LogTemp, Error, TEXT("PerfSentinelAnalyze requires explicit -Trace=<existing.utrace> -Out=<native_evidence.json>."));
+		return 2;
+	}
+	HitchThresholdMs = FMath::Clamp(HitchThresholdMs, 1.0, 10000.0);
 	TracePath = FPaths::ConvertRelativePathToFull(TracePath);
 	OutputPath = FPaths::ConvertRelativePathToFull(OutputPath);
 	FPaths::NormalizeFilename(TracePath);
@@ -153,7 +623,7 @@ int32 UPerfSentinelAnalyzeCommandlet::Main(const FString& Params)
 	TraceServices::FAnalysisSessionReadScope ReadScope(*Session);
 	const double SessionDuration = Session->GetDurationSeconds();
 	TSharedRef<FJsonObject> Root = MakeShared<FJsonObject>();
-	Root->SetNumberField(TEXT("schema_version"), 2);
+	Root->SetNumberField(TEXT("schema_version"), 3);
 	Root->SetStringField(TEXT("extractor"), TEXT("PerfSentinelTraceServices-UE5.8"));
 	Root->SetStringField(TEXT("trace"), TracePath);
 	Root->SetNumberField(TEXT("duration_seconds"), SessionDuration);
@@ -202,6 +672,7 @@ int32 UPerfSentinelAnalyzeCommandlet::Main(const FString& Params)
 		ExtractFrames(TraceFrameType_Rendering, RenderFrames, false);
 	}
 	HitchFrames.Sort([](const FHitchFrame& A, const FHitchFrame& B) { return A.DurationMs > B.DurationMs; });
+	const int32 HitchWindowsSeen = HitchFrames.Num();
 	if (HitchFrames.Num() > MaxHitchWindows)
 	{
 		HitchFrames.SetNum(MaxHitchWindows, EAllowShrinking::No);
@@ -212,18 +683,7 @@ int32 UPerfSentinelAnalyzeCommandlet::Main(const FString& Params)
 
 	const TraceServices::IThreadProvider* ThreadProvider = Session->ReadProvider<TraceServices::IThreadProvider>(TraceServices::GetThreadProviderName());
 	const TraceServices::ITimingProfilerProvider* TimingProvider = TraceServices::ReadTimingProfilerProvider(*Session);
-	TMap<uint32, FString> TimerNames;
-	if (TimingProvider)
-	{
-		const TraceServices::ITimingProfilerTimerReader& Reader = TimingProvider->GetTimerReader();
-		for (uint32 TimerId = 0; TimerId < Reader.GetTimerCount(); ++TimerId)
-		{
-			if (const TraceServices::FTimingProfilerTimer* Timer = Reader.GetTimer(TimerId))
-			{
-				TimerNames.Add(TimerId, Timer->Name ? Timer->Name : TEXT("<unnamed>"));
-			}
-		}
-	}
+	ExtractTimingScopeTotals(TimingProvider, SessionDuration, Root, Coverage);
 
 	TArray<TSharedPtr<FJsonValue>> Threads;
 	TArray<TSharedPtr<FJsonValue>> TimingEvents;
@@ -250,7 +710,11 @@ int32 UPerfSentinelAnalyzeCommandlet::Main(const FString& Params)
 					Timeline.EnumerateEvents(Hitch.Start, Hitch.End,
 						[&](double Start, double End, uint32 Depth, const TraceServices::FTimingProfilerEvent& Event)
 						{
-							if (TimingEventCount >= MaxTimingEvents || (End - Start) < 0.00005)
+							const double ClippedStart = FMath::Max(Start, Hitch.Start);
+							const double ScopeEnd = FMath::IsFinite(End) ? End : SessionDuration;
+							const double ClippedEnd = FMath::Min(ScopeEnd, Hitch.End);
+							if (!FMath::IsFinite(Start) || ClippedEnd <= ClippedStart) { return TraceServices::EEventEnumerate::Continue; }
+							if (TimingEventCount >= MaxTimingEvents || (ClippedEnd - ClippedStart) < 0.00005)
 							{
 								return TimingEventCount >= MaxTimingEvents ? TraceServices::EEventEnumerate::Stop : TraceServices::EEventEnumerate::Continue;
 							}
@@ -259,10 +723,15 @@ int32 UPerfSentinelAnalyzeCommandlet::Main(const FString& Params)
 							Item->SetNumberField(TEXT("thread_id"), Thread.Id);
 							Item->SetStringField(TEXT("thread"), Thread.Name ? Thread.Name : TEXT(""));
 							Item->SetNumberField(TEXT("timer_id"), Event.TimerIndex);
-							Item->SetStringField(TEXT("timer"), TimerNames.FindRef(Event.TimerIndex));
-							Item->SetNumberField(TEXT("start_seconds"), Start);
-							Item->SetNumberField(TEXT("end_seconds"), End);
-							Item->SetNumberField(TEXT("duration_ms"), (End - Start) * 1000.0);
+							const TraceServices::FTimingProfilerTimer* Timer = TimingProvider->GetTimerReader().GetTimer(Event.TimerIndex);
+							Item->SetStringField(TEXT("timer"), Timer && Timer->Name ? Timer->Name : TEXT("<unknown>"));
+							Item->SetNumberField(TEXT("start_seconds"), ClippedStart);
+							Item->SetNumberField(TEXT("end_seconds"), ClippedEnd);
+							Item->SetNumberField(TEXT("duration_ms"), (ClippedEnd - ClippedStart) * 1000.0);
+							Item->SetNumberField(TEXT("original_scope_start_seconds"), Start);
+							Item->SetNumberField(TEXT("original_scope_end_seconds"), ScopeEnd);
+							Item->SetNumberField(TEXT("original_scope_duration_ms"), FMath::Max(0.0, ScopeEnd - Start) * 1000.0);
+							Item->SetBoolField(TEXT("scope_open_at_trace_end"), !FMath::IsFinite(End));
 							Item->SetNumberField(TEXT("depth"), Depth);
 							TimingEvents.Add(JsonObjectValue(Item));
 							++TimingEventCount;
@@ -275,26 +744,48 @@ int32 UPerfSentinelAnalyzeCommandlet::Main(const FString& Params)
 
 	if (TimingProvider && TimingEventCount < MaxTimingEvents)
 	{
-		uint32 GpuTimelineIndex = ~0u;
-		if (TimingProvider->GetGpuTimelineIndex(GpuTimelineIndex))
+		TMap<uint32, FString> GpuTimelines;
+		TimingProvider->EnumerateGpuQueues([&](const TraceServices::FGpuQueueInfo& Queue)
 		{
-			TimingProvider->ReadTimeline(GpuTimelineIndex, [&](const TraceServices::ITimingProfilerProvider::Timeline& Timeline)
+			uint32 TimelineIndex = ~0u;
+			if (TimingProvider->GetGpuQueueTimelineIndex(Queue.Id, TimelineIndex)) { GpuTimelines.Add(TimelineIndex, Queue.GetDisplayName()); }
+		});
+		if (GpuTimelines.IsEmpty())
+		{
+			uint32 TimelineIndex = ~0u;
+			if (TimingProvider->GetGpuTimelineIndex(TimelineIndex)) { GpuTimelines.Add(TimelineIndex, TEXT("GPU")); }
+			if (TimingProvider->GetGpu2TimelineIndex(TimelineIndex)) { GpuTimelines.Add(TimelineIndex, TEXT("GPU2")); }
+		}
+		for (const TPair<uint32, FString>& GpuTimeline : GpuTimelines)
+		{
+			if (TimingEventCount >= MaxTimingEvents) { break; }
+			TimingProvider->ReadTimeline(GpuTimeline.Key, [&](const TraceServices::ITimingProfilerProvider::Timeline& Timeline)
 			{
 				for (const FHitchFrame& Hitch : HitchFrames)
 				{
 					Timeline.EnumerateEvents(Hitch.Start, Hitch.End,
 						[&](double Start, double End, uint32 Depth, const TraceServices::FTimingProfilerEvent& Event)
 						{
+							const double ClippedStart = FMath::Max(Start, Hitch.Start);
+							const double ScopeEnd = FMath::IsFinite(End) ? End : SessionDuration;
+							const double ClippedEnd = FMath::Min(ScopeEnd, Hitch.End);
+							if (!FMath::IsFinite(Start) || ClippedEnd <= ClippedStart) { return TraceServices::EEventEnumerate::Continue; }
 							if (TimingEventCount >= MaxTimingEvents) { return TraceServices::EEventEnumerate::Stop; }
 							TSharedRef<FJsonObject> Item = MakeShared<FJsonObject>();
 							Item->SetNumberField(TEXT("frame_index"), static_cast<double>(Hitch.Index));
 							Item->SetNumberField(TEXT("thread_id"), -1);
-							Item->SetStringField(TEXT("thread"), TEXT("GPU"));
+							Item->SetNumberField(TEXT("timeline_index"), GpuTimeline.Key);
+							Item->SetStringField(TEXT("thread"), GpuTimeline.Value);
 							Item->SetNumberField(TEXT("timer_id"), Event.TimerIndex);
-							Item->SetStringField(TEXT("timer"), TimerNames.FindRef(Event.TimerIndex));
-							Item->SetNumberField(TEXT("start_seconds"), Start);
-							Item->SetNumberField(TEXT("end_seconds"), End);
-							Item->SetNumberField(TEXT("duration_ms"), (End - Start) * 1000.0);
+							const TraceServices::FTimingProfilerTimer* Timer = TimingProvider->GetTimerReader().GetTimer(Event.TimerIndex);
+							Item->SetStringField(TEXT("timer"), Timer && Timer->Name ? Timer->Name : TEXT("<unknown>"));
+							Item->SetNumberField(TEXT("start_seconds"), ClippedStart);
+							Item->SetNumberField(TEXT("end_seconds"), ClippedEnd);
+							Item->SetNumberField(TEXT("duration_ms"), (ClippedEnd - ClippedStart) * 1000.0);
+							Item->SetNumberField(TEXT("original_scope_start_seconds"), Start);
+							Item->SetNumberField(TEXT("original_scope_end_seconds"), ScopeEnd);
+							Item->SetNumberField(TEXT("original_scope_duration_ms"), FMath::Max(0.0, ScopeEnd - Start) * 1000.0);
+							Item->SetBoolField(TEXT("scope_open_at_trace_end"), !FMath::IsFinite(End));
 							Item->SetNumberField(TEXT("depth"), Depth);
 							TimingEvents.Add(JsonObjectValue(Item));
 							++TimingEventCount;
@@ -306,6 +797,13 @@ int32 UPerfSentinelAnalyzeCommandlet::Main(const FString& Params)
 	}
 	Root->SetArrayField(TEXT("threads"), Threads);
 	Root->SetArrayField(TEXT("timing_events"), TimingEvents);
+	Root->SetStringField(TEXT("timing_events_scope"), TEXT("retained_hitch_windows_only"));
+	Root->SetBoolField(TEXT("timing_events_truncated"), TimingEventCount >= MaxTimingEvents);
+	Root->SetNumberField(TEXT("timing_events_limit"), MaxTimingEvents);
+	Root->SetNumberField(TEXT("hitch_windows_exported"), HitchFrames.Num());
+	Root->SetNumberField(TEXT("hitch_windows_seen"), HitchWindowsSeen);
+	Root->SetBoolField(TEXT("hitch_windows_truncated"), HitchWindowsSeen > HitchFrames.Num());
+	Root->SetNumberField(TEXT("hitch_windows_limit"), MaxHitchWindows);
 	Coverage->SetObjectField(TEXT("timing"), MakeCoverageEntry(TimingProvider != nullptr, TimingEventCount));
 
 	const TraceServices::ICounterProvider* CounterProvider = Session->ReadProvider<TraceServices::ICounterProvider>(TraceServices::GetCounterProviderName());
@@ -760,49 +1258,7 @@ int32 UPerfSentinelAnalyzeCommandlet::Main(const FString& Params)
 	Root->SetArrayField(TEXT("object_classes"), ObjectClasses);
 	Coverage->SetObjectField(TEXT("objects"), MakeCoverageEntry(ObjectProvider != nullptr, ObjectSnapshots.Num()));
 
-	const TraceServices::INetProfilerProvider* NetProvider = TraceServices::ReadNetProfilerProvider(*Session);
-	TArray<TSharedPtr<FJsonValue>> NetworkConnections;
-	if (NetProvider)
-	{
-		NetProvider->ReadGameInstances([&](const TraceServices::FNetProfilerGameInstance& Instance)
-		{
-			NetProvider->ReadConnections(Instance.GameInstanceIndex, [&](const TraceServices::FNetProfilerConnection& Connection)
-			{
-				for (uint8 ModeValue = 0; ModeValue < TraceServices::ENetProfilerConnectionMode::Count; ++ModeValue)
-				{
-					const TraceServices::ENetProfilerConnectionMode Mode = static_cast<TraceServices::ENetProfilerConnectionMode>(ModeValue);
-					const uint32 PacketCount = NetProvider->GetPacketCount(Connection.ConnectionIndex, Mode);
-					uint64 TotalBytes = 0; uint32 MaxBytes = 0; uint32 Dropped = 0;
-					if (PacketCount > 0)
-					{
-						NetProvider->EnumeratePackets(Connection.ConnectionIndex, Mode, 0, PacketCount - 1,
-							[&](const TraceServices::FNetProfilerPacket& Packet)
-							{
-								TotalBytes += Packet.TotalPacketSizeInBytes;
-								MaxBytes = FMath::Max(MaxBytes, Packet.TotalPacketSizeInBytes);
-								Dropped += Packet.DeliveryStatus == TraceServices::ENetProfilerDeliveryStatus::Dropped ? 1 : 0;
-							});
-					}
-					if (PacketCount > 0)
-					{
-						TSharedRef<FJsonObject> Item = MakeShared<FJsonObject>();
-						Item->SetStringField(TEXT("instance"), Instance.InstanceName ? Instance.InstanceName : TEXT(""));
-						Item->SetBoolField(TEXT("server"), Instance.bIsServer);
-						Item->SetStringField(TEXT("connection"), Connection.Name ? Connection.Name : TEXT(""));
-						Item->SetStringField(TEXT("address"), Connection.AddressString ? Connection.AddressString : TEXT(""));
-						Item->SetStringField(TEXT("mode"), Mode == TraceServices::ENetProfilerConnectionMode::Outgoing ? TEXT("outgoing") : TEXT("incoming"));
-						Item->SetNumberField(TEXT("packet_count"), PacketCount);
-						Item->SetNumberField(TEXT("total_bytes"), static_cast<double>(TotalBytes));
-						Item->SetNumberField(TEXT("max_packet_bytes"), MaxBytes);
-						Item->SetNumberField(TEXT("dropped_packets"), Dropped);
-						NetworkConnections.Add(JsonObjectValue(Item));
-					}
-				}
-			});
-		});
-	}
-	Root->SetArrayField(TEXT("network_connections"), NetworkConnections);
-	Coverage->SetObjectField(TEXT("network"), MakeCoverageEntry(NetProvider != nullptr, NetworkConnections.Num()));
+	ExtractNetworkEvidence(*Session, SessionDuration, HitchFrames, Root, Coverage);
 
 	const TraceServices::IScreenshotProvider* ScreenshotProvider = Session->ReadProvider<TraceServices::IScreenshotProvider>(TraceServices::GetScreenshotProviderName());
 	Coverage->SetObjectField(TEXT("screenshots"), MakeCoverageEntry(ScreenshotProvider != nullptr));

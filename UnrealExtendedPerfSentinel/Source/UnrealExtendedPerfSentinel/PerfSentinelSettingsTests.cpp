@@ -44,7 +44,7 @@ bool FPerfSentinelCaptureProfilesTest::RunTest(const FString& Parameters)
 	Settings->CaptureProfile = EPerfSentinelCaptureProfile::Multiplayer;
 	Settings->ApplyCaptureProfile();
 	TestTrue(TEXT("Multiplayer profile captures network"), Settings->TraceChannels.Contains(TEXT("net")));
-	TestTrue(TEXT("Multiplayer profile includes NetTrace level"), Settings->GetRequiredLaunchArguments().Contains(TEXT("-NetTrace=1")));
+	TestFalse(TEXT("Multiplayer tracing can start at runtime"), Settings->CaptureProfileRequiresRelaunch());
 
 	Settings->TraceChannels = { TEXT("custom-channel") };
 	Settings->CaptureProfile = EPerfSentinelCaptureProfile::Custom;

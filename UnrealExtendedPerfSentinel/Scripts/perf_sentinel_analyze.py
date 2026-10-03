@@ -24,7 +24,7 @@ from typing import Any
 
 
 ANALYZER_NAME = "perf_sentinel_analyze.py"
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 OBJECT_TIMER_PATTERNS = [
     re.compile(r"\b(?P<target>[A-Za-z][A-Za-z0-9_]*_C_UAID_[A-Fa-f0-9]+)\b"),
@@ -72,6 +72,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--fallback-stats", type=Path)
     parser.add_argument("--spikes", type=Path)
     parser.add_argument("--runtime-counters", type=Path)
+    parser.add_argument("--network-samples", type=Path)
     parser.add_argument("--insights-exe", type=Path)
     parser.add_argument("--native-evidence", type=Path)
     parser.add_argument("--baseline-dir", type=Path)
@@ -454,6 +455,14 @@ def export_unreal_insights(
     timers_csv = csv_dir / "Timers.csv"
     counters_csv = csv_dir / "Counters.csv"
 
+    # Re-analysis reuses the report directory. Remove only files owned by this
+    # exporter before launch, so missing/failed Insights cannot reuse old costs.
+    # A cleanup error aborts this analysis rather than presenting stale evidence.
+    for owned_path in (timer_csv, threads_csv, timers_csv, counters_csv, insights_log, rsp_path):
+        owned_path.unlink(missing_ok=True)
+    for owned_path in (report_dir / "spikes").glob("*/timing_events.csv"):
+        owned_path.unlink(missing_ok=True)
+
     if not insights_exe:
         insights_log.write_text("UnrealInsights executable was not provided.\n", encoding="utf-8")
         ensure_csv_placeholders(timer_csv, threads_csv)
@@ -534,7 +543,8 @@ def float_or_none(value: Any) -> float | None:
     if not text or text == "-":
         return None
     try:
-        return float(text.replace(",", ""))
+        value = float(text.replace(",", ""))
+        return value if math.isfinite(value) else None
     except ValueError:
         return None
 
@@ -833,8 +843,14 @@ def generate_counter_findings(builder: "FindingBuilder", counters: list[dict[str
 def compute_event_self_times(native: dict[str, Any]) -> list[dict[str, Any]]:
     """Compute best-effort self time from nested events in each frame/thread hierarchy."""
     events = [dict(row) for row in native.get("timing_events", []) if isinstance(row, dict)]
+    frames = {int_or_zero(row.get("index")): row for row in native.get("game_frames", []) if isinstance(row, dict)}
     groups: dict[tuple[int, str], list[dict[str, Any]]] = {}
     for event in events:
+        frame = frames.get(int_or_zero(event.get("frame_index")))
+        if frame:
+            start = max(float_or_none(event.get("start_seconds")) or 0.0, float_or_none(frame.get("start_seconds")) or 0.0)
+            end = min(float_or_none(event.get("end_seconds")) or start, float_or_none(frame.get("end_seconds")) or start)
+            event.update({"start_seconds": start, "end_seconds": max(start, end), "duration_ms": max(0.0, end - start) * 1000.0})
         key = (int_or_zero(event.get("frame_index")), str(event.get("thread") or ""))
         groups.setdefault(key, []).append(event)
 
@@ -896,14 +912,15 @@ def build_frame_attribution(native: dict[str, Any], hitch_threshold_ms: float) -
             if int_or_zero(event.get("depth")) == 0:
                 thread = str(event.get("thread") or "Unknown")
                 thread_root[thread] = thread_root.get(thread, 0.0) + (float_or_none(event.get("duration_ms")) or 0.0)
-        critical_thread = max(thread_root, key=thread_root.get) if thread_root else "unknown"
+        dominant_thread = max(thread_root, key=thread_root.get) if thread_root else "unknown"
         results.append(
             {
                 "frame_index": frame_index,
                 "start_seconds": float_or_none(frame.get("start_seconds")) or 0.0,
                 "end_seconds": float_or_none(frame.get("end_seconds")) or 0.0,
                 "duration_ms": duration_ms,
-                "critical_thread": critical_thread,
+                "dominant_thread": dominant_thread,
+                "attribution_limit": "Longest traced root scope overlap; this does not prove a CPU/GPU dependency critical path.",
                 "thread_root_ms": dict(sorted(thread_root.items(), key=lambda item: item[1], reverse=True)),
                 "top_contributors": [
                     {
@@ -947,15 +964,22 @@ def build_coverage_manifest(metadata: dict[str, Any], native: dict[str, Any]) ->
         requested_here = bool(requested & channels)
         raw = native_coverage.get(provider) if isinstance(native_coverage.get(provider), dict) else {}
         available = bool(raw.get("available"))
-        status = "available" if available else ("missing" if requested_here else "not_requested")
+        # TraceServices registers providers even when their channels emitted no events.
+        # A present but empty provider is a coverage gap, not a zero-cost measurement.
+        empty = available and raw.get("count") == 0
+        status = "empty" if empty else ("available" if available else ("missing" if requested_here else "not_requested"))
         providers[provider] = {"status": status, "requested_channels": sorted(requested & channels), "count": raw.get("count")}
-        if status == "missing":
+        if requested_here and status in ("missing", "empty"):
             missing_requested.append(provider)
     launch_requirements_satisfied = bool(metadata.get("launch_requirements_satisfied", True))
     return {
         "native_extractor_available": bool(native),
         "requested_channels": sorted(requested),
         "required_launch_arguments": metadata.get("required_launch_arguments", []),
+        "enabled_channels": metadata.get("enabled_channels", []),
+        "unavailable_channels": metadata.get("unavailable_channels", []),
+        "network_trace_compiled": metadata.get("network_trace_compiled"),
+        "network_trace_verbosity": metadata.get("network_trace_verbosity"),
         "launch_requirements_satisfied": launch_requirements_satisfied,
         "providers": providers,
         "missing_requested_providers": missing_requested,
@@ -963,7 +987,8 @@ def build_coverage_manifest(metadata: dict[str, Any], native: dict[str, Any]) ->
     }
 
 
-def build_performance_metrics(native: dict[str, Any], fallback_rows: list[dict[str, Any]], hitch_threshold_ms: float) -> dict[str, Any]:
+def build_performance_metrics(native: dict[str, Any], fallback_rows: list[dict[str, Any]], hitch_threshold_ms: float,
+                              runtime_counters: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     native_values = [float_or_none(row.get("duration_ms")) for row in native.get("game_frames", []) if isinstance(row, dict)]
     frame_values = [value for value in native_values if value is not None]
     if not frame_values:
@@ -977,9 +1002,18 @@ def build_performance_metrics(native: dict[str, Any], fallback_rows: list[dict[s
         duration_seconds = sum(frame_values) / 1000.0
     hitch_count = sum(1 for value in frame_values if value >= hitch_threshold_ms)
     allocation = native.get("allocation_summary") if isinstance(native.get("allocation_summary"), dict) else {}
-    memory_growth_mb = (float_or_none(allocation.get("growth_bytes")) or 0.0) / (1024.0 * 1024.0)
+    memory_growth = float_or_none(allocation.get("growth_bytes"))
+    memory_source = "allocation_trace" if memory_growth is not None else "unavailable"
+    if memory_growth is None:
+        physical_memory = [value for row in runtime_counters or [] if (value := float_or_none(row.get("memory_used_physical_bytes"))) is not None]
+        if len(physical_memory) >= 2:
+            memory_growth = physical_memory[-1] - physical_memory[0]
+            memory_source = "runtime_process_physical_memory"
+    memory_growth_mb = memory_growth / (1024.0 * 1024.0) if memory_growth is not None else None
     return {
         "sample_count": len(frame_values),
+        "frame_metrics_available": bool(frame_values),
+        "frame_source": "native_frames" if any(value is not None for value in native_values) else ("runtime_frame_samples" if frame_values else "unavailable"),
         "duration_seconds": round(duration_seconds, 3),
         "frame_ms": {
             "mean": round(statistics.fmean(frame_values), 4) if frame_values else 0.0,
@@ -992,8 +1026,250 @@ def build_performance_metrics(native: dict[str, Any], fallback_rows: list[dict[s
         },
         "hitch_count": hitch_count,
         "hitches_per_minute": round(hitch_count / max(duration_seconds / 60.0, 1e-9), 4) if duration_seconds else 0.0,
-        "memory_growth_mb": round(memory_growth_mb, 4),
+        "memory_growth_mb": round(memory_growth_mb, 4) if memory_growth_mb is not None else None,
+        "memory_source": memory_source,
     }
+
+
+def number_distribution(values: list[float]) -> dict[str, Any]:
+    values = [value for value in values if math.isfinite(value) and value >= 0]
+    if not values:
+        return {"available": False, "sample_count": 0, "mean": None, "p95": None, "max": None}
+    return {"available": True, "sample_count": len(values), "mean": round(statistics.fmean(values), 4),
+            "p95": round(percentile(values, 95), 4), "max": round(max(values), 4)}
+
+
+def flatten_runtime_network(samples: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Retain world/driver/connection identity; never combine client and server observations."""
+    rows: list[dict[str, Any]] = []
+    for sample in samples:
+        for world in sample.get("worlds", []):
+            if not isinstance(world, dict):
+                continue
+            for driver in world.get("drivers", []):
+                if not isinstance(driver, dict):
+                    continue
+                for connection in driver.get("connections", []):
+                    if not isinstance(connection, dict):
+                        continue
+                    row = dict(connection)
+                    interval = float_or_none(row.get("sample_interval_seconds"))
+                    row["interval_measurement_valid"] = row.get("counter_status") == "valid" and interval is not None and interval > 0
+                    # Preserve reported values in the evidence rows, but only valid
+                    # counter intervals can contribute rates or loss to summaries.
+                    for field in ("in_bytes_per_second", "out_bytes_per_second", "in_packets_per_second", "out_packets_per_second",
+                                  "in_loss_percent", "out_loss_percent"):
+                        row[f"reported_{field}"] = row.get(field)
+                        if not row["interval_measurement_valid"]:
+                            row[field] = None
+                    notified = float_or_none(row.get("out_packets_notified_delta"))
+                    outgoing_lost = float_or_none(row.get("out_packets_lost_delta"))
+                    # NAKs refer to previously sent packets, which can still be in
+                    # flight for several sampling intervals. Sent delta is never
+                    # a valid denominator for ACK/NAK notification-based loss.
+                    row["out_loss_percent"] = None
+                    if not row["interval_measurement_valid"]:
+                        row["out_loss_status"] = "invalid_or_unverified_interval"
+                    elif notified is None:
+                        row["out_loss_status"] = "legacy_sidecar_missing_ack_nak_denominator"
+                    elif notified <= 0:
+                        row["out_loss_status"] = "no_ack_nak_notifications"
+                    elif outgoing_lost is None or outgoing_lost < 0 or outgoing_lost > notified:
+                        row["out_loss_status"] = "invalid_notification_counters"
+                    else:
+                        row["out_loss_percent"] = 100.0 * outgoing_lost / notified
+                        row["out_loss_status"] = "measured_ack_nak_notifications"
+                    for key in ("timestamp", "capture_elapsed_seconds", "frame_number"):
+                        row[key] = sample.get(key)
+                    row.update({key: world.get(key) for key in ("world_id", "map_name", "world_type", "net_mode")})
+                    row.update({key: driver.get(key) for key in ("driver_id", "driver_name", "driver_class", "native_game_instance_id")})
+                    row["process_id"] = sample.get("process_id")
+                    row["identity"] = f"world:{row.get('world_id')}/driver:{row.get('driver_id')}/connection:{row.get('connection_id')}"
+                    rows.append(row)
+    return rows
+
+
+def flatten_runtime_drivers(samples: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for sample in samples:
+        for world in sample.get("worlds", []):
+            if not isinstance(world, dict):
+                continue
+            for driver in world.get("drivers", []):
+                if not isinstance(driver, dict):
+                    continue
+                row = {key: value for key, value in driver.items() if key != "connections"}
+                row.update({key: world.get(key) for key in ("world_id", "map_name", "world_type", "net_mode")})
+                row.update({key: sample.get(key) for key in ("timestamp", "capture_elapsed_seconds", "frame_number", "process_id")})
+                row["identity"] = f"world:{row.get('world_id')}/driver:{row.get('driver_id')}"
+                row["observed_connections"] = len(driver.get("connections", []))
+                rows.append(row)
+    return rows
+
+
+def build_network_report(native: dict[str, Any], samples: list[dict[str, Any]], metadata: dict[str, Any]) -> dict[str, Any]:
+    connections = [dict(row) for row in native.get("network_connections", []) if isinstance(row, dict)]
+    bins = [dict(row) for row in native.get("network_time_bins", []) if isinstance(row, dict)]
+    content = [dict(row) for row in native.get("network_content_costs", []) if isinstance(row, dict)]
+    runtime_rows = flatten_runtime_network(samples)
+    runtime_drivers = flatten_runtime_drivers(samples)
+    driver_groups: dict[str, list[dict[str, Any]]] = {}
+    for row in runtime_drivers:
+        driver_groups.setdefault(row["identity"], []).append(row)
+    driver_summary: list[dict[str, Any]] = []
+    for identity, rows in driver_groups.items():
+        summary = {key: rows[0].get(key) for key in ("world_id", "map_name", "net_mode", "driver_id", "driver_name", "driver_class", "uses_iris", "net_server_max_tick_rate", "packet_simulation")}
+        summary.update({"identity": identity, "sample_count": len(rows), "max_observed_connections": max(row["observed_connections"] for row in rows)})
+        for counter in ("total_rpcs_called", "total_reliable_bunches_sent"):
+            values = [value for row in rows if (value := float_or_none(row.get(counter))) is not None]
+            summary[counter] = {"first_lifetime_total": values[0] if values else None, "last_lifetime_total": values[-1] if values else None,
+                                "observed_increment": sum(max(0.0, right - left) for left, right in zip(values, values[1:])) if len(values) >= 2 else None,
+                                "counter_reset_count": sum(right < left for left, right in zip(values, values[1:]))}
+        driver_summary.append(summary)
+    runtime_streams: dict[str, list[dict[str, Any]]] = {}
+    for row in runtime_rows:
+        runtime_streams.setdefault(row["identity"], []).append(row)
+    runtime_summary: list[dict[str, Any]] = []
+    for identity, rows in runtime_streams.items():
+        summary = {key: rows[0].get(key) for key in ("world_id", "map_name", "net_mode", "driver_id", "driver_name", "connection_id", "native_game_instance_id", "native_connection_id", "process_id")}
+        summary.update({"identity": identity, "sample_count": len(rows), "last_state": rows[-1].get("state"),
+                        "counter_reset_count": sum(row.get("counter_status") == "reset" for row in rows)})
+        notified_rows = [row for row in rows if row.get("out_loss_status") == "measured_ack_nak_notifications"]
+        notified_packets = sum(float_or_none(row.get("out_packets_notified_delta")) or 0.0 for row in notified_rows)
+        outgoing_naks = sum(float_or_none(row.get("out_packets_lost_delta")) or 0.0 for row in notified_rows)
+        summary.update({"out_ack_nak_notified_packets": notified_packets if notified_rows else None,
+                        "out_nak_packets": outgoing_naks if notified_rows else None,
+                        "out_notified_loss_percent": 100.0 * outgoing_naks / notified_packets if notified_packets > 0 else None,
+                        "legacy_out_loss_samples": sum(row.get("out_loss_status") == "legacy_sidecar_missing_ack_nak_denominator" for row in rows),
+                        "invalid_interval_samples": sum(not row.get("interval_measurement_valid") for row in rows)})
+        for field in ("in_bytes_per_second", "out_bytes_per_second", "avg_rtt_ms", "raw_ping_ms", "jitter_ms",
+                      "in_loss_percent", "out_loss_percent", "reliable_outstanding_bunches", "max_channel_reliable_backlog",
+                      "pending_incoming_bunches", "open_channels", "actor_channels"):
+            summary[field] = number_distribution([value for row in rows if (value := float_or_none(row.get(field))) is not None])
+        summary["not_ready_samples"] = sum(row.get("is_net_ready") is False for row in rows)
+        runtime_summary.append(summary)
+
+    for row in connections:
+        row.setdefault("identity", f"instance:{row.get('instance_index', row.get('instance', 'unknown'))}/connection:{row.get('connection_index', row.get('connection', 'unknown'))}/direction:{row.get('mode')}")
+        duration = float_or_none(row.get("capture_duration_seconds"))
+        if duration is None:
+            duration = float_or_none(native.get("duration_seconds"))
+        if row.get("mean_bytes_per_second") is None and duration and duration > 0:
+            row["mean_bytes_per_second"] = int_or_zero(row.get("total_bytes")) / duration
+        delivered = float_or_none(row.get("delivered_packets"))
+        dropped = int_or_zero(row.get("dropped_packets"))
+        row["trace_reported_drop_percent"] = 100.0 * dropped / (delivered + dropped) if delivered is not None and delivered + dropped > 0 else None
+        row["status_resolved_percent"] = 100.0 * (delivered + dropped) / int_or_zero(row.get("packet_count")) if delivered is not None and int_or_zero(row.get("packet_count")) else None
+
+    def measured_max(values: list[float | None]) -> float | None:
+        measured = [value for value in values if value is not None and math.isfinite(value)]
+        return round(max(measured), 4) if measured else None
+
+    def rates(direction: str, runtime_field: str) -> list[float | None]:
+        # Connection peaks are useful budgets. Summing both endpoints would double-count wire traffic.
+        values = [float_or_none(row.get("bytes_per_second")) for row in bins if row.get("mode", row.get("direction")) == direction]
+        values += [float_or_none(row.get(runtime_field)) for row in runtime_rows]
+        return [value / 1024.0 if value is not None else None for value in values]
+
+    metrics = {
+        "peak_outgoing_kib_per_second": measured_max(rates("outgoing", "out_bytes_per_second")),
+        "peak_incoming_kib_per_second": measured_max(rates("incoming", "in_bytes_per_second")),
+        "peak_rtt_ms": measured_max([float_or_none(row.get("avg_rtt_ms")) for row in runtime_rows]),
+        "peak_loss_percent": measured_max([float_or_none(row.get(field)) for row in runtime_rows for field in ("in_loss_percent", "out_loss_percent")]
+                                           + [float_or_none(row.get("trace_reported_drop_percent")) for row in connections]
+                                           + [value * 100.0 for row in bins if (value := float_or_none(row.get("status_drop_ratio"))) is not None]),
+        "peak_reliable_backlog": measured_max([float_or_none(row.get("reliable_outstanding_bunches")) for row in runtime_rows]),
+    }
+    packet_count = sum(int_or_zero(row.get("packet_count")) for row in connections)
+    observed_worlds = [world for sample in samples for world in sample.get("worlds", []) if isinstance(world, dict)]
+    network_not_applicable = bool(observed_worlds) and all("standalone" in str(world.get("net_mode", "")).lower() and not world.get("drivers") for world in observed_worlds)
+    limitations = [
+        "Trace byte counts measure Unreal socket packets, excluding lower-level IP/UDP/EOS/voice/backend transport overhead unless that transport reports to NetDriver tracing.",
+        "Incoming/outgoing and client/server views remain separate; adding both endpoints counts the same traffic twice.",
+        "Named packet scopes are nested; inclusive bits overlap. Exclusive bits attribute serialized content without inventing RPC/property classifications.",
+        "NetProfiler has no ACK timestamp or RTT. RTT/jitter and reliable queues require the runtime sidecar; they cannot be derived from packet spacing.",
+        "UE 5.8 NetTrace marks packet-event Delivered without confirming an ACK. Trace-reported dropped share includes zero-byte incoming sequence-gap placeholders and is not an end-to-end delivery measurement.",
+        "Runtime rates and queue values are interval samples and can miss short bursts. queued_bits is bandwidth budget debt, not queued payload bytes.",
+        "Outgoing runtime loss divides NAK notifications by ACK+NAK-notified packets from valid counter intervals, never by packets sent in that interval. Older sidecars missing this denominator retain reported values as legacy evidence and exclude outgoing loss from budgets.",
+        "Packet drops or high RTT alone do not prove a missed gameplay event. Correlate application request IDs and durable state with bookmarks.",
+        "Runtime native_game_instance_id/native_connection_id can match trace instance_id/connection_id within the same process. Native trace time and capture_elapsed_seconds remain separate timebases unless their capture anchors are verified.",
+    ]
+    native_summary = native.get("network_summary") if isinstance(native.get("network_summary"), dict) else {}
+    if native_summary.get("truncated") or any(value is True for key, value in native_summary.items() if "truncated" in key) or any(isinstance(value, dict) and value.get("truncated") for value in native_summary.values()):
+        limitations.append("Native network detail reached an extraction limit; see native network_summary limits and counts before extrapolating truncated tables.")
+    # Full data stays in evidence.sqlite and CSV; JSON/Slate keeps bounded summaries.
+    whole_session_scopes = [row for row in native.get("timing_scope_totals", []) if isinstance(row, dict)]
+    cpu_scopes = [row for row in (whole_session_scopes or native.get("timing_events", [])) if isinstance(row, dict) and row.get("kind", "cpu") == "cpu"
+                  and re.search(r"(?:NetDriver|Replicat|ProcessRemoteFunction|ReceivedRPC|TickDispatch|TickFlush)", str(row.get("timer", "")), re.I)]
+    return {
+        "status": "measured" if packet_count or runtime_rows else ("not_applicable" if network_not_applicable else "not_available"),
+        "packet_trace_available": packet_count > 0, "runtime_connection_metrics_available": bool(runtime_rows),
+        "runtime_sample_count": len(samples), "runtime_connection_sample_count": len(runtime_rows),
+        "collector_overhead_ms": number_distribution([value for row in samples if (value := float_or_none(row.get("collector_overhead_ms"))) is not None]),
+        "runtime_truncated_samples": sum(bool(row.get("truncated")) for row in samples),
+        "disconnects": [row for sample in samples for row in sample.get("disconnected_connections", []) if isinstance(row, dict)][:200],
+        "packet_count": packet_count, "total_socket_bytes": sum(int_or_zero(row.get("total_bytes")) for row in connections),
+        "delivered_packets": sum(int_or_zero(row.get("delivered_packets")) for row in connections),
+        "dropped_packets": sum(int_or_zero(row.get("dropped_packets")) for row in connections),
+        "unknown_packets": sum(int_or_zero(row.get("unknown_packets")) for row in connections),
+        "metrics": metrics, "budgets": metadata.get("network_budgets", {}),
+        "connections": connections, "runtime_connections": runtime_summary,
+        "runtime_drivers": driver_summary,
+        "top_content_costs": sorted(content, key=lambda row: int_or_zero(row.get("exclusive_bits")), reverse=True)[:50],
+        "hitch_activity": native.get("network_hitch_activity", [])[:200],
+        "network_named_cpu_scopes": sorted(cpu_scopes, key=lambda row: float_or_none(row.get("exclusive_ms", row.get("duration_ms"))) or 0.0, reverse=True)[:25],
+        "network_cpu_scope_coverage": "whole_session_named_scope_candidates" if whole_session_scopes else native.get("timing_events_scope", "hitch_windows_only"),
+        "native_extraction": native_summary, "limitations": limitations,
+    }
+
+
+def add_network_findings(builder: FindingBuilder, network: dict[str, Any]) -> None:
+    budgets = network.get("budgets") if isinstance(network.get("budgets"), dict) else {}
+    metrics = network.get("metrics", {})
+    rules = (
+        ("max_outgoing_kib_per_second", "peak_outgoing_kib_per_second", "Outgoing connection bandwidth", "KiB/s"),
+        ("max_incoming_kib_per_second", "peak_incoming_kib_per_second", "Incoming connection bandwidth", "KiB/s"),
+        ("max_rtt_ms", "peak_rtt_ms", "Connection round-trip time", "ms"),
+        ("max_loss_percent", "peak_loss_percent", "Trace/runtime reported packet loss", "%"),
+        ("max_reliable_backlog", "peak_reliable_backlog", "Outstanding reliable bunches", "bunches"),
+    )
+    for budget, metric, label, unit in rules:
+        limit = float_or_none(budgets.get(budget))
+        value = float_or_none(metrics.get(metric))
+        if not limit or limit <= 0:
+            continue
+        if value is None:
+            builder.add("warning", "network_coverage", f"{label} budget could not be evaluated",
+                        [f"Configured limit is {limit:g} {unit}; no corresponding measurement is available."],
+                        "Capture a connected multiplayer session with net tracing and the runtime network sampler enabled.", confidence=1.0)
+        elif value > limit:
+            builder.add("warning", "network_budget", f"{label} exceeded its budget",
+                        [f"Measured connection peak {value:.3f} {unit}; limit {limit:g} {unit}."],
+                        "Inspect per-connection timeline and named serialized scopes; correlate the interval with replication/RPC CPU work and reliable queues.",
+                        confidence=0.95, evidence_ids=[f"network.metrics:{metric}"])
+    if not network.get("packet_trace_available") and network.get("status") != "not_applicable":
+        builder.add("warning", "network_coverage", "Packet and replication content costs are unavailable",
+                    ["No network trace packets were extracted. Runtime counters alone cannot attribute bandwidth to actors, properties, or RPC scopes."],
+                    "Launch every multiplayer process with the profiling arguments, enable the net channel and NetTrace verbosity, connect clients, then recapture.", confidence=1.0)
+
+
+def write_network_csv(directory: Path, native: dict[str, Any], runtime_rows: list[dict[str, Any]], runtime_drivers: list[dict[str, Any]] | None = None) -> dict[str, str]:
+    directory.mkdir(parents=True, exist_ok=True)
+    paths: dict[str, str] = {}
+    for key in ("network_connections", "network_time_bins", "network_content_costs", "network_hitch_activity", "network_packet_samples", "runtime_network_samples", "runtime_network_drivers"):
+        rows = runtime_rows if key == "runtime_network_samples" else (runtime_drivers or [] if key == "runtime_network_drivers" else native.get(key, []))
+        rows = [row for row in rows if isinstance(row, dict)]
+        path = directory / f"{key}.csv"
+        if not rows:
+            path.unlink(missing_ok=True)
+            continue
+        fields = sorted({key for row in rows for key, value in row.items() if not isinstance(value, (dict, list))})
+        with path.open("w", encoding="utf-8", newline="") as stream:
+            writer = csv.DictWriter(stream, fieldnames=fields, extrasaction="ignore")
+            writer.writeheader()
+            writer.writerows(rows)
+        paths[key] = str(path)
+    return paths
 
 
 def compare_baseline(args: argparse.Namespace, metrics: dict[str, Any], log: AnalyzerLog) -> tuple[dict[str, Any], Path | None]:
@@ -1005,6 +1281,12 @@ def compare_baseline(args: argparse.Namespace, metrics: dict[str, Any], log: Ana
     if baseline_path.exists():
         baseline = load_json_file(baseline_path, log)
         previous_metrics = baseline.get("metrics") if isinstance(baseline.get("metrics"), dict) else {}
+        previous_context = previous_metrics.get("capture_context")
+        current_context = metrics.get("capture_context")
+        if not previous_context or not current_context or previous_context != current_context:
+            return {"status": "incompatible_context", "baseline_path": str(baseline_path), "deltas": {},
+                    "reason": "Baseline context is missing or the map, roles, profile, hardware, or connection workload changed.",
+                    "baseline_context": previous_context, "current_context": current_context}, baseline_path
         previous_frame = previous_metrics.get("frame_ms") if isinstance(previous_metrics.get("frame_ms"), dict) else {}
         current_frame = metrics.get("frame_ms") if isinstance(metrics.get("frame_ms"), dict) else {}
         deltas: dict[str, Any] = {}
@@ -1017,21 +1299,52 @@ def compare_baseline(args: argparse.Namespace, metrics: dict[str, Any], log: Ana
                 "absolute_ms": round(current - previous, 4),
                 "percent": round((current - previous) / previous * 100.0, 3) if previous > 0 else 0.0,
             }
-        comparison = {"status": "compared", "baseline_path": str(baseline_path), "deltas": deltas}
+        network_deltas: dict[str, Any] = {}
+        for key, current in (metrics.get("network") or {}).items():
+            previous = float_or_none((previous_metrics.get("network") or {}).get(key))
+            current = float_or_none(current)
+            if previous is not None and current is not None:
+                network_deltas[key] = {"baseline": previous, "current": current, "absolute": round(current - previous, 4),
+                                       "percent": round((current - previous) / previous * 100.0, 3) if previous > 0 else (0.0 if current == 0 else None),
+                                       "newly_nonzero": previous == 0 and current > 0}
+        comparison = {"status": "compared", "baseline_path": str(baseline_path), "deltas": deltas, "network_deltas": network_deltas}
     return comparison, baseline_path
 
 
-def evaluate_ci_gates(args: argparse.Namespace, metrics: dict[str, Any], regression: dict[str, Any]) -> dict[str, Any]:
+def evaluate_ci_gates(args: argparse.Namespace, metrics: dict[str, Any], regression: dict[str, Any], network: dict[str, Any] | None = None) -> dict[str, Any]:
     gates: list[dict[str, Any]] = []
     if args.ci:
         baseline_available = regression.get("status") == "compared"
         gates.append({"name": "baseline_available", "value": 1 if baseline_available else 0, "limit": 1, "passed": baseline_available})
+        frame_available = bool(metrics.get("frame_metrics_available"))
+        gates.append({"name": "frame_metrics_available", "value": 1 if frame_available else 0, "limit": 1, "passed": frame_available})
     p99_delta = float_or_none(((regression.get("deltas") or {}).get("p99") or {}).get("percent")) or 0.0
     gates.append({"name": "p99_regression_percent", "value": p99_delta, "limit": args.max_p99_regression_percent, "passed": p99_delta <= args.max_p99_regression_percent})
     hitch_rate = float_or_none(metrics.get("hitches_per_minute")) or 0.0
     gates.append({"name": "hitches_per_minute", "value": hitch_rate, "limit": args.max_hitches_per_minute, "passed": hitch_rate <= args.max_hitches_per_minute})
-    memory_growth = float_or_none(metrics.get("memory_growth_mb")) or 0.0
-    gates.append({"name": "memory_growth_mb", "value": memory_growth, "limit": args.max_memory_growth_mb, "passed": memory_growth <= args.max_memory_growth_mb})
+    memory_growth = float_or_none(metrics.get("memory_growth_mb"))
+    gates.append({"name": "memory_growth_mb", "value": memory_growth, "limit": args.max_memory_growth_mb,
+                  "status": "measured" if memory_growth is not None else "unavailable", "passed": memory_growth is not None and memory_growth <= args.max_memory_growth_mb})
+    network = network or {}
+    for budget, metric in (("max_outgoing_kib_per_second", "peak_outgoing_kib_per_second"),
+                           ("max_incoming_kib_per_second", "peak_incoming_kib_per_second"), ("max_rtt_ms", "peak_rtt_ms"),
+                           ("max_loss_percent", "peak_loss_percent"), ("max_reliable_backlog", "peak_reliable_backlog")):
+        limit = float_or_none((network.get("budgets") or {}).get(budget))
+        if limit is not None and limit > 0:
+            value = float_or_none((network.get("metrics") or {}).get(metric))
+            gates.append({"name": metric, "value": value, "limit": limit, "status": "measured" if value is not None else "unavailable",
+                          "passed": value is not None and value <= limit})
+    regression_limit = float_or_none((network.get("budgets") or {}).get("max_network_regression_percent"))
+    if regression_limit is not None and regression_limit > 0:
+        deltas = regression.get("network_deltas") or {}
+        for metric in (network.get("metrics") or {}):
+            if (network.get("metrics") or {}).get(metric) is None:
+                continue
+            value = float_or_none((deltas.get(metric) or {}).get("percent"))
+            newly_nonzero = bool((deltas.get(metric) or {}).get("newly_nonzero"))
+            gates.append({"name": f"{metric}_regression_percent", "value": value, "limit": regression_limit,
+                          "status": "newly_nonzero" if newly_nonzero else ("measured" if value is not None else "unavailable"),
+                          "passed": not newly_nonzero and value is not None and value <= regression_limit})
     return {"enabled": bool(args.ci), "passed": all(gate["passed"] for gate in gates), "gates": gates}
 
 
@@ -1063,7 +1376,7 @@ def write_evidence_database(path: Path, native: dict[str, Any], report: dict[str
             "memory_tags": ("CREATE TABLE memory_tags (tracker TEXT, tag TEXT, tag_id TEXT, sample_count INTEGER, first_bytes INTEGER, last_bytes INTEGER, peak_bytes INTEGER, growth_bytes INTEGER)", ("tracker", "tag", "tag_id", "sample_count", "first_bytes", "last_bytes", "peak_bytes", "growth_bytes")),
             "object_snapshots": ("CREATE TABLE object_snapshots (snapshot_id INTEGER, start_seconds REAL, end_seconds REAL, object_count INTEGER, object_array_size INTEGER, reference_count INTEGER, traced_object_count INTEGER, has_total_memory_sizes INTEGER)", ("id", "start_seconds", "end_seconds", "object_count", "object_array_size", "reference_count", "traced_object_count", "has_total_memory_sizes")),
             "object_classes": ("CREATE TABLE object_classes (class_name TEXT, instance_count INTEGER, system_bytes INTEGER, video_bytes INTEGER, total_bytes INTEGER)", ("class", "count", "system_bytes", "video_bytes", "total_bytes")),
-            "network_connections": ("CREATE TABLE network_connections (instance TEXT, server INTEGER, connection_name TEXT, address TEXT, mode TEXT, packet_count INTEGER, total_bytes INTEGER, max_packet_bytes INTEGER, dropped_packets INTEGER)", ("instance", "server", "connection", "address", "mode", "packet_count", "total_bytes", "max_packet_bytes", "dropped_packets")),
+            "network_connections": ("CREATE TABLE network_connections (instance TEXT, server INTEGER, connection_name TEXT, address TEXT, mode TEXT, packet_count INTEGER, total_bytes INTEGER, max_packet_bytes INTEGER, dropped_packets INTEGER, identity TEXT, delivered_packets INTEGER, unknown_packets INTEGER, capture_duration_seconds REAL, mean_bytes_per_second REAL)", ("instance", "server", "connection", "address", "mode", "packet_count", "total_bytes", "max_packet_bytes", "dropped_packets", "identity", "delivered_packets", "unknown_packets", "capture_duration_seconds", "mean_bytes_per_second")),
         }
         for table, (create_sql, columns) in table_specs.items():
             connection.execute(create_sql)
@@ -1081,6 +1394,16 @@ def write_evidence_database(path: Path, native: dict[str, Any], report: dict[str
         connection.execute("CREATE INDEX idx_package_load_time ON package_loads(total_ms DESC)")
         connection.execute("CREATE INDEX idx_export_load_time ON export_loads(total_ms DESC)")
         connection.execute("CREATE INDEX idx_object_class_bytes ON object_classes(total_bytes DESC)")
+        # Keep complete rows beside indexed common columns so newly added engine fields
+        # remain queryable without silently losing evidence at a schema boundary.
+        for table in ("network_time_bins", "network_content_costs", "network_hitch_activity", "network_packet_samples", "runtime_network_samples", "runtime_network_drivers", "timing_scope_totals"):
+            connection.execute(f"CREATE TABLE {table} (identity TEXT, time_seconds REAL, row_json TEXT NOT NULL)")
+            connection.executemany(f"INSERT INTO {table} VALUES (?, ?, ?)",
+                                  [(row.get("identity"), row.get("start_seconds", row.get("time_seconds", row.get("capture_elapsed_seconds"))), json.dumps(row))
+                                   for row in native.get(table, []) if isinstance(row, dict)])
+            connection.execute(f"CREATE INDEX idx_{table}_identity_time ON {table}(identity,time_seconds)")
+        connection.execute("CREATE TABLE network_report (report_json TEXT NOT NULL)")
+        connection.execute("INSERT INTO network_report VALUES (?)", (json.dumps(report.get("network", {})),))
         connection.execute("CREATE TABLE findings (id TEXT PRIMARY KEY, severity TEXT, category TEXT, confidence REAL, title TEXT, finding_json TEXT)")
         for finding in report.get("findings", []):
             connection.execute(
@@ -1139,17 +1462,17 @@ def add_native_findings(builder: FindingBuilder, native: dict[str, Any], attribu
         )
         builder.add(
             severity="error" if float(worst.get("duration_ms", 0)) >= 66.66 else "warning",
-            category="frame_critical_path",
-            title="Native trace analysis identified the critical hitch path",
+            category="frame_scope_attribution",
+            title="Native trace analysis identified long scopes overlapping a hitch",
             evidence=[
                 f"Frame {worst.get('frame_index')} took {float(worst.get('duration_ms', 0)):.2f} ms.",
-                f"Critical thread/queue: {worst.get('critical_thread', 'unknown')}.",
+                f"Longest traced thread/queue overlap: {worst.get('dominant_thread', 'unknown')}.",
                 f"Top self-time contributors: {contributor_text or 'no named timing scopes were available'}.",
             ],
             suggested_next_step="Open the trace at the recorded start/end interval and inspect the named scopes and their callers/callees.",
             time_range={"start_seconds": worst.get("start_seconds"), "end_seconds": worst.get("end_seconds"), "frame_index": worst.get("frame_index")},
             confidence=0.95 if contributors else 0.65,
-            attribution=f"Frame-local nested CPU/GPU events point to {worst.get('critical_thread', 'unknown')} as the longest traced execution path.",
+            attribution=f"{worst.get('dominant_thread', 'unknown')} has the greatest traced root-scope overlap; dependencies and waits must be checked before claiming a critical path.",
             evidence_ids=[f"game_frames:{worst.get('frame_index')}", f"timing_events:frame={worst.get('frame_index')}"],
             alternative_explanations=["Untraced work, driver stalls, or OS scheduling may contribute when the corresponding provider is unavailable."],
         )
@@ -1306,11 +1629,11 @@ def add_native_findings(builder: FindingBuilder, native: dict[str, Any], attribu
         builder.add(
             severity="warning",
             category="network_packet_loss",
-            title="Network trace recorded dropped packets",
-            evidence=[f"{total_dropped} dropped packet(s) were recorded across {len(dropped)} connection/direction stream(s)."],
+            title="Network trace reported dropped packet statuses",
+            evidence=[f"{total_dropped} dropped status(es) were recorded across {len(dropped)} connection/direction stream(s); incoming sequence gaps can be zero-byte placeholders."],
             suggested_next_step="Inspect packet content, RPC/property contributors, reliable backlog, and connection conditions in Networking Insights.",
             confidence=0.95,
-            attribution="Networking Insights delivery status directly marked these packets as dropped.",
+            attribution="Networking Insights recorded Dropped statuses; Delivered is not proof of ACK confirmation in UE 5.8.",
             evidence_ids=["network_connections:dropped_packets>0"],
         )
 
@@ -1352,6 +1675,7 @@ def generate_findings(
     native: dict[str, Any] | None = None,
     frame_attribution: list[dict[str, Any]] | None = None,
     coverage: dict[str, Any] | None = None,
+    network: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     builder = FindingBuilder()
     all_frame_rows = normalize_perf_rows(spikes + fallback_rows)
@@ -1437,6 +1761,8 @@ def generate_findings(
 
     if native:
         add_native_findings(builder, native, frame_attribution or [], coverage or {})
+    if network is not None:
+        add_network_findings(builder, network)
 
     if not builder.findings:
         builder.add(
@@ -1472,6 +1798,7 @@ def build_report(
     frame_attribution: list[dict[str, Any]] | None = None,
     regression: dict[str, Any] | None = None,
     ci_gates: dict[str, Any] | None = None,
+    network: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     normalized_spikes = normalize_perf_rows(spikes)
     normalized_fallback = normalize_perf_rows(fallback_rows)
@@ -1514,6 +1841,7 @@ def build_report(
             "hitches_per_minute": float((metrics or {}).get("hitches_per_minute", 0.0)),
         },
         "artifacts": {
+            **artifacts,
             "metadata": artifacts.get("metadata", ""),
             "analysis_log": artifacts.get("analysis_log", ""),
             "unreal_insights_log": artifacts.get("unreal_insights_log", ""),
@@ -1535,6 +1863,7 @@ def build_report(
         "counters_summary": summarize_counters(counters or []),
         "coverage": coverage or {},
         "metrics": metrics or {},
+        "network": network or {},
         "frame_attribution": (frame_attribution or [])[:50],
         "regression": regression or {"status": "disabled"},
         "ci": ci_gates or {"enabled": False, "passed": True, "gates": []},
@@ -1560,8 +1889,10 @@ def render_markdown(report: dict[str, Any]) -> str:
     lines.append(f"- Findings: {summary.get('finding_count', 0)}")
     lines.append(f"- Spike Count: {summary.get('spike_count', 0)}")
     lines.append(f"- Worst Frame: {float(summary.get('worst_frame_ms', 0.0)):.2f} ms")
-    lines.append(f"- P99 Frame: {float(summary.get('p99_frame_ms', 0.0)):.2f} ms")
-    lines.append(f"- Hitches/minute: {float(summary.get('hitches_per_minute', 0.0)):.2f}")
+    frame_metrics_available = bool(report.get("metrics", {}).get("frame_metrics_available"))
+    lines.append(f"- P99 Frame: {float(summary.get('p99_frame_ms', 0.0)):.2f} ms" if frame_metrics_available else "- P99 Frame: unavailable")
+    lines.append(f"- Hitches/minute: {float(summary.get('hitches_per_minute', 0.0)):.2f}" if frame_metrics_available else "- Hitches/minute: unavailable")
+    lines.append(f"- Memory trend source: {report.get('metrics', {}).get('memory_source', 'unavailable')}. Process physical memory and allocation-trace bytes measure different costs.")
     lines.append("")
 
     coverage = report.get("coverage", {})
@@ -1571,6 +1902,63 @@ def render_markdown(report: dict[str, Any]) -> str:
     lines.append(f"- Complete for requested profile: {'yes' if coverage.get('complete_for_requested_profile') else 'no'}")
     missing = coverage.get("missing_requested_providers", [])
     lines.append(f"- Missing requested providers: {', '.join(missing) if missing else 'none'}")
+    lines.append("")
+
+    network = report.get("network", {})
+    lines.append("## Network Costs")
+    lines.append("")
+    lines.append(f"- Status: {network.get('status', 'not_available')}")
+    lines.append(f"- Trace packets/status entries: {network.get('packet_count', 0)}; socket bytes: {network.get('total_socket_bytes', 0)}")
+    lines.append(f"- Trace-reported statuses: Delivered {network.get('delivered_packets', 0)}, Dropped {network.get('dropped_packets', 0)}, Unknown {network.get('unknown_packets', 0)}. Delivered does not confirm an ACK.")
+    for key, value in (network.get("metrics") or {}).items():
+        lines.append(f"- {key}: {value:.3f}" if value is not None else f"- {key}: unavailable")
+    lines.append("")
+    lines.append("| Connection/direction | Packets | Socket bytes | Mean KiB/s | Trace drop share % |")
+    lines.append("| --- | ---: | ---: | ---: | ---: |")
+    for row in network.get("connections", []):
+        rate = float_or_none(row.get("mean_bytes_per_second"))
+        loss = float_or_none(row.get("trace_reported_drop_percent"))
+        lines.append(f"| {md_escape(row.get('identity', '-'))} | {int_or_zero(row.get('packet_count'))} | {int_or_zero(row.get('total_bytes'))} | "
+                     + (f"{rate / 1024.0:.3f}" if rate is not None else "unavailable") + " | "
+                     + (f"{loss:.3f}" if loss is not None else "unavailable") + " |")
+    lines.append("")
+    lines.append("| Named packet scope | Direction | Calls | Exclusive bits | Inclusive bits (overlap) |")
+    lines.append("| --- | --- | ---: | ---: | ---: |")
+    for row in network.get("top_content_costs", [])[:25]:
+        lines.append(f"| {md_escape(row.get('name', '-'))} | {md_escape(row.get('mode', row.get('direction', '-')))} | "
+                     f"{int_or_zero(row.get('event_count', row.get('instance_count')))} | {int_or_zero(row.get('exclusive_bits'))} | {int_or_zero(row.get('inclusive_bits'))} |")
+    lines.append("")
+    lines.append("| Runtime connection | RTT p95 ms | Outgoing p95 KiB/s | Outgoing NAK/notified % | Reliable backlog max | Not-ready samples |")
+    lines.append("| --- | ---: | ---: | ---: | ---: | ---: |")
+    for row in network.get("runtime_connections", []):
+        def runtime_metric(field: str, metric: str, scale: float = 1.0) -> str:
+            value = float_or_none((row.get(field) or {}).get(metric))
+            return f"{value / scale:.3f}" if value is not None else "unavailable"
+        notified_loss = float_or_none(row.get("out_notified_loss_percent"))
+        lines.append(f"| {md_escape(row.get('identity', '-'))} | {runtime_metric('avg_rtt_ms', 'p95')} | "
+                     f"{runtime_metric('out_bytes_per_second', 'p95', 1024.0)} | "
+                     + (f"{notified_loss:.3f}" if notified_loss is not None else "unavailable")
+                     + f" | {runtime_metric('reliable_outstanding_bunches', 'max')} | {row.get('not_ready_samples', 0)} |")
+    lines.append("")
+    lines.append("| Runtime driver | Role | Iris | Server tick Hz | Observed RPC counter increment | Reliable bunch counter increment |")
+    lines.append("| --- | --- | --- | ---: | ---: | ---: |")
+    for row in network.get("runtime_drivers", []):
+        rpc_increment = (row.get("total_rpcs_called") or {}).get("observed_increment")
+        reliable_increment = (row.get("total_reliable_bunches_sent") or {}).get("observed_increment")
+        lines.append(f"| {md_escape(row.get('identity', '-'))} | {md_escape(row.get('net_mode', '-'))} | {row.get('uses_iris')} | "
+                     f"{row.get('net_server_max_tick_rate', 'unavailable')} | {rpc_increment if rpc_increment is not None else 'unavailable'} | "
+                     f"{reliable_increment if reliable_increment is not None else 'unavailable'} |")
+    lines.append("")
+    for row in network.get("runtime_drivers", []):
+        if row.get("packet_simulation"):
+            lines.append(f"- {row.get('identity')}: packet simulation {json.dumps(row['packet_simulation'], sort_keys=True)}")
+    lines.append("")
+    overhead = network.get("collector_overhead_ms", {})
+    if overhead.get("available"):
+        lines.append(f"- Network collector overhead: mean {overhead.get('mean'):.3f} ms, max {overhead.get('max'):.3f} ms; truncated runtime samples {network.get('runtime_truncated_samples', 0)}.")
+        lines.append("")
+    for limitation in network.get("limitations", []):
+        lines.append(f"- Coverage: {limitation}")
     lines.append("")
 
     lines.append("## Findings")
@@ -1595,15 +1983,33 @@ def render_markdown(report: dict[str, Any]) -> str:
     if attribution:
         lines.append("## Worst Frame Attribution")
         lines.append("")
-        lines.append("| Frame | Duration ms | Critical thread | Top contributor | Self ms | Inclusive ms |")
+        lines.append("| Frame | Duration ms | Longest traced overlap | Top contributor | Self ms | Inclusive ms |")
         lines.append("| ---: | ---: | --- | --- | ---: | ---: |")
         for frame in attribution[:20]:
             top = (frame.get("top_contributors") or [{}])[0]
             lines.append(
                 f"| {int(frame.get('frame_index', 0))} | {float(frame.get('duration_ms', 0)):.3f} | "
-                f"{md_escape(frame.get('critical_thread', '-'))} | {md_escape(top.get('timer', '-'))} | "
+                f"{md_escape(frame.get('dominant_thread', '-'))} | {md_escape(top.get('timer', '-'))} | "
                 f"{float(top.get('self_ms', 0)):.3f} | {float(top.get('inclusive_ms', 0)):.3f} |"
             )
+        lines.append("")
+    lines.append("## Whole Session Scope Costs")
+    lines.append("")
+    lines.append("Inclusive totals overlap; exclusive totals measure instrumented CPU/GPU scope time, which can exceed wall time across parallel threads/queues.")
+    lines.append("")
+    lines.append("| Kind | Scope | Calls | Exclusive ms | Inclusive ms | Maximum inclusive ms |")
+    lines.append("| --- | --- | ---: | ---: | ---: | ---: |")
+    for row in report.get("whole_session_scope_costs", [])[:25]:
+        lines.append(f"| {md_escape(row.get('kind', '-'))} | {md_escape(row.get('timer', '-'))} | {int_or_zero(row.get('instance_count'))} | "
+                     f"{float_or_none(row.get('exclusive_ms')) or 0.0:.3f} | {float_or_none(row.get('inclusive_ms')) or 0.0:.3f} | {float_or_none(row.get('max_inclusive_ms')) or 0.0:.3f} |")
+    if not report.get("whole_session_scope_costs"):
+        lines.append("| unavailable | - | - | - | - | - |")
+    lines.append("")
+    if report.get("scenario_bookmarks"):
+        lines.append("## Scenario Bookmarks")
+        lines.append("")
+        for row in report["scenario_bookmarks"][:50]:
+            lines.append(f"- {float_or_none(row.get('time_seconds')) or 0.0:.3f}s: {row.get('text', '')}")
         lines.append("")
 
     regression = report.get("regression", {})
@@ -1612,8 +2018,13 @@ def render_markdown(report: dict[str, Any]) -> str:
     lines.append(f"- Status: {regression.get('status', 'disabled')}")
     if regression.get("baseline_path"):
         lines.append(f"- Baseline: `{regression.get('baseline_path')}`")
+    if regression.get("reason"):
+        lines.append(f"- Comparability: {regression.get('reason')}")
     for key, delta in (regression.get("deltas") or {}).items():
         lines.append(f"- {key}: {float(delta.get('current', 0)):.3f} ms ({float(delta.get('percent', 0)):+.2f}% vs baseline)")
+    for key, delta in (regression.get("network_deltas") or {}).items():
+        percent = float_or_none(delta.get("percent"))
+        lines.append(f"- {key}: {delta.get('current')} ({percent:+.2f}% vs baseline)" if percent is not None else f"- {key}: {delta.get('current')} (relative delta unavailable from zero baseline)")
     lines.append("")
 
     ci = report.get("ci", {})
@@ -1624,7 +2035,8 @@ def render_markdown(report: dict[str, Any]) -> str:
         for gate in ci.get("gates", []):
             lines.append(
                 f"- {'PASS' if gate.get('passed') else 'FAIL'} {gate.get('name')}: "
-                f"{float(gate.get('value', 0)):.3f} (limit {float(gate.get('limit', 0)):.3f})"
+                + (f"{float(gate['value']):.3f}" if gate.get('value') is not None else "unavailable")
+                + f" (limit {float(gate.get('limit', 0)):.3f})"
             )
         lines.append("")
 
@@ -1701,7 +2113,7 @@ def render_markdown(report: dict[str, Any]) -> str:
     lines.append("## Artifacts")
     lines.append("")
     artifacts = report.get("artifacts", {})
-    for key in ["metadata", "analysis_log", "native_evidence_json", "evidence_database", "baseline", "unreal_insights_log", "timer_statistics_csv", "threads_csv", "timers_csv", "counters_csv", "game_stats_json"]:
+    for key in report.get("artifacts", {}):
         value = artifacts.get(key)
         if value:
             lines.append(f"- {key}: `{value}`")
@@ -1720,6 +2132,8 @@ def main() -> int:
         args.spikes = args.spikes.resolve()
     if args.runtime_counters:
         args.runtime_counters = args.runtime_counters.resolve()
+    if args.network_samples:
+        args.network_samples = args.network_samples.resolve()
     if args.insights_exe:
         args.insights_exe = args.insights_exe.resolve()
     if args.native_evidence:
@@ -1728,6 +2142,8 @@ def main() -> int:
         args.baseline_dir = args.baseline_dir.resolve()
 
     args.out.mkdir(parents=True, exist_ok=True)
+    # Optional aggregate output must disappear when this run has no such data.
+    (args.out / "timing_scope_totals.csv").unlink(missing_ok=True)
     log = AnalyzerLog(args.out / "analysis.log")
     log.write(f"PerfSentinel analyzer started: {ANALYZER_NAME}")
 
@@ -1749,6 +2165,10 @@ def main() -> int:
 
     spikes = load_ndjson(spikes_path, log)
     counters = load_ndjson(counters_path, log)
+    network_path = args.network_samples
+    if not network_path and metadata.get("network_samples_file"):
+        network_path = Path(str(metadata["network_samples_file"])).resolve()
+    network_samples = load_ndjson(network_path, log)
     csv_dir = args.out / "csv_export"
     timer_csv, threads_csv, insights_log = export_unreal_insights(
         args.insights_exe, args.trace, metadata, spikes, args.out, csv_dir, log, trace_time_offset
@@ -1763,9 +2183,40 @@ def main() -> int:
     severe_frame_budget_ms = float((metadata.get("budgets") or {}).get("severe_frame_budget_ms", max(args.hitch_threshold_ms, args.frame_budget_ms * 2.0)))
     frame_attribution = build_frame_attribution(native, args.hitch_threshold_ms) if native else []
     coverage = build_coverage_manifest(metadata, native)
-    metrics = build_performance_metrics(native, fallback_rows + spikes, args.hitch_threshold_ms)
+    # Spike rows intentionally oversample slow frames. Use full frame samples or
+    # the regular fallback stream for percentiles, never append spikes to either.
+    frame_samples = load_ndjson(Path(str(metadata["frame_samples_file"])).resolve(), log) if metadata.get("frame_samples_file") else []
+    metrics = build_performance_metrics(native, frame_samples or fallback_rows, args.hitch_threshold_ms, counters)
+    network = build_network_report(native, network_samples, metadata)
+    if network.get("status") == "not_applicable":
+        coverage["providers"]["network"]["status"] = "not_applicable"
+        coverage["missing_requested_providers"] = [provider for provider in coverage["missing_requested_providers"] if provider != "network"]
+        coverage["complete_for_requested_profile"] = bool(native) and not coverage["missing_requested_providers"] and coverage["launch_requirements_satisfied"]
+    runtime_rows = flatten_runtime_network(network_samples)
+    runtime_drivers = flatten_runtime_drivers(network_samples)
+    runtime_context = load_json_file(Path(str(metadata["runtime_context_file"])).resolve(), log) if metadata.get("runtime_context_file") else {}
+    def stable_map(value: Any) -> str:
+        return re.sub(r"UEDPIE_\d+_", "", str(value or ""))
+    worlds = sorted({(stable_map(world.get("map_name")), str(world.get("net_mode", "")), str(world.get("world_type", "")))
+                     for sample in network_samples for world in sample.get("worlds", []) if isinstance(world, dict)})
+    peak_connections = max((sum(len([connection for connection in driver.get("connections", []) if isinstance(connection, dict) and connection.get("state") != "disconnected"])
+                                for world in sample.get("worlds", []) if isinstance(world, dict)
+                                for driver in world.get("drivers", []) if isinstance(driver, dict)) for sample in network_samples), default=None)
+    metrics["capture_context"] = {
+        "project": metadata.get("project"), "scenario": metadata.get("scenario", args.baseline_key),
+        "engine_version": metadata.get("engine_version"), "capture_profile": metadata.get("capture_profile"),
+        "requested_channels": sorted(metadata.get("channels", [])), "worlds": [list(world) for world in worlds],
+        "peak_connection_workload": peak_connections,
+        "trace_roles": sorted({"server" if row.get("server") else "client" for row in network["connections"]}),
+        "trace_connection_workload": len({(str(row.get("instance_index", row.get("instance"))), str(row.get("connection_index", row.get("connection")))) for row in network["connections"]}),
+        "driver_configurations": [json.loads(value) for value in sorted({json.dumps({key: row.get(key) for key in ("driver_class", "net_mode", "uses_iris", "net_server_max_tick_rate", "packet_simulation")}, sort_keys=True) for row in runtime_drivers})],
+        **{key: runtime_context.get(key) for key in ("platform", "cpu_brand", "gpu_brand", "world_type")},
+        "map_name": stable_map(runtime_context.get("map_name")),
+        "metric_sources": {"frame": metrics["frame_source"], "memory": metrics["memory_source"]},
+    }
+    metrics["network"] = network["metrics"]
     regression, baseline_path = compare_baseline(args, metrics, log)
-    ci_gates = evaluate_ci_gates(args, metrics, regression)
+    ci_gates = evaluate_ci_gates(args, metrics, regression, network)
     findings = generate_findings(
         spikes,
         fallback_rows,
@@ -1777,9 +2228,13 @@ def main() -> int:
         native,
         frame_attribution,
         coverage,
+        network,
     )
 
     evidence_database = args.out / "evidence.sqlite"
+    network_csv = write_network_csv(args.out / "network_csv", native, runtime_rows, runtime_drivers)
+    network_summary_path = args.out / "network_summary.json"
+    network_summary_path.write_text(json.dumps(network, indent=2), encoding="utf-8")
 
     report = build_report(
         args=args,
@@ -1803,19 +2258,36 @@ def main() -> int:
             "native_evidence_json": str(args.native_evidence) if args.native_evidence else "",
             "evidence_database": str(evidence_database),
             "baseline": str(baseline_path) if baseline_path else "",
+            "network_summary_json": str(network_summary_path),
+            "network_samples": str(network_path) if network_path else "",
+            **network_csv,
         },
         coverage=coverage,
         metrics=metrics,
         frame_attribution=frame_attribution,
         regression=regression,
         ci_gates=ci_gates,
+        network=network,
     )
+    report["scenario_bookmarks"] = [row for row in native.get("bookmarks", []) if isinstance(row, dict)][:200]
+    report["whole_session_scope_costs"] = sorted([row for row in native.get("timing_scope_totals", []) if isinstance(row, dict)],
+                                                 key=lambda row: float_or_none(row.get("exclusive_ms")) or 0.0, reverse=True)[:100]
+    report["whole_session_scope_coverage"] = native.get("timing_scope_summary", {})
+    scope_rows = native.get("timing_scope_totals", [])
+    if scope_rows:
+        scope_path = args.out / "timing_scope_totals.csv"
+        fields = sorted({key for row in scope_rows if isinstance(row, dict) for key in row})
+        with scope_path.open("w", encoding="utf-8", newline="") as stream:
+            writer = csv.DictWriter(stream, fieldnames=fields)
+            writer.writeheader()
+            writer.writerows(row for row in scope_rows if isinstance(row, dict))
+        report["artifacts"]["timing_scope_totals_csv"] = str(scope_path)
 
     findings_json = args.out / "findings.json"
     findings_md = args.out / "findings.md"
     findings_json.write_text(json.dumps(report, indent=2), encoding="utf-8")
     findings_md.write_text(render_markdown(report), encoding="utf-8")
-    write_evidence_database(evidence_database, native, report)
+    write_evidence_database(evidence_database, {**native, "runtime_network_samples": runtime_rows, "runtime_network_drivers": runtime_drivers}, report)
 
     if args.update_baseline and baseline_path and (not args.ci or ci_gates.get("passed", True)):
         baseline_payload = {

@@ -6,6 +6,7 @@
 #include "PerfSentinelTypes.h"
 
 class FArchive;
+class FPerfSentinelNetworkSampler;
 class UPerfSentinelSettings;
 
 /** Captures frame-time spike observations while a trace session is active. */
@@ -23,6 +24,7 @@ public:
 	const FString& GetFrameSamplesPath() const { return FrameSamplesPath; }
 	const FString& GetRuntimeContextPath() const { return RuntimeContextPath; }
 	const FString& GetRuntimeCountersPath() const { return RuntimeCountersPath; }
+	const FString& GetNetworkSamplesPath() const { return NetworkSamplesPath; }
 	const FString& GetGameStatsPath() const { return GameStatsPath; }
 	const TArray<FPerfSentinelSpikeSnapshot>& GetSpikeSnapshots() const { return SpikeSnapshots; }
 	int32 GetSpikeCount() const { return SpikeSnapshots.Num(); }
@@ -71,6 +73,7 @@ private:
 	static void FillThreadTimings(FFrameSample& Sample);
 	void AppendFrameSample(const FFrameSample& Sample) const;
 	void AppendRuntimeCounters(const FFrameSample& Sample);
+	void AppendNetworkSample(const FFrameSample& Sample, const UPerfSentinelSettings& Settings);
 	void AddPerClassBreakdownFields(const UWorld* World, const TSharedRef<class FJsonObject>& Root) const;
 	bool CaptureSpike(float FrameTimeMs, bool bManual);
 	void HarvestSpikeStats();
@@ -102,12 +105,16 @@ private:
 	FString FrameSamplesPath;
 	FString RuntimeContextPath;
 	FString RuntimeCountersPath;
+	FString NetworkSamplesPath;
 	FString GameStatsPath;
 	TArray<FPerfSentinelSpikeSnapshot> SpikeSnapshots;
 	TArray<FFrameSample> FrameSampleBuffer;
 	TArray<FPendingSpikeWindow> PendingSpikeWindows;
 	TUniquePtr<FArchive> FrameSamplesWriter;
 	TUniquePtr<FArchive> RuntimeCountersWriter;
+	TUniquePtr<FArchive> NetworkSamplesWriter;
+	TUniquePtr<FPerfSentinelNetworkSampler> NetworkSampler;
+	double LastNetworkSampleSeconds = -TNumericLimits<double>::Max();
 	double LastScreenshotTimeSeconds = -TNumericLimits<double>::Max();
 	double LastSpikeEventTimeSeconds = -TNumericLimits<double>::Max();
 	int32 SuppressedSpikeCount = 0;

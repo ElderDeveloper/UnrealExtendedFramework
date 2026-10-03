@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import importlib.util
 import sqlite3
 import subprocess
 import sys
@@ -10,6 +11,10 @@ from pathlib import Path
 
 
 ANALYZER = Path(__file__).resolve().parents[1] / "perf_sentinel_analyze.py"
+MODULE_SPEC = importlib.util.spec_from_file_location("perf_sentinel_analyze", ANALYZER)
+assert MODULE_SPEC and MODULE_SPEC.loader
+MODULE = importlib.util.module_from_spec(MODULE_SPEC)
+MODULE_SPEC.loader.exec_module(MODULE)
 
 
 def coverage_entry(count: int = 1) -> dict[str, object]:
@@ -138,13 +143,13 @@ class PerfSentinelAnalyzerTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
             report = json.loads((root / "report" / "findings.json").read_text(encoding="utf-8"))
-            self.assertEqual(report["schema_version"], 2)
+            self.assertEqual(report["schema_version"], 3)
             self.assertEqual(report["summary"]["status"], "native")
             self.assertEqual(report["summary"]["worst_frame_ms"], 80.0)
             self.assertTrue(report["coverage"]["complete_for_requested_profile"])
             categories = {finding["category"] for finding in report["findings"]}
-            self.assertTrue({"frame_critical_path", "task_queue_delay", "stack_sampling", "file_io", "asset_loading", "load_request_latency", "memory_tag_growth", "object_snapshot_growth", "network_packet_loss"}.issubset(categories))
-            self.assertEqual(report["frame_attribution"][0]["critical_thread"], "GameThread")
+            self.assertTrue({"frame_scope_attribution", "task_queue_delay", "stack_sampling", "file_io", "asset_loading", "load_request_latency", "memory_tag_growth", "object_snapshot_growth", "network_packet_loss"}.issubset(categories))
+            self.assertEqual(report["frame_attribution"][0]["dominant_thread"], "GameThread")
             self.assertAlmostEqual(report["frame_attribution"][0]["top_contributors"][0]["self_ms"], 50.0)
             self.assertTrue((baseline / "Hitch_Fixture.json").exists())
             self.assertIn("PerfSentinel analyzer started", (root / "report" / "analysis.log").read_text(encoding="utf-8"))
@@ -189,6 +194,83 @@ class PerfSentinelAnalyzerTests(unittest.TestCase):
             self.assertIn("p99_regression_percent", failed)
             self.assertIn("hitches_per_minute", failed)
             self.assertIn("memory_growth_mb", failed)
+
+    def test_network_costs_preserve_direction_unknown_status_and_runtime_latency(self) -> None:
+        native = native_evidence()
+        native["network_connections"] = [{"identity": "server/client/outgoing", "mode": "outgoing", "packet_count": 10,
+                                           "total_bytes": 4096, "delivered_packets": 6, "dropped_packets": 2, "unknown_packets": 2,
+                                           "capture_duration_seconds": 60.0}]
+        native["network_time_bins"] = [{"identity": "server/client/outgoing", "mode": "outgoing", "bytes_per_second": 10240}]
+        native["network_content_costs"] = [{"name": "SomeSerializedScope", "mode": "outgoing", "event_count": 4,
+                                             "inclusive_bits": 800, "exclusive_bits": 200}]
+        samples = [{"capture_elapsed_seconds": 1.0, "worlds": [{"world_id": "W", "net_mode": "Client", "map_name": "Lobby",
+                    "drivers": [{"driver_id": "D", "connections": [{"connection_id": 1, "state": "open", "counter_status": "valid",
+                    "sample_interval_seconds": 1.0, "out_packets_notified_delta": 100, "out_packets_lost_delta": 3,
+                    "out_bytes_per_second": 20480, "avg_rtt_ms": 450, "out_loss_percent": 3.0, "reliable_outstanding_bunches": 12}]}]}]}]
+        network = MODULE.build_network_report(native, samples, {"network_budgets": {"max_rtt_ms": 300}})
+        self.assertEqual(network["metrics"]["peak_outgoing_kib_per_second"], 20.0)
+        self.assertEqual(network["metrics"]["peak_rtt_ms"], 450)
+        self.assertEqual(network["connections"][0]["trace_reported_drop_percent"], 25.0)
+        self.assertEqual(network["unknown_packets"], 2)
+        self.assertEqual(network["top_content_costs"][0]["exclusive_bits"], 200)
+        self.assertIn("without confirming an ACK", " ".join(network["limitations"]))
+        builder = MODULE.FindingBuilder()
+        MODULE.add_network_findings(builder, network)
+        self.assertTrue(any(row["category"] == "network_budget" for row in builder.findings))
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            runtime_rows = MODULE.flatten_runtime_network(samples)
+            paths = MODULE.write_network_csv(root, native, runtime_rows)
+            self.assertTrue(Path(paths["runtime_network_samples"]).exists())
+            MODULE.write_evidence_database(root / "evidence.sqlite", {**native, "runtime_network_samples": runtime_rows}, {"network": network})
+            database = sqlite3.connect(root / "evidence.sqlite")
+            try:
+                self.assertEqual(database.execute("SELECT json_extract(row_json,'$.avg_rtt_ms') FROM runtime_network_samples").fetchone()[0], 450)
+                self.assertEqual(database.execute("SELECT json_extract(row_json,'$.exclusive_bits') FROM network_content_costs").fetchone()[0], 200)
+            finally:
+                database.close()
+
+    def test_missing_metrics_and_empty_requested_providers_are_unavailable(self) -> None:
+        coverage = MODULE.build_coverage_manifest({"channels": ["frame", "net"]}, {"coverage": {"frames": coverage_entry(0), "network": coverage_entry(0)}})
+        self.assertFalse(coverage["complete_for_requested_profile"])
+        self.assertEqual(coverage["providers"]["network"]["status"], "empty")
+        metrics = MODULE.build_performance_metrics({}, [], 50)
+        self.assertFalse(metrics["frame_metrics_available"])
+        self.assertIsNone(metrics["memory_growth_mb"])
+        args = MODULE.argparse.Namespace(ci=True, max_p99_regression_percent=15, max_hitches_per_minute=3, max_memory_growth_mb=200)
+        ci = MODULE.evaluate_ci_gates(args, metrics, {"status": "compared"}, {"budgets": {"max_rtt_ms": 400}, "metrics": {"peak_rtt_ms": None}})
+        self.assertFalse(ci["passed"])
+        self.assertTrue(any(gate["name"] == "peak_rtt_ms" and gate["status"] == "unavailable" and not gate["passed"] for gate in ci["gates"]))
+
+    def test_timing_attribution_clips_scope_to_frame(self) -> None:
+        native = native_evidence()
+        native["timing_events"] = [{"frame_index": 2, "thread": "Worker", "timer": "LongBackgroundScope", "start_seconds": 0,
+                                    "end_seconds": 10, "depth": 0, "duration_ms": 10000}]
+        attribution = MODULE.build_frame_attribution(native, 50)
+        self.assertAlmostEqual(attribution[0]["top_contributors"][0]["inclusive_ms"], 80.0)
+        self.assertEqual(attribution[0]["dominant_thread"], "Worker")
+        self.assertIn("does not prove", attribution[0]["attribution_limit"])
+
+    def test_spikes_do_not_bias_regular_frame_percentiles(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            fallback = root / "fallback.ndjson"
+            spikes = root / "spikes.ndjson"
+            fallback.write_text(json.dumps({"frame_time_ms": 10.0}) + "\n", encoding="utf-8")
+            spikes.write_text(json.dumps({"frame_time_ms": 500.0}) + "\n", encoding="utf-8")
+            result = self.run_analyzer(root, {}, "--fallback-stats", str(fallback), "--spikes", str(spikes))
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            report = json.loads((root / "report" / "findings.json").read_text(encoding="utf-8"))
+            self.assertEqual(report["metrics"]["sample_count"], 1)
+            self.assertEqual(report["metrics"]["frame_ms"]["p99"], 10.0)
+            self.assertEqual(report["summary"]["worst_frame_ms"], 500.0)
+
+    def test_baseline_rejects_different_capture_context(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            args = MODULE.argparse.Namespace(baseline_dir=Path(temporary), baseline_key="run")
+            (Path(temporary) / "run.json").write_text(json.dumps({"metrics": {"capture_context": {"roles": ["server"]}}}), encoding="utf-8")
+            comparison, _ = MODULE.compare_baseline(args, {"capture_context": {"roles": ["client"]}}, MODULE.AnalyzerLog())
+            self.assertEqual(comparison["status"], "incompatible_context")
 
 
 if __name__ == "__main__":

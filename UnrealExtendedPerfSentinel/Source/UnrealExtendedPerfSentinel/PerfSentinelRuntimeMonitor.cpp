@@ -3,6 +3,8 @@
 #include "PerfSentinelRuntimeMonitor.h"
 
 #include "PerfSentinelSettings.h"
+#include "PerfSentinelNetworkSampler.h"
+#include "ProfilingDebugging/CpuProfilerTrace.h"
 #include "PerfSentinelStatHarvester.h"
 #include "PerfSentinelTraceController.h"
 
@@ -53,7 +55,7 @@ UWorld* GetPerfSentinelWorld()
 	for (const FWorldContext& Context : GEngine->GetWorldContexts())
 	{
 		UWorld* World = Context.World();
-		if (World && (World->WorldType == EWorldType::PIE || World->WorldType == EWorldType::Game || World->WorldType == EWorldType::Editor))
+		if (World && (World->WorldType == EWorldType::PIE || World->WorldType == EWorldType::Game))
 		{
 			return World;
 		}
@@ -104,6 +106,7 @@ FString BuildConfigurationToString()
 
 void AddWorldCounterFields(const UWorld* World, const TSharedRef<FJsonObject>& Root)
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(PerfSentinel_WorldCounters);
 	int32 ActorCount = 0;
 	int32 TickingActorCount = 0;
 	int32 ComponentCount = 0;
@@ -206,7 +209,10 @@ FString SlateVisibilityToString(ESlateVisibility Visibility)
 }
 }
 
-FPerfSentinelRuntimeMonitor::FPerfSentinelRuntimeMonitor() = default;
+FPerfSentinelRuntimeMonitor::FPerfSentinelRuntimeMonitor()
+{
+	NetworkSampler = MakeUnique<FPerfSentinelNetworkSampler>();
+}
 
 FPerfSentinelRuntimeMonitor::~FPerfSentinelRuntimeMonitor()
 {
@@ -249,6 +255,8 @@ void FPerfSentinelRuntimeMonitor::Activate(const FString& InSessionBaseName, con
 	RuntimeContextPath = FPaths::Combine(SpikeOutputDirectory, TEXT("runtime_context.json"));
 	RuntimeCountersPath = FPaths::Combine(SpikeOutputDirectory, FString::Printf(TEXT("%s_runtime_counters.ndjson"), *SessionBaseName));
 	GameStatsPath = FPaths::Combine(SpikeOutputDirectory, TEXT("GameStats.json"));
+	NetworkSamplesPath = FPaths::Combine(SpikeOutputDirectory, FString::Printf(TEXT("%s_network_samples.ndjson"), *SessionBaseName));
+	FPaths::NormalizeFilename(NetworkSamplesPath);
 	FPaths::NormalizeFilename(SpikeEventsPath);
 	FPaths::NormalizeFilename(FrameSamplesPath);
 	FPaths::NormalizeFilename(RuntimeContextPath);
@@ -272,6 +280,14 @@ void FPerfSentinelRuntimeMonitor::Activate(const FString& InSessionBaseName, con
 			UE_LOG(LogPerfSentinel, Warning, TEXT("RuntimeMonitor: Failed to open runtime counter stream: %s"), *RuntimeCountersPath);
 		}
 	}
+
+	if (Settings && Settings->bCollectNetworkSamples)
+	{
+		NetworkSamplesWriter.Reset(IFileManager::Get().CreateFileWriter(*NetworkSamplesPath));
+		if (!NetworkSamplesWriter) { UE_LOG(LogPerfSentinel, Warning, TEXT("RuntimeMonitor: Cannot open network sample stream: %s"), *NetworkSamplesPath); }
+	}
+	NetworkSampler->Reset();
+	LastNetworkSampleSeconds = -TNumericLimits<double>::Max();
 
 	SpikeSnapshots.Reset();
 	FrameSampleBuffer.Reset();
@@ -348,6 +364,8 @@ void FPerfSentinelRuntimeMonitor::Deactivate()
 	PendingScreenshotPaths.Reset();
 	FrameSamplesWriter.Reset();
 	RuntimeCountersWriter.Reset();
+	NetworkSamplesWriter.Reset();
+	NetworkSampler->Reset();
 	bActive = false;
 }
 
@@ -406,6 +424,13 @@ void FPerfSentinelRuntimeMonitor::RecordFrameSample(const UPerfSentinelSettings&
 		PruneFrameSampleBuffer(Sample.PlatformSeconds, Settings.SpikeWindowPreSeconds + Settings.SpikeWindowPostSeconds + 1.0f);
 	}
 
+	if (Settings.bCollectNetworkSamples && NetworkSamplesWriter
+		&& Sample.PlatformSeconds - LastNetworkSampleSeconds >= FMath::Max(0.1, static_cast<double>(Settings.NetworkSampleIntervalSeconds)))
+	{
+		AppendNetworkSample(Sample, Settings);
+		LastNetworkSampleSeconds = Sample.PlatformSeconds;
+	}
+
 	if (Settings.bCollectRuntimeCounters)
 	{
 		const double IntervalSeconds = FMath::Max(0.1, static_cast<double>(Settings.RuntimeCounterIntervalSeconds));
@@ -443,6 +468,8 @@ void FPerfSentinelRuntimeMonitor::AppendRuntimeCounters(const FFrameSample& Samp
 		return;
 	}
 
+	TRACE_CPUPROFILER_EVENT_SCOPE(PerfSentinel_RuntimeCounters);
+	const double CollectorStarted = FPlatformTime::Seconds();
 	TSharedRef<FJsonObject> Root = MakeShared<FJsonObject>();
 	Root->SetStringField(TEXT("timestamp"), Sample.Timestamp.ToIso8601());
 	Root->SetNumberField(TEXT("platform_seconds"), Sample.PlatformSeconds);
@@ -489,11 +516,28 @@ void FPerfSentinelRuntimeMonitor::AppendRuntimeCounters(const FFrameSample& Samp
 		Root->SetNumberField(TEXT("viewport_height"), ViewportSize.Y);
 	}
 
+	Root->SetNumberField(TEXT("collector_overhead_ms"), (FPlatformTime::Seconds() - CollectorStarted) * 1000.0);
 	WriteJsonLine(RuntimeCountersWriter.Get(), Root);
+}
+
+void FPerfSentinelRuntimeMonitor::AppendNetworkSample(const FFrameSample& Sample, const UPerfSentinelSettings& Settings)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(PerfSentinel_NetworkSample);
+	const double CollectorStarted = FPlatformTime::Seconds();
+	TSharedRef<FJsonObject> Root = NetworkSampler->Sample(Sample.PlatformSeconds, Settings);
+	Root->SetStringField(TEXT("timestamp"), Sample.Timestamp.ToIso8601());
+	Root->SetNumberField(TEXT("platform_seconds"), Sample.PlatformSeconds);
+	Root->SetNumberField(TEXT("capture_elapsed_seconds"), Sample.PlatformSeconds - CaptureStartPlatformSeconds);
+	Root->SetNumberField(TEXT("frame_number"), static_cast<double>(Sample.FrameNumber));
+	Root->SetNumberField(TEXT("frame_time_ms"), Sample.FrameTimeMs);
+	Root->SetNumberField(TEXT("game_thread_ms"), Sample.GameThreadMs);
+	Root->SetNumberField(TEXT("collector_overhead_ms"), (FPlatformTime::Seconds() - CollectorStarted) * 1000.0);
+	WriteJsonLine(NetworkSamplesWriter.Get(), Root);
 }
 
 void FPerfSentinelRuntimeMonitor::AddPerClassBreakdownFields(const UWorld* World, const TSharedRef<FJsonObject>& Root) const
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(PerfSentinel_ClassBreakdown);
 	const UPerfSentinelSettings* Settings = UPerfSentinelSettings::Get();
 	const int32 TopN = Settings ? FMath::Max(1, Settings->PerClassTopN) : 25;
 

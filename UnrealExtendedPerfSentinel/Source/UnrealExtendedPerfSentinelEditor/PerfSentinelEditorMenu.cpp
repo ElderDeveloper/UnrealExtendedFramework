@@ -128,6 +128,7 @@ void FPerfSentinelEditorMenu::RegisterMenus()
 					AddProfile(TEXT("LoadingStreaming"), LOCTEXT("ProfileLoading", "Loading / Streaming"), LOCTEXT("ProfileLoadingTip", "Adds load-time, file, and asset metadata providers."), EPerfSentinelCaptureProfile::LoadingStreaming);
 					AddProfile(TEXT("MemoryLeak"), LOCTEXT("ProfileMemory", "Memory Leak"), LOCTEXT("ProfileMemoryTip", "Adds memory allocations, tags, callstacks, modules, and asset metadata."), EPerfSentinelCaptureProfile::MemoryLeak);
 					AddProfile(TEXT("Multiplayer"), LOCTEXT("ProfileMultiplayer", "Multiplayer"), LOCTEXT("ProfileMultiplayerTip", "Adds packet, connection, and network event evidence."), EPerfSentinelCaptureProfile::Multiplayer);
+					AddProfile(TEXT("ComprehensiveGameplay"), LOCTEXT("ProfileComprehensive", "Comprehensive Gameplay"), LOCTEXT("ProfileComprehensiveTip", "Combines performance, network, loading, task, UI, and animation evidence. More capture overhead; allocation callstacks remain a separate profile."), EPerfSentinelCaptureProfile::ComprehensiveGameplay);
 					AddProfile(TEXT("UIAnimation"), LOCTEXT("ProfileUI", "UI / Animation"), LOCTEXT("ProfileUITip", "Adds Slate and animation trace providers."), EPerfSentinelCaptureProfile::UIAnimation);
 				}));
 			CaptureSection.AddMenuEntryWithCommandList(Commands.LaunchProfileSession, CommandList);

@@ -36,8 +36,9 @@ enum class EPerfSentinelCaptureProfile : uint8
 	HitchDiagnosis UMETA(DisplayName = "Hitch Diagnosis"),
 	LoadingStreaming UMETA(DisplayName = "Loading / Streaming"),
 	MemoryLeak UMETA(DisplayName = "Memory / Leak (Relaunch Required)"),
-	Multiplayer UMETA(DisplayName = "Multiplayer (Relaunch Required)"),
-	UIAnimation UMETA(DisplayName = "UI / Animation")
+	Multiplayer UMETA(DisplayName = "Multiplayer Networking"),
+	UIAnimation UMETA(DisplayName = "UI / Animation"),
+	ComprehensiveGameplay UMETA(DisplayName = "Comprehensive Gameplay")
 };
 
 /** Predefined performance budget profiles for common capture scenarios. */
@@ -79,6 +80,12 @@ struct UNREALEXTENDEDPERFSENTINEL_API FPerfSentinelTraceSession
 	TArray<FString> Channels;
 
 	UPROPERTY(BlueprintReadOnly, Category = "PerfSentinel")
+	TArray<FString> EnabledChannels;
+
+	UPROPERTY(BlueprintReadOnly, Category = "PerfSentinel")
+	TArray<FString> UnavailableChannels;
+
+	UPROPERTY(BlueprintReadOnly, Category = "PerfSentinel")
 	EPerfSentinelCaptureProfile CaptureProfile = EPerfSentinelCaptureProfile::Standard;
 
 	/** Launch flags required for channels that cannot safely be enabled late. */
@@ -102,6 +109,9 @@ struct UNREALEXTENDEDPERFSENTINEL_API FPerfSentinelTraceSession
 
 	UPROPERTY(BlueprintReadOnly, Category = "PerfSentinel")
 	FString RuntimeCountersPath;
+
+	UPROPERTY(BlueprintReadOnly, Category = "PerfSentinel")
+	FString NetworkSamplesPath;
 
 	UPROPERTY(BlueprintReadOnly, Category = "PerfSentinel")
 	FString GameStatsPath;

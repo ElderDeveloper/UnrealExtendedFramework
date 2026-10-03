@@ -74,6 +74,52 @@ public:
 	UPROPERTY(EditAnywhere, Config, Category = "Raw Data")
 	bool bWriteGameStats = true;
 
+	/** Lightweight gameplay transport counters are independent of full object inventories and trace verbosity. */
+	UPROPERTY(EditAnywhere, Config, Category = "Networking")
+	bool bCollectNetworkSamples = true;
+
+	UPROPERTY(EditAnywhere, Config, Category = "Networking", meta = (ClampMin = "0.1", UIMin = "0.1"))
+	float NetworkSampleIntervalSeconds = 1.0f;
+
+	/** Adds native packet / actor / property / RPC trace data. Unsupported builds remain explicit in metadata. */
+	UPROPERTY(EditAnywhere, Config, Category = "Networking")
+	bool bEnableNetworkTrace = true;
+
+	/** 1 = packet content, 2 = verbose, 3 = very verbose (higher capture overhead). */
+	UPROPERTY(EditAnywhere, Config, Category = "Networking", meta = (ClampMin = "1", ClampMax = "3", UIMin = "1", UIMax = "3"))
+	int32 NetworkTraceVerbosity = 1;
+
+	UPROPERTY(EditAnywhere, Config, Category = "Networking", meta = (ClampMin = "1", ClampMax = "64"))
+	int32 MaxNetworkWorlds = 16;
+
+	UPROPERTY(EditAnywhere, Config, Category = "Networking", meta = (ClampMin = "1", ClampMax = "64"))
+	int32 MaxNetworkDrivers = 16;
+
+	UPROPERTY(EditAnywhere, Config, Category = "Networking", meta = (ClampMin = "1", ClampMax = "2048"))
+	int32 MaxNetworkConnections = 256;
+
+	UPROPERTY(EditAnywhere, Config, Category = "Networking", meta = (ClampMin = "1", ClampMax = "16384"))
+	int32 MaxNetworkChannelsPerConnection = 4096;
+
+	/** Optional network budgets. Zero disables a limit until the project establishes a measured baseline. */
+	UPROPERTY(EditAnywhere, Config, Category = "Networking | Budgets", meta = (ClampMin = "0"))
+	float MaxOutgoingKiBPerSecond = 0.0f;
+
+	UPROPERTY(EditAnywhere, Config, Category = "Networking | Budgets", meta = (ClampMin = "0"))
+	float MaxIncomingKiBPerSecond = 0.0f;
+
+	UPROPERTY(EditAnywhere, Config, Category = "Networking | Budgets", meta = (ClampMin = "0"))
+	float MaxNetworkRttMs = 0.0f;
+
+	UPROPERTY(EditAnywhere, Config, Category = "Networking | Budgets", meta = (ClampMin = "0", ClampMax = "100"))
+	float MaxNetworkLossPercent = 0.0f;
+
+	UPROPERTY(EditAnywhere, Config, Category = "Networking | Budgets", meta = (ClampMin = "0"))
+	int32 MaxReliableBacklog = 0;
+
+	UPROPERTY(EditAnywhere, Config, Category = "Networking | Budgets", meta = (ClampMin = "0"))
+	float MaxNetworkRegressionPercent = 0.0f;
+
 	/** Full actor/widget inventory is intrusive; keep it opt-in for targeted investigations. */
 	UPROPERTY(EditAnywhere, Config, Category = "Raw Data")
 	bool bWriteFullObjectInventory = false;

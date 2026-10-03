@@ -13,6 +13,7 @@
 #include "HAL/PlatformFileManager.h"
 #include "HAL/PlatformProcess.h"
 #include "Misc/Paths.h"
+#include "ProfilingDebugging/MiscTrace.h"
 
 namespace
 {
@@ -142,6 +143,15 @@ void FPerfSentinelConsoleCommands::RegisterCommands()
 		TEXT("Record a manual spike event during an active capture."),
 		FConsoleCommandWithArgsDelegate::CreateRaw(this, &FPerfSentinelConsoleCommands::CaptureSpikeScreenshot),
 		ECVF_Default));
+
+	RegisteredCommands.Add(ConsoleManager.RegisterConsoleCommand(
+		TEXT("PerfSentinel.Bookmark"),
+		TEXT("Mark a gameplay moment in the active capture. Usage: PerfSentinel.Bookmark <Label>"),
+		FConsoleCommandWithArgsDelegate::CreateRaw(this, &FPerfSentinelConsoleCommands::Bookmark), ECVF_Default));
+	RegisteredCommands.Add(ConsoleManager.RegisterConsoleCommand(
+		TEXT("PerfSentinel.SetCaptureProfile"),
+		TEXT("Select a profile for the next capture without saving config. Usage: PerfSentinel.SetCaptureProfile Standard|Multiplayer|ComprehensiveGameplay|HitchDiagnosis|LoadingStreaming|MemoryLeak|UIAnimation|Custom"),
+		FConsoleCommandWithArgsDelegate::CreateRaw(this, &FPerfSentinelConsoleCommands::SetCaptureProfile), ECVF_Default));
 
 	UE_LOG(LogPerfSentinel, Log, TEXT("PerfSentinel console commands registered."));
 }
@@ -345,4 +355,50 @@ void FPerfSentinelConsoleCommands::CaptureSpikeScreenshot(const TArray<FString>&
 	}
 
 	Monitor->CaptureManualSpike();
+}
+
+void FPerfSentinelConsoleCommands::Bookmark(const TArray<FString>& Args)
+{
+	const FPerfSentinelTraceController* Controller = FUnrealExtendedPerfSentinelModule::GetTraceController();
+	if (!Controller || !Controller->IsCapturing() || Args.IsEmpty())
+	{
+		UE_LOG(LogPerfSentinel, Warning, TEXT("PerfSentinel.Bookmark: Start a capture and supply a label first."));
+		return;
+	}
+	const FString Label = FString::Join(Args, TEXT(" ")).Left(512);
+	TRACE_BOOKMARK(TEXT("PerfSentinel: %s"), *Label);
+	UE_LOG(LogPerfSentinel, Log, TEXT("PerfSentinel.Bookmark: %s"), *Label);
+}
+
+void FPerfSentinelConsoleCommands::SetCaptureProfile(const TArray<FString>& Args)
+{
+	const FPerfSentinelTraceController* Controller = FUnrealExtendedPerfSentinelModule::GetTraceController();
+	if (!Controller || !Controller->IsIdle() || Args.Num() != 1)
+	{
+		UE_LOG(LogPerfSentinel, Warning, TEXT("PerfSentinel.SetCaptureProfile: Stop capture first and supply one profile name."));
+		return;
+	}
+	const UEnum* Profiles = StaticEnum<EPerfSentinelCaptureProfile>();
+	int64 ProfileValue = INDEX_NONE;
+	for (int32 Index = 0; Profiles && Index < Profiles->NumEnums() - 1; ++Index)
+	{
+		if (Profiles->GetNameStringByIndex(Index).Equals(Args[0], ESearchCase::IgnoreCase))
+		{
+			ProfileValue = Profiles->GetValueByIndex(Index);
+			break;
+		}
+	}
+	if (ProfileValue == INDEX_NONE)
+	{
+		UE_LOG(LogPerfSentinel, Warning, TEXT("PerfSentinel.SetCaptureProfile: Unknown profile '%s'. Use Standard, Multiplayer, ComprehensiveGameplay, HitchDiagnosis, LoadingStreaming, MemoryLeak, UIAnimation, or Custom."), *Args[0]);
+		return;
+	}
+	UPerfSentinelSettings* Settings = GetMutableDefault<UPerfSentinelSettings>();
+	Settings->CaptureProfile = static_cast<EPerfSentinelCaptureProfile>(ProfileValue);
+	Settings->ApplyCaptureProfile();
+	UE_LOG(LogPerfSentinel, Log, TEXT("PerfSentinel.SetCaptureProfile: %s; channels: %s"), *Args[0], *FString::Join(Settings->GetChannelsForCaptureProfile(), TEXT(",")));
+	if (!Settings->AreRequiredLaunchArgumentsPresent())
+	{
+		UE_LOG(LogPerfSentinel, Warning, TEXT("Profile launch requirements: %s"), *FString::Join(Settings->GetRequiredLaunchArguments(), TEXT(" ")));
+	}
 }

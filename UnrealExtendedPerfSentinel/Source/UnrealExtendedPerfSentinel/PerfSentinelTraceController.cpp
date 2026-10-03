@@ -4,6 +4,8 @@
 
 #include "PerfSentinelRuntimeMonitor.h"
 #include "PerfSentinelSettings.h"
+#include "ProfilingDebugging/TraceAuxiliary.h"
+#include "Net/Core/Trace/NetTrace.h"
 
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
@@ -21,6 +23,31 @@
 
 DEFINE_LOG_CATEGORY(LogPerfSentinel);
 
+namespace
+{
+FString CanonicalChannelName(FString Name)
+{
+	Name.RemoveFromEnd(TEXT("Channel"), ESearchCase::IgnoreCase);
+	Name.ToLowerInline();
+	return Name;
+}
+
+TArray<FString> GetEnabledTraceChannels()
+{
+	TArray<FString> Channels;
+	UE::Trace::EnumerateChannels([](const UE::Trace::FChannelInfo& Info, void* User)
+	{
+		if (Info.bIsEnabled)
+		{
+			static_cast<TArray<FString>*>(User)->AddUnique(CanonicalChannelName(UTF8_TO_TCHAR(Info.Name)));
+		}
+		return true;
+	}, &Channels);
+	return Channels;
+}
+}
+
+
 FPerfSentinelTraceController::FPerfSentinelTraceController()
 {
 	RuntimeMonitor = MakeUnique<FPerfSentinelRuntimeMonitor>();
@@ -29,6 +56,7 @@ FPerfSentinelTraceController::FPerfSentinelTraceController()
 FPerfSentinelTraceController::~FPerfSentinelTraceController()
 {
 	CancelAutoStop();
+	if (bOwnsTrace) { StopCapture(); }
 }
 
 bool FPerfSentinelTraceController::HasCompletedTrace() const
@@ -41,6 +69,12 @@ bool FPerfSentinelTraceController::StartCapture(const FString& ScenarioName)
 	if (CaptureState != EPerfSentinelCaptureState::Idle)
 	{
 		UE_LOG(LogPerfSentinel, Warning, TEXT("StartCapture: Cannot start while state is %d."), static_cast<int32>(CaptureState));
+		return false;
+	}
+
+	if (UE::Trace::IsTracing() || FTraceAuxiliary::IsConnected())
+	{
+		UE_LOG(LogPerfSentinel, Warning, TEXT("StartCapture: Another trace recorder is active. PerfSentinel did not stop or redirect it. Explicitly stop the existing recording before starting PerfSentinel; network tracing itself needs no relaunch."));
 		return false;
 	}
 
@@ -171,6 +205,10 @@ bool FPerfSentinelTraceController::StopCapture()
 		{
 			CurrentSession.RuntimeCountersPath = RuntimeMonitor->GetRuntimeCountersPath();
 		}
+		if (FPaths::FileExists(RuntimeMonitor->GetNetworkSamplesPath()))
+		{
+			CurrentSession.NetworkSamplesPath = RuntimeMonitor->GetNetworkSamplesPath();
+		}
 		if (FPaths::FileExists(RuntimeMonitor->GetGameStatsPath()))
 		{
 			CurrentSession.GameStatsPath = RuntimeMonitor->GetGameStatsPath();
@@ -280,8 +318,14 @@ FString FPerfSentinelTraceController::ExtractSessionBaseName(const FString& Trac
 	return FPaths::GetBaseFilename(TracePath);
 }
 
-bool FPerfSentinelTraceController::StartTraceFile(const FString& TracePath, const TArray<FString>& Channels) const
+bool FPerfSentinelTraceController::StartTraceFile(const FString& TracePath, const TArray<FString>& Channels)
 {
+	const TArray<FString> PreviouslyEnabled = GetEnabledTraceChannels();
+	bPreviousNetChannelEnabled = PreviouslyEnabled.Contains(TEXT("net"));
+	NewlyEnabledChannels.Reset();
+	AppliedNetTraceVerbosity = 0;
+	bChangedNetTraceVerbosity = false;
+	TArray<FString> StartChannels;
 	for (const FString& Channel : Channels)
 	{
 		FString TrimmedChannel = Channel;
@@ -303,22 +347,70 @@ bool FPerfSentinelTraceController::StartTraceFile(const FString& TracePath, cons
 			continue;
 		}
 
-		const bool bEnabled = UE::Trace::ToggleChannel(*TrimmedChannel, true);
-		UE_LOG(LogPerfSentinel, Verbose, TEXT("StartTraceFile: Channel '%s' enabled state: %s"), *TrimmedChannel, bEnabled ? TEXT("true") : TEXT("false"));
+		StartChannels.AddUnique(TrimmedChannel);
 	}
 
-	const bool bWriteStarted = UE::Trace::WriteTo(*TracePath);
-	if (!bWriteStarted)
+#if UE_NET_TRACE_ENABLED
+	PreviousNetTraceVerbosity = FNetTrace::GetTraceVerbosity();
+	const bool bRequestsNet = Channels.ContainsByPredicate([](const FString& Channel) { return CanonicalChannelName(Channel.TrimStartAndEnd()).Equals(TEXT("net")); });
+	if (bRequestsNet)
 	{
+		const uint32 Desired = FMath::Clamp(UPerfSentinelSettings::Get()->NetworkTraceVerbosity, 1, 3);
+		FNetTrace::SetTraceVerbosity(Desired);
+		AppliedNetTraceVerbosity = FNetTrace::GetTraceVerbosity();
+		bChangedNetTraceVerbosity = AppliedNetTraceVerbosity != PreviousNetTraceVerbosity;
+	}
+#endif
+	const FString ChannelArg = FString::Join(StartChannels, TEXT(","));
+	// TraceAuxiliary publishes connection notifications needed by NetTrace initialization and object metadata.
+	bOwnsTrace = FTraceAuxiliary::Start(FTraceAuxiliary::EConnectionType::File, *TracePath, *ChannelArg);
+	const TArray<FString> Enabled = GetEnabledTraceChannels();
+	for (const FString& Channel : Enabled) { if (!PreviouslyEnabled.Contains(Channel)) { NewlyEnabledChannels.Add(Channel); } }
+	CurrentSession.EnabledChannels.Reset();
+	CurrentSession.UnavailableChannels.Reset();
+	for (const FString& Channel : Channels)
+	{
+		(Enabled.Contains(CanonicalChannelName(Channel)) ? CurrentSession.EnabledChannels : CurrentSession.UnavailableChannels).Add(Channel);
+	}
+	if (!bOwnsTrace)
+	{
+		RestoreTraceConfiguration();
 		return false;
 	}
-
-	return UE::Trace::IsTracing();
+	return bOwnsTrace;
 }
 
-bool FPerfSentinelTraceController::StopTraceFile() const
+bool FPerfSentinelTraceController::StopTraceFile()
 {
-	return UE::Trace::Stop();
+	if (!bOwnsTrace) { return false; }
+	FString Destination = FPaths::ConvertRelativePathToFull(FTraceAuxiliary::GetTraceDestinationString());
+	FPaths::NormalizeFilename(Destination);
+	if (FTraceAuxiliary::IsConnected() && !Destination.Equals(CurrentSession.TracePath, ESearchCase::IgnoreCase))
+	{
+		UE_LOG(LogPerfSentinel, Error, TEXT("StopCapture: Trace output changed externally; refusing to stop another recording."));
+		return false;
+	}
+	const bool bWasStopped = FTraceAuxiliary::Stop();
+	if (!bWasStopped && UE::Trace::IsTracing()) { return false; }
+	bOwnsTrace = false;
+	RestoreTraceConfiguration();
+	return true;
+}
+
+void FPerfSentinelTraceController::RestoreTraceConfiguration()
+{
+#if UE_NET_TRACE_ENABLED
+	if (bChangedNetTraceVerbosity && FNetTrace::GetTraceVerbosity() == AppliedNetTraceVerbosity)
+	{
+		FNetTrace::SetTraceVerbosity(PreviousNetTraceVerbosity);
+	}
+#endif
+	for (const FString& Channel : NewlyEnabledChannels) { UE::Trace::ToggleChannel(*Channel, false); }
+	// NetTrace's verbosity setter toggles NetChannel itself; restore its separately recorded state too.
+	// This covers an enabled channel with verbosity zero and a disabled channel with nonzero verbosity.
+	UE::Trace::ToggleChannel(TEXT("net"), bPreviousNetChannelEnabled);
+	NewlyEnabledChannels.Reset();
+	bChangedNetTraceVerbosity = false;
 }
 
 bool FPerfSentinelTraceController::ExecTraceCommand(const FString& Command)
@@ -388,6 +480,14 @@ void FPerfSentinelTraceController::WriteMetadataSidecar() const
 		ChannelValues.Add(MakeShared<FJsonValueString>(Channel));
 	}
 	Root->SetArrayField(TEXT("channels"), ChannelValues);
+	TArray<TSharedPtr<FJsonValue>> EnabledChannelValues, UnavailableChannelValues;
+	for (const FString& Channel : CurrentSession.EnabledChannels) { EnabledChannelValues.Add(MakeShared<FJsonValueString>(Channel)); }
+	for (const FString& Channel : CurrentSession.UnavailableChannels) { UnavailableChannelValues.Add(MakeShared<FJsonValueString>(Channel)); }
+	Root->SetArrayField(TEXT("enabled_channels"), EnabledChannelValues);
+	Root->SetArrayField(TEXT("unavailable_channels"), UnavailableChannelValues);
+	Root->SetNumberField(TEXT("network_trace_verbosity"), AppliedNetTraceVerbosity);
+	Root->SetBoolField(TEXT("network_trace_compiled"), UE_NET_TRACE_ENABLED != 0);
+	Root->SetStringField(TEXT("network_trace_status"), AppliedNetTraceVerbosity > 0 ? TEXT("enabled_verify_data_in_analysis") : (UE_NET_TRACE_ENABLED ? TEXT("not_requested") : TEXT("not_compiled")));
 	TArray<TSharedPtr<FJsonValue>> RequiredLaunchValues;
 	for (const FString& Argument : CurrentSession.RequiredLaunchArguments)
 	{
@@ -422,6 +522,10 @@ void FPerfSentinelTraceController::WriteMetadataSidecar() const
 	{
 		Root->SetStringField(TEXT("runtime_counters_file"), CurrentSession.RuntimeCountersPath);
 	}
+	if (!CurrentSession.NetworkSamplesPath.IsEmpty())
+	{
+		Root->SetStringField(TEXT("network_samples_file"), CurrentSession.NetworkSamplesPath);
+	}
 	if (!CurrentSession.GameStatsPath.IsEmpty())
 	{
 		Root->SetStringField(TEXT("game_stats_file"), CurrentSession.GameStatsPath);
@@ -433,6 +537,14 @@ void FPerfSentinelTraceController::WriteMetadataSidecar() const
 	Budgets->SetNumberField(TEXT("severe_frame_budget_ms"), Settings->SevereFrameBudgetMs);
 	Budgets->SetNumberField(TEXT("screenshot_spike_threshold_ms"), Settings->ScreenshotSpikeThresholdMs);
 	Root->SetObjectField(TEXT("budgets"), Budgets);
+	TSharedRef<FJsonObject> NetworkBudgets = MakeShared<FJsonObject>();
+	NetworkBudgets->SetNumberField(TEXT("max_outgoing_kib_per_second"), Settings->MaxOutgoingKiBPerSecond);
+	NetworkBudgets->SetNumberField(TEXT("max_incoming_kib_per_second"), Settings->MaxIncomingKiBPerSecond);
+	NetworkBudgets->SetNumberField(TEXT("max_rtt_ms"), Settings->MaxNetworkRttMs);
+	NetworkBudgets->SetNumberField(TEXT("max_loss_percent"), Settings->MaxNetworkLossPercent);
+	NetworkBudgets->SetNumberField(TEXT("max_reliable_backlog"), Settings->MaxReliableBacklog);
+	NetworkBudgets->SetNumberField(TEXT("max_network_regression_percent"), Settings->MaxNetworkRegressionPercent);
+	Root->SetObjectField(TEXT("network_budgets"), NetworkBudgets);
 
 	TSharedRef<FJsonObject> SettingsObject = MakeShared<FJsonObject>();
 	SettingsObject->SetStringField(TEXT("trace_output_directory"), Settings->GetResolvedTraceOutputDirectory());
@@ -452,6 +564,13 @@ void FPerfSentinelTraceController::WriteMetadataSidecar() const
 	SettingsObject->SetBoolField(TEXT("collect_stat_gpu_fallback"), Settings->bCollectStatGpuFallback);
 	SettingsObject->SetBoolField(TEXT("collect_frame_samples"), Settings->bCollectFrameSamples);
 	SettingsObject->SetBoolField(TEXT("collect_runtime_counters"), Settings->bCollectRuntimeCounters);
+	SettingsObject->SetBoolField(TEXT("collect_network_samples"), Settings->bCollectNetworkSamples);
+	SettingsObject->SetNumberField(TEXT("network_sample_interval_seconds"), Settings->NetworkSampleIntervalSeconds);
+	SettingsObject->SetNumberField(TEXT("network_trace_verbosity_requested"), Settings->NetworkTraceVerbosity);
+	SettingsObject->SetNumberField(TEXT("max_network_worlds"), Settings->MaxNetworkWorlds);
+	SettingsObject->SetNumberField(TEXT("max_network_drivers"), Settings->MaxNetworkDrivers);
+	SettingsObject->SetNumberField(TEXT("max_network_connections"), Settings->MaxNetworkConnections);
+	SettingsObject->SetNumberField(TEXT("max_network_channels_per_connection"), Settings->MaxNetworkChannelsPerConnection);
 	SettingsObject->SetNumberField(TEXT("runtime_counter_interval_seconds"), Settings->RuntimeCounterIntervalSeconds);
 	SettingsObject->SetBoolField(TEXT("write_spike_window_files"), Settings->bWriteSpikeWindows);
 	SettingsObject->SetBoolField(TEXT("write_game_stats"), Settings->bWriteGameStats);

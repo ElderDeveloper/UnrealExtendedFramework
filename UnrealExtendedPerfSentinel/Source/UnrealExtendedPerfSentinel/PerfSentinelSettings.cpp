@@ -117,7 +117,9 @@ TArray<FString> UPerfSentinelSettings::GetChannelsForCaptureProfile() const
 {
 	if (CaptureProfile == EPerfSentinelCaptureProfile::Custom)
 	{
-		return TraceChannels;
+		TArray<FString> Channels = TraceChannels;
+		if (bEnableNetworkTrace) { Channels.AddUnique(TEXT("net")); }
+		return Channels;
 	}
 
 	TArray<FString> Channels = { TEXT("cpu"), TEXT("frame"), TEXT("gpu"), TEXT("bookmark"), TEXT("region"), TEXT("counters"), TEXT("stats") };
@@ -138,10 +140,14 @@ TArray<FString> UPerfSentinelSettings::GetChannelsForCaptureProfile() const
 	case EPerfSentinelCaptureProfile::Multiplayer:
 		Channels.Add(TEXT("net"));
 		break;
+	case EPerfSentinelCaptureProfile::ComprehensiveGameplay:
+		Channels.Append({ TEXT("net"), TEXT("task"), TEXT("loadtime"), TEXT("file"), TEXT("metadata"), TEXT("assetmetadata"), TEXT("slate"), TEXT("animation") });
+		break;
 	default:
 		break;
 	}
 
+	if (bEnableNetworkTrace) { Channels.AddUnique(TEXT("net")); }
 	return Channels;
 }
 
@@ -150,11 +156,12 @@ TArray<FString> UPerfSentinelSettings::GetRequiredLaunchArguments() const
 	switch (CaptureProfile)
 	{
 	case EPerfSentinelCaptureProfile::MemoryLeak:
-		return { TEXT("-trace=default,memory,metadata,assetmetadata,callstack,module") };
+		return { TEXT("-trace=default,memory,metadata,assetmetadata,callstack,module"), TEXT("-traceautostart=0") };
 	case EPerfSentinelCaptureProfile::Multiplayer:
-		return { TEXT("-trace=default,net"), TEXT("-NetTrace=1") };
+		// Native NetTrace can be enabled at runtime; capture explicitly records the applied verbosity.
+		return {};
 	case EPerfSentinelCaptureProfile::HitchDiagnosis:
-		return { TEXT("-trace=default,task,contextswitch,stacksampling") };
+		return { TEXT("-trace=default,task,contextswitch,stacksampling"), TEXT("-traceautostart=0") };
 	default:
 		return {};
 	}
@@ -187,6 +194,7 @@ bool UPerfSentinelSettings::AreRequiredLaunchArgumentsPresent() const
 			TArray<FString> Active;
 			TArray<FString> Needed;
 			ActiveTraceChannels.ParseIntoArray(Active, TEXT(","), true);
+			for (FString& Value : Active) { Value.TrimStartAndEndInline(); }
 			Required.RightChop(Required.Find(TEXT("=")) + 1).ParseIntoArray(Needed, TEXT(","), true);
 			for (const FString& NeededChannel : Needed)
 			{
@@ -196,9 +204,17 @@ bool UPerfSentinelSettings::AreRequiredLaunchArgumentsPresent() const
 				}
 			}
 		}
-		else if (!CommandLine.Contains(Required, ESearchCase::IgnoreCase))
+		else
 		{
-			return false;
+			// Compare complete parsed switches: substring matches accept "-Flag=10" as "-Flag=1".
+			const TCHAR* Cursor = *CommandLine;
+			bool bFound = false;
+			while (*Cursor)
+			{
+				const FString Token = FParse::Token(Cursor, false);
+				if (Token.Equals(Required, ESearchCase::IgnoreCase)) { bFound = true; break; }
+			}
+			if (!bFound) { return false; }
 		}
 	}
 	return true;

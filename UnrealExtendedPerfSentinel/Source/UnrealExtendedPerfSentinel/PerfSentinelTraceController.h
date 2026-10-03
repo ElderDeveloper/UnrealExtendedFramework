@@ -38,8 +38,9 @@ private:
 	FString BuildChannelsArg() const;
 	FString ExtractSessionBaseName(const FString& TracePath) const;
 
-	bool StartTraceFile(const FString& TracePath, const TArray<FString>& Channels) const;
-	bool StopTraceFile() const;
+	bool StartTraceFile(const FString& TracePath, const TArray<FString>& Channels);
+	bool StopTraceFile();
+	void RestoreTraceConfiguration();
 	static bool ExecTraceCommand(const FString& Command);
 	static bool WaitForTraceFile(const FString& TracePath);
 
@@ -50,4 +51,10 @@ private:
 	FPerfSentinelTraceSession LastCompletedSession;
 	TUniquePtr<FPerfSentinelRuntimeMonitor> RuntimeMonitor;
 	FTSTicker::FDelegateHandle AutoStopHandle;
+	TArray<FString> NewlyEnabledChannels;
+	uint32 PreviousNetTraceVerbosity = 0;
+	uint32 AppliedNetTraceVerbosity = 0;
+	bool bPreviousNetChannelEnabled = false;
+	bool bChangedNetTraceVerbosity = false;
+	bool bOwnsTrace = false;
 };
