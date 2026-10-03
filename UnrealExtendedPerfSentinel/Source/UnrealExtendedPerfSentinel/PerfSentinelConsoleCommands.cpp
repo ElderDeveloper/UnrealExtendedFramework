@@ -8,11 +8,13 @@
 #include "PerfSentinelRuntimeMonitor.h"
 #include "PerfSentinelSettings.h"
 #include "PerfSentinelTraceController.h"
+#include "PerfSentinelTelemetry.h"
 
 #include "HAL/IConsoleManager.h"
 #include "HAL/PlatformFileManager.h"
 #include "HAL/PlatformProcess.h"
 #include "Misc/Paths.h"
+#include "String/LexFromString.h"
 #include "ProfilingDebugging/MiscTrace.h"
 
 namespace
@@ -150,8 +152,16 @@ void FPerfSentinelConsoleCommands::RegisterCommands()
 		FConsoleCommandWithArgsDelegate::CreateRaw(this, &FPerfSentinelConsoleCommands::Bookmark), ECVF_Default));
 	RegisteredCommands.Add(ConsoleManager.RegisterConsoleCommand(
 		TEXT("PerfSentinel.SetCaptureProfile"),
-		TEXT("Select a profile for the next capture without saving config. Usage: PerfSentinel.SetCaptureProfile Standard|Multiplayer|ComprehensiveGameplay|HitchDiagnosis|LoadingStreaming|MemoryLeak|UIAnimation|Custom"),
+		TEXT("Select a profile for the next capture without saving config. Usage: PerfSentinel.SetCaptureProfile LightweightBaseline|Standard|Multiplayer|ComprehensiveGameplay|HitchDiagnosis|LoadingStreaming|MemoryLeak|UIAnimation|Custom"),
 		FConsoleCommandWithArgsDelegate::CreateRaw(this, &FPerfSentinelConsoleCommands::SetCaptureProfile), ECVF_Default));
+	RegisteredCommands.Add(ConsoleManager.RegisterConsoleCommand(
+		TEXT("PerfSentinel.SetRunContext"),
+		TEXT("Set identity for future captures/history without saving config. Usage: PerfSentinel.SetRunContext <SharedRunId> <ProcessRole> [BuildId]"),
+		FConsoleCommandWithArgsDelegate::CreateRaw(this, &FPerfSentinelConsoleCommands::SetRunContext), ECVF_Default));
+	RegisteredCommands.Add(ConsoleManager.RegisterConsoleCommand(
+		TEXT("PerfSentinel.SetClockAlignment"),
+		TEXT("Record a supplied clock observation without synchronizing clocks. Usage: PerfSentinel.SetClockAlignment <OffsetMs> <UncertaintyMs|-1>"),
+		FConsoleCommandWithArgsDelegate::CreateRaw(this, &FPerfSentinelConsoleCommands::SetClockAlignment), ECVF_Default));
 
 	UE_LOG(LogPerfSentinel, Log, TEXT("PerfSentinel console commands registered."));
 }
@@ -390,7 +400,7 @@ void FPerfSentinelConsoleCommands::SetCaptureProfile(const TArray<FString>& Args
 	}
 	if (ProfileValue == INDEX_NONE)
 	{
-		UE_LOG(LogPerfSentinel, Warning, TEXT("PerfSentinel.SetCaptureProfile: Unknown profile '%s'. Use Standard, Multiplayer, ComprehensiveGameplay, HitchDiagnosis, LoadingStreaming, MemoryLeak, UIAnimation, or Custom."), *Args[0]);
+		UE_LOG(LogPerfSentinel, Warning, TEXT("PerfSentinel.SetCaptureProfile: Unknown profile '%s'. Use LightweightBaseline, Standard, Multiplayer, ComprehensiveGameplay, HitchDiagnosis, LoadingStreaming, MemoryLeak, UIAnimation, or Custom."), *Args[0]);
 		return;
 	}
 	UPerfSentinelSettings* Settings = GetMutableDefault<UPerfSentinelSettings>();
@@ -401,4 +411,40 @@ void FPerfSentinelConsoleCommands::SetCaptureProfile(const TArray<FString>& Args
 	{
 		UE_LOG(LogPerfSentinel, Warning, TEXT("Profile launch requirements: %s"), *FString::Join(Settings->GetRequiredLaunchArguments(), TEXT(" ")));
 	}
+}
+
+void FPerfSentinelConsoleCommands::SetRunContext(const TArray<FString>& Args)
+{
+	const FPerfSentinelTraceController* Controller = FUnrealExtendedPerfSentinelModule::GetTraceController();
+	if (!Controller || !Controller->IsIdle() || Args.Num() < 2 || Args.Num() > 3 || Args[0].TrimStartAndEnd().IsEmpty())
+	{
+		UE_LOG(LogPerfSentinel, Warning, TEXT("PerfSentinel.SetRunContext: Stop capture first. Usage: <SharedRunId> <ProcessRole> [BuildId]."));
+		return;
+	}
+	UPerfSentinelSettings* Settings = GetMutableDefault<UPerfSentinelSettings>();
+	Settings->SharedRunId = Args[0].TrimStartAndEnd().Left(128);
+	Settings->ProcessRole = Args[1].TrimStartAndEnd().Left(64).ToLower();
+	Settings->BuildId = Args.Num() > 2 ? Args[2].TrimStartAndEnd().Left(256) : FString();
+	FPerfSentinelTelemetry::Get().ConfigureDefaultContext(Settings->SharedRunId, Settings->ProcessRole,
+		Settings->ClockOffsetMilliseconds, Settings->ClockUncertaintyMilliseconds);
+	UE_LOG(LogPerfSentinel, Log, TEXT("PerfSentinel: future run=%s role=%s build=%s. Earlier history retains its recorded identity."),
+		*Settings->SharedRunId, *Settings->ProcessRole, *Settings->BuildId);
+}
+
+void FPerfSentinelConsoleCommands::SetClockAlignment(const TArray<FString>& Args)
+{
+	const FPerfSentinelTraceController* Controller = FUnrealExtendedPerfSentinelModule::GetTraceController();
+	double Offset = 0.0, Uncertainty = -1.0;
+	if (!Controller || !Controller->IsIdle() || Args.Num() != 2
+		|| !LexTryParseString(Offset, *Args[0]) || !LexTryParseString(Uncertainty, *Args[1])
+		|| !FMath::IsFinite(Offset) || !FMath::IsFinite(Uncertainty) || Uncertainty < -1.0)
+	{
+		UE_LOG(LogPerfSentinel, Warning, TEXT("PerfSentinel.SetClockAlignment: Stop capture first and supply finite offset/uncertainty milliseconds (-1 means unknown)."));
+		return;
+	}
+	UPerfSentinelSettings* Settings = GetMutableDefault<UPerfSentinelSettings>();
+	Settings->ClockOffsetMilliseconds = Offset;
+	Settings->ClockUncertaintyMilliseconds = Uncertainty < 0.0 ? -1.0 : Uncertainty;
+	FPerfSentinelTelemetry::Get().ConfigureDefaultContext(Settings->SharedRunId, Settings->ProcessRole, Offset, Settings->ClockUncertaintyMilliseconds);
+	UE_LOG(LogPerfSentinel, Log, TEXT("PerfSentinel: supplied clock offset %.3f ms, uncertainty %.3f ms; no synchronization was performed."), Offset, Settings->ClockUncertaintyMilliseconds);
 }

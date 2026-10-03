@@ -28,6 +28,8 @@ private:
 	void CaptureSpikeScreenshot(const TArray<FString>& Args);
 	void Bookmark(const TArray<FString>& Args);
 	void SetCaptureProfile(const TArray<FString>& Args);
+	void SetRunContext(const TArray<FString>& Args);
+	void SetClockAlignment(const TArray<FString>& Args);
 
 	TArray<IConsoleObject*> RegisteredCommands;
 };

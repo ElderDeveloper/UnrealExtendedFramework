@@ -7,6 +7,10 @@
 #include "PerfSentinelEditorCommands.h"
 #include "PerfSentinelEditorMenu.h"
 #include "PerfSentinelReportView.h"
+#include "PerfSentinelAgentService.h"
+#include "PerfSentinelAgentToolset.h"
+#include "Misc/CoreDelegates.h"
+#include "ToolsetRegistry/UToolsetRegistry.h"
 
 #include "Framework/Docking/TabManager.h"
 #include "Widgets/Docking/SDockTab.h"
@@ -23,6 +27,9 @@ void FUnrealExtendedPerfSentinelEditorModule::StartupModule()
 	}
 
 	FPerfSentinelEditorCommands::Register();
+	FPerfSentinelAgentService::Initialize();
+	if (UToolsetRegistry::IsAvailable()) { RegisterAgentToolset(); }
+	else { AgentRegistrationHandle = FCoreDelegates::GetOnPostEngineInit().AddRaw(this, &FUnrealExtendedPerfSentinelEditorModule::RegisterAgentToolset); }
 	FGlobalTabmanager::Get()->RegisterNomadTabSpawner(
 		PerfSentinelReportTabName,
 		FOnSpawnTab::CreateRaw(this, &FUnrealExtendedPerfSentinelEditorModule::SpawnReportTab))
@@ -44,6 +51,9 @@ void FUnrealExtendedPerfSentinelEditorModule::ShutdownModule()
 	{
 		return;
 	}
+	FCoreDelegates::GetOnPostEngineInit().Remove(AgentRegistrationHandle);
+	if (UToolsetRegistry::IsAvailable()) { UToolsetRegistry::UnregisterToolsetClass(UPerfSentinelAgentToolset::StaticClass()); }
+	FPerfSentinelAgentService::Shutdown();
 
 	if (const TSharedPtr<FPerfSentinelAnalysisManager> Manager = FUnrealExtendedPerfSentinelModule::GetAnalysisManager())
 	{
@@ -57,6 +67,17 @@ void FUnrealExtendedPerfSentinelEditorModule::ShutdownModule()
 	}
 	EditorMenu.Reset();
 	FPerfSentinelEditorCommands::Unregister();
+}
+
+void FUnrealExtendedPerfSentinelEditorModule::RegisterAgentToolset()
+{
+	if (IsRunningCommandlet() || !UToolsetRegistry::IsAvailable()) { return; }
+	if (!UToolsetRegistry::IsToolsetClassRegistered(UPerfSentinelAgentToolset::StaticClass()))
+	{
+		UToolsetRegistry::RegisterToolsetClass(UPerfSentinelAgentToolset::StaticClass());
+	}
+	// Native UAgentSkill subclasses are discovered from their source-defined CDOs.
+	GetDefault<UPerfSentinelInvestigationSkill>();
 }
 
 TSharedRef<SDockTab> FUnrealExtendedPerfSentinelEditorModule::SpawnReportTab(const FSpawnTabArgs& Args)

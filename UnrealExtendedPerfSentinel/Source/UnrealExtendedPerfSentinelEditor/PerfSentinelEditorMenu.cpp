@@ -123,7 +123,8 @@ void FPerfSentinelEditorMenu::RegisterMenus()
 						ProfileSection.AddEntry(FToolMenuEntry::InitMenuEntry(Name, Label, Tooltip, FSlateIcon(), Action, EUserInterfaceActionType::RadioButton));
 					};
 
-					AddProfile(TEXT("Standard"), LOCTEXT("ProfileStandard", "Standard"), LOCTEXT("ProfileStandardTip", "Low-overhead CPU, GPU, frame, counter, stats, region, and bookmark capture."), EPerfSentinelCaptureProfile::Standard);
+					AddProfile(TEXT("LightweightBaseline"), LOCTEXT("ProfileLightweightBaseline", "Lightweight Baseline"), LOCTEXT("ProfileLightweightBaselineTip", "CPU, GPU, frame, gameplay network, and bounded telemetry evidence with expensive object inventories disabled."), EPerfSentinelCaptureProfile::LightweightBaseline);
+					AddProfile(TEXT("Standard"), LOCTEXT("ProfileStandard", "Standard"), LOCTEXT("ProfileStandardTip", "CPU, GPU, frame, gameplay network, counter, stats, region, and bookmark capture."), EPerfSentinelCaptureProfile::Standard);
 					AddProfile(TEXT("HitchDiagnosis"), LOCTEXT("ProfileHitch", "Hitch Diagnosis"), LOCTEXT("ProfileHitchTip", "Adds task scheduling, context-switch, and stack-sampling evidence."), EPerfSentinelCaptureProfile::HitchDiagnosis);
 					AddProfile(TEXT("LoadingStreaming"), LOCTEXT("ProfileLoading", "Loading / Streaming"), LOCTEXT("ProfileLoadingTip", "Adds load-time, file, and asset metadata providers."), EPerfSentinelCaptureProfile::LoadingStreaming);
 					AddProfile(TEXT("MemoryLeak"), LOCTEXT("ProfileMemory", "Memory Leak"), LOCTEXT("ProfileMemoryTip", "Adds memory allocations, tags, callstacks, modules, and asset metadata."), EPerfSentinelCaptureProfile::MemoryLeak);

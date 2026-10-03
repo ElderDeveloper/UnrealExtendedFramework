@@ -176,6 +176,8 @@ void SPerfSentinelReportView::RefreshReport()
 	const int32 FindingCount = static_cast<int32>(ReadNumber(Summary, TEXT("finding_count")));
 	const double P99Ms = ReadNumber(Summary, TEXT("p99_frame_ms"));
 	const double HitchesPerMinute = ReadNumber(Summary, TEXT("hitches_per_minute"));
+	double ObservedHitchRate = 0.0;
+	const bool bHitchRateAvailable = Summary.IsValid() && Summary->TryGetNumberField(TEXT("hitches_per_minute"), ObservedHitchRate);
 	const TSharedPtr<FJsonObject>* MetricsPtr = nullptr;
 	bool bFrameMetricsAvailable = false;
 	if (Root->TryGetObjectField(TEXT("metrics"), MetricsPtr) && MetricsPtr && MetricsPtr->IsValid())
@@ -186,7 +188,7 @@ void SPerfSentinelReportView::RefreshReport()
 		LOCTEXT("Summary", "{0}  |  {1}  |  {2} findings  |  p99 {3} ms  |  {4} hitches/min\n{5}"),
 		FText::FromString(Scenario), FText::FromString(Status), FText::AsNumber(FindingCount),
 		bFrameMetricsAvailable ? FText::AsNumber(P99Ms) : LOCTEXT("UnavailableFrameMetric", "unavailable"),
-		FText::AsNumber(HitchesPerMinute), FText::FromString(ReportPath)));
+		bFrameMetricsAvailable && bHitchRateAvailable ? FText::AsNumber(HitchesPerMinute) : LOCTEXT("UnavailableHitchMetric", "unavailable"), FText::FromString(ReportPath)));
 
 	const TSharedPtr<FJsonObject>* CiPtr = nullptr;
 	if (Root->TryGetObjectField(TEXT("ci"), CiPtr) && CiPtr && CiPtr->IsValid())
@@ -227,7 +229,7 @@ void SPerfSentinelReportView::RefreshReport()
 	{
 		const TSharedPtr<FJsonObject> Network = *NetworkPtr;
 		AddMessage(FText::FromString(FString::Printf(
-			TEXT("Network: %s | %.0f packet/status entries | %.0f socket bytes\nTrace-reported statuses: %.0f Delivered, %.0f Dropped, %.0f Unknown. Delivered does not confirm an ACK."),
+			TEXT("Network: %s | %.0f packet/status entries | %.0f traced Unreal packet bytes\nTrace-reported statuses: %.0f Delivered, %.0f Dropped, %.0f Unknown. Delivered does not confirm an ACK. Trace bytes do not establish complete transport wire cost."),
 			*ReadString(Network, TEXT("status"), TEXT("not_available")), ReadNumber(Network, TEXT("packet_count")),
 			ReadNumber(Network, TEXT("total_socket_bytes")), ReadNumber(Network, TEXT("delivered_packets")),
 			ReadNumber(Network, TEXT("dropped_packets")), ReadNumber(Network, TEXT("unknown_packets")))));
@@ -275,7 +277,14 @@ void SPerfSentinelReportView::RefreshReport()
 		const FString Severity = ReadString(Finding, TEXT("severity"), TEXT("info"));
 		const FString Title = ReadString(Finding, TEXT("title"));
 		const FString Category = ReadString(Finding, TEXT("category"));
-		const double Confidence = ReadNumber(Finding, TEXT("confidence"));
+		const FString EvidenceLevel = ReadString(Finding, TEXT("evidence_level"));
+		const FString RuleId = ReadString(Finding, TEXT("rule_id"));
+		double LegacyConfidence = 0.0;
+		const bool bHasLegacyConfidence = Finding->TryGetNumberField(TEXT("confidence"), LegacyConfidence);
+		const FString EvidenceLabel = !EvidenceLevel.IsEmpty()
+			? FString::Printf(TEXT("%s | evidence: %s | rule: %s"), *Category, *EvidenceLevel, *RuleId)
+			: (bHasLegacyConfidence ? FString::Printf(TEXT("%s | legacy confidence %.0f%%"), *Category, LegacyConfidence * 100.0)
+				: FString::Printf(TEXT("%s | evidence level unavailable"), *Category));
 		FString EvidenceText;
 		const TArray<TSharedPtr<FJsonValue>>* Evidence = nullptr;
 		if (Finding->TryGetArrayField(TEXT("evidence"), Evidence) && Evidence)
@@ -306,7 +315,7 @@ void SPerfSentinelReportView::RefreshReport()
 				]
 				+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 3.0f)
 				[
-					SNew(STextBlock).Text(FText::FromString(FString::Printf(TEXT("%s | confidence %.0f%%"), *Category, Confidence * 100.0))).AutoWrapText(true)
+					SNew(STextBlock).Text(FText::FromString(EvidenceLabel)).AutoWrapText(true)
 				]
 				+ SVerticalBox::Slot().AutoHeight().Padding(0.0f, 3.0f)
 				[

@@ -69,6 +69,22 @@ const UPerfSentinelSettings* UPerfSentinelSettings::Get()
 	return GetDefault<UPerfSentinelSettings>();
 }
 
+void UPerfSentinelSettings::ApplyCommandLineOverrides()
+{
+	UPerfSentinelSettings* Settings = GetMutableDefault<UPerfSentinelSettings>();
+	const TCHAR* CommandLine = FCommandLine::Get();
+	FString Value;
+	if (FParse::Value(CommandLine, TEXT("PerfSentinelRunId="), Value)) { Settings->SharedRunId = Value.TrimStartAndEnd().Left(128); }
+	if (FParse::Value(CommandLine, TEXT("PerfSentinelRole="), Value)) { Settings->ProcessRole = Value.TrimStartAndEnd().Left(64).ToLower(); }
+	if (FParse::Value(CommandLine, TEXT("PerfSentinelBuildId="), Value)) { Settings->BuildId = Value.TrimStartAndEnd().Left(256); }
+	double Number = 0.0;
+	if (FParse::Value(CommandLine, TEXT("PerfSentinelClockOffsetMs="), Number) && FMath::IsFinite(Number)) { Settings->ClockOffsetMilliseconds = Number; }
+	if (FParse::Value(CommandLine, TEXT("PerfSentinelClockUncertaintyMs="), Number) && FMath::IsFinite(Number) && Number >= -1.0)
+	{
+		Settings->ClockUncertaintyMilliseconds = Number < 0.0 ? -1.0 : Number;
+	}
+}
+
 void UPerfSentinelSettings::ApplyBudgetProfile()
 {
 	switch (BudgetProfile)

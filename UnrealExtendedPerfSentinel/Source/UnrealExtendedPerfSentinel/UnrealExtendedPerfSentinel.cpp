@@ -6,6 +6,7 @@
 #include "PerfSentinelAnalysisManager.h"
 #include "PerfSentinelSettings.h"
 #include "PerfSentinelTraceController.h"
+#include "PerfSentinelTelemetry.h"
 
 #define LOCTEXT_NAMESPACE "FUnrealExtendedPerfSentinelModule"
 
@@ -16,6 +17,8 @@ FUnrealExtendedPerfSentinelModule::~FUnrealExtendedPerfSentinelModule() = defaul
 void FUnrealExtendedPerfSentinelModule::StartupModule()
 {
 	Instance = this;
+	UPerfSentinelSettings::ApplyCommandLineOverrides();
+	FPerfSentinelTelemetry::Get().Initialize();
 	TraceController = MakeUnique<FPerfSentinelTraceController>();
 	AnalysisManager = MakeShared<FPerfSentinelAnalysisManager>();
 
@@ -39,6 +42,7 @@ void FUnrealExtendedPerfSentinelModule::ShutdownModule()
 	}
 	AnalysisManager.Reset();
 	TraceController.Reset();
+	FPerfSentinelTelemetry::Get().Shutdown();
 	Instance = nullptr;
 }
 

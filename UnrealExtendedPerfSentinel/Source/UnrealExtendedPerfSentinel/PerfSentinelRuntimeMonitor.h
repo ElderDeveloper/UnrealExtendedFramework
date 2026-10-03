@@ -25,6 +25,8 @@ public:
 	const FString& GetRuntimeContextPath() const { return RuntimeContextPath; }
 	const FString& GetRuntimeCountersPath() const { return RuntimeCountersPath; }
 	const FString& GetNetworkSamplesPath() const { return NetworkSamplesPath; }
+	const FString& GetTelemetryEventsPath() const { return TelemetryEventsPath; }
+	const FString& GetCollectorCatalogPath() const { return CollectorCatalogPath; }
 	const FString& GetGameStatsPath() const { return GameStatsPath; }
 	const TArray<FPerfSentinelSpikeSnapshot>& GetSpikeSnapshots() const { return SpikeSnapshots; }
 	int32 GetSpikeCount() const { return SpikeSnapshots.Num(); }
@@ -74,6 +76,7 @@ private:
 	void AppendFrameSample(const FFrameSample& Sample) const;
 	void AppendRuntimeCounters(const FFrameSample& Sample);
 	void AppendNetworkSample(const FFrameSample& Sample, const UPerfSentinelSettings& Settings);
+	void FlushTelemetry(bool bFinal);
 	void AddPerClassBreakdownFields(const UWorld* World, const TSharedRef<class FJsonObject>& Root) const;
 	bool CaptureSpike(float FrameTimeMs, bool bManual);
 	void HarvestSpikeStats();
@@ -106,6 +109,8 @@ private:
 	FString RuntimeContextPath;
 	FString RuntimeCountersPath;
 	FString NetworkSamplesPath;
+	FString TelemetryEventsPath;
+	FString CollectorCatalogPath;
 	FString GameStatsPath;
 	TArray<FPerfSentinelSpikeSnapshot> SpikeSnapshots;
 	TArray<FFrameSample> FrameSampleBuffer;
@@ -113,6 +118,10 @@ private:
 	TUniquePtr<FArchive> FrameSamplesWriter;
 	TUniquePtr<FArchive> RuntimeCountersWriter;
 	TUniquePtr<FArchive> NetworkSamplesWriter;
+	TUniquePtr<FArchive> TelemetryWriter;
+	uint64 TelemetryCursor = 0;
+	uint64 LastTelemetryDroppedRows = 0;
+	double LastCollectorSampleSeconds = -TNumericLimits<double>::Max();
 	TUniquePtr<FPerfSentinelNetworkSampler> NetworkSampler;
 	double LastNetworkSampleSeconds = -TNumericLimits<double>::Max();
 	double LastScreenshotTimeSeconds = -TNumericLimits<double>::Max();

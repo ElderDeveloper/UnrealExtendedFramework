@@ -15,6 +15,7 @@ public class UnrealExtendedPerfSentinelEditor : ModuleRules
 			"Engine",
 			"UnrealEd",
 			"UnrealExtendedPerfSentinel",
+			"ToolsetRegistry",
 		});
 
 		PrivateDependencyModuleNames.AddRange(new string[]
@@ -28,6 +29,8 @@ public class UnrealExtendedPerfSentinelEditor : ModuleRules
 			"DesktopPlatform",
 			"Settings",
 			"Json",
+			"JsonUtilities",
+			"Projects",
 			"TraceAnalysis",
 			"TraceServices",
 		});

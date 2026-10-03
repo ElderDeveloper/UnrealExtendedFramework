@@ -40,6 +40,56 @@ public:
 	UPROPERTY(EditAnywhere, Config, Category = "Capture")
 	EPerfSentinelCaptureProfile CaptureProfile = EPerfSentinelCaptureProfile::Standard;
 
+	/** Shared caller-supplied identity for related server/client captures. Empty creates an independent run. */
+	UPROPERTY(EditAnywhere, Config, Category = "Capture | Identity")
+	FString SharedRunId;
+
+	/** Optional explicit process role; empty infers the role from captured gameplay worlds. */
+	UPROPERTY(EditAnywhere, Config, Category = "Capture | Identity")
+	FString ProcessRole;
+
+	/** Build/commit identity supplied by the launcher or CI. Empty means unknown, never the current checkout's guessed revision. */
+	UPROPERTY(EditAnywhere, Config, Category = "Capture | Identity")
+	FString BuildId;
+
+	/** Observed adjustment to the local clock in milliseconds; only meaningful with a known uncertainty. */
+	UPROPERTY(EditAnywhere, Config, Category = "Capture | Identity")
+	double ClockOffsetMilliseconds = 0.0;
+
+	/** Negative means clocks have not been synchronized. No cross-process ordering precision is implied. */
+	UPROPERTY(EditAnywhere, Config, Category = "Capture | Identity", meta = (ClampMin = "-1"))
+	double ClockUncertaintyMilliseconds = -1.0;
+
+	/** Keep bounded telemetry history without opening a trace recorder. */
+	UPROPERTY(EditAnywhere, Config, Category = "Telemetry")
+	bool bEnableTelemetryHistory = true;
+
+	UPROPERTY(EditAnywhere, Config, Category = "Telemetry", meta = (ClampMin = "1", ClampMax = "16384"))
+	int32 TelemetryHistoryCapacity = 2048;
+
+	UPROPERTY(EditAnywhere, Config, Category = "Telemetry", meta = (ClampMin = "0", ClampMax = "300"))
+	float TelemetryHistorySeconds = 30.0f;
+
+	UPROPERTY(EditAnywhere, Config, Category = "Collectors", meta = (ClampMin = "0.1", ClampMax = "60"))
+	float CollectorIntervalSeconds = 1.0f;
+
+	UPROPERTY(EditAnywhere, Config, Category = "Collectors", meta = (ClampMin = "1", ClampMax = "300"))
+	float DetailedCollectorIntervalSeconds = 5.0f;
+
+	/** Detailed inventories are opt-in; counts are never interpreted as execution cost. */
+	UPROPERTY(EditAnywhere, Config, Category = "Collectors")
+	bool bEnableDetailedCollectors = false;
+
+	/** Stop scheduling more collectors after this observed budget. A callback cannot be preempted. */
+	UPROPERTY(EditAnywhere, Config, Category = "Collectors", meta = (ClampMin = "0.1", ClampMax = "50"))
+	float MaxCollectorTimeMilliseconds = 2.0f;
+
+	UPROPERTY(EditAnywhere, Config, Category = "Collectors", meta = (ClampMin = "1", ClampMax = "4096"))
+	int32 MaxCollectorRows = 256;
+
+	/** Apply PerfSentinel-specific launcher overrides in memory, without changing project config. */
+	static void ApplyCommandLineOverrides();
+
 	/** Automatically stop captures after DefaultCaptureDurationSeconds. */
 	UPROPERTY(EditAnywhere, Config, Category = "Capture")
 	bool bAutoStopCapture = true;

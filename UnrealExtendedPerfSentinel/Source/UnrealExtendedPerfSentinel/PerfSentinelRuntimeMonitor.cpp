@@ -4,6 +4,8 @@
 
 #include "PerfSentinelSettings.h"
 #include "PerfSentinelNetworkSampler.h"
+#include "PerfSentinelTelemetry.h"
+#include "PerfSentinelCollector.h"
 #include "ProfilingDebugging/CpuProfilerTrace.h"
 #include "PerfSentinelStatHarvester.h"
 #include "PerfSentinelTraceController.h"
@@ -107,6 +109,17 @@ FString BuildConfigurationToString()
 void AddWorldCounterFields(const UWorld* World, const TSharedRef<FJsonObject>& Root)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(PerfSentinel_WorldCounters);
+	const UPerfSentinelSettings* Settings = UPerfSentinelSettings::Get();
+	if (Settings && Settings->CaptureProfile == EPerfSentinelCaptureProfile::LightweightBaseline)
+	{
+		Root->SetStringField(TEXT("world_inventory_status"), TEXT("disabled_by_profile"));
+		if (World)
+		{
+			Root->SetNumberField(TEXT("streaming_levels_configured"), World->GetStreamingLevels().Num());
+			Root->SetNumberField(TEXT("streaming_levels_loading"), World->GetNumStreamingLevelsBeingLoaded());
+		}
+		return;
+	}
 	int32 ActorCount = 0;
 	int32 TickingActorCount = 0;
 	int32 ComponentCount = 0;
@@ -176,6 +189,7 @@ void AddWorldCounterFields(const UWorld* World, const TSharedRef<FJsonObject>& R
 	Root->SetNumberField(TEXT("uobject_count"), UObjectCount);
 	Root->SetNumberField(TEXT("loaded_streaming_level_count"), LoadedStreamingLevelCount);
 	Root->SetNumberField(TEXT("visible_streaming_level_count"), VisibleStreamingLevelCount);
+	Root->SetStringField(TEXT("world_inventory_status"), TEXT("observed"));
 }
 
 void AddMemoryFields(const TSharedRef<FJsonObject>& Root)
@@ -256,6 +270,8 @@ void FPerfSentinelRuntimeMonitor::Activate(const FString& InSessionBaseName, con
 	RuntimeCountersPath = FPaths::Combine(SpikeOutputDirectory, FString::Printf(TEXT("%s_runtime_counters.ndjson"), *SessionBaseName));
 	GameStatsPath = FPaths::Combine(SpikeOutputDirectory, TEXT("GameStats.json"));
 	NetworkSamplesPath = FPaths::Combine(SpikeOutputDirectory, FString::Printf(TEXT("%s_network_samples.ndjson"), *SessionBaseName));
+	TelemetryEventsPath = FPaths::Combine(SpikeOutputDirectory, FString::Printf(TEXT("%s_telemetry.ndjson"), *SessionBaseName));
+	CollectorCatalogPath = FPaths::Combine(SpikeOutputDirectory, TEXT("collector_catalog.json"));
 	FPaths::NormalizeFilename(NetworkSamplesPath);
 	FPaths::NormalizeFilename(SpikeEventsPath);
 	FPaths::NormalizeFilename(FrameSamplesPath);
@@ -264,6 +280,13 @@ void FPerfSentinelRuntimeMonitor::Activate(const FString& InSessionBaseName, con
 	FPaths::NormalizeFilename(GameStatsPath);
 
 	const UPerfSentinelSettings* Settings = UPerfSentinelSettings::Get();
+	FPerfSentinelCollectorRegistry::Get().InitializeBuiltins();
+	FPerfSentinelCollectorRegistry::Get().ResetCapture();
+	TelemetryWriter.Reset(IFileManager::Get().CreateFileWriter(*TelemetryEventsPath));
+	if (!TelemetryWriter) { UE_LOG(LogPerfSentinel, Warning, TEXT("RuntimeMonitor: Cannot open telemetry stream: %s"), *TelemetryEventsPath); }
+	TelemetryCursor = 0;
+	LastTelemetryDroppedRows = 0;
+	LastCollectorSampleSeconds = -TNumericLimits<double>::Max();
 	if (Settings && Settings->bCollectFrameSamples)
 	{
 		FrameSamplesWriter.Reset(IFileManager::Get().CreateFileWriter(*FrameSamplesPath));
@@ -321,6 +344,12 @@ void FPerfSentinelRuntimeMonitor::Activate(const FString& InSessionBaseName, con
 
 	WriteRuntimeContext();
 	WriteGameStats();
+	TSharedRef<FJsonObject> Catalog = FPerfSentinelCollectorRegistry::Get().GetCatalog();
+	Catalog->SetObjectField(TEXT("telemetry_history"), FPerfSentinelTelemetry::Get().GetCoverage());
+	Catalog->SetStringField(TEXT("capture_profile"), Settings && Settings->CaptureProfile == EPerfSentinelCaptureProfile::LightweightBaseline ? TEXT("lightweight_baseline") : TEXT("configured_profile"));
+	Catalog->SetBoolField(TEXT("detailed_collectors_enabled"), Settings && Settings->bEnableDetailedCollectors && Settings->CaptureProfile != EPerfSentinelCaptureProfile::LightweightBaseline);
+	WriteJsonObjectToFile(CollectorCatalogPath, Catalog);
+	FlushTelemetry(false);
 
 	EndFrameHandle = FCoreDelegates::OnEndFrame.AddRaw(this, &FPerfSentinelRuntimeMonitor::HandleEndFrame);
 
@@ -356,6 +385,7 @@ void FPerfSentinelRuntimeMonitor::Deactivate()
 
 	if (bActive)
 	{
+		FlushTelemetry(true);
 		FlushSpikeWindows(true);
 		WriteGameStats();
 		UE_LOG(LogPerfSentinel, Log, TEXT("RuntimeMonitor: Deactivated with %d spike event(s)."), SpikeSnapshots.Num());
@@ -365,6 +395,7 @@ void FPerfSentinelRuntimeMonitor::Deactivate()
 	FrameSamplesWriter.Reset();
 	RuntimeCountersWriter.Reset();
 	NetworkSamplesWriter.Reset();
+	TelemetryWriter.Reset();
 	NetworkSampler->Reset();
 	bActive = false;
 }
@@ -395,6 +426,13 @@ void FPerfSentinelRuntimeMonitor::HandleEndFrame()
 
 	const float FrameTimeMs = FApp::GetDeltaTime() * 1000.0f;
 	RecordFrameSample(*Settings);
+	if (FPlatformTime::Seconds() - LastCollectorSampleSeconds >= FMath::Max(0.1, static_cast<double>(Settings->CollectorIntervalSeconds)))
+	{
+		const double CollectorSeconds = FPlatformTime::Seconds();
+		FPerfSentinelTelemetry::Get().Record(FPerfSentinelCollectorRegistry::Get().Sample(CollectorSeconds, *Settings));
+		LastCollectorSampleSeconds = CollectorSeconds;
+	}
+	FlushTelemetry(false);
 	FlushSpikeWindows(false);
 
 	if (FrameTimeMs >= Settings->ScreenshotSpikeThresholdMs)
@@ -498,7 +536,7 @@ void FPerfSentinelRuntimeMonitor::AppendRuntimeCounters(const FFrameSample& Samp
 
 	// Heavy per-class breakdown + streaming-level contents on a slower cadence to limit overhead.
 	const UPerfSentinelSettings* Settings = UPerfSentinelSettings::Get();
-	if (Settings && Settings->bCollectPerClassBreakdown)
+	if (Settings && Settings->bCollectPerClassBreakdown && Settings->CaptureProfile != EPerfSentinelCaptureProfile::LightweightBaseline)
 	{
 		const double LeakInterval = FMath::Max(0.5, static_cast<double>(Settings->LeakSnapshotIntervalSeconds));
 		if ((Sample.PlatformSeconds - LastLeakSnapshotTimeSeconds) >= LeakInterval)
@@ -508,6 +546,7 @@ void FPerfSentinelRuntimeMonitor::AppendRuntimeCounters(const FFrameSample& Samp
 			LastLeakSnapshotTimeSeconds = Sample.PlatformSeconds;
 		}
 	}
+	Root->SetStringField(TEXT("per_class_breakdown_status"), Settings && Settings->CaptureProfile == EPerfSentinelCaptureProfile::LightweightBaseline ? TEXT("disabled_by_profile") : (Settings && Settings->bCollectPerClassBreakdown ? TEXT("scheduled") : TEXT("disabled_by_settings")));
 
 	if (GEngine && GEngine->GameViewport && GEngine->GameViewport->Viewport)
 	{
@@ -533,6 +572,60 @@ void FPerfSentinelRuntimeMonitor::AppendNetworkSample(const FFrameSample& Sample
 	Root->SetNumberField(TEXT("game_thread_ms"), Sample.GameThreadMs);
 	Root->SetNumberField(TEXT("collector_overhead_ms"), (FPlatformTime::Seconds() - CollectorStarted) * 1000.0);
 	WriteJsonLine(NetworkSamplesWriter.Get(), Root);
+}
+
+void FPerfSentinelRuntimeMonitor::FlushTelemetry(bool bFinal)
+{
+	if (!TelemetryWriter) { return; }
+	TRACE_CPUPROFILER_EVENT_SCOPE(PerfSentinel_TelemetryFlush);
+	const double Started = FPlatformTime::Seconds();
+	const UPerfSentinelSettings* Settings = UPerfSentinelSettings::Get();
+	const int32 MaxRows = Settings ? FMath::Clamp(Settings->MaxCollectorRows, 1, 4096) : 256;
+	bool bLimited = false;
+	for (int32 Batch = 0; Batch < (bFinal ? 64 : 1); ++Batch)
+	{
+		TArray<TSharedPtr<FJsonObject>> Rows;
+		uint64 DroppedRows = 0;
+		FPerfSentinelTelemetry::Get().ReadSince(TelemetryCursor, MaxRows, Rows, DroppedRows);
+		for (const TSharedPtr<FJsonObject>& Row : Rows)
+		{
+			if (!Row.IsValid()) { continue; }
+			Row->SetNumberField(TEXT("capture_elapsed_seconds"), Row->GetNumberField(TEXT("platform_seconds")) - CaptureStartPlatformSeconds);
+			WriteJsonLine(TelemetryWriter.Get(), Row.ToSharedRef());
+		}
+		if (DroppedRows != LastTelemetryDroppedRows)
+		{
+			TSharedRef<FJsonObject> Coverage = MakeShared<FJsonObject>();
+			Coverage->SetStringField(TEXT("event_type"), TEXT("coverage"));
+			Coverage->SetStringField(TEXT("source"), TEXT("telemetry_history"));
+			Coverage->SetStringField(TEXT("timestamp"), FDateTime::UtcNow().ToIso8601());
+			Coverage->SetStringField(TEXT("timebase"), TEXT("process_platform_seconds"));
+			Coverage->SetNumberField(TEXT("platform_seconds"), FPlatformTime::Seconds());
+			Coverage->SetNumberField(TEXT("capture_elapsed_seconds"), FPlatformTime::Seconds() - CaptureStartPlatformSeconds);
+			Coverage->SetNumberField(TEXT("dropped_or_expired_rows"), static_cast<double>(DroppedRows));
+			Coverage->SetStringField(TEXT("interpretation"), TEXT("history_retention_or_capacity_not_network_packet_loss"));
+			WriteJsonLine(TelemetryWriter.Get(), Coverage);
+			LastTelemetryDroppedRows = DroppedRows;
+		}
+		if (Rows.Num() < MaxRows) { break; }
+		if (bFinal && FPlatformTime::Seconds() - Started >= 0.05) { bLimited = true; break; }
+	}
+	if (bFinal)
+	{
+		// The batch/time cap can leave queued rows. Surface this instead of claiming the final flush was complete.
+		uint64 PeekCursor = TelemetryCursor;
+		uint64 PeekDroppedRows = 0;
+		TArray<TSharedPtr<FJsonObject>> PendingRows;
+		FPerfSentinelTelemetry::Get().ReadSince(PeekCursor, 1, PendingRows, PeekDroppedRows);
+		bLimited |= PendingRows.Num() > 0;
+		TSharedRef<FJsonObject> Catalog = FPerfSentinelCollectorRegistry::Get().GetCatalog();
+		Catalog->SetObjectField(TEXT("telemetry_history"), FPerfSentinelTelemetry::Get().GetCoverage());
+		Catalog->SetBoolField(TEXT("final_flush_limited"), bLimited);
+		Catalog->SetBoolField(TEXT("detailed_collectors_enabled"), Settings && Settings->bEnableDetailedCollectors && Settings->CaptureProfile != EPerfSentinelCaptureProfile::LightweightBaseline);
+		Catalog->SetStringField(TEXT("capture_profile"), Settings && Settings->CaptureProfile == EPerfSentinelCaptureProfile::LightweightBaseline ? TEXT("lightweight_baseline") : TEXT("configured_profile"));
+		Catalog->SetNumberField(TEXT("final_flush_elapsed_ms"), (FPlatformTime::Seconds() - Started) * 1000.0);
+		WriteJsonObjectToFile(CollectorCatalogPath, Catalog);
+	}
 }
 
 void FPerfSentinelRuntimeMonitor::AddPerClassBreakdownFields(const UWorld* World, const TSharedRef<FJsonObject>& Root) const
@@ -1041,7 +1134,7 @@ void FPerfSentinelRuntimeMonitor::WriteGameStats() const
 	};
 
 	TArray<TSharedPtr<FJsonValue>> ActorValues;
-	if (Settings->bWriteFullObjectInventory && World)
+	if (Settings->bWriteFullObjectInventory && Settings->CaptureProfile != EPerfSentinelCaptureProfile::LightweightBaseline && World)
 	{
 		for (TActorIterator<AActor> It(World); It; ++It)
 		{
@@ -1084,7 +1177,7 @@ void FPerfSentinelRuntimeMonitor::WriteGameStats() const
 	}
 
 	TArray<TSharedPtr<FJsonValue>> WidgetValues;
-	if (Settings->bWriteFullObjectInventory)
+	if (Settings->bWriteFullObjectInventory && Settings->CaptureProfile != EPerfSentinelCaptureProfile::LightweightBaseline)
 	{
 		for (TObjectIterator<UUserWidget> It; It; ++It)
 		{
@@ -1149,7 +1242,8 @@ void FPerfSentinelRuntimeMonitor::WriteGameStats() const
 	Root->SetArrayField(TEXT("runtime_stats"), ScopeValues);
 	Root->SetNumberField(TEXT("suppressed_spike_count"), SuppressedSpikeCount);
 	Root->SetNumberField(TEXT("worst_suppressed_frame_ms"), WorstSuppressedFrameMs);
-	Root->SetBoolField(TEXT("full_object_inventory_collected"), Settings->bWriteFullObjectInventory);
+	Root->SetBoolField(TEXT("full_object_inventory_collected"), Settings->bWriteFullObjectInventory && Settings->CaptureProfile != EPerfSentinelCaptureProfile::LightweightBaseline);
+	Root->SetStringField(TEXT("full_object_inventory_status"), Settings->CaptureProfile == EPerfSentinelCaptureProfile::LightweightBaseline ? TEXT("disabled_by_profile") : (Settings->bWriteFullObjectInventory ? TEXT("collected") : TEXT("disabled_by_settings")));
 	WriteJsonObjectToFile(GameStatsPath, Root);
 }
 

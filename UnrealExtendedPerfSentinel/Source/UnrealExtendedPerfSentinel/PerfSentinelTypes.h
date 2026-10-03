@@ -38,7 +38,8 @@ enum class EPerfSentinelCaptureProfile : uint8
 	MemoryLeak UMETA(DisplayName = "Memory / Leak (Relaunch Required)"),
 	Multiplayer UMETA(DisplayName = "Multiplayer Networking"),
 	UIAnimation UMETA(DisplayName = "UI / Animation"),
-	ComprehensiveGameplay UMETA(DisplayName = "Comprehensive Gameplay")
+	ComprehensiveGameplay UMETA(DisplayName = "Comprehensive Gameplay"),
+	LightweightBaseline UMETA(DisplayName = "Lightweight Baseline")
 };
 
 /** Predefined performance budget profiles for common capture scenarios. */
@@ -62,6 +63,22 @@ struct UNREALEXTENDEDPERFSENTINEL_API FPerfSentinelTraceSession
 	FString ScenarioName;
 
 	UPROPERTY(BlueprintReadOnly, Category = "PerfSentinel")
+	FString SessionId;
+
+	UPROPERTY(BlueprintReadOnly, Category = "PerfSentinel")
+	FString RunId;
+
+	UPROPERTY(BlueprintReadOnly, Category = "PerfSentinel")
+	FString ProcessRole;
+
+	UPROPERTY(BlueprintReadOnly, Category = "PerfSentinel")
+	FString BuildId;
+
+	double StartedPlatformSeconds = 0.0;
+	double ClockOffsetMilliseconds = 0.0;
+	double ClockUncertaintyMilliseconds = -1.0;
+
+	UPROPERTY(BlueprintReadOnly, Category = "PerfSentinel")
 	FDateTime StartedAt = FDateTime::MinValue();
 
 	UPROPERTY(BlueprintReadOnly, Category = "PerfSentinel")
@@ -81,6 +98,10 @@ struct UNREALEXTENDEDPERFSENTINEL_API FPerfSentinelTraceSession
 
 	UPROPERTY(BlueprintReadOnly, Category = "PerfSentinel")
 	TArray<FString> EnabledChannels;
+
+	/** Full enabled channel set, including channels already enabled before this capture. */
+	UPROPERTY(BlueprintReadOnly, Category = "PerfSentinel")
+	TArray<FString> ActiveChannels;
 
 	UPROPERTY(BlueprintReadOnly, Category = "PerfSentinel")
 	TArray<FString> UnavailableChannels;
@@ -112,6 +133,12 @@ struct UNREALEXTENDEDPERFSENTINEL_API FPerfSentinelTraceSession
 
 	UPROPERTY(BlueprintReadOnly, Category = "PerfSentinel")
 	FString NetworkSamplesPath;
+
+	UPROPERTY(BlueprintReadOnly, Category = "PerfSentinel")
+	FString TelemetryEventsPath;
+
+	UPROPERTY(BlueprintReadOnly, Category = "PerfSentinel")
+	FString CollectorCatalogPath;
 
 	UPROPERTY(BlueprintReadOnly, Category = "PerfSentinel")
 	FString GameStatsPath;

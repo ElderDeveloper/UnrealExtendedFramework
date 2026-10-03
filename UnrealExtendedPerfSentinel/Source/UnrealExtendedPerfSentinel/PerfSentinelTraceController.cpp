@@ -4,18 +4,24 @@
 
 #include "PerfSentinelRuntimeMonitor.h"
 #include "PerfSentinelSettings.h"
+#include "PerfSentinelTelemetry.h"
 #include "ProfilingDebugging/TraceAuxiliary.h"
 #include "Net/Core/Trace/NetTrace.h"
 
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
 #include "Engine/Engine.h"
+#include "Engine/World.h"
+#include "HAL/PlatformMisc.h"
+#include "HAL/PlatformProperties.h"
+#include "HAL/PlatformTime.h"
 #include "HAL/PlatformFileManager.h"
 #include "HAL/PlatformProcess.h"
 #include "Misc/App.h"
 #include "Misc/DateTime.h"
 #include "Misc/EngineVersion.h"
 #include "Misc/FileHelper.h"
+#include "Misc/Guid.h"
 #include "Misc/Paths.h"
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
@@ -25,6 +31,29 @@ DEFINE_LOG_CATEGORY(LogPerfSentinel);
 
 namespace
 {
+FString InferProcessRole()
+{
+	TSet<FString> Roles;
+	if (GEngine)
+	{
+		for (const FWorldContext& Context : GEngine->GetWorldContexts())
+		{
+			const UWorld* World = Context.World();
+			if (!World || (World->WorldType != EWorldType::Game && World->WorldType != EWorldType::PIE)) { continue; }
+			switch (World->GetNetMode())
+			{
+			case NM_DedicatedServer: Roles.Add(TEXT("server")); break;
+			case NM_ListenServer: Roles.Add(TEXT("listen_server")); break;
+			case NM_Client: Roles.Add(TEXT("client")); break;
+			default: Roles.Add(TEXT("standalone")); break;
+			}
+		}
+	}
+	if (Roles.Num() == 1) { return *Roles.CreateConstIterator(); }
+	if (Roles.Num() > 1) { return TEXT("mixed"); }
+	return GIsEditor ? TEXT("editor") : TEXT("unknown");
+}
+
 FString CanonicalChannelName(FString Name)
 {
 	Name.RemoveFromEnd(TEXT("Channel"), ESearchCase::IgnoreCase);
@@ -61,7 +90,7 @@ FPerfSentinelTraceController::~FPerfSentinelTraceController()
 
 bool FPerfSentinelTraceController::HasCompletedTrace() const
 {
-	return !LastCompletedSession.TracePath.IsEmpty() && LastCompletedSession.IsCompleted();
+	return !LastCompletedSession.TracePath.IsEmpty() && LastCompletedSession.IsCompleted() && FPaths::FileExists(LastCompletedSession.TracePath);
 }
 
 bool FPerfSentinelTraceController::StartCapture(const FString& ScenarioName)
@@ -108,6 +137,15 @@ bool FPerfSentinelTraceController::StartCapture(const FString& ScenarioName)
 
 	CurrentSession = FPerfSentinelTraceSession();
 	CurrentSession.ScenarioName = ScenarioName;
+	CurrentSession.SessionId = FGuid::NewGuid().ToString(EGuidFormats::DigitsWithHyphensLower);
+	CurrentSession.RunId = Settings->SharedRunId.TrimStartAndEnd().Left(128);
+	if (CurrentSession.RunId.IsEmpty()) { CurrentSession.RunId = CurrentSession.SessionId; }
+	CurrentSession.ProcessRole = Settings->ProcessRole.TrimStartAndEnd().Left(64).ToLower();
+	if (CurrentSession.ProcessRole.IsEmpty()) { CurrentSession.ProcessRole = InferProcessRole(); }
+	CurrentSession.BuildId = Settings->BuildId.TrimStartAndEnd().Left(256);
+	CurrentSession.StartedPlatformSeconds = FPlatformTime::Seconds();
+	CurrentSession.ClockOffsetMilliseconds = FMath::IsFinite(Settings->ClockOffsetMilliseconds) ? Settings->ClockOffsetMilliseconds : 0.0;
+	CurrentSession.ClockUncertaintyMilliseconds = FMath::IsFinite(Settings->ClockUncertaintyMilliseconds) ? Settings->ClockUncertaintyMilliseconds : -1.0;
 	CurrentSession.StartedAt = FDateTime::UtcNow();
 	CurrentSession.TracePath = TracePath;
 	CurrentSession.MetadataPath = MetadataPath;
@@ -131,6 +169,8 @@ bool FPerfSentinelTraceController::StartCapture(const FString& ScenarioName)
 	}
 
 	CaptureState = EPerfSentinelCaptureState::Capturing;
+	FPerfSentinelTelemetry::Get().SetCaptureContext(CurrentSession.SessionId, CurrentSession.RunId, CurrentSession.ProcessRole,
+		CurrentSession.ClockOffsetMilliseconds, CurrentSession.ClockUncertaintyMilliseconds);
 
 	if (RuntimeMonitor)
 	{
@@ -182,6 +222,7 @@ bool FPerfSentinelTraceController::StopCapture()
 	{
 		UE_LOG(LogPerfSentinel, Error, TEXT("StopCapture: Expected trace file was not written: %s"), *CurrentSession.TracePath);
 		CaptureState = EPerfSentinelCaptureState::Idle;
+		FPerfSentinelTelemetry::Get().ClearCaptureContext();
 		return false;
 	}
 
@@ -209,6 +250,14 @@ bool FPerfSentinelTraceController::StopCapture()
 		{
 			CurrentSession.NetworkSamplesPath = RuntimeMonitor->GetNetworkSamplesPath();
 		}
+		if (FPaths::FileExists(RuntimeMonitor->GetTelemetryEventsPath()))
+		{
+			CurrentSession.TelemetryEventsPath = RuntimeMonitor->GetTelemetryEventsPath();
+		}
+		if (FPaths::FileExists(RuntimeMonitor->GetCollectorCatalogPath()))
+		{
+			CurrentSession.CollectorCatalogPath = RuntimeMonitor->GetCollectorCatalogPath();
+		}
 		if (FPaths::FileExists(RuntimeMonitor->GetGameStatsPath()))
 		{
 			CurrentSession.GameStatsPath = RuntimeMonitor->GetGameStatsPath();
@@ -217,6 +266,7 @@ bool FPerfSentinelTraceController::StopCapture()
 
 	WriteMetadataSidecar();
 	LastCompletedSession = CurrentSession;
+	FPerfSentinelTelemetry::Get().ClearCaptureContext();
 	CaptureState = EPerfSentinelCaptureState::Idle;
 
 	UE_LOG(LogPerfSentinel, Log, TEXT("StopCapture: Trace capture stopped."));
@@ -252,8 +302,10 @@ FString FPerfSentinelTraceController::BuildTraceFilePath() const
 	const UPerfSentinelSettings* Settings = UPerfSentinelSettings::Get();
 	check(Settings);
 
-	const FString Timestamp = FDateTime::Now().ToString(TEXT("%Y-%m-%d_%H%M%S"));
-	const FString SessionBaseName = FString::Printf(TEXT("%s_%s"), *Settings->TraceFilePrefix, *Timestamp);
+	const FString Timestamp = FDateTime::UtcNow().ToString(TEXT("%Y-%m-%d_%H%M%S"));
+	FString SafePrefix = FPaths::MakeValidFileName(Settings->TraceFilePrefix);
+	if (SafePrefix.IsEmpty()) { SafePrefix = TEXT("PerfSentinel"); }
+	const FString SessionBaseName = FString::Printf(TEXT("%s_%s_%s"), *SafePrefix.Left(64), *Timestamp, *FGuid::NewGuid().ToString(EGuidFormats::Digits).Left(12));
 
 	IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
 	FString CandidateBaseName = SessionBaseName;
@@ -365,6 +417,7 @@ bool FPerfSentinelTraceController::StartTraceFile(const FString& TracePath, cons
 	// TraceAuxiliary publishes connection notifications needed by NetTrace initialization and object metadata.
 	bOwnsTrace = FTraceAuxiliary::Start(FTraceAuxiliary::EConnectionType::File, *TracePath, *ChannelArg);
 	const TArray<FString> Enabled = GetEnabledTraceChannels();
+	CurrentSession.ActiveChannels = Enabled;
 	for (const FString& Channel : Enabled) { if (!PreviouslyEnabled.Contains(Channel)) { NewlyEnabledChannels.Add(Channel); } }
 	CurrentSession.EnabledChannels.Reset();
 	CurrentSession.UnavailableChannels.Reset();
@@ -432,21 +485,9 @@ bool FPerfSentinelTraceController::ExecTraceCommand(const FString& Command)
 
 bool FPerfSentinelTraceController::WaitForTraceFile(const FString& TracePath)
 {
-	IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
-	const double StartSeconds = FPlatformTime::Seconds();
-	constexpr double TimeoutSeconds = 2.0;
-
-	while ((FPlatformTime::Seconds() - StartSeconds) < TimeoutSeconds)
-	{
-		if (PlatformFile.FileExists(*TracePath))
-		{
-			return true;
-		}
-
-		FPlatformProcess::Sleep(0.05f);
-	}
-
-	return PlatformFile.FileExists(*TracePath);
+	// The file writer opens its destination before capture starts. Do not block the game thread
+	// on a missing file during StopCapture; report the failed capture explicitly.
+	return FPlatformFileManager::Get().GetPlatformFile().FileExists(*TracePath);
 }
 
 void FPerfSentinelTraceController::WriteMetadataSidecar() const
@@ -459,6 +500,23 @@ void FPerfSentinelTraceController::WriteMetadataSidecar() const
 	}
 
 	TSharedRef<FJsonObject> Root = MakeShared<FJsonObject>();
+	Root->SetNumberField(TEXT("schema_version"), 4);
+	Root->SetStringField(TEXT("session_id"), CurrentSession.SessionId);
+	Root->SetStringField(TEXT("run_id"), CurrentSession.RunId);
+	Root->SetStringField(TEXT("process_role"), CurrentSession.ProcessRole);
+	Root->SetNumberField(TEXT("process_id"), FPlatformProcess::GetCurrentProcessId());
+	Root->SetStringField(TEXT("build_id"), CurrentSession.BuildId);
+	Root->SetStringField(TEXT("build_configuration"), LexToString(FApp::GetBuildConfiguration()));
+	Root->SetStringField(TEXT("build_target"), LexToString(FApp::GetBuildTargetType()));
+	Root->SetStringField(TEXT("engine_build_version"), FApp::GetBuildVersion());
+	Root->SetStringField(TEXT("platform"), FPlatformProperties::PlatformName());
+	Root->SetStringField(TEXT("local_clock_utc"), CurrentSession.StartedAt.ToIso8601());
+	Root->SetNumberField(TEXT("local_clock_monotonic_seconds"), CurrentSession.StartedPlatformSeconds);
+	const bool bKnownClock = CurrentSession.ClockUncertaintyMilliseconds >= 0.0;
+	Root->SetBoolField(TEXT("clock_alignment_known"), bKnownClock);
+	Root->SetField(TEXT("clock_offset_ms"), bKnownClock ? TSharedPtr<FJsonValue>(MakeShared<FJsonValueNumber>(CurrentSession.ClockOffsetMilliseconds)) : TSharedPtr<FJsonValue>(MakeShared<FJsonValueNull>()));
+	Root->SetField(TEXT("clock_uncertainty_ms"), bKnownClock ? TSharedPtr<FJsonValue>(MakeShared<FJsonValueNumber>(CurrentSession.ClockUncertaintyMilliseconds)) : TSharedPtr<FJsonValue>(MakeShared<FJsonValueNull>()));
+	Root->SetStringField(TEXT("clock_alignment_source"), bKnownClock ? TEXT("caller_supplied_observation") : TEXT("unknown"));
 	Root->SetStringField(TEXT("trace_file"), CurrentSession.TracePath);
 	Root->SetStringField(TEXT("scenario"), CurrentSession.ScenarioName);
 	Root->SetStringField(TEXT("started_at"), CurrentSession.StartedAt.ToIso8601());
@@ -484,6 +542,9 @@ void FPerfSentinelTraceController::WriteMetadataSidecar() const
 	for (const FString& Channel : CurrentSession.EnabledChannels) { EnabledChannelValues.Add(MakeShared<FJsonValueString>(Channel)); }
 	for (const FString& Channel : CurrentSession.UnavailableChannels) { UnavailableChannelValues.Add(MakeShared<FJsonValueString>(Channel)); }
 	Root->SetArrayField(TEXT("enabled_channels"), EnabledChannelValues);
+	TArray<TSharedPtr<FJsonValue>> ActiveChannelValues;
+	for (const FString& Channel : CurrentSession.ActiveChannels) { ActiveChannelValues.Add(MakeShared<FJsonValueString>(Channel)); }
+	Root->SetArrayField(TEXT("active_channels"), ActiveChannelValues);
 	Root->SetArrayField(TEXT("unavailable_channels"), UnavailableChannelValues);
 	Root->SetNumberField(TEXT("network_trace_verbosity"), AppliedNetTraceVerbosity);
 	Root->SetBoolField(TEXT("network_trace_compiled"), UE_NET_TRACE_ENABLED != 0);
@@ -494,7 +555,7 @@ void FPerfSentinelTraceController::WriteMetadataSidecar() const
 		RequiredLaunchValues.Add(MakeShared<FJsonValueString>(Argument));
 	}
 	Root->SetArrayField(TEXT("required_launch_arguments"), RequiredLaunchValues);
-	Root->SetBoolField(TEXT("profile_requires_relaunch"), Settings->CaptureProfileRequiresRelaunch());
+	Root->SetBoolField(TEXT("profile_requires_relaunch"), CurrentSession.RequiredLaunchArguments.Num() > 0);
 	Root->SetBoolField(TEXT("launch_requirements_satisfied"), CurrentSession.bLaunchRequirementsSatisfied);
 	if (RuntimeMonitor.IsValid())
 	{
@@ -526,6 +587,8 @@ void FPerfSentinelTraceController::WriteMetadataSidecar() const
 	{
 		Root->SetStringField(TEXT("network_samples_file"), CurrentSession.NetworkSamplesPath);
 	}
+	if (!CurrentSession.TelemetryEventsPath.IsEmpty()) { Root->SetStringField(TEXT("telemetry_events_file"), CurrentSession.TelemetryEventsPath); }
+	if (!CurrentSession.CollectorCatalogPath.IsEmpty()) { Root->SetStringField(TEXT("collector_catalog_file"), CurrentSession.CollectorCatalogPath); }
 	if (!CurrentSession.GameStatsPath.IsEmpty())
 	{
 		Root->SetStringField(TEXT("game_stats_file"), CurrentSession.GameStatsPath);
@@ -565,6 +628,14 @@ void FPerfSentinelTraceController::WriteMetadataSidecar() const
 	SettingsObject->SetBoolField(TEXT("collect_frame_samples"), Settings->bCollectFrameSamples);
 	SettingsObject->SetBoolField(TEXT("collect_runtime_counters"), Settings->bCollectRuntimeCounters);
 	SettingsObject->SetBoolField(TEXT("collect_network_samples"), Settings->bCollectNetworkSamples);
+	SettingsObject->SetBoolField(TEXT("enable_telemetry_history"), Settings->bEnableTelemetryHistory);
+	SettingsObject->SetNumberField(TEXT("telemetry_history_capacity"), Settings->TelemetryHistoryCapacity);
+	SettingsObject->SetNumberField(TEXT("telemetry_history_seconds"), Settings->TelemetryHistorySeconds);
+	SettingsObject->SetBoolField(TEXT("enable_detailed_collectors"), Settings->bEnableDetailedCollectors);
+	SettingsObject->SetNumberField(TEXT("collector_interval_seconds"), Settings->CollectorIntervalSeconds);
+	SettingsObject->SetNumberField(TEXT("detailed_collector_interval_seconds"), Settings->DetailedCollectorIntervalSeconds);
+	SettingsObject->SetNumberField(TEXT("max_collector_time_ms"), Settings->MaxCollectorTimeMilliseconds);
+	SettingsObject->SetNumberField(TEXT("max_collector_rows"), Settings->MaxCollectorRows);
 	SettingsObject->SetNumberField(TEXT("network_sample_interval_seconds"), Settings->NetworkSampleIntervalSeconds);
 	SettingsObject->SetNumberField(TEXT("network_trace_verbosity_requested"), Settings->NetworkTraceVerbosity);
 	SettingsObject->SetNumberField(TEXT("max_network_worlds"), Settings->MaxNetworkWorlds);
