@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Shared/EEOSSubsystem.h"
+#include "Interfaces/OnlineEntitlementsInterface.h"
 #include "EEOSEcomSubsystem.generated.h"
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnEOSOffersQueried, bool, bSuccess, const TArray<FEEOSCatalogOffer>&, Offers);
@@ -114,9 +115,11 @@ private:
 	/** Handle for QueryEntitlements' binding on the interface-wide OnQueryEntitlementsCompleteDelegates.
 	 *  Doubles as the in-flight guard for QueryEntitlements; the handler removes ONLY this handle. */
 	FDelegateHandle EntitlementsQueryHandle;
+	IOnlineEntitlementsPtr PendingEntitlementsInterface;
 
 	/** Handle for QueryOwnership's binding on the same interface-wide list — kept separate so
 	 *  overlapping entitlements/ownership queries never remove each other's binding.
 	 *  Doubles as the in-flight guard for QueryOwnership. */
 	FDelegateHandle OwnershipQueryHandle;
+	IOnlineEntitlementsPtr PendingOwnershipInterface;
 };

@@ -1,6 +1,7 @@
 // Copyright Kemal Erdem YILMAZ. All Rights Reserved.
 
 #include "EEOSTitleStorageSubsystem.h"
+#include "Shared/EEOSNativeOperation.h"
 #include "OnlineSubsystemUtils.h"
 #include "UnrealExtendedEOS.h"
 
@@ -11,18 +12,13 @@ void UEEOSTitleStorageSubsystem::Initialize(FSubsystemCollectionBase& Collection
 
 void UEEOSTitleStorageSubsystem::Deinitialize()
 {
-	if (IsEOSAvailable())
+	BeginEOSShutdown();
+	if (BoundInterface.IsValid())
 	{
-		if (IOnlineSubsystem* EOSSub = GetEOSOnlineSubsystem())
-		{
-			IOnlineTitleFilePtr TitleFileInterface = EOSSub->GetTitleFileInterface();
-			if (TitleFileInterface.IsValid())
-			{
-				TitleFileInterface->ClearOnEnumerateFilesCompleteDelegates(this);
-				TitleFileInterface->ClearOnReadFileCompleteDelegates(this);
-			}
-		}
+		BoundInterface->ClearOnEnumerateFilesCompleteDelegates(this);
+		BoundInterface->ClearOnReadFileCompleteDelegates(this);
 	}
+	BoundInterface.Reset();
 	bTitleFileDelegatesBound = false;
 	PendingReadFiles.Empty();
 	PendingAsStringFiles.Empty();
@@ -31,12 +27,20 @@ void UEEOSTitleStorageSubsystem::Deinitialize()
 	Super::Deinitialize();
 }
 
-void UEEOSTitleStorageSubsystem::EnsureTitleFileDelegatesBound(IOnlineTitleFile& TitleFileInterface)
+bool UEEOSTitleStorageSubsystem::EnsureTitleFileDelegatesBound(IOnlineTitleFile& TitleFileInterface)
 {
-	if (bTitleFileDelegatesBound)
+	if (bTitleFileDelegatesBound && BoundInterface.Get() == &TitleFileInterface && IsEOSContextCurrent(BindingContext, false)) return true;
+	if (bTitleFileDelegatesBound && (!PendingReadFiles.IsEmpty() || bEnumerateInFlight))
+	{ RejectOperation(TEXT("TitleStorage"), EEOSOperationCode::Busy, TEXT("Original storage interface still owns pending transfers.")); return false; }
+	if (BoundInterface.IsValid())
 	{
-		return;
+		BoundInterface->ClearOnEnumerateFilesCompleteDelegates(this);
+		BoundInterface->ClearOnReadFileCompleteDelegates(this);
 	}
+	IOnlineSubsystem* OSS = GetExistingEOSOnlineSubsystem();
+	BoundInterface = OSS ? OSS->GetTitleFileInterface() : IOnlineTitleFilePtr();
+	if (!BoundInterface.IsValid() || BoundInterface.Get() != &TitleFileInterface) return false;
+	BindingContext = CaptureEOSContext();
 
 	// Bind the interface-wide delegate lists exactly once; completions are correlated
 	// to in-flight operations through the pending-file set / in-flight flag, so
@@ -45,7 +49,7 @@ void UEEOSTitleStorageSubsystem::EnsureTitleFileDelegatesBound(IOnlineTitleFile&
 		FOnReadFileCompleteDelegate::CreateUObject(this, &UEEOSTitleStorageSubsystem::HandleReadTitleFileComplete));
 	TitleFileInterface.AddOnEnumerateFilesCompleteDelegate_Handle(
 		FOnEnumerateFilesCompleteDelegate::CreateUObject(this, &UEEOSTitleStorageSubsystem::HandleEnumerateTitleFilesComplete));
-	bTitleFileDelegatesBound = true;
+	bTitleFileDelegatesBound = true; return true;
 }
 
 bool UEEOSTitleStorageSubsystem::ReadTitleFile(const FString& FileName)
@@ -54,7 +58,7 @@ bool UEEOSTitleStorageSubsystem::ReadTitleFile(const FString& FileName)
 	{
 		// Log-only rejection: a failure broadcast here would carry the SAME file name as the
 		// legitimate in-flight read and be indistinguishable from its real completion (R1)
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSTitleStorageSubsystem::ReadTitleFile — Read already in flight for '%s', rejecting duplicate request (no broadcast)"), *FileName);
+		RejectOperation(TEXT("ReadTitleFile"), EEOSOperationCode::Busy, TEXT("Another admitted request already owns this operation."));
 		return false;
 	}
 
@@ -69,12 +73,12 @@ bool UEEOSTitleStorageSubsystem::ReadTitleFile(const FString& FileName)
 	IOnlineTitleFilePtr TitleFileInterface = EOSSub->GetTitleFileInterface();
 	if (!TitleFileInterface.IsValid())
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSTitleStorageSubsystem::ReadTitleFile — TitleFile interface not available"));
+		FEEOSNativeOperationLease::ReportRepeated(GetOwningEOSInstanceName(), TEXT("ReadTitleFile"), TEXT("CapabilityUnavailable"));
 		OnTitleFileRead.Broadcast(false, FileName, TArray<uint8>());
 		return false;
 	}
 
-	EnsureTitleFileDelegatesBound(*TitleFileInterface);
+	if (!EnsureTitleFileDelegatesBound(*TitleFileInterface)) return false;
 	PendingReadFiles.Add(FileName);
 	if (!TitleFileInterface->ReadFile(FileName))
 	{
@@ -82,12 +86,12 @@ bool UEEOSTitleStorageSubsystem::ReadTitleFile(const FString& FileName)
 		// removed the entry and broadcast, so only report if the file is still pending.
 		if (PendingReadFiles.Remove(FileName) > 0)
 		{
-			UE_LOG(LogExtendedEOS, Error, TEXT("EEOSTitleStorageSubsystem::ReadTitleFile — ReadFile failed to start for '%s'"), *FileName);
+			UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSTitleStorageSubsystem::ReadTitleFile — ReadFile failed to start for '%s'"), *FEEOSNativeOperationLease::SafeField(FileName));
 			OnTitleFileRead.Broadcast(false, FileName, TArray<uint8>());
 		}
 		return false;
 	}
-	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSTitleStorageSubsystem::ReadTitleFile — Reading '%s'"), *FileName);
+	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSTitleStorageSubsystem::ReadTitleFile — Reading '%s'"), *FEEOSNativeOperationLease::SafeField(FileName));
 	return true;
 }
 
@@ -97,7 +101,7 @@ bool UEEOSTitleStorageSubsystem::ReadTitleFileAsString(const FString& FileName)
 	{
 		// Log-only rejection: a failure broadcast here would carry the SAME file name as the
 		// legitimate in-flight read and be indistinguishable from its real completion (R1)
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSTitleStorageSubsystem::ReadTitleFileAsString — Read already in flight for '%s', rejecting duplicate request (no broadcast)"), *FileName);
+		RejectOperation(TEXT("ReadTitleFileAsString"), EEOSOperationCode::Busy, TEXT("Another admitted request already owns this operation."));
 		return false;
 	}
 
@@ -116,13 +120,13 @@ bool UEEOSTitleStorageSubsystem::ReadTitleFileAsString(const FString& FileName)
 	IOnlineTitleFilePtr TitleFileInterface = EOSSub->GetTitleFileInterface();
 	if (!TitleFileInterface.IsValid())
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSTitleStorageSubsystem::ReadTitleFileAsString — TitleFile interface not available"));
+		FEEOSNativeOperationLease::ReportRepeated(GetOwningEOSInstanceName(), TEXT("ReadTitleFileAsString"), TEXT("CapabilityUnavailable"));
 		OnTitleFileRead.Broadcast(false, FileName, TArray<uint8>());
 		OnTitleFileReadAsString.Broadcast(false, FileName, FString());
 		return false;
 	}
 
-	EnsureTitleFileDelegatesBound(*TitleFileInterface);
+	if (!EnsureTitleFileDelegatesBound(*TitleFileInterface)) return false;
 	PendingReadFiles.Add(FileName);
 	PendingAsStringFiles.Add(FileName);
 	if (!TitleFileInterface->ReadFile(FileName))
@@ -132,13 +136,13 @@ bool UEEOSTitleStorageSubsystem::ReadTitleFileAsString(const FString& FileName)
 		if (PendingReadFiles.Remove(FileName) > 0)
 		{
 			PendingAsStringFiles.Remove(FileName);
-			UE_LOG(LogExtendedEOS, Error, TEXT("EEOSTitleStorageSubsystem::ReadTitleFileAsString — ReadFile failed to start for '%s'"), *FileName);
+			UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSTitleStorageSubsystem::ReadTitleFileAsString — ReadFile failed to start for '%s'"), *FEEOSNativeOperationLease::SafeField(FileName));
 			OnTitleFileRead.Broadcast(false, FileName, TArray<uint8>());
 			OnTitleFileReadAsString.Broadcast(false, FileName, FString());
 		}
 		return false;
 	}
-	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSTitleStorageSubsystem::ReadTitleFileAsString — Reading '%s'"), *FileName);
+	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSTitleStorageSubsystem::ReadTitleFileAsString — Reading '%s'"), *FEEOSNativeOperationLease::SafeField(FileName));
 	return true;
 }
 
@@ -163,12 +167,12 @@ bool UEEOSTitleStorageSubsystem::QueryTitleFiles()
 	IOnlineTitleFilePtr TitleFileInterface = EOSSub->GetTitleFileInterface();
 	if (!TitleFileInterface.IsValid())
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSTitleStorageSubsystem::QueryTitleFiles — TitleFile interface not available"));
+		FEEOSNativeOperationLease::ReportRepeated(GetOwningEOSInstanceName(), TEXT("QueryTitleFiles"), TEXT("CapabilityUnavailable"));
 		OnTitleFilesQueried.Broadcast(TArray<FString>());
 		return false;
 	}
 
-	EnsureTitleFileDelegatesBound(*TitleFileInterface);
+	if (!EnsureTitleFileDelegatesBound(*TitleFileInterface)) return false;
 	bEnumerateInFlight = true;
 	if (!TitleFileInterface->EnumerateFiles())
 	{
@@ -177,7 +181,7 @@ bool UEEOSTitleStorageSubsystem::QueryTitleFiles()
 		if (bEnumerateInFlight)
 		{
 			bEnumerateInFlight = false;
-			UE_LOG(LogExtendedEOS, Error, TEXT("EEOSTitleStorageSubsystem::QueryTitleFiles — EnumerateFiles failed to start"));
+			UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSTitleStorageSubsystem::QueryTitleFiles — EnumerateFiles failed to start"));
 			OnTitleFilesQueried.Broadcast(TArray<FString>());
 		}
 		return false;
@@ -200,6 +204,7 @@ bool UEEOSTitleStorageSubsystem::HasTitleFile(const FString& FileName) const
 
 void UEEOSTitleStorageSubsystem::HandleEnumerateTitleFilesComplete(bool bWasSuccessful, const FString& Error)
 {
+	bWasSuccessful = bWasSuccessful && IsEOSContextCurrent(BindingContext, false);
 	if (!bEnumerateInFlight)
 	{
 		// Not an operation we started — ignore
@@ -211,9 +216,9 @@ void UEEOSTitleStorageSubsystem::HandleEnumerateTitleFilesComplete(bool bWasSucc
 
 	if (bWasSuccessful)
 	{
-		if (IOnlineSubsystem* EOSSub = GetEOSOnlineSubsystem())
+		if (IOnlineSubsystem* EOSSub = GetExistingEOSOnlineSubsystem())
 		{
-			IOnlineTitleFilePtr TitleFileInterface = EOSSub->GetTitleFileInterface();
+			IOnlineTitleFilePtr TitleFileInterface = BoundInterface;
 			if (TitleFileInterface.IsValid())
 			{
 				TArray<FCloudFileHeader> Headers;
@@ -227,7 +232,7 @@ void UEEOSTitleStorageSubsystem::HandleEnumerateTitleFilesComplete(bool bWasSucc
 	}
 	else
 	{
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSTitleStorageSubsystem: Enumerate title files failed — %s"), *Error);
+		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSTitleStorageSubsystem: Enumerate title files failed — %s"), *FEEOSNativeOperationLease::SafeField(Error));
 	}
 
 	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSTitleStorageSubsystem: Enumerated %d title files"), CachedTitleFiles.Num());
@@ -236,6 +241,7 @@ void UEEOSTitleStorageSubsystem::HandleEnumerateTitleFilesComplete(bool bWasSucc
 
 void UEEOSTitleStorageSubsystem::HandleReadTitleFileComplete(bool bWasSuccessful, const FString& FileName)
 {
+	bWasSuccessful = bWasSuccessful && IsEOSContextCurrent(BindingContext, false);
 	if (PendingReadFiles.Remove(FileName) == 0)
 	{
 		// Not an operation we started (or already reported) — ignore
@@ -247,9 +253,9 @@ void UEEOSTitleStorageSubsystem::HandleReadTitleFileComplete(bool bWasSuccessful
 
 	if (bWasSuccessful)
 	{
-		if (IOnlineSubsystem* EOSSub = GetEOSOnlineSubsystem())
+		if (IOnlineSubsystem* EOSSub = GetExistingEOSOnlineSubsystem())
 		{
-			IOnlineTitleFilePtr TitleFileInterface = EOSSub->GetTitleFileInterface();
+			IOnlineTitleFilePtr TitleFileInterface = BoundInterface;
 			if (TitleFileInterface.IsValid())
 			{
 				TitleFileInterface->GetFileContents(FileName, FileData);
@@ -257,7 +263,7 @@ void UEEOSTitleStorageSubsystem::HandleReadTitleFileComplete(bool bWasSuccessful
 		}
 	}
 
-	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSTitleStorageSubsystem: Read '%s' %s (%d bytes)"), *FileName, bWasSuccessful ? TEXT("succeeded") : TEXT("failed"), FileData.Num());
+	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSTitleStorageSubsystem: Read '%s' %s (%d bytes)"), *FEEOSNativeOperationLease::SafeField(FileName), bWasSuccessful ? TEXT("succeeded") : TEXT("failed"), FileData.Num());
 	OnTitleFileRead.Broadcast(bWasSuccessful, FileName, FileData);
 
 	if (bRequestedAsString)

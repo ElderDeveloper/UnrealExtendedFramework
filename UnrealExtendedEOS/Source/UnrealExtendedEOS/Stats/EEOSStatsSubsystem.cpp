@@ -1,6 +1,7 @@
 // Copyright Kemal Erdem YILMAZ. All Rights Reserved.
 
 #include "EEOSStatsSubsystem.h"
+#include "Shared/EEOSNativeOperation.h"
 #include "OnlineSubsystemUtils.h"
 #include "Interfaces/OnlineStatsInterface.h"
 #include "Shared/EEOSBlueprintLibrary.h"
@@ -16,6 +17,7 @@ void UEEOSStatsSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 
 void UEEOSStatsSubsystem::Deinitialize()
 {
+	BeginEOSShutdown();
 	CachedStats.Empty();
 	Super::Deinitialize();
 }
@@ -43,7 +45,7 @@ bool UEEOSStatsSubsystem::IngestStatsInternal(const TCHAR* FunctionName, const T
 
 	if (StatsToIngest.Num() > EOS_STATS_MAX_INGEST_STATS)
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSStatsSubsystem::%s — %d stats exceeds the SDK limit of %d per ingest"),
+		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSStatsSubsystem::%s — %d stats exceeds the SDK limit of %d per ingest"),
 			FunctionName, StatsToIngest.Num(), EOS_STATS_MAX_INGEST_STATS);
 		OnStatIngested.Broadcast(false);
 		return false;
@@ -66,7 +68,7 @@ bool UEEOSStatsSubsystem::IngestStatsInternal(const TCHAR* FunctionName, const T
 	EOS_HStats StatsHandle = PlatformHandle ? EOS_Platform_GetStatsInterface(PlatformHandle) : nullptr;
 	if (!StatsHandle)
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSStatsSubsystem::%s — Stats interface not available"), FunctionName);
+		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSStatsSubsystem::%s — Stats interface not available"), FunctionName);
 		OnStatIngested.Broadcast(false);
 		return false;
 	}
@@ -85,7 +87,7 @@ bool UEEOSStatsSubsystem::IngestStatsInternal(const TCHAR* FunctionName, const T
 	const FString LocalPUIDStr = UEEOSBlueprintLibrary::ExtractProductUserId(LocalUserId->ToString());
 	if (LocalPUIDStr.IsEmpty())
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSStatsSubsystem::%s — Logged-in user has no Product User ID (no Connect session)"), FunctionName);
+		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSStatsSubsystem::%s — Logged-in user has no Product User ID (no Connect session)"), FunctionName);
 		OnStatIngested.Broadcast(false);
 		return false;
 	}
@@ -107,7 +109,7 @@ bool UEEOSStatsSubsystem::IngestStatsInternal(const TCHAR* FunctionName, const T
 		if (StatNameUpper != Pair.Key)
 		{
 			UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSStatsSubsystem::%s — Stat name '%s' is not upper case; ingesting as '%s' (EOS stat names are upper case in the Dev Portal)"),
-				FunctionName, *Pair.Key, *StatNameUpper);
+				FunctionName, *FEEOSNativeOperationLease::SafeField(Pair.Key), *FEEOSNativeOperationLease::SafeField(StatNameUpper));
 		}
 
 		FTCHARToUTF8 Converted(*StatNameUpper);
@@ -143,21 +145,23 @@ bool UEEOSStatsSubsystem::IngestStatsInternal(const TCHAR* FunctionName, const T
 	{
 		// Weak — the EOS platform outlives this subsystem, so the callback can fire after GC
 		TWeakObjectPtr<UEEOSStatsSubsystem> Self;
+		FEEOSRequestContext Ownership;
 		int32 NumStats = 0;
 	};
 
 	FIngestStatsContext* Context = new FIngestStatsContext();
-	Context->Self = this;
+	Context->Self = this; Context->Ownership = CaptureEOSContext();
 	Context->NumStats = IngestData.Num();
 
 	EOS_Stats_IngestStat(StatsHandle, &Options, Context,
 		[](const EOS_Stats_IngestStatCompleteCallbackInfo* Data)
 		{
+			if (!Data || !EOS_EResult_IsOperationComplete(Data->ResultCode)) return;
 			TUniquePtr<FIngestStatsContext> Ctx(static_cast<FIngestStatsContext*>(Data->ClientData));
 			if (!Ctx) return;
 
 			UEEOSStatsSubsystem* Self = Ctx->Self.Get();
-			if (!Self) return;
+			if (!Self || !Self->IsEOSContextCurrent(Ctx->Ownership)) return;
 
 			const bool bSuccess = Data->ResultCode == EOS_EResult::EOS_Success;
 			if (bSuccess)
@@ -219,7 +223,7 @@ bool UEEOSStatsSubsystem::QueryStats(const FString& UserId, const TArray<FString
 	// validity of the parsed id is not enough.
 	if (UEEOSBlueprintLibrary::ExtractProductUserId(NetId->ToString()).IsEmpty())
 	{
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSStatsSubsystem::QueryStats — User id '%s' has no Product User ID half; EOS stats are keyed by PUID and the engine would never complete this query"), *UserId);
+		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSStatsSubsystem::QueryStats — User id '%s' has no Product User ID half; EOS stats are keyed by PUID and the engine would never complete this query"), *FEEOSNativeOperationLease::SafeField(UserId));
 		OnStatsQueried.Broadcast(false, TArray<FEEOSStat>());
 		return false;
 	}
@@ -228,8 +232,9 @@ bool UEEOSStatsSubsystem::QueryStats(const FString& UserId, const TArray<FString
 	Users.Add(NetId.ToSharedRef());
 
 	StatsInterface->QueryStats(LocalUserId.ToSharedRef(), Users, StatNames,
-		FOnlineStatsQueryUsersStatsComplete::CreateWeakLambda(this, [this, QueriedId = NetId.ToSharedRef()](const FOnlineError& Error, const TArray<TSharedRef<const FOnlineStatsUserStats>>& UsersStats)
+		FOnlineStatsQueryUsersStatsComplete::CreateWeakLambda(this, [this, QueriedId = NetId.ToSharedRef(), Ownership = CaptureEOSContext()](const FOnlineError& Error, const TArray<TSharedRef<const FOnlineStatsUserStats>>& UsersStats)
 		{
+			if (!IsEOSContextCurrent(Ownership)) { OnStatsQueried.Broadcast(false, TArray<FEEOSStat>()); return; }
 			CachedStats.Empty();
 			bool bQueriedUserPresent = false;
 

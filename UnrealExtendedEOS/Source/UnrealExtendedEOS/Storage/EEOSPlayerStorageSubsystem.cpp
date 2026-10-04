@@ -1,6 +1,7 @@
 // Copyright Kemal Erdem YILMAZ. All Rights Reserved.
 
 #include "EEOSPlayerStorageSubsystem.h"
+#include "Shared/EEOSNativeOperation.h"
 #include "OnlineSubsystemUtils.h"
 #include "UnrealExtendedEOS.h"
 #include "Kismet/GameplayStatics.h"
@@ -13,22 +14,15 @@ void UEEOSPlayerStorageSubsystem::Initialize(FSubsystemCollectionBase& Collectio
 
 void UEEOSPlayerStorageSubsystem::Deinitialize()
 {
-	// Unbind cloud delegates (bound once on first use, kept until now)
-	if (IsEOSAvailable())
+	BeginEOSShutdown();
+	if (BoundInterface.IsValid())
 	{
-		if (IOnlineSubsystem* EOSSub = GetEOSOnlineSubsystem())
-		{
-			IOnlineUserCloudPtr CloudInterface = EOSSub->GetUserCloudInterface();
-			if (CloudInterface.IsValid())
-			{
-				CloudInterface->ClearOnWriteUserFileCompleteDelegates(this);
-				CloudInterface->ClearOnReadUserFileCompleteDelegates(this);
-				CloudInterface->ClearOnEnumerateUserFilesCompleteDelegates(this);
-				CloudInterface->ClearOnDeleteUserFileCompleteDelegates(this);
-			}
-		}
+		BoundInterface->ClearOnWriteUserFileCompleteDelegates(this);
+		BoundInterface->ClearOnReadUserFileCompleteDelegates(this);
+		BoundInterface->ClearOnEnumerateUserFilesCompleteDelegates(this);
+		BoundInterface->ClearOnDeleteUserFileCompleteDelegates(this);
 	}
-
+	BoundInterface.Reset();
 	bCloudDelegatesBound = false;
 	PendingWriteFiles.Empty();
 	PendingReadFiles.Empty();
@@ -39,12 +33,22 @@ void UEEOSPlayerStorageSubsystem::Deinitialize()
 	Super::Deinitialize();
 }
 
-void UEEOSPlayerStorageSubsystem::EnsureCloudDelegatesBound(IOnlineUserCloud& CloudInterface)
+bool UEEOSPlayerStorageSubsystem::EnsureCloudDelegatesBound(IOnlineUserCloud& CloudInterface)
 {
-	if (bCloudDelegatesBound)
+	if (bCloudDelegatesBound && BoundInterface.Get() == &CloudInterface && IsEOSContextCurrent(BindingContext)) return true;
+	if (bCloudDelegatesBound && (!PendingReadFiles.IsEmpty() || bEnumerateInFlight || !PendingWriteFiles.IsEmpty() || !PendingDeleteFiles.IsEmpty()))
+	{ RejectOperation(TEXT("PlayerStorage"), EEOSOperationCode::Busy, TEXT("Original storage interface still owns pending transfers.")); return false; }
+	if (BoundInterface.IsValid())
 	{
-		return;
+		BoundInterface->ClearOnWriteUserFileCompleteDelegates(this);
+		BoundInterface->ClearOnReadUserFileCompleteDelegates(this);
+		BoundInterface->ClearOnEnumerateUserFilesCompleteDelegates(this);
+		BoundInterface->ClearOnDeleteUserFileCompleteDelegates(this);
 	}
+	IOnlineSubsystem* OSS = GetExistingEOSOnlineSubsystem();
+	BoundInterface = OSS ? OSS->GetUserCloudInterface() : IOnlineUserCloudPtr();
+	if (!BoundInterface.IsValid() || BoundInterface.Get() != &CloudInterface) return false;
+	BindingContext = CaptureEOSContext();
 
 	// Bind the interface-wide delegate lists exactly once; completions are correlated
 	// to in-flight operations through the pending-file sets, so concurrent transfers
@@ -53,7 +57,7 @@ void UEEOSPlayerStorageSubsystem::EnsureCloudDelegatesBound(IOnlineUserCloud& Cl
 	CloudInterface.OnReadUserFileCompleteDelegates.AddUObject(this, &UEEOSPlayerStorageSubsystem::HandleReadUserFileComplete);
 	CloudInterface.OnEnumerateUserFilesCompleteDelegates.AddUObject(this, &UEEOSPlayerStorageSubsystem::HandleEnumerateUserFilesComplete);
 	CloudInterface.OnDeleteUserFileCompleteDelegates.AddUObject(this, &UEEOSPlayerStorageSubsystem::HandleDeleteUserFileComplete);
-	bCloudDelegatesBound = true;
+	bCloudDelegatesBound = true; return true;
 }
 
 bool UEEOSPlayerStorageSubsystem::WritePlayerData(const FString& FileName, const TArray<uint8>& Data)
@@ -62,7 +66,7 @@ bool UEEOSPlayerStorageSubsystem::WritePlayerData(const FString& FileName, const
 	{
 		// Log-only rejection: a failure broadcast here would carry the SAME file name as the
 		// legitimate in-flight write and be indistinguishable from its real completion (R1)
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSPlayerStorageSubsystem::WritePlayerData — Write already in flight for '%s', rejecting duplicate request (no broadcast)"), *FileName);
+		RejectOperation(TEXT("WritePlayerData"), EEOSOperationCode::Busy, TEXT("Another admitted request already owns this operation."));
 		return false;
 	}
 
@@ -77,7 +81,7 @@ bool UEEOSPlayerStorageSubsystem::WritePlayerData(const FString& FileName, const
 	IOnlineUserCloudPtr CloudInterface = EOSSub->GetUserCloudInterface();
 	if (!CloudInterface.IsValid())
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSPlayerStorageSubsystem::WritePlayerData — UserCloud interface not available"));
+		FEEOSNativeOperationLease::ReportRepeated(GetOwningEOSInstanceName(), TEXT("WritePlayerData"), TEXT("CapabilityUnavailable"));
 		OnPlayerDataWritten.Broadcast(false, FileName);
 		return false;
 	}
@@ -92,12 +96,12 @@ bool UEEOSPlayerStorageSubsystem::WritePlayerData(const FString& FileName, const
 	FUniqueNetIdPtr UserId = IdentityInterface->GetUniquePlayerId(0);
 	if (!UserId.IsValid())
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSPlayerStorageSubsystem::WritePlayerData — No logged-in user"));
+		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSPlayerStorageSubsystem::WritePlayerData — No logged-in user"));
 		OnPlayerDataWritten.Broadcast(false, FileName);
 		return false;
 	}
 
-	EnsureCloudDelegatesBound(*CloudInterface);
+	if (!EnsureCloudDelegatesBound(*CloudInterface)) return false;
 	PendingWriteFiles.Add(FileName);
 	TArray<uint8> MutableData = Data;
 	if (!CloudInterface->WriteUserFile(*UserId, FileName, MutableData))
@@ -106,12 +110,12 @@ bool UEEOSPlayerStorageSubsystem::WritePlayerData(const FString& FileName, const
 		// removed the entry and broadcast, so only report if the file is still pending.
 		if (PendingWriteFiles.Remove(FileName) > 0)
 		{
-			UE_LOG(LogExtendedEOS, Error, TEXT("EEOSPlayerStorageSubsystem::WritePlayerData — WriteUserFile failed to start for '%s'"), *FileName);
+			UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSPlayerStorageSubsystem::WritePlayerData — WriteUserFile failed to start for '%s'"), *FEEOSNativeOperationLease::SafeField(FileName));
 			OnPlayerDataWritten.Broadcast(false, FileName);
 		}
 		return false;
 	}
-	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSPlayerStorageSubsystem::WritePlayerData — Writing %d bytes to '%s'"), Data.Num(), *FileName);
+	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSPlayerStorageSubsystem::WritePlayerData — Writing %d bytes to '%s'"), Data.Num(), *FEEOSNativeOperationLease::SafeField(FileName));
 	return true;
 }
 
@@ -127,7 +131,7 @@ bool UEEOSPlayerStorageSubsystem::WriteSaveGame(const FString& FileName, USaveGa
 {
 	if (!SaveGameObject)
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSPlayerStorageSubsystem::WriteSaveGame — SaveGameObject is null"));
+		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSPlayerStorageSubsystem::WriteSaveGame — SaveGameObject is null"));
 		OnPlayerDataWritten.Broadcast(false, FileName);
 		return false;
 	}
@@ -135,11 +139,11 @@ bool UEEOSPlayerStorageSubsystem::WriteSaveGame(const FString& FileName, USaveGa
 	TArray<uint8> SaveData;
 	if (UGameplayStatics::SaveGameToMemory(SaveGameObject, SaveData))
 	{
-		UE_LOG(LogExtendedEOS, Log, TEXT("EEOSPlayerStorageSubsystem::WriteSaveGame — Serialized %d bytes, writing to '%s'"), SaveData.Num(), *FileName);
+		UE_LOG(LogExtendedEOS, Log, TEXT("EEOSPlayerStorageSubsystem::WriteSaveGame — Serialized %d bytes, writing to '%s'"), SaveData.Num(), *FEEOSNativeOperationLease::SafeField(FileName));
 		return WritePlayerData(FileName, SaveData);
 	}
 
-	UE_LOG(LogExtendedEOS, Error, TEXT("EEOSPlayerStorageSubsystem::WriteSaveGame — Failed to serialize SaveGame object"));
+	UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSPlayerStorageSubsystem::WriteSaveGame — Failed to serialize SaveGame object"));
 	OnPlayerDataWritten.Broadcast(false, FileName);
 	return false;
 }
@@ -152,7 +156,7 @@ bool UEEOSPlayerStorageSubsystem::ReadPlayerData(const FString& FileName)
 		// legitimate in-flight read and be indistinguishable from its real completion — an
 		// in-flight ReadSaveGame('X') would consume a rejected duplicate ReadPlayerData('X')
 		// as its own failure and unbind while the real data is still on its way (R1)
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSPlayerStorageSubsystem::ReadPlayerData — Read already in flight for '%s', rejecting duplicate request (no broadcast)"), *FileName);
+		RejectOperation(TEXT("ReadPlayerData"), EEOSOperationCode::Busy, TEXT("Another admitted request already owns this operation."));
 		return false;
 	}
 
@@ -167,7 +171,7 @@ bool UEEOSPlayerStorageSubsystem::ReadPlayerData(const FString& FileName)
 	IOnlineUserCloudPtr CloudInterface = EOSSub->GetUserCloudInterface();
 	if (!CloudInterface.IsValid())
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSPlayerStorageSubsystem::ReadPlayerData — UserCloud interface not available"));
+		FEEOSNativeOperationLease::ReportRepeated(GetOwningEOSInstanceName(), TEXT("ReadPlayerData"), TEXT("CapabilityUnavailable"));
 		OnPlayerDataRead.Broadcast(false, FileName, TArray<uint8>());
 		return false;
 	}
@@ -182,23 +186,23 @@ bool UEEOSPlayerStorageSubsystem::ReadPlayerData(const FString& FileName)
 	FUniqueNetIdPtr UserId = IdentityInterface->GetUniquePlayerId(0);
 	if (!UserId.IsValid())
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSPlayerStorageSubsystem::ReadPlayerData — No logged-in user"));
+		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSPlayerStorageSubsystem::ReadPlayerData — No logged-in user"));
 		OnPlayerDataRead.Broadcast(false, FileName, TArray<uint8>());
 		return false;
 	}
 
-	EnsureCloudDelegatesBound(*CloudInterface);
+	if (!EnsureCloudDelegatesBound(*CloudInterface)) return false;
 	PendingReadFiles.Add(FileName);
 	if (!CloudInterface->ReadUserFile(*UserId, FileName))
 	{
 		if (PendingReadFiles.Remove(FileName) > 0)
 		{
-			UE_LOG(LogExtendedEOS, Error, TEXT("EEOSPlayerStorageSubsystem::ReadPlayerData — ReadUserFile failed to start for '%s'"), *FileName);
+			UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSPlayerStorageSubsystem::ReadPlayerData — ReadUserFile failed to start for '%s'"), *FEEOSNativeOperationLease::SafeField(FileName));
 			OnPlayerDataRead.Broadcast(false, FileName, TArray<uint8>());
 		}
 		return false;
 	}
-	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSPlayerStorageSubsystem::ReadPlayerData — Reading '%s'"), *FileName);
+	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSPlayerStorageSubsystem::ReadPlayerData — Reading '%s'"), *FEEOSNativeOperationLease::SafeField(FileName));
 	return true;
 }
 
@@ -207,7 +211,7 @@ bool UEEOSPlayerStorageSubsystem::ReadSaveGame(const FString& FileName)
 	if (PendingSaveGameReads.Contains(FileName))
 	{
 		// Log-only rejection — see ReadPlayerData's duplicate guard (R1)
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSPlayerStorageSubsystem::ReadSaveGame — SaveGame read already in flight for '%s', rejecting duplicate request (no broadcast)"), *FileName);
+		RejectOperation(TEXT("ReadSaveGame"), EEOSOperationCode::Busy, TEXT("Another admitted request already owns this operation."));
 		return false;
 	}
 
@@ -238,7 +242,7 @@ bool UEEOSPlayerStorageSubsystem::DeletePlayerData(const FString& FileName)
 	if (PendingDeleteFiles.Contains(FileName))
 	{
 		// Log-only rejection — see ReadPlayerData's duplicate guard (R1)
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSPlayerStorageSubsystem::DeletePlayerData — Delete already in flight for '%s', rejecting duplicate request (no broadcast)"), *FileName);
+		RejectOperation(TEXT("DeletePlayerData"), EEOSOperationCode::Busy, TEXT("Another admitted request already owns this operation."));
 		return false;
 	}
 
@@ -253,7 +257,7 @@ bool UEEOSPlayerStorageSubsystem::DeletePlayerData(const FString& FileName)
 	IOnlineUserCloudPtr CloudInterface = EOSSub->GetUserCloudInterface();
 	if (!CloudInterface.IsValid())
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSPlayerStorageSubsystem::DeletePlayerData — UserCloud interface not available"));
+		FEEOSNativeOperationLease::ReportRepeated(GetOwningEOSInstanceName(), TEXT("DeletePlayerData"), TEXT("CapabilityUnavailable"));
 		OnPlayerDataDeleted.Broadcast(false, FileName);
 		return false;
 	}
@@ -268,23 +272,23 @@ bool UEEOSPlayerStorageSubsystem::DeletePlayerData(const FString& FileName)
 	FUniqueNetIdPtr UserId = IdentityInterface->GetUniquePlayerId(0);
 	if (!UserId.IsValid())
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSPlayerStorageSubsystem::DeletePlayerData — No logged-in user"));
+		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSPlayerStorageSubsystem::DeletePlayerData — No logged-in user"));
 		OnPlayerDataDeleted.Broadcast(false, FileName);
 		return false;
 	}
 
-	EnsureCloudDelegatesBound(*CloudInterface);
+	if (!EnsureCloudDelegatesBound(*CloudInterface)) return false;
 	PendingDeleteFiles.Add(FileName);
 	if (!CloudInterface->DeleteUserFile(*UserId, FileName, true, true))
 	{
 		if (PendingDeleteFiles.Remove(FileName) > 0)
 		{
-			UE_LOG(LogExtendedEOS, Error, TEXT("EEOSPlayerStorageSubsystem::DeletePlayerData — DeleteUserFile failed to start for '%s'"), *FileName);
+			UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSPlayerStorageSubsystem::DeletePlayerData — DeleteUserFile failed to start for '%s'"), *FEEOSNativeOperationLease::SafeField(FileName));
 			OnPlayerDataDeleted.Broadcast(false, FileName);
 		}
 		return false;
 	}
-	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSPlayerStorageSubsystem::DeletePlayerData — Deleting '%s'"), *FileName);
+	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSPlayerStorageSubsystem::DeletePlayerData — Deleting '%s'"), *FEEOSNativeOperationLease::SafeField(FileName));
 	return true;
 }
 
@@ -327,7 +331,7 @@ bool UEEOSPlayerStorageSubsystem::QueryPlayerFiles()
 		return false;
 	}
 
-	EnsureCloudDelegatesBound(*CloudInterface);
+	if (!EnsureCloudDelegatesBound(*CloudInterface)) return false;
 	bEnumerateInFlight = true;
 	CloudInterface->EnumerateUserFiles(*UserId);
 	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSPlayerStorageSubsystem::QueryPlayerFiles — Enumerating player files..."));
@@ -343,18 +347,22 @@ TArray<FString> UEEOSPlayerStorageSubsystem::GetPlayerFileList() const
 
 void UEEOSPlayerStorageSubsystem::HandleWriteUserFileComplete(bool bWasSuccessful, const FUniqueNetId& UserId, const FString& FileName)
 {
+	if (BindingContext.LocalId != UserId.ToString()) { LogCallbackDisposition(TEXT("PlayerStorage"), 0, TEXT("DifferentOwner"), BindingContext.Generation); return; }
+	bWasSuccessful = bWasSuccessful && IsEOSContextCurrent(BindingContext);
 	if (PendingWriteFiles.Remove(FileName) == 0)
 	{
 		// Not an operation we started (or already reported) — ignore
 		return;
 	}
 
-	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSPlayerStorageSubsystem: Write '%s' %s"), *FileName, bWasSuccessful ? TEXT("succeeded") : TEXT("failed"));
+	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSPlayerStorageSubsystem: Write '%s' %s"), *FEEOSNativeOperationLease::SafeField(FileName), bWasSuccessful ? TEXT("succeeded") : TEXT("failed"));
 	OnPlayerDataWritten.Broadcast(bWasSuccessful, FileName);
 }
 
 void UEEOSPlayerStorageSubsystem::HandleReadUserFileComplete(bool bWasSuccessful, const FUniqueNetId& UserId, const FString& FileName)
 {
+	if (BindingContext.LocalId != UserId.ToString()) { LogCallbackDisposition(TEXT("PlayerStorage"), 0, TEXT("DifferentOwner"), BindingContext.Generation); return; }
+	bWasSuccessful = bWasSuccessful && IsEOSContextCurrent(BindingContext);
 	if (PendingReadFiles.Remove(FileName) == 0)
 	{
 		// Not an operation we started (or already reported) — ignore
@@ -365,21 +373,23 @@ void UEEOSPlayerStorageSubsystem::HandleReadUserFileComplete(bool bWasSuccessful
 
 	if (bWasSuccessful)
 	{
-		if (IOnlineSubsystem* EOSSub = GetEOSOnlineSubsystem())
+		if (IOnlineSubsystem* EOSSub = GetExistingEOSOnlineSubsystem())
 		{
-			if (IOnlineUserCloudPtr Cloud = EOSSub->GetUserCloudInterface())
+			if (IOnlineUserCloudPtr Cloud = BoundInterface)
 			{
 				Cloud->GetFileContents(UserId, FileName, FileData);
 			}
 		}
 	}
 
-	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSPlayerStorageSubsystem: Read '%s' %s (%d bytes)"), *FileName, bWasSuccessful ? TEXT("succeeded") : TEXT("failed"), FileData.Num());
+	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSPlayerStorageSubsystem: Read '%s' %s (%d bytes)"), *FEEOSNativeOperationLease::SafeField(FileName), bWasSuccessful ? TEXT("succeeded") : TEXT("failed"), FileData.Num());
 	OnPlayerDataRead.Broadcast(bWasSuccessful, FileName, FileData);
 }
 
 void UEEOSPlayerStorageSubsystem::HandleEnumerateUserFilesComplete(bool bWasSuccessful, const FUniqueNetId& UserId)
 {
+	if (BindingContext.LocalId != UserId.ToString()) { LogCallbackDisposition(TEXT("PlayerStorage"), 0, TEXT("DifferentOwner"), BindingContext.Generation); return; }
+	bWasSuccessful = bWasSuccessful && IsEOSContextCurrent(BindingContext);
 	if (!bEnumerateInFlight)
 	{
 		// Not an operation we started — ignore
@@ -391,9 +401,9 @@ void UEEOSPlayerStorageSubsystem::HandleEnumerateUserFilesComplete(bool bWasSucc
 
 	if (bWasSuccessful)
 	{
-		if (IOnlineSubsystem* EOSSub = GetEOSOnlineSubsystem())
+		if (IOnlineSubsystem* EOSSub = GetExistingEOSOnlineSubsystem())
 		{
-			if (IOnlineUserCloudPtr Cloud = EOSSub->GetUserCloudInterface())
+			if (IOnlineUserCloudPtr Cloud = BoundInterface)
 			{
 				TArray<FCloudFileHeader> Headers;
 				Cloud->GetUserFileList(UserId, Headers);
@@ -411,13 +421,15 @@ void UEEOSPlayerStorageSubsystem::HandleEnumerateUserFilesComplete(bool bWasSucc
 
 void UEEOSPlayerStorageSubsystem::HandleDeleteUserFileComplete(bool bWasSuccessful, const FUniqueNetId& UserId, const FString& FileName)
 {
+	if (BindingContext.LocalId != UserId.ToString()) { LogCallbackDisposition(TEXT("PlayerStorage"), 0, TEXT("DifferentOwner"), BindingContext.Generation); return; }
+	bWasSuccessful = bWasSuccessful && IsEOSContextCurrent(BindingContext);
 	if (PendingDeleteFiles.Remove(FileName) == 0)
 	{
 		// Not an operation we started (or already reported) — ignore
 		return;
 	}
 
-	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSPlayerStorageSubsystem: Delete '%s' %s"), *FileName, bWasSuccessful ? TEXT("succeeded") : TEXT("failed"));
+	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSPlayerStorageSubsystem: Delete '%s' %s"), *FEEOSNativeOperationLease::SafeField(FileName), bWasSuccessful ? TEXT("succeeded") : TEXT("failed"));
 	OnPlayerDataDeleted.Broadcast(bWasSuccessful, FileName);
 }
 
@@ -435,12 +447,12 @@ void UEEOSPlayerStorageSubsystem::HandleSaveGameDataRead(bool bSuccess, const FS
 		USaveGame* LoadedGame = UGameplayStatics::LoadGameFromMemory(Data);
 		if (LoadedGame)
 		{
-			UE_LOG(LogExtendedEOS, Log, TEXT("EEOSPlayerStorageSubsystem: Deserialized SaveGame from '%s'"), *FileName);
+			UE_LOG(LogExtendedEOS, Log, TEXT("EEOSPlayerStorageSubsystem: Deserialized SaveGame from '%s'"), *FEEOSNativeOperationLease::SafeField(FileName));
 			OnSaveGameRead.Broadcast(true, FileName, LoadedGame);
 		}
 		else
 		{
-			UE_LOG(LogExtendedEOS, Error, TEXT("EEOSPlayerStorageSubsystem: Failed to deserialize SaveGame from '%s'"), *FileName);
+			UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSPlayerStorageSubsystem: Failed to deserialize SaveGame from '%s'"), *FEEOSNativeOperationLease::SafeField(FileName));
 			OnSaveGameRead.Broadcast(false, FileName, nullptr);
 		}
 	}

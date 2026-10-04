@@ -74,6 +74,8 @@ private:
 	/** True if the session was opened with an Epic account id, false for an external id */
 	bool bSessionUsedEpicAccount = false;
 
-	/** The exact account id string used at Begin: the Epic Account ID, or the external id (PUID or "local") */
+	/** The exact account id string used at Begin: the Epic Account ID, or the external id (PUID) */
 	FString SessionAccountId;
+	TSharedPtr<IEOSPlatformHandle, ESPMode::ThreadSafe> SessionPlatform;
+	bool bShuttingDown = false;
 };

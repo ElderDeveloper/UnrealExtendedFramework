@@ -204,6 +204,18 @@ public:
 		meta = (DisplayName = "Enable Verbose Logging"))
 	bool bEnableVerboseLogging = false;
 
+	/** Essential admitted/terminal summaries. Project compile-time logging policy still applies. */
+	UPROPERTY(config, EditAnywhere, BlueprintReadOnly, Category = "Diagnostics")
+	bool bEnableOperationLogging = true;
+	/** Enables intermediate transitions and callback disposition in this plugin category only. */
+	UPROPERTY(config, EditAnywhere, BlueprintReadOnly, Category = "Diagnostics")
+	bool bEnableDetailedOperationLogging = false;
+	/** Allow plugin diagnostics in shipping when the project's logging policy permits them. */
+	UPROPERTY(config, EditAnywhere, BlueprintReadOnly, Category = "Diagnostics")
+	bool bEnableShippingDiagnostics = true;
+	UPROPERTY(config, EditAnywhere, BlueprintReadOnly, Category = "Diagnostics", meta = (ClampMin = "1.0", ClampMax = "3600.0"))
+	float DiagnosticSummaryIntervalSeconds = 10.0f;
+
 
 	// ── Feature Toggles ──────────────────────────────────────────────────────
 

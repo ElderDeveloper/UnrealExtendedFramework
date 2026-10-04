@@ -3,6 +3,7 @@
 #include "EGInteractionComponent.h"
 
 #include "Blueprint/UserWidget.h"
+#include "Components/PrimitiveComponent.h"
 #include "DrawDebugHelpers.h"
 #include "EGInteractableActor.h"
 #include "EGInteractableInterface.h"
@@ -278,8 +279,12 @@ void UEGInteractionComponent::InteractionStart()
 	}
 
 	// The client tracks the target locally so hold UI can run before the server confirms.
+	// Close an earlier rejected request even if its optimistic actor was cleared.
+	InteractionEnd();
 	ActiveInteractionActor = TargetActor;
-	ServerInteractionStart(TargetActor, LastHitResult);
+	RequestedInteractionActor = TargetActor;
+	RequestedInteractionAttemptId = ++NextInteractionAttemptId;
+	ServerInteractionStart(RequestedInteractionAttemptId, TargetActor, LastHitResult);
 }
 
 void UEGInteractionComponent::InteractionTick(float DeltaTime)
@@ -301,26 +306,22 @@ void UEGInteractionComponent::InteractionTick(float DeltaTime)
 
 void UEGInteractionComponent::InteractionEnd()
 {
-	AActor* TargetActor = ActiveInteractionActor.Get();
-	if (!TargetActor && !ActiveInteractionActor.IsStale())
+	if (GetOwner() && GetOwner()->HasAuthority())
 	{
+		EndInteractionOnServer(ActiveInteractionActor.Get());
+		ServerInteractionAttemptId = 0;
 		return;
 	}
 
-	if (TargetActor && GetOwner() && GetOwner()->HasAuthority())
-	{
-		EndInteractionOnServer(TargetActor);
-		return;
-	}
-
+	const int64 AttemptId = RequestedInteractionAttemptId;
+	RequestedInteractionAttemptId = 0;
+	RequestedInteractionActor.Reset();
 	ActiveInteractionActor.Reset();
-
-	if (!TargetActor)
+	if (AttemptId > 0)
 	{
-		return;
+		// Send even when the target was destroyed or a rejection already cleared local UI.
+		ServerInteractionEnd(AttemptId);
 	}
-
-	ServerInteractionEnd(TargetActor);
 }
 
 void UEGInteractionComponent::EnableMouseInteraction()
@@ -387,33 +388,51 @@ FHitResult UEGInteractionComponent::GetInteractionHit(const AActor* Interactor)
 // Authority
 // =====================================================================
 
-void UEGInteractionComponent::ServerInteractionStart_Implementation(AActor* TargetActor, FHitResult ClientHitResult)
+void UEGInteractionComponent::ServerInteractionStart_Implementation(int64 AttemptId, AActor* TargetActor, FHitResult ClientHitResult)
 {
-	const bool bSuccess = BeginInteractionOnServer(TargetActor, ClientHitResult);
-	if (!bSuccess)
-	{
-		ClientInteractionResult(false, TargetActor, ClientHitResult, EGInteraction::RejectedReason);
-	}
-}
-
-void UEGInteractionComponent::ServerInteractionEnd_Implementation(AActor* TargetActor)
-{
-	EndInteractionOnServer(TargetActor);
-}
-
-void UEGInteractionComponent::ClientInteractionResult_Implementation(bool bSuccess, AActor* TargetActor, FHitResult ConfirmedHitResult, const FText& FailureReason)
-{
-	if (bSuccess)
+	if (AttemptId <= LastServerInteractionAttemptId)
 	{
 		return;
 	}
+	LastServerInteractionAttemptId = AttemptId;
+	// Newer input supersedes an abandoned hold; a delayed old end cannot end the new one.
+	EndInteractionOnServer(ActiveInteractionActor.Get());
+	ServerInteractionAttemptId = 0;
+	const bool bSuccess = BeginInteractionOnServer(TargetActor, ClientHitResult);
+	if (bSuccess)
+	{
+		ServerInteractionAttemptId = AttemptId;
+	}
+	ClientInteractionResult(AttemptId, bSuccess, !bSuccess, TargetActor,
+		bSuccess ? FText::GetEmpty() : EGInteraction::RejectedReason);
+}
 
-	// The server refused, so drop the client's optimistic hold bookkeeping.
-	if (ActiveInteractionActor.Get() == TargetActor)
+void UEGInteractionComponent::ServerInteractionEnd_Implementation(int64 AttemptId)
+{
+	if (AttemptId != ServerInteractionAttemptId || AttemptId <= 0)
+	{
+		return;
+	}
+	AActor* TargetActor = ActiveInteractionActor.Get();
+	EndInteractionOnServer(TargetActor);
+	ServerInteractionAttemptId = 0;
+	ClientInteractionResult(AttemptId, true, true, TargetActor, FText::GetEmpty());
+}
+
+void UEGInteractionComponent::ClientInteractionResult_Implementation(int64 AttemptId, bool bSuccess, bool bFinished, AActor* TargetActor, const FText& FailureReason)
+{
+	if (AttemptId != NextInteractionAttemptId)
+	{
+		return;
+	}
+	if ((!bSuccess || bFinished) && RequestedInteractionAttemptId == AttemptId)
 	{
 		ActiveInteractionActor.Reset();
 	}
-	OnInteractionFailed.Broadcast(TargetActor, FailureReason);
+	if (!bSuccess)
+	{
+		OnInteractionFailed.Broadcast(TargetActor, FailureReason);
+	}
 }
 
 bool UEGInteractionComponent::BeginInteractionOnServer(AActor* TargetActor, const FHitResult& HitResult)
@@ -438,13 +457,17 @@ bool UEGInteractionComponent::BeginInteractionOnServer(AActor* TargetActor, cons
 void UEGInteractionComponent::EndInteractionOnServer(AActor* TargetActor)
 {
 	AActor* ActiveActor = ActiveInteractionActor.Get();
-	if (!ActiveActor || ActiveActor != TargetActor)
+	if (ActiveActor != TargetActor)
 	{
 		return;
 	}
 
-	IEGInteractableInterface::Execute_InteractionEnd(ActiveActor, GetOwner());
+	// Clear first: target callbacks can themselves begin/end interaction.
 	ActiveInteractionActor.Reset();
+	if (IsValid(ActiveActor))
+	{
+		IEGInteractableInterface::Execute_InteractionEnd(ActiveActor, GetOwner());
+	}
 }
 
 bool UEGInteractionComponent::IsServerInteractionValid(AActor* TargetActor, const FHitResult& HitResult) const
@@ -468,7 +491,25 @@ bool UEGInteractionComponent::IsServerInteractionValid(AActor* TargetActor, cons
 	}
 
 	const float ValidationDistance = InteractionRange + TraceRadius + ValidationSlack;
-	if (FVector::DistSquared(GetOwner()->GetActorLocation(), TargetActor->GetActorLocation()) > FMath::Square(ValidationDistance))
+	const FVector OwnerLocation = GetOwner()->GetActorLocation();
+	FVector ClosestPoint = TargetActor->GetActorLocation();
+	const UPrimitiveComponent* HitComponent = HitResult.GetComponent();
+	if (HitComponent && HitComponent->GetOwner() != TargetActor)
+	{
+		return false;
+	}
+	float DistanceToTarget = HitComponent ? HitComponent->GetClosestPointOnCollision(OwnerLocation, ClosestPoint) : -1.0f;
+	if (DistanceToTarget < 0.0f)
+	{
+		DistanceToTarget = TargetActor->ActorGetDistanceToCollision(OwnerLocation, TraceChannel, ClosestPoint);
+	}
+	if (DistanceToTarget < 0.0f)
+	{
+		const FBox Bounds = TargetActor->GetComponentsBoundingBox(true);
+		DistanceToTarget = Bounds.IsValid ? FVector::Dist(OwnerLocation, Bounds.GetClosestPointTo(OwnerLocation))
+			: FVector::Dist(OwnerLocation, TargetActor->GetActorLocation());
+	}
+	if (DistanceToTarget > ValidationDistance)
 	{
 		UE_CLOG(bDebugLogTraceResults, LogEGInteraction, Warning, TEXT("[%s] Rejected: %s is out of range"), *GetNameSafe(GetOwner()), *GetNameSafe(TargetActor));
 		return false;

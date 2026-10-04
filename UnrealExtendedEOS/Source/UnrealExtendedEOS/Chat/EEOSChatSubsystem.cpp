@@ -1,6 +1,8 @@
 // Copyright Kemal Erdem YILMAZ. All Rights Reserved.
 
 #include "EEOSChatSubsystem.h"
+#include "Shared/EEOSNativeOperation.h"
+#include "Shared/EEOSIdentityUtils.h"
 #include "UnrealExtendedEOS.h"
 #include "OnlineSubsystemUtils.h"
 #include "Interfaces/OnlineChatInterface.h"
@@ -19,21 +21,28 @@ static FString MakeDMChannelKey(const FString& TargetUserId)
 	return FString::Printf(TEXT("DM_%s"), Puid.IsEmpty() ? *TargetUserId : *Puid);
 }
 
+
 void UEEOSChatSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
-	Super::Initialize(Collection);
-
+	Super::Initialize(Collection); bShuttingDown = false;
+	BindNativeChat();
+	ChatBindingTicker = FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateUObject(this, &UEEOSChatSubsystem::TickNativeChat), 0.5f);
+}
+void UEEOSChatSubsystem::BindNativeChat()
+{
+	ChatBindingContext = CaptureEOSContext();
 	// Register for incoming chat messages if the interface is available
-	if (IsEOSAvailable())
+	if (IOnlineSubsystem* EOSSub = GetExistingEOSOnlineSubsystem())
 	{
-		IOnlineSubsystem* EOSSub = GetEOSOnlineSubsystem();
-		IOnlineChatPtr ChatInterface = EOSSub->GetChatInterface();
+		IOnlineChatPtr ChatInterface = EOSSub ? EOSSub->GetChatInterface() : IOnlineChatPtr();
 		if (ChatInterface.IsValid())
 		{
+			BoundChat = ChatInterface;
 			ChatMessageReceivedHandle = ChatInterface->AddOnChatRoomMessageReceivedDelegate_Handle(
-				FOnChatRoomMessageReceivedDelegate::CreateLambda(
-				[this](const FUniqueNetId& UserId, const FChatRoomId& RoomId, const TSharedRef<FChatMessage>& ChatMessage)
+				FOnChatRoomMessageReceivedDelegate::CreateWeakLambda(this,
+				[this, Ownership = CaptureEOSContext()](const FUniqueNetId& UserId, const FChatRoomId& RoomId, const TSharedRef<FChatMessage>& ChatMessage)
 				{
+					if (bShuttingDown || !IsEOSContextCurrent(Ownership) || Ownership.LocalId != UserId.ToString()) return;
 					FString ChannelName = RoomId;
 					FString SenderId = ChatMessage->GetUserId()->ToString();
 					FString SenderName = ChatMessage->GetNickname();
@@ -65,9 +74,10 @@ void UEEOSChatSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 				}));
 
 			ChatRoomJoinHandle = ChatInterface->AddOnChatRoomJoinPublicDelegate_Handle(
-				FOnChatRoomJoinPublicDelegate::CreateLambda(
-				[this](const FUniqueNetId& UserId, const FChatRoomId& RoomId, bool bWasSuccessful, const FString& Error)
+				FOnChatRoomJoinPublicDelegate::CreateWeakLambda(this,
+				[this, Ownership = CaptureEOSContext()](const FUniqueNetId& UserId, const FChatRoomId& RoomId, bool bWasSuccessful, const FString& Error)
 				{
+					if (bShuttingDown || !IsEOSContextCurrent(Ownership) || Ownership.LocalId != UserId.ToString()) return;
 					FString ChannelName = RoomId;
 					if (bWasSuccessful)
 					{
@@ -82,20 +92,21 @@ void UEEOSChatSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 							ChannelHistory.Add(ChannelName, TArray<FEEOSChatMessage>());
 						}
 
-						UE_LOG(LogExtendedEOS, Log, TEXT("EEOSChatSubsystem: Joined channel '%s' via EOS"), *ChannelName);
+						UE_LOG(LogExtendedEOS, Log, TEXT("EEOSChatSubsystem: Joined channel '%s' via EOS"), *FEEOSNativeOperationLease::SafeField(ChannelName));
 					}
 					else
 					{
-						UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSChatSubsystem: Failed to join channel '%s' — %s"), *ChannelName, *Error);
+						UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSChatSubsystem: Failed to join channel '%s' — %s"), *FEEOSNativeOperationLease::SafeField(ChannelName), *FEEOSNativeOperationLease::SafeField(Error));
 					}
 
 					OnChannelJoined.Broadcast(bWasSuccessful, ChannelName);
 				}));
 
 			ChatRoomExitHandle = ChatInterface->AddOnChatRoomExitDelegate_Handle(
-				FOnChatRoomExitDelegate::CreateLambda(
-				[this](const FUniqueNetId& UserId, const FChatRoomId& RoomId, bool bWasSuccessful, const FString& Error)
+				FOnChatRoomExitDelegate::CreateWeakLambda(this,
+				[this, Ownership = CaptureEOSContext()](const FUniqueNetId& UserId, const FChatRoomId& RoomId, bool bWasSuccessful, const FString& Error)
 				{
+					if (bShuttingDown || !IsEOSContextCurrent(Ownership) || Ownership.LocalId != UserId.ToString()) return;
 					if (bWasSuccessful)
 					{
 						FString ChannelName = RoomId;
@@ -103,28 +114,30 @@ void UEEOSChatSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 						// A left channel can no longer be marked read — drop its unread counter
 						// so GetUnreadMessageCount doesn't report unreachable messages forever
 						UnreadCounts.Remove(ChannelName);
-						UE_LOG(LogExtendedEOS, Log, TEXT("EEOSChatSubsystem: Left channel '%s' via EOS"), *ChannelName);
+						UE_LOG(LogExtendedEOS, Log, TEXT("EEOSChatSubsystem: Left channel '%s' via EOS"), *FEEOSNativeOperationLease::SafeField(ChannelName));
 						OnChannelLeft.Broadcast(ChannelName);
 					}
 				}));
 
 			ChatMemberJoinHandle = ChatInterface->AddOnChatRoomMemberJoinDelegate_Handle(
-				FOnChatRoomMemberJoinDelegate::CreateLambda(
-				[this](const FUniqueNetId& UserId, const FChatRoomId& RoomId, const FUniqueNetId& MemberId)
+				FOnChatRoomMemberJoinDelegate::CreateWeakLambda(this,
+				[this, Ownership = CaptureEOSContext()](const FUniqueNetId& UserId, const FChatRoomId& RoomId, const FUniqueNetId& MemberId)
 				{
+					if (bShuttingDown || !IsEOSContextCurrent(Ownership) || Ownership.LocalId != UserId.ToString()) return;
 					FString ChannelName = RoomId;
 					FString UserIdStr = MemberId.ToString();
-					UE_LOG(LogExtendedEOS, Log, TEXT("EEOSChatSubsystem: User '%s' joined channel '%s'"), *UserIdStr, *ChannelName);
+					UE_LOG(LogExtendedEOS, Log, TEXT("EEOSChatSubsystem: User '%s' joined channel '%s'"), *FEEOSNativeOperationLease::SafeField(UserIdStr), *FEEOSNativeOperationLease::SafeField(ChannelName));
 					OnUserJoined.Broadcast(UserIdStr, ChannelName);
 				}));
 
 			ChatMemberExitHandle = ChatInterface->AddOnChatRoomMemberExitDelegate_Handle(
-				FOnChatRoomMemberExitDelegate::CreateLambda(
-				[this](const FUniqueNetId& UserId, const FChatRoomId& RoomId, const FUniqueNetId& MemberId)
+				FOnChatRoomMemberExitDelegate::CreateWeakLambda(this,
+				[this, Ownership = CaptureEOSContext()](const FUniqueNetId& UserId, const FChatRoomId& RoomId, const FUniqueNetId& MemberId)
 				{
+					if (bShuttingDown || !IsEOSContextCurrent(Ownership) || Ownership.LocalId != UserId.ToString()) return;
 					FString ChannelName = RoomId;
 					FString UserIdStr = MemberId.ToString();
-					UE_LOG(LogExtendedEOS, Log, TEXT("EEOSChatSubsystem: User '%s' left channel '%s'"), *UserIdStr, *ChannelName);
+					UE_LOG(LogExtendedEOS, Log, TEXT("EEOSChatSubsystem: User '%s' left channel '%s'"), *FEEOSNativeOperationLease::SafeField(UserIdStr), *FEEOSNativeOperationLease::SafeField(ChannelName));
 					OnUserLeft.Broadcast(UserIdStr, ChannelName);
 				}));
 
@@ -134,35 +147,50 @@ void UEEOSChatSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 		else
 		{
 			bUsingOnlineChat = false;
-			UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSChatSubsystem: IOnlineChat not available — send/receive will not transmit over network. "
-				"Consider using P2P subsystem for text messaging if the chat interface is not supported."));
+			FEEOSNativeOperationLease::ReportRepeated(GetOwningEOSInstanceName(), TEXT("Chat"), TEXT("UnsupportedChatCapability"));
 		}
 	}
 }
+void UEEOSChatSubsystem::UnbindNativeChat()
+{
+	if (BoundChat.IsValid())
+	{
+		BoundChat->ClearOnChatRoomMessageReceivedDelegate_Handle(ChatMessageReceivedHandle);
+		BoundChat->ClearOnChatRoomJoinPublicDelegate_Handle(ChatRoomJoinHandle);
+		BoundChat->ClearOnChatRoomExitDelegate_Handle(ChatRoomExitHandle);
+		BoundChat->ClearOnChatRoomMemberJoinDelegate_Handle(ChatMemberJoinHandle);
+		BoundChat->ClearOnChatRoomMemberExitDelegate_Handle(ChatMemberExitHandle);
+	}
+	ChatMessageReceivedHandle.Reset(); ChatRoomJoinHandle.Reset(); ChatRoomExitHandle.Reset(); ChatMemberJoinHandle.Reset(); ChatMemberExitHandle.Reset();
+	BoundChat.Reset(); bUsingOnlineChat = false;
+}
+bool UEEOSChatSubsystem::TickNativeChat(float)
+{
+	if (bShuttingDown) return false;
+	IOnlineSubsystem* OSS = GetExistingEOSOnlineSubsystem();
+	const auto Current = OSS ? OSS->GetChatInterface() : IOnlineChatPtr();
+	if (Current != BoundChat || !IsEOSContextCurrent(ChatBindingContext))
+	{
+		UnbindNativeChat(); JoinedChannels.Empty(); ChannelHistory.Empty(); UnreadCounts.Empty();
+		BindNativeChat();
+	}
+	return true;
+}
+
 
 void UEEOSChatSubsystem::Deinitialize()
 {
-	// Clean up delegate handles
-	if (IsEOSAvailable())
-	{
-		IOnlineSubsystem* EOSSub = GetEOSOnlineSubsystem();
-		if (EOSSub)
-		{
-			IOnlineChatPtr ChatInterface = EOSSub->GetChatInterface();
-			if (ChatInterface.IsValid())
-			{
-				ChatInterface->ClearOnChatRoomMessageReceivedDelegate_Handle(ChatMessageReceivedHandle);
-				ChatInterface->ClearOnChatRoomJoinPublicDelegate_Handle(ChatRoomJoinHandle);
-				ChatInterface->ClearOnChatRoomExitDelegate_Handle(ChatRoomExitHandle);
-				ChatInterface->ClearOnChatRoomMemberJoinDelegate_Handle(ChatMemberJoinHandle);
-				ChatInterface->ClearOnChatRoomMemberExitDelegate_Handle(ChatMemberExitHandle);
-			}
-		}
-	}
-
-	LeaveAllChannels();
-	ChannelHistory.Empty();
-	UnreadCounts.Empty();
+	// Only leave channels with the exact local identity that joined them.
+	const bool bOriginalMember = IsEOSContextCurrent(ChatBindingContext);
+	const auto OriginalChat = BoundChat;
+	const auto Identity = ChatBindingContext.Identity;
+	const auto Local = Identity.IsValid() ? Identity->GetUniquePlayerId(0) : FUniqueNetIdPtr();
+	BeginEOSShutdown(); bShuttingDown = true;
+	if (ChatBindingTicker.IsValid()) FTSTicker::GetCoreTicker().RemoveTicker(ChatBindingTicker);
+	ChatBindingTicker.Reset(); UnbindNativeChat();
+	if (bOriginalMember && OriginalChat.IsValid() && Local.IsValid() && Local->IsValid())
+		for (const auto& Channel : JoinedChannels) OriginalChat->ExitRoom(*Local, FChatRoomId(Channel.Key));
+	JoinedChannels.Empty(); ChannelHistory.Empty(); UnreadCounts.Empty();
 	Super::Deinitialize();
 }
 
@@ -170,9 +198,11 @@ void UEEOSChatSubsystem::Deinitialize()
 
 bool UEEOSChatSubsystem::JoinChannel(const FString& ChannelName)
 {
+	if (bShuttingDown) return false;
+	TickNativeChat(0);
 	if (JoinedChannels.Contains(ChannelName))
 	{
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSChatSubsystem::JoinChannel — Already joined '%s'"), *ChannelName);
+		UE_LOG(LogExtendedEOS, Verbose, TEXT("EEOSChatSubsystem::JoinChannel — Already joined '%s'"), *FEEOSNativeOperationLease::SafeField(ChannelName));
 		OnChannelJoined.Broadcast(true, ChannelName);
 		return true;
 	}
@@ -180,28 +210,29 @@ bool UEEOSChatSubsystem::JoinChannel(const FString& ChannelName)
 	if (bUsingOnlineChat)
 	{
 		IOnlineSubsystem* EOSSub = GetEOSOnlineSubsystem();
-		IOnlineChatPtr ChatInterface = EOSSub->GetChatInterface();
-		FUniqueNetIdPtr UserId = EOSSub->GetIdentityInterface()->GetUniquePlayerId(0);
-		if (ChatInterface.IsValid() && UserId.IsValid())
+		IOnlineChatPtr ChatInterface = EOSSub ? EOSSub->GetChatInterface() : IOnlineChatPtr();
+		const auto Identity = EOSSub ? EOSSub->GetIdentityInterface() : IOnlineIdentityPtr();
+		FUniqueNetIdPtr UserId = Identity.IsValid() ? Identity->GetUniquePlayerId(0) : FUniqueNetIdPtr();
+		if (ChatInterface.IsValid() && UserId.IsValid() && UserId->IsValid() && Identity->GetLoginStatus(0) == ELoginStatus::LoggedIn)
 		{
-			FString PlayerNickname = EOSSub->GetIdentityInterface()->GetPlayerNickname(0);
+			FString PlayerNickname = EEOSIdentity::SafeLocalNickname(EOSSub->GetIdentityInterface());
 			if (!ChatInterface->JoinPublicRoom(*UserId, FChatRoomId(ChannelName), PlayerNickname, FChatRoomConfig()))
 			{
 				// A false return means NO room delegate will ever fire — fail observably
 				// instead of leaving OnChannelJoined waiters hanging
-				UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSChatSubsystem::JoinChannel — JoinPublicRoom was refused for '%s'"), *ChannelName);
+				UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSChatSubsystem::JoinChannel — JoinPublicRoom was refused for '%s'"), *FEEOSNativeOperationLease::SafeField(ChannelName));
 				OnChannelJoined.Broadcast(false, ChannelName);
 				return false;
 			}
 
 			// The delegate callback registered in Initialize() will handle success/failure
-			UE_LOG(LogExtendedEOS, Log, TEXT("EEOSChatSubsystem: Joining channel '%s' via EOS..."), *ChannelName);
+			UE_LOG(LogExtendedEOS, Log, TEXT("EEOSChatSubsystem: Joining channel '%s' via EOS..."), *FEEOSNativeOperationLease::SafeField(ChannelName));
 			return true;
 		}
 	}
 
 	// Fallback: no online chat interface
-	UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSChatSubsystem::JoinChannel — IOnlineChat not available, channel '%s' is local-only"), *ChannelName);
+	FEEOSNativeOperationLease::ReportRepeated(GetOwningEOSInstanceName(), TEXT("JoinChannel"), TEXT("UnsupportedChatCapability"));
 	FEEOSChatChannel Channel;
 	Channel.ChannelName = ChannelName;
 	Channel.bIsJoined = true;
@@ -219,25 +250,28 @@ bool UEEOSChatSubsystem::JoinChannel(const FString& ChannelName)
 
 bool UEEOSChatSubsystem::LeaveChannel(const FString& ChannelName)
 {
+	if (bShuttingDown) return false;
+	TickNativeChat(0);
 	if (!JoinedChannels.Contains(ChannelName))
 	{
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSChatSubsystem::LeaveChannel — Not in channel '%s'"), *ChannelName);
+		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSChatSubsystem::LeaveChannel — Not in channel '%s'"), *FEEOSNativeOperationLease::SafeField(ChannelName));
 		return false;
 	}
 
 	if (bUsingOnlineChat)
 	{
 		IOnlineSubsystem* EOSSub = GetEOSOnlineSubsystem();
-		IOnlineChatPtr ChatInterface = EOSSub->GetChatInterface();
-		FUniqueNetIdPtr UserId = EOSSub->GetIdentityInterface()->GetUniquePlayerId(0);
-		if (ChatInterface.IsValid() && UserId.IsValid())
+		IOnlineChatPtr ChatInterface = EOSSub ? EOSSub->GetChatInterface() : IOnlineChatPtr();
+		const auto Identity = EOSSub ? EOSSub->GetIdentityInterface() : IOnlineIdentityPtr();
+		FUniqueNetIdPtr UserId = Identity.IsValid() ? Identity->GetUniquePlayerId(0) : FUniqueNetIdPtr();
+		if (ChatInterface.IsValid() && UserId.IsValid() && UserId->IsValid() && Identity->GetLoginStatus(0) == ELoginStatus::LoggedIn)
 		{
 			if (!ChatInterface->ExitRoom(*UserId, FChatRoomId(ChannelName)))
 			{
 				// A false return means NO exit delegate will ever fire — drop the channel
 				// (and its now-unreachable unread counter) locally and broadcast so
 				// OnChannelLeft waiters don't hang
-				UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSChatSubsystem::LeaveChannel — ExitRoom was refused for '%s', removing channel locally"), *ChannelName);
+				UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSChatSubsystem::LeaveChannel — ExitRoom was refused for '%s', removing channel locally"), *FEEOSNativeOperationLease::SafeField(ChannelName));
 				JoinedChannels.Remove(ChannelName);
 				UnreadCounts.Remove(ChannelName);
 				OnChannelLeft.Broadcast(ChannelName);
@@ -252,7 +286,7 @@ bool UEEOSChatSubsystem::LeaveChannel(const FString& ChannelName)
 	// Fallback: local-only
 	JoinedChannels.Remove(ChannelName);
 	UnreadCounts.Remove(ChannelName);
-	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSChatSubsystem: Left channel '%s'"), *ChannelName);
+	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSChatSubsystem: Left channel '%s'"), *FEEOSNativeOperationLease::SafeField(ChannelName));
 	OnChannelLeft.Broadcast(ChannelName);
 	return true;
 }
@@ -272,9 +306,11 @@ void UEEOSChatSubsystem::LeaveAllChannels()
 
 bool UEEOSChatSubsystem::SendMessage(const FString& ChannelName, const FString& Message)
 {
+	if (bShuttingDown) return false;
+	TickNativeChat(0);
 	if (!JoinedChannels.Contains(ChannelName))
 	{
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSChatSubsystem::SendMessage — Not in channel '%s'"), *ChannelName);
+		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSChatSubsystem::SendMessage — Not in channel '%s'"), *FEEOSNativeOperationLease::SafeField(ChannelName));
 		OnMessageSent.Broadcast(false, ChannelName);
 		return false;
 	}
@@ -282,9 +318,10 @@ bool UEEOSChatSubsystem::SendMessage(const FString& ChannelName, const FString& 
 	if (bUsingOnlineChat)
 	{
 		IOnlineSubsystem* EOSSub = GetEOSOnlineSubsystem();
-		IOnlineChatPtr ChatInterface = EOSSub->GetChatInterface();
-		FUniqueNetIdPtr UserId = EOSSub->GetIdentityInterface()->GetUniquePlayerId(0);
-		if (ChatInterface.IsValid() && UserId.IsValid())
+		IOnlineChatPtr ChatInterface = EOSSub ? EOSSub->GetChatInterface() : IOnlineChatPtr();
+		const auto Identity = EOSSub ? EOSSub->GetIdentityInterface() : IOnlineIdentityPtr();
+		FUniqueNetIdPtr UserId = Identity.IsValid() ? Identity->GetUniquePlayerId(0) : FUniqueNetIdPtr();
+		if (ChatInterface.IsValid() && UserId.IsValid() && UserId->IsValid() && Identity->GetLoginStatus(0) == ELoginStatus::LoggedIn)
 		{
 			bool bSent = ChatInterface->SendRoomChat(*UserId, FChatRoomId(ChannelName), Message);
 			if (bSent)
@@ -292,7 +329,7 @@ bool UEEOSChatSubsystem::SendMessage(const FString& ChannelName, const FString& 
 				// Add to local history
 				FEEOSChatMessage ChatMsg;
 				ChatMsg.SenderId = UserId->ToString();
-				ChatMsg.SenderDisplayName = EOSSub->GetIdentityInterface()->GetPlayerNickname(0);
+				ChatMsg.SenderDisplayName = EEOSIdentity::SafeLocalNickname(EOSSub->GetIdentityInterface());
 				ChatMsg.Message = Message;
 				ChatMsg.ChannelName = ChannelName;
 				ChatMsg.Timestamp = FDateTime::UtcNow();
@@ -305,12 +342,12 @@ bool UEEOSChatSubsystem::SendMessage(const FString& ChannelName, const FString& 
 					History.RemoveAt(0, History.Num() - 200);
 				}
 
-				UE_LOG(LogExtendedEOS, Log, TEXT("EEOSChatSubsystem: Sent message in '%s' via EOS"), *ChannelName);
+				UE_LOG(LogExtendedEOS, Log, TEXT("EEOSChatSubsystem: Sent message in '%s' via EOS"), *FEEOSNativeOperationLease::SafeField(ChannelName));
 				OnMessageSent.Broadcast(true, ChannelName);
 			}
 			else
 			{
-				UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSChatSubsystem: EOS SendRoomChat failed for channel '%s'"), *ChannelName);
+				UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSChatSubsystem: EOS SendRoomChat failed for channel '%s'"), *FEEOSNativeOperationLease::SafeField(ChannelName));
 				OnMessageSent.Broadcast(false, ChannelName);
 			}
 			return bSent;
@@ -318,29 +355,32 @@ bool UEEOSChatSubsystem::SendMessage(const FString& ChannelName, const FString& 
 	}
 
 	// No online chat: DO NOT fake success — report failure
-	UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSChatSubsystem::SendMessage — IOnlineChat not available, message NOT delivered to '%s'"), *ChannelName);
+	FEEOSNativeOperationLease::ReportRepeated(GetOwningEOSInstanceName(), TEXT("SendMessage"), TEXT("UnsupportedChatCapability"));
 	OnMessageSent.Broadcast(false, ChannelName);
 	return false;
 }
 
 bool UEEOSChatSubsystem::SendDirectMessage(const FString& TargetUserId, const FString& Message)
 {
+	if (bShuttingDown) return false;
+	TickNativeChat(0);
 	// One conversation per target regardless of the id form the caller used — see MakeDMChannelKey
 	const FString DMChannelName = MakeDMChannelKey(TargetUserId);
 
 	if (bUsingOnlineChat)
 	{
 		IOnlineSubsystem* EOSSub = GetEOSOnlineSubsystem();
-		IOnlineChatPtr ChatInterface = EOSSub->GetChatInterface();
-		FUniqueNetIdPtr LocalUserId = EOSSub->GetIdentityInterface()->GetUniquePlayerId(0);
-		if (ChatInterface.IsValid() && LocalUserId.IsValid())
+		IOnlineChatPtr ChatInterface = EOSSub ? EOSSub->GetChatInterface() : IOnlineChatPtr();
+		const auto Identity = EOSSub ? EOSSub->GetIdentityInterface() : IOnlineIdentityPtr();
+		FUniqueNetIdPtr LocalUserId = Identity.IsValid() ? Identity->GetUniquePlayerId(0) : FUniqueNetIdPtr();
+		if (ChatInterface.IsValid() && LocalUserId.IsValid() && LocalUserId->IsValid() && Identity->GetLoginStatus(0) == ELoginStatus::LoggedIn)
 		{
 			// CreateUniquePlayerId on the EOS OSS returns the non-null registry EmptyId on
 			// parse failure — Ptr.IsValid() alone is not a validity check, ask the id itself too
 			FUniqueNetIdPtr TargetId = EOSSub->GetIdentityInterface()->CreateUniquePlayerId(TargetUserId);
 			if (!TargetId.IsValid() || !TargetId->IsValid())
 			{
-				UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSChatSubsystem::SendDirectMessage — Could not parse target id '%s'"), *TargetUserId);
+				UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSChatSubsystem::SendDirectMessage — Could not parse target id '%s'"), *FEEOSNativeOperationLease::SafeField(TargetUserId));
 				OnMessageSent.Broadcast(false, DMChannelName);
 				return false;
 			}
@@ -350,7 +390,7 @@ bool UEEOSChatSubsystem::SendDirectMessage(const FString& TargetUserId, const FS
 			{
 				FEEOSChatMessage ChatMsg;
 				ChatMsg.SenderId = LocalUserId->ToString();
-				ChatMsg.SenderDisplayName = EOSSub->GetIdentityInterface()->GetPlayerNickname(0);
+				ChatMsg.SenderDisplayName = EEOSIdentity::SafeLocalNickname(EOSSub->GetIdentityInterface());
 				ChatMsg.Message = Message;
 				ChatMsg.ChannelName = DMChannelName;
 				ChatMsg.Timestamp = FDateTime::UtcNow();
@@ -365,12 +405,12 @@ bool UEEOSChatSubsystem::SendDirectMessage(const FString& TargetUserId, const FS
 					History.RemoveAt(0, History.Num() - 200);
 				}
 
-				UE_LOG(LogExtendedEOS, Log, TEXT("EEOSChatSubsystem: Sent DM to '%s' via EOS"), *TargetUserId);
+				UE_LOG(LogExtendedEOS, Log, TEXT("EEOSChatSubsystem: Sent DM to '%s' via EOS"), *FEEOSNativeOperationLease::SafeField(TargetUserId));
 				OnMessageSent.Broadcast(true, DMChannelName);
 			}
 			else
 			{
-				UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSChatSubsystem: EOS SendPrivateChat failed for '%s'"), *TargetUserId);
+				UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSChatSubsystem: EOS SendPrivateChat failed for '%s'"), *FEEOSNativeOperationLease::SafeField(TargetUserId));
 				OnMessageSent.Broadcast(false, DMChannelName);
 			}
 			return bSent;
@@ -378,7 +418,7 @@ bool UEEOSChatSubsystem::SendDirectMessage(const FString& TargetUserId, const FS
 	}
 
 	// No online chat: DO NOT fake success
-	UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSChatSubsystem::SendDirectMessage — IOnlineChat not available, message NOT delivered to '%s'"), *TargetUserId);
+	FEEOSNativeOperationLease::ReportRepeated(GetOwningEOSInstanceName(), TEXT("SendDirectMessage"), TEXT("UnsupportedChatCapability"));
 	OnMessageSent.Broadcast(false, DMChannelName);
 	return false;
 }
@@ -431,4 +471,16 @@ void UEEOSChatSubsystem::MarkChannelRead(const FString& ChannelName)
 void UEEOSChatSubsystem::MarkAllRead()
 {
 	UnreadCounts.Empty();
+}
+
+FEEOSChatCapabilitySnapshot UEEOSChatSubsystem::GetChatCapability() const
+{
+	FEEOSChatCapabilitySnapshot Result;
+	IOnlineSubsystem* OSS = GetExistingEOSOnlineSubsystem();
+	const auto Chat = OSS ? OSS->GetChatInterface() : IOnlineChatPtr();
+	Result.bNativeInterfaceAvailable = Chat.IsValid(); Result.bLocalIdentityReady = GetEOSReadiness().bNativeLoggedIn;
+	Result.bCanSubmitNativeMessage = !bShuttingDown && Result.bNativeInterfaceAvailable && Result.bLocalIdentityReady;
+	Result.Code = bShuttingDown ? EEOSOperationCode::Canceled : !Result.bNativeInterfaceAvailable ? EEOSOperationCode::UnsupportedCapability : !Result.bLocalIdentityReady ? EEOSOperationCode::IdentityUnavailable : EEOSOperationCode::None;
+	Result.Route = Result.bNativeInterfaceAvailable ? FName(TEXT("IOnlineChat")) : FName(TEXT("LocalHistoryOnly"));
+	return Result;
 }

@@ -49,7 +49,7 @@ struct FEEOSLobbyTestAccess
 	static void RemoteExit(UEEOSLobbySubsystem* S, const FNamedOnlineSession* Native, bool bSuccess) { S->ReconcileRemoteLobbyExit(Native, bSuccess); }
 	static bool Owner(UEEOSLobbySubsystem* S, const FString& Id) { return S->UpdateCachedLobbyOwner(Id); }
 	static void Promotion(UEEOSLobbySubsystem* S, uint64 Token, const FString& LobbyId, const FString& Member, bool bSuccess)
-	{ S->HandlePromotionComplete(Token, LobbyId, Member, bSuccess); }
+	{ S->HandlePromotionComplete(Token, S->LobbyGeneration, LobbyId, Member, bSuccess); }
 	static void BeginPromotion(UEEOSLobbySubsystem* S, uint64 Token, const FString& LobbyId)
 	{ S->bPromotionPending = true; S->PromotionToken = Token; S->PromotionLobbyId = LobbyId; }
 	static void ExpectNativeExits(UEEOSLobbySubsystem* S, int32 Count) { S->ExpectedNativeExitCompletions = Count; S->NativeExitCompletions = 0; }

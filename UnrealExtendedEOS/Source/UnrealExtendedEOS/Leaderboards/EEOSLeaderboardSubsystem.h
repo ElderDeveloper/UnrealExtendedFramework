@@ -32,7 +32,7 @@ public:
 	// All async actions return true when the request was started (the result arrives on
 	// the corresponding delegate) and false when it could not be. Pre-flight failures
 	// broadcast a failure; a query rejected because another leaderboard query is already
-	// in flight is log-only — NO broadcast, so the in-flight query's waiters never see a
+	// in flight emits only a detailed rejection — NO legacy broadcast, so the in-flight query's waiters never see a
 	// foreign failure on the shared OnLeaderboardQueried delegate.
 
 	/**
@@ -113,6 +113,8 @@ private:
 	/** Handle for our binding on the interface-wide OnLeaderboardReadCompleteDelegates —
 	 *  cleared (only this handle, never RemoveAll) when our read completes. */
 	FDelegateHandle LeaderboardReadCompleteHandle;
+	IOnlineLeaderboardsPtr PendingLeaderboardInterface;
+	FEEOSRequestContext LeaderboardContext;
 
 	/** Inclusive 1-based rank window the current query asked for (-1 = no trimming).
 	 *  Rank-based reads over-fetch by up to one record because the engine's AroundRank
@@ -124,7 +126,7 @@ private:
 	 *  not. Every action entry point gates on this before doing any work. */
 	bool IsLeaderboardsEnabled(const TCHAR* CallSite) const;
 
-	/** Rejects the new query if a leaderboard read is already in flight. Log-only — never
+	/** Rejects the new query if a leaderboard read is already in flight. Detailed rejection only — never
 	 *  broadcasts, so the in-flight query's waiters are not misled on the shared delegate.
 	 *  Returns true if rejected. */
 	bool RejectIfQueryInFlight(const TCHAR* FunctionName, const FString& LeaderboardId);

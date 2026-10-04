@@ -5,6 +5,9 @@
 #include "CoreMinimal.h"
 #include "HAL/IConsoleManager.h"
 #include "GameplayTagContainer.h"
+#include "Engine/DataAsset.h"
+#include "Engine/DeveloperSettings.h"
+#include "Subsystems/GameInstanceSubsystem.h"
 #include "Settings/EFModularSettingsBase.h"
 #include "EFModularSettingsSubsystem.generated.h"
 

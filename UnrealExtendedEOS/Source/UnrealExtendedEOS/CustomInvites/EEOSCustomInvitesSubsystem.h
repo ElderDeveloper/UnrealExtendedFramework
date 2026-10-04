@@ -4,6 +4,10 @@
 
 #include "CoreMinimal.h"
 #include "Shared/EEOSSubsystem.h"
+#include "Containers/Ticker.h"
+#if WITH_EOS_SDK
+#include "eos_custominvites_types.h"
+#endif
 #include "EEOSCustomInvitesSubsystem.generated.h"
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnEOSCustomInviteSent, bool, bSuccess, const FString&, TargetUserId);
@@ -144,7 +148,19 @@ public:
 	/** Records a received join request as pending, then broadcasts OnRequestToJoinReceived. Game thread only. */
 	void HandleRequestToJoinReceived(const FString& FromUserId);
 
+	/** Internal native callback admission; queued callbacks are suppressed during teardown. */
+	bool CanReceiveNativeCallbacks() const { return !bShuttingDown && IsEOSContextCurrent(NotificationContext); }
+	uint64 GetNativeCallbackGeneration() const { return NativeCallbackGeneration; }
+#if WITH_EOS_SDK
+	bool IsNativeCallbackForLocalUser(EOS_ProductUserId User) const { return User && User == GetLocalProductUserId(); }
+#endif
+
 private:
+	bool bShuttingDown = false;
+	uint64 NativeCallbackGeneration = 0;
+	FEEOSRequestContext NotificationContext;
+	FTSTicker::FDelegateHandle NotificationTicker;
+
 
 	FString CurrentPayload;
 
@@ -167,6 +183,11 @@ private:
 	void RegisterNotificationCallbacks();
 	void UnregisterNotificationCallbacks();
 
+	TSharedPtr<IEOSPlatformHandle, ESPMode::ThreadSafe> NotificationPlatform;
+	EOS_ProductUserId NotificationLocalUser = nullptr;
+	EOS_HCustomInvites GetCustomInvitesHandle() const;
+	EOS_ProductUserId GetLocalProductUserId() const;
+	bool FinalizeInviteWithSdk(const FString& SenderId, const FString& CustomInviteId, EOS_EResult ProcessingResult);
 	uint64 NotifyCustomInviteReceivedId = 0;
 	uint64 NotifyCustomInviteAcceptedId = 0;
 	uint64 NotifyCustomInviteRejectedId = 0;

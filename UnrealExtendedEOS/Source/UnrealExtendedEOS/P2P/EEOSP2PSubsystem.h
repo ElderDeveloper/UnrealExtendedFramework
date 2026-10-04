@@ -175,11 +175,11 @@ private:
 
 	/** Resolve the local Product User ID of the first logged-in Connect user (index 0) on the
 	 *  given platform. Returns nullptr while no Connect user is logged in (or Platform is null). */
-	static EOS_ProductUserId GetLocalProductUserId(EOS_HPlatform PlatformHandle);
+	EOS_ProductUserId GetLocalProductUserId(EOS_HPlatform PlatformHandle) const;
 
 	/** Platform lookup WITHOUT the Shared base's unconditional not-available warning —
 	 *  the lazy-init/receive ticker runs every frame and must not spam while waiting. */
-	static EOS_HPlatform GetPlatformHandleQuiet();
+	EOS_HPlatform GetPlatformHandleQuiet() const;
 
 	/** True if the given platform handle is still among the SDK manager's active platforms. */
 	static bool IsPlatformStillActive(EOS_HPlatform PlatformHandle);
@@ -218,7 +218,7 @@ private:
 	EOS_ProductUserId RegisteredLocalUserId = nullptr;
 
 	/** The EOS platform handle the notifications were registered on. RemoveNotify calls MUST run
-	 *  against this exact handle: GetPlatformHandle() returns ActivePlatforms[0] *at call time*,
+	 *  against this exact handle: GetPlatformHandle() resolves the current owning instance,
 	 *  which under platform churn / multi-instance PIE can be a different platform — removal there
 	 *  would no-op while the original platform still references the notify context. */
 	EOS_HPlatform RegisteredPlatform = nullptr;

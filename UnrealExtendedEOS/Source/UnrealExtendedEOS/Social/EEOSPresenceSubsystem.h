@@ -4,6 +4,8 @@
 
 #include "CoreMinimal.h"
 #include "Shared/EEOSSubsystem.h"
+#include "Shared/EEOSNativeOperation.h"
+#include "Containers/Ticker.h"
 #include "EEOSPresenceSubsystem.generated.h"
 
 UENUM(BlueprintType)
@@ -113,7 +115,32 @@ private:
 		/** ClearPresence sets this: on success CachedPresenceState resets to Online so the
 		 *  next setter does not silently keep the user offline. */
 		bool bResetStateToOnlineOnSuccess = false;
+		bool bSetState = false;
+		bool bSetText = false;
+		bool bSetRichText = false;
+		bool bClear = false;
+		int64 RequestId = 0;
+		FString IdentityId;
+		FEEOSRequestContext Context;
+		FDateTime StartedUtc;
+		double StartedSeconds = 0;
 	};
+	TArray<FEEOSPendingPresence> PendingWrites;
+	bool bPresenceInFlight = false;
+	bool bShuttingDown = false;
+	uint64 PresenceGeneration = 0;
+	FString PresenceIdentity;
+	FEEOSRequestContext ObservedPresenceContext;
+	FEEOSRequestContext ActivePresenceContext;
+	int64 ActivePresenceRequest = 0;
+	const void* ActivePresenceInterface = nullptr;
+	double ActivePresenceStart = 0;
+	bool bStallReported = false;
+	FTSTicker::FDelegateHandle PresenceTicker;
+	FEEOSNativeOperationLease PresenceLease;
+	void PumpPresenceWrites();
+	void RetireQueuedPresence(const FEEOSPendingPresence& Request, const FString& Reason);
+	bool TickPresenceIdentity(float DeltaTime);
 
 	FEEOSPresenceInfo CachedLocalPresence;
 	FString CachedRichText;
@@ -132,8 +159,9 @@ private:
 	/** Stage a copy of the confirmed caches as the starting point for one setter's change. */
 	FEEOSPendingPresence StagePendingFromCache() const;
 
-	/** Submit a staged status to the presence interface. Broadcasts OnPresenceSet exactly
-	 *  once: immediately on failure to start (returns false), otherwise from the async
-	 *  completion (returns true), which also commits the staged values into the caches. */
+	/** Accept bounded, identity-scoped intent for FIFO dispatch against confirmed state.
+	 *  Busy rejects without OnPresenceSet; an idle identity/capability rejection emits false.
+	 *  Accepted requests complete through OnOperationCompleted; retired queued requests do
+	 *  not emit a legacy event for another active write. Shutdown records internal outcomes. */
 	bool SubmitPresence(FEEOSPendingPresence&& Pending, const FString& CallerName);
 };

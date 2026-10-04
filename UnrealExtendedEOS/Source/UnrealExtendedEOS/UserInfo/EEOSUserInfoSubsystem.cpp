@@ -1,6 +1,8 @@
 // Copyright Kemal Erdem YILMAZ. All Rights Reserved.
 
 #include "EEOSUserInfoSubsystem.h"
+#include "Shared/EEOSNativeOperation.h"
+#include "Shared/EEOSIdentityUtils.h"
 #include "OnlineSubsystemUtils.h"
 #include "Interfaces/OnlineUserInterface.h"
 #include "Interfaces/OnlineIdentityInterface.h"
@@ -50,7 +52,7 @@ namespace
 		}
 		if (Identity.IsValid())
 		{
-			const FString Nickname = Identity->GetPlayerNickname(UserId);
+			const FString Nickname = EEOSIdentity::SafeNickname(Identity, UserId);
 			if (!Nickname.IsEmpty())
 			{
 				OutInfo.EpicAccountId = UserId.ToString();
@@ -83,22 +85,16 @@ void UEEOSUserInfoSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 
 void UEEOSUserInfoSubsystem::Deinitialize()
 {
+	BeginEOSShutdown(); bShuttingDown = true;
+	if (PendingUserInterface.IsValid())
+	{
+		PendingUserInterface->OnQueryUserInfoCompleteDelegates[0].Remove(QueryUserInfoDelegateHandle);
+		PendingUserInterface->OnQueryUserInfoCompleteDelegates[0].Remove(QueryBatchDelegateHandle);
+	}
+	PendingUserInterface.Reset();
 	// Clear any in-flight query handlers — the lambdas self-remove on completion,
 	// but an operation still in flight would leave its handle registered
-	if (QueryUserInfoDelegateHandle.IsValid() || QueryBatchDelegateHandle.IsValid())
-	{
-		if (IOnlineSubsystem* EOSSub = GetEOSOnlineSubsystem())
-		{
-			IOnlineUserPtr UserInterface = EOSSub->GetUserInterface();
-			if (UserInterface.IsValid())
-			{
-				UserInterface->OnQueryUserInfoCompleteDelegates[0].Remove(QueryUserInfoDelegateHandle);
-				UserInterface->OnQueryUserInfoCompleteDelegates[0].Remove(QueryBatchDelegateHandle);
-			}
-		}
-		QueryUserInfoDelegateHandle.Reset();
-		QueryBatchDelegateHandle.Reset();
-	}
+	QueryUserInfoDelegateHandle.Reset(); QueryBatchDelegateHandle.Reset();
 
 	bFindUserByDisplayNameInFlight = false;
 	PendingQueryUserInfoId.Reset();
@@ -112,6 +108,11 @@ void UEEOSUserInfoSubsystem::Deinitialize()
 
 bool UEEOSUserInfoSubsystem::QueryUserInfo(const FString& EpicAccountId)
 {
+	if (bShuttingDown || QueryUserInfoDelegateHandle.IsValid() || QueryBatchDelegateHandle.IsValid() || bFindUserByDisplayNameInFlight)
+	{
+		RejectOperation(TEXT("QueryUserInfo"), EEOSOperationCode::Busy, TEXT("A user lookup sharing the native query or completion channel is pending.")); return false;
+	}
+
 	if (!IsEOSAvailable())
 	{
 		LogEOSUnavailable(TEXT("QueryUserInfo"));
@@ -124,7 +125,7 @@ bool UEEOSUserInfoSubsystem::QueryUserInfo(const FString& EpicAccountId)
 	IOnlineIdentityPtr Identity = EOSSub->GetIdentityInterface();
 	if (!UserInterface.IsValid() || !Identity.IsValid())
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSUserInfoSubsystem::QueryUserInfo — User/Identity interface not available"));
+		FEEOSNativeOperationLease::ReportRepeated(GetOwningEOSInstanceName(), TEXT("QueryUserInfo"), TEXT("CapabilityUnavailable"));
 		OnUserInfoQueried.Broadcast(false, FEEOSUserInfo());
 		return false;
 	}
@@ -142,7 +143,7 @@ bool UEEOSUserInfoSubsystem::QueryUserInfo(const FString& EpicAccountId)
 	// delegate — the legitimate in-flight caller is waiting on it — so: log + return false.
 	if (QueryUserInfoDelegateHandle.IsValid())
 	{
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSUserInfoSubsystem::QueryUserInfo — A user-info query is already in flight, rejecting '%s' (no broadcast)"), *EpicAccountId);
+		RejectOperation(TEXT("QueryUserInfo"), EEOSOperationCode::Busy, TEXT("Another admitted request already owns this operation."));
 		return false;
 	}
 
@@ -151,7 +152,7 @@ bool UEEOSUserInfoSubsystem::QueryUserInfo(const FString& EpicAccountId)
 	FUniqueNetIdPtr ParsedId = Identity->CreateUniquePlayerId(MakeCompositeId(EpicAccountId));
 	if (!ParsedId.IsValid() || !ParsedId->IsValid())
 	{
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSUserInfoSubsystem::QueryUserInfo — Invalid EpicAccountId '%s'"), *EpicAccountId);
+		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSUserInfoSubsystem::QueryUserInfo — Invalid EpicAccountId '%s'"), *FEEOSNativeOperationLease::SafeField(EpicAccountId));
 		OnUserInfoQueried.Broadcast(false, FEEOSUserInfo());
 		return false;
 	}
@@ -166,11 +167,11 @@ bool UEEOSUserInfoSubsystem::QueryUserInfo(const FString& EpicAccountId)
 		{
 			CachedUserInfo = Info;
 			UE_LOG(LogExtendedEOS, Log, TEXT("EEOSUserInfoSubsystem: Served local user '%s' from cache — %s"),
-				*CachedUserInfo.EpicAccountId, *CachedUserInfo.DisplayName);
+				*FEEOSNativeOperationLease::SafeField(CachedUserInfo.EpicAccountId), *FEEOSNativeOperationLease::SafeField(CachedUserInfo.DisplayName));
 			OnUserInfoQueried.Broadcast(true, CachedUserInfo);
 			return true;
 		}
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSUserInfoSubsystem::QueryUserInfo — Local user '%s' has no cached account info"), *EpicAccountId);
+		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSUserInfoSubsystem::QueryUserInfo — Local user '%s' has no cached account info"), *FEEOSNativeOperationLease::SafeField(EpicAccountId));
 		OnUserInfoQueried.Broadcast(false, FEEOSUserInfo());
 		return false;
 	}
@@ -179,24 +180,31 @@ bool UEEOSUserInfoSubsystem::QueryUserInfo(const FString& EpicAccountId)
 	// no echo and possibly no completion. A Connect-only id can never complete: fail now.
 	if (UEEOSBlueprintLibrary::ExtractEpicAccountId(ParsedId->ToString()).IsEmpty())
 	{
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSUserInfoSubsystem::QueryUserInfo — '%s' has no Epic Account half; the engine cannot query it"), *EpicAccountId);
+		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSUserInfoSubsystem::QueryUserInfo — '%s' has no Epic Account half; the engine cannot query it"), *FEEOSNativeOperationLease::SafeField(EpicAccountId));
 		OnUserInfoQueried.Broadcast(false, FEEOSUserInfo());
 		return false;
 	}
 
+	if (!EEOSIdentity::HasLocalEpicAccount(Identity))
+	{
+		OnUserInfoQueried.Broadcast(false, FEEOSUserInfo()); return false;
+	}
+	PendingUserInterface = UserInterface;
 	// Remember the requested id as the registry INSTANCE (not a string snapshot — see the
 	// member comment); the completion list is interface-wide and any concurrent user-info
 	// query (incl. engine-internal friends-name resolution) lands there too.
 	PendingQueryUserInfoId = ParsedId;
 
+	const auto Context = CaptureEOSContext();
+	const int64 Request = BeginOperation(TEXT("QueryUserInfo"), ParsedId->ToString());
 	QueryUserInfoDelegateHandle = UserInterface->OnQueryUserInfoCompleteDelegates[0].AddWeakLambda(this,
-		[this, EpicAccountId, UserInterface, Identity](int32 LocalUserNum, bool bWasSuccessful, const TArray<FUniqueNetIdRef>& QueriedIds, const FString& ErrorStr)
+		[this, EpicAccountId, UserInterface, Identity, Context, Request](int32 LocalUserNum, bool bWasSuccessful, const TArray<FUniqueNetIdRef>& QueriedIds, const FString& ErrorStr)
 		{
 			// Only consume a completion that echoes the id we asked for; anything else is
 			// someone else's query — ignore WITHOUT unbinding and keep waiting for ours.
 			// (The engine's completion accumulator can also carry foreign ids alongside ours,
 			// so we search the echo rather than requiring an exact match.)
-			if (!PendingQueryUserInfoId.IsValid())
+			if (bShuttingDown || LocalUserNum != 0 || !PendingQueryUserInfoId.IsValid() || GetActiveOperationOutcome(TEXT("QueryUserInfo")).RequestId != Request)
 			{
 				return;
 			}
@@ -224,29 +232,47 @@ bool UEEOSUserInfoSubsystem::QueryUserInfo(const FString& EpicAccountId)
 			// bWasSuccessful reflects only the LAST read the engine processed, which can
 			// belong to a different id sharing the same accumulated completion.
 			FEEOSUserInfo Info;
-			if (GetKnownUserInfo(UserInterface, Identity, *OurQueriedId, Info))
+			const bool bCurrent = IsEOSContextCurrent(Context);
+			const bool bResolved = bCurrent && GetKnownUserInfo(UserInterface, Identity, *OurQueriedId, Info);
+			const auto Outcome = CompleteOperation(TEXT("QueryUserInfo"), bResolved, !bCurrent ? EEOSOperationCode::Canceled : bResolved ? EEOSOperationCode::Succeeded : EEOSOperationCode::NativeFailure,
+				bCurrent ? TEXT("User query completed.") : TEXT("Original query identity/platform retired."), FString(), bWasSuccessful ? TEXT("Success") : TEXT("Failure"), EEOSResultSource::NativeCallback);
+			FEEOSOutcomeDispatchScope Dispatch(this, Outcome);
+			if (bResolved)
 			{
 				CachedUserInfo = Info;
 				UE_LOG(LogExtendedEOS, Log, TEXT("EEOSUserInfoSubsystem: Queried user '%s' — %s"),
-					*CachedUserInfo.EpicAccountId, *CachedUserInfo.DisplayName);
-				OnUserInfoQueried.Broadcast(true, CachedUserInfo);
+					*FEEOSNativeOperationLease::SafeField(CachedUserInfo.EpicAccountId), *FEEOSNativeOperationLease::SafeField(CachedUserInfo.DisplayName));
+				OnUserInfoQueried.Broadcast(true, CachedUserInfo); OnOperationCompleted.Broadcast(Outcome);
 				return;
 			}
 
 			UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSUserInfoSubsystem: QueryUserInfo failed for '%s' (engine success flag: %d) — %s"),
-				*EpicAccountId, bWasSuccessful ? 1 : 0, *ErrorStr);
-			OnUserInfoQueried.Broadcast(false, FEEOSUserInfo());
+				*FEEOSNativeOperationLease::SafeField(EpicAccountId), bWasSuccessful ? 1 : 0, *FEEOSNativeOperationLease::SafeField(ErrorStr));
+			OnUserInfoQueried.Broadcast(false, FEEOSUserInfo()); OnOperationCompleted.Broadcast(Outcome);
 		});
 
 	TArray<FUniqueNetIdRef> UserIds;
 	UserIds.Add(ParsedId->AsShared());
-	UserInterface->QueryUserInfo(0, UserIds);
-	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSUserInfoSubsystem::QueryUserInfo — Querying '%s'..."), *EpicAccountId);
+	const FDelegateHandle SubmittedHandle = QueryUserInfoDelegateHandle;
+	if (!UserInterface->QueryUserInfo(0, UserIds) && QueryUserInfoDelegateHandle == SubmittedHandle)
+	{
+		UserInterface->OnQueryUserInfoCompleteDelegates[0].Remove(QueryUserInfoDelegateHandle);
+		QueryUserInfoDelegateHandle.Reset(); PendingQueryUserInfoId.Reset();
+		const auto Outcome = CompleteOperation(TEXT("QueryUserInfo"), false, EEOSOperationCode::NativeStartRejected, TEXT("Native user query refused submission."));
+		FEEOSOutcomeDispatchScope Dispatch(this, Outcome);
+		OnUserInfoQueried.Broadcast(false, FEEOSUserInfo()); OnOperationCompleted.Broadcast(Outcome); return false;
+	}
+	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSUserInfoSubsystem::QueryUserInfo — Querying '%s'..."), *FEEOSNativeOperationLease::SafeField(EpicAccountId));
 	return true;
 }
 
 bool UEEOSUserInfoSubsystem::FindUserByDisplayName(const FString& DisplayName)
 {
+	if (bShuttingDown || QueryUserInfoDelegateHandle.IsValid() || QueryBatchDelegateHandle.IsValid() || bFindUserByDisplayNameInFlight)
+	{
+		RejectOperation(TEXT("FindUserByDisplayName"), EEOSOperationCode::Busy, TEXT("A user lookup sharing the native query or completion channel is pending.")); return false;
+	}
+
 	if (!IsEOSAvailable())
 	{
 		LogEOSUnavailable(TEXT("FindUserByDisplayName"));
@@ -259,7 +285,7 @@ bool UEEOSUserInfoSubsystem::FindUserByDisplayName(const FString& DisplayName)
 	// caller's waiters. Rejections do not broadcast (the pending caller owns the delegate).
 	if (bFindUserByDisplayNameInFlight)
 	{
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSUserInfoSubsystem::FindUserByDisplayName — A search is already in flight, rejecting '%s' (no broadcast)"), *DisplayName);
+		RejectOperation(TEXT("FindUserByDisplayName"), EEOSOperationCode::Busy, TEXT("Another admitted request already owns this operation."));
 		return false;
 	}
 
@@ -273,7 +299,7 @@ bool UEEOSUserInfoSubsystem::FindUserByDisplayName(const FString& DisplayName)
 	EOS_HUserInfo UserInfoHandle = PlatformHandle ? EOS_Platform_GetUserInfoInterface(PlatformHandle) : nullptr;
 	if (!UserInfoHandle)
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSUserInfoSubsystem::FindUserByDisplayName — UserInfo interface not available"));
+		FEEOSNativeOperationLease::ReportRepeated(GetOwningEOSInstanceName(), TEXT("FindUserByDisplayName"), TEXT("CapabilityUnavailable"));
 		OnUserSearchComplete.Broadcast(false, TArray<FEEOSUserInfo>());
 		return false;
 	}
@@ -294,8 +320,12 @@ bool UEEOSUserInfoSubsystem::FindUserByDisplayName(const FString& DisplayName)
 		TWeakObjectPtr<UEEOSUserInfoSubsystem> Self;
 		FString DisplayName;
 		EOS_HUserInfo UserInfoHandle;
+		TSharedPtr<IEOSPlatformHandle, ESPMode::ThreadSafe> Platform;
+		FEEOSRequestContext Context;
+		int64 Request;
 	};
-	FFindUserContext* Ctx = new FFindUserContext{ this, DisplayName, UserInfoHandle };
+	const int64 Request = BeginOperation(TEXT("FindUserByDisplayName"));
+	FFindUserContext* Ctx = new FFindUserContext{ this, DisplayName, UserInfoHandle, GetOwningEOSPlatform(), CaptureEOSContext(), Request };
 
 	// The UTF-8 conversion outlives the synchronous SDK call, which copies the string
 	FTCHARToUTF8 NameUtf8(*DisplayName);
@@ -309,17 +339,19 @@ bool UEEOSUserInfoSubsystem::FindUserByDisplayName(const FString& DisplayName)
 	EOS_UserInfo_QueryUserInfoByDisplayName(UserInfoHandle, &Options, Ctx,
 		[](const EOS_UserInfo_QueryUserInfoByDisplayNameCallbackInfo* Data)
 		{
-			FFindUserContext* Ctx = static_cast<FFindUserContext*>(Data->ClientData);
-			if (!Ctx) return;
+			if (!Data || !Data->ClientData || !EOS_EResult_IsOperationComplete(Data->ResultCode)) return;
+			TUniquePtr<FFindUserContext> Ctx(static_cast<FFindUserContext*>(Data->ClientData));
 
 			UEEOSUserInfoSubsystem* Self = Ctx->Self.Get();
 			const FString SearchedName = MoveTemp(Ctx->DisplayName);
 			const EOS_HUserInfo UserInfoHandle = Ctx->UserInfoHandle;
-			delete Ctx;
 
-			if (!Self) return;
+			if (!Self || Self->bShuttingDown) return;
+			if (Self->GetActiveOperationOutcome(TEXT("FindUserByDisplayName")).RequestId != Ctx->Request)
+			{ Self->LogCallbackDisposition(TEXT("FindUserByDisplayName"), Ctx->Request, TEXT("DifferentOwner"), Ctx->Context.Generation); return; }
 
-			const bool bSuccess = (Data->ResultCode == EOS_EResult::EOS_Success);
+			const bool bCurrent = Self->IsEOSContextCurrent(Ctx->Context);
+			const bool bSuccess = bCurrent && (Data->ResultCode == EOS_EResult::EOS_Success);
 			FEEOSUserInfo Info;
 			if (bSuccess)
 			{
@@ -348,10 +380,13 @@ bool UEEOSUserInfoSubsystem::FindUserByDisplayName(const FString& DisplayName)
 				}
 			}
 
-			Self->HandleFindUserByDisplayNameComplete(bSuccess, Info, SearchedName);
+			const auto Outcome = Self->CompleteOperation(TEXT("FindUserByDisplayName"), bSuccess, !bCurrent ? EEOSOperationCode::Canceled : bSuccess ? EEOSOperationCode::Succeeded : EEOSOperationCode::NativeFailure,
+				bCurrent ? TEXT("Display-name query completed.") : TEXT("Original display-name query identity/platform retired."), FString(), FString(), EEOSResultSource::SDKCallback, ANSI_TO_TCHAR(EOS_EResult_ToString(Data->ResultCode)));
+			FEEOSOutcomeDispatchScope Dispatch(Self, Outcome);
+			Self->HandleFindUserByDisplayNameComplete(bSuccess, Info, SearchedName); Self->OnOperationCompleted.Broadcast(Outcome);
 		});
 
-	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSUserInfoSubsystem::FindUserByDisplayName — Searching '%s'..."), *DisplayName);
+	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSUserInfoSubsystem::FindUserByDisplayName — Searching '%s'..."), *FEEOSNativeOperationLease::SafeField(DisplayName));
 	return true;
 }
 
@@ -366,11 +401,11 @@ void UEEOSUserInfoSubsystem::HandleFindUserByDisplayNameComplete(bool bSuccess, 
 	{
 		CachedSearchResults.Add(FoundUser);
 		UE_LOG(LogExtendedEOS, Log, TEXT("EEOSUserInfoSubsystem: Found user '%s' — ID=%s"),
-			*FoundUser.DisplayName, *FoundUser.EpicAccountId);
+			*FEEOSNativeOperationLease::SafeField(FoundUser.DisplayName), *FEEOSNativeOperationLease::SafeField(FoundUser.EpicAccountId));
 	}
 	else
 	{
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSUserInfoSubsystem: FindUserByDisplayName failed for '%s'"), *SearchedName);
+		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSUserInfoSubsystem: FindUserByDisplayName failed for '%s'"), *FEEOSNativeOperationLease::SafeField(SearchedName));
 	}
 
 	OnUserSearchComplete.Broadcast(bSuccess, CachedSearchResults);
@@ -378,6 +413,11 @@ void UEEOSUserInfoSubsystem::HandleFindUserByDisplayNameComplete(bool bSuccess, 
 
 bool UEEOSUserInfoSubsystem::QueryUserInfoBatch(const TArray<FString>& EpicAccountIds)
 {
+	if (bShuttingDown || QueryUserInfoDelegateHandle.IsValid() || QueryBatchDelegateHandle.IsValid() || bFindUserByDisplayNameInFlight)
+	{
+		RejectOperation(TEXT("QueryUserInfoBatch"), EEOSOperationCode::Busy, TEXT("A user lookup sharing the native query or completion channel is pending.")); return false;
+	}
+
 	if (!IsEOSAvailable())
 	{
 		LogEOSUnavailable(TEXT("QueryUserInfoBatch"));
@@ -406,7 +446,7 @@ bool UEEOSUserInfoSubsystem::QueryUserInfoBatch(const TArray<FString>& EpicAccou
 	// the legitimate in-flight caller is waiting on it — so: log + return false.
 	if (QueryBatchDelegateHandle.IsValid())
 	{
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSUserInfoSubsystem::QueryUserInfoBatch — A batch query is already in flight, rejecting (%d IDs, no broadcast)"), EpicAccountIds.Num());
+		RejectOperation(TEXT("QueryUserInfoBatch"), EEOSOperationCode::Busy, TEXT("Another admitted request already owns this operation."));
 		return false;
 	}
 
@@ -423,7 +463,7 @@ bool UEEOSUserInfoSubsystem::QueryUserInfoBatch(const TArray<FString>& EpicAccou
 		FUniqueNetIdPtr ParsedId = Identity->CreateUniquePlayerId(MakeCompositeId(Id));
 		if (!ParsedId.IsValid() || !ParsedId->IsValid())
 		{
-			UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSUserInfoSubsystem::QueryUserInfoBatch — Skipping invalid ID '%s'"), *Id);
+			UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSUserInfoSubsystem::QueryUserInfoBatch — Skipping invalid ID '%s'"), *FEEOSNativeOperationLease::SafeField(Id));
 			continue;
 		}
 
@@ -436,12 +476,12 @@ bool UEEOSUserInfoSubsystem::QueryUserInfoBatch(const TArray<FString>& EpicAccou
 			}
 			else
 			{
-				UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSUserInfoSubsystem::QueryUserInfoBatch — Local user '%s' has no cached account info, skipping"), *Id);
+				UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSUserInfoSubsystem::QueryUserInfoBatch — Local user '%s' has no cached account info, skipping"), *FEEOSNativeOperationLease::SafeField(Id));
 			}
 		}
 		else if (UEEOSBlueprintLibrary::ExtractEpicAccountId(ParsedId->ToString()).IsEmpty())
 		{
-			UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSUserInfoSubsystem::QueryUserInfoBatch — '%s' has no Epic Account half; the engine cannot query it, skipping"), *Id);
+			UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSUserInfoSubsystem::QueryUserInfoBatch — '%s' has no Epic Account half; the engine cannot query it, skipping"), *FEEOSNativeOperationLease::SafeField(Id));
 		}
 		else
 		{
@@ -451,25 +491,36 @@ bool UEEOSUserInfoSubsystem::QueryUserInfoBatch(const TArray<FString>& EpicAccou
 
 	if (QueryIds.Num() == 0)
 	{
-		// Nothing queryable remains — NEVER call the engine: an all-skipped request produces
-		// no completion at all and would arm the guard forever. Complete synchronously with
-		// exactly one broadcast, carrying whatever we could serve locally.
+		// No native request is submitted for users already resolved locally.
+		BeginOperation(TEXT("QueryUserInfoBatch"));
 		CachedSearchResults = PreServedResults;
 		const bool bAnyResult = CachedSearchResults.Num() > 0;
-		UE_LOG(LogExtendedEOS, Log, TEXT("EEOSUserInfoSubsystem::QueryUserInfoBatch — Nothing to query remotely; completing synchronously with %d locally-served results"), CachedSearchResults.Num());
+		const auto Outcome = CompleteOperation(TEXT("QueryUserInfoBatch"), bAnyResult,
+			bAnyResult ? EEOSOperationCode::Succeeded : EEOSOperationCode::InvalidTarget, TEXT("Batch resolved from local information; no native query submitted."));
+		FEEOSOutcomeDispatchScope Dispatch(this, Outcome);
 		OnUserSearchComplete.Broadcast(bAnyResult, CachedSearchResults);
+		if (!bShuttingDown) OnOperationCompleted.Broadcast(Outcome);
 		return bAnyResult;
 	}
 
+	if (!EEOSIdentity::HasLocalEpicAccount(Identity))
+	{
+		CachedSearchResults = PreServedResults;
+		OnUserSearchComplete.Broadcast(!CachedSearchResults.IsEmpty(), CachedSearchResults);
+		return !CachedSearchResults.IsEmpty();
+	}
+	PendingUserInterface = UserInterface;
 	// Remember the ids we actually sent as registry INSTANCES (not string snapshots — see
 	// the member comment); the completion list is interface-wide and any concurrent
 	// user-info query (incl. engine-internal friends-name resolution) lands there too.
 	PendingBatchQueryIds = QueryIds;
 
+	const auto Context = CaptureEOSContext();
+	const int64 Request = BeginOperation(TEXT("QueryUserInfoBatch"));
 	QueryBatchDelegateHandle = UserInterface->OnQueryUserInfoCompleteDelegates[0].AddWeakLambda(this,
-		[this, UserInterface, Identity, PreServedResults](int32 LocalUserNum, bool bWasSuccessful, const TArray<FUniqueNetIdRef>& QueriedIds, const FString& ErrorStr)
+		[this, UserInterface, Identity, PreServedResults, Context, Request](int32 LocalUserNum, bool bWasSuccessful, const TArray<FUniqueNetIdRef>& QueriedIds, const FString& ErrorStr)
 		{
-			if (PendingBatchQueryIds.Num() == 0)
+			if (bShuttingDown || LocalUserNum != 0 || PendingBatchQueryIds.Num() == 0 || GetActiveOperationOutcome(TEXT("QueryUserInfoBatch")).RequestId != Request)
 			{
 				return;
 			}
@@ -513,23 +564,33 @@ bool UEEOSUserInfoSubsystem::QueryUserInfoBatch(const TArray<FString>& EpicAccou
 			// engine's success flag: subset echoes mean some ids may be missing, and the
 			// flag only reflects the LAST read the engine processed — already-cached or
 			// earlier-resolved users still surface. Success = we produced any results.
-			CachedSearchResults = PreServedResults;
-			for (const FUniqueNetIdRef& RequestedId : RequestedIds)
+			const bool bCurrent = IsEOSContextCurrent(Context);
+			CachedSearchResults = bCurrent ? PreServedResults : TArray<FEEOSUserInfo>();
+			if (bCurrent) for (const FUniqueNetIdRef& RequestedId : RequestedIds)
 			{
 				FEEOSUserInfo Info;
-				if (GetKnownUserInfo(UserInterface, Identity, *RequestedId, Info))
-				{
-					CachedSearchResults.Add(Info);
-				}
+				if (GetKnownUserInfo(UserInterface, Identity, *RequestedId, Info)) CachedSearchResults.Add(Info);
 			}
-
 			const bool bAnyResult = CachedSearchResults.Num() > 0;
-			UE_LOG(LogExtendedEOS, Log, TEXT("EEOSUserInfoSubsystem: Batch query %s — %d results (engine success flag: %d)"),
-				bAnyResult ? TEXT("succeeded") : TEXT("failed"), CachedSearchResults.Num(), bWasSuccessful ? 1 : 0);
+			const auto Outcome = CompleteOperation(TEXT("QueryUserInfoBatch"), bAnyResult,
+				!bCurrent ? EEOSOperationCode::Canceled : bAnyResult ? EEOSOperationCode::Succeeded : EEOSOperationCode::NativeFailure,
+				bCurrent ? TEXT("Batch query completed.") : TEXT("Original batch identity/platform retired."), FString(),
+				bWasSuccessful ? TEXT("Success") : TEXT("Failure"), EEOSResultSource::NativeCallback);
+			FEEOSOutcomeDispatchScope Dispatch(this, Outcome);
 			OnUserSearchComplete.Broadcast(bAnyResult, CachedSearchResults);
+			if (!bShuttingDown) OnOperationCompleted.Broadcast(Outcome);
 		});
 
-	UserInterface->QueryUserInfo(0, PendingBatchQueryIds);
+	const FDelegateHandle SubmittedHandle = QueryBatchDelegateHandle;
+	const auto SubmittedIds = PendingBatchQueryIds;
+	if (!UserInterface->QueryUserInfo(0, SubmittedIds) && QueryBatchDelegateHandle == SubmittedHandle)
+	{
+		UserInterface->OnQueryUserInfoCompleteDelegates[0].Remove(QueryBatchDelegateHandle);
+		QueryBatchDelegateHandle.Reset(); PendingBatchQueryIds.Empty();
+		const auto Outcome = CompleteOperation(TEXT("QueryUserInfoBatch"), false, EEOSOperationCode::NativeStartRejected, TEXT("Native batch query refused submission."));
+		FEEOSOutcomeDispatchScope Dispatch(this, Outcome);
+		OnUserSearchComplete.Broadcast(false, TArray<FEEOSUserInfo>()); OnOperationCompleted.Broadcast(Outcome); return false;
+	}
 	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSUserInfoSubsystem::QueryUserInfoBatch — Querying %d of %d users (%d served locally)..."),
 		PendingBatchQueryIds.Num(), EpicAccountIds.Num(), PreServedResults.Num());
 	return true;
@@ -539,6 +600,10 @@ bool UEEOSUserInfoSubsystem::QueryUserInfoBatch(const TArray<FString>& EpicAccou
 
 bool UEEOSUserInfoSubsystem::QueryExternalAccountMappings(const TArray<FString>& ExternalAccountIds, EEOSExternalCredentialType AccountType)
 {
+	if (bShuttingDown || bMappingsQueryInFlight)
+	{
+		RejectOperation(TEXT("QueryExternalAccountMappings"), EEOSOperationCode::Busy, TEXT("External account mapping query is unavailable or pending.")); return false;
+	}
 	if (!IsEOSAvailable())
 	{
 		LogEOSUnavailable(TEXT("QueryExternalAccountMappings"));
@@ -549,7 +614,7 @@ bool UEEOSUserInfoSubsystem::QueryExternalAccountMappings(const TArray<FString>&
 	EOS_HPlatform PlatformHandle = GetPlatformHandle();
 	if (!PlatformHandle)
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSUserInfoSubsystem::QueryExternalAccountMappings — Platform handle not available"));
+		FEEOSNativeOperationLease::ReportRepeated(GetOwningEOSInstanceName(), TEXT("QueryExternalAccountMappings"), TEXT("CapabilityUnavailable"));
 		OnExternalMappingsQueried.Broadcast(false, TArray<FEEOSExternalAccountMapping>());
 		return false;
 	}
@@ -557,7 +622,7 @@ bool UEEOSUserInfoSubsystem::QueryExternalAccountMappings(const TArray<FString>&
 	EOS_HConnect ConnectHandle = EOS_Platform_GetConnectInterface(PlatformHandle);
 	if (!ConnectHandle)
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSUserInfoSubsystem::QueryExternalAccountMappings — Connect interface not available"));
+		FEEOSNativeOperationLease::ReportRepeated(GetOwningEOSInstanceName(), TEXT("QueryExternalAccountMappings"), TEXT("CapabilityUnavailable"));
 		OnExternalMappingsQueried.Broadcast(false, TArray<FEEOSExternalAccountMapping>());
 		return false;
 	}
@@ -567,7 +632,7 @@ bool UEEOSUserInfoSubsystem::QueryExternalAccountMappings(const TArray<FString>&
 	FUniqueNetIdPtr LocalUserId = EOSSub->GetIdentityInterface()->GetUniquePlayerId(0);
 	if (!LocalUserId.IsValid())
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSUserInfoSubsystem::QueryExternalAccountMappings — No logged-in user"));
+		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSUserInfoSubsystem::QueryExternalAccountMappings — No logged-in user"));
 		OnExternalMappingsQueried.Broadcast(false, TArray<FEEOSExternalAccountMapping>());
 		return false;
 	}
@@ -578,7 +643,7 @@ bool UEEOSUserInfoSubsystem::QueryExternalAccountMappings(const TArray<FString>&
 	const FString LocalPUIDStr = UEEOSBlueprintLibrary::ExtractProductUserId(LocalUserId->ToString());
 	if (LocalPUIDStr.IsEmpty())
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSUserInfoSubsystem::QueryExternalAccountMappings — Logged-in user has no Product User ID (no Connect session)"));
+		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSUserInfoSubsystem::QueryExternalAccountMappings — Logged-in user has no Product User ID (no Connect session)"));
 		OnExternalMappingsQueried.Broadcast(false, TArray<FEEOSExternalAccountMapping>());
 		return false;
 	}
@@ -634,32 +699,38 @@ bool UEEOSUserInfoSubsystem::QueryExternalAccountMappings(const TArray<FString>&
 		TWeakObjectPtr<UEEOSUserInfoSubsystem> Self;
 		TArray<FString> QueriedIds;
 		EOS_EExternalAccountType AccountType;
+		EOS_HConnect ConnectHandle = nullptr;
+		FEEOSRequestContext Ownership;
+		TSharedPtr<IEOSPlatformHandle, ESPMode::ThreadSafe> Platform;
 	};
 
 	FQueryMappingsContext* Ctx = new FQueryMappingsContext();
 	Ctx->Self = this;
 	Ctx->QueriedIds = ExternalAccountIds;
 	Ctx->AccountType = EosAccountType;
+	Ctx->ConnectHandle = ConnectHandle;
+	Ctx->Platform = GetOwningEOSPlatform(); Ctx->Ownership = CaptureEOSContext();
+	bMappingsQueryInFlight = true;
 
 	EOS_Connect_QueryExternalAccountMappings(ConnectHandle, &Options, Ctx,
 		[](const EOS_Connect_QueryExternalAccountMappingsCallbackInfo* Data)
 		{
-			FQueryMappingsContext* Ctx = static_cast<FQueryMappingsContext*>(Data->ClientData);
-			if (!Ctx) return;
+			if (!Data || !Data->ClientData || !EOS_EResult_IsOperationComplete(Data->ResultCode)) return;
+			TUniquePtr<FQueryMappingsContext> Ctx(static_cast<FQueryMappingsContext*>(Data->ClientData));
 
 			UEEOSUserInfoSubsystem* Self = Ctx->Self.Get();
 			TArray<FString> QueriedIds = MoveTemp(Ctx->QueriedIds);
 			EOS_EExternalAccountType AccountType = Ctx->AccountType;
-			delete Ctx;
 
-			if (!Self) return;
+			if (!Self || Self->bShuttingDown) return;
+			const bool bCurrent = Self->IsEOSContextCurrent(Ctx->Ownership);
 
+			Self->bMappingsQueryInFlight = false;
 			Self->CachedMappings.Empty();
 
-			if (Data->ResultCode == EOS_EResult::EOS_Success)
+			if (bCurrent && Data->ResultCode == EOS_EResult::EOS_Success)
 			{
-				EOS_HPlatform PlatformHandle = Self->GetPlatformHandle();
-				EOS_HConnect ConnectHandle = EOS_Platform_GetConnectInterface(PlatformHandle);
+				const EOS_HConnect ConnectHandle = Ctx->ConnectHandle;
 
 				// Now retrieve mappings for each queried external ID
 				for (const FString& ExtId : QueriedIds)

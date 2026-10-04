@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Shared/EEOSSubsystem.h"
+#include "Interfaces/OnlineFriendsInterface.h"
 #include "EEOSFriendsSubsystem.generated.h"
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnEOSFriendsListReady, const TArray<FEEOSFriendInfo>&, Friends);
@@ -74,5 +75,5 @@ private:
 
 	TArray<FEEOSFriendInfo> CachedFriends;
 
-	void HandleReadFriendsListComplete(int32 LocalUserNum, bool bWasSuccessful, const FString& ListName, const FString& ErrorStr);
+	void HandleReadFriendsListComplete(int32 LocalUserNum, bool bWasSuccessful, const FString& ListName, const FString& ErrorStr, const IOnlineFriendsPtr& FriendsInterface);
 };

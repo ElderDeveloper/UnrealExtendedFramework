@@ -1,6 +1,8 @@
 // Copyright Kemal Erdem YILMAZ. All Rights Reserved.
 
 #include "EEOSConnectSubsystem.h"
+#include "Shared/EEOSNativeOperation.h"
+#include "Shared/EEOSIdentityUtils.h"
 #include "OnlineSubsystemUtils.h"
 #include "Shared/EEOSBlueprintLibrary.h"
 #include "UnrealExtendedEOS.h"
@@ -9,32 +11,34 @@
 #include "eos_connect_types.h"
 #include "eos_sdk.h"
 
-/** Heap context passed as EOS ClientData — the EOS platform outlives this subsystem,
- *  so callbacks must resolve a weak pointer instead of touching a raw `this`. */
+/** Keeps the originating SDK platform alive until the terminal callback; UObject ownership stays weak. */
 struct FEEOSConnectCallbackContext
 {
 	TWeakObjectPtr<UEEOSConnectSubsystem> Self;
+	TSharedPtr<IEOSPlatformHandle, ESPMode::ThreadSafe> Platform;
+	FEEOSRequestContext Context;
+	FEEOSNativeOperationLease Lease;
+	int64 RequestId = 0;
+	FName Operation;
 };
 
 void UEEOSConnectSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
 	Super::Initialize(Collection);
+	LastIdentityGeneration = CaptureEOSContext().Generation;
+	ConnectWatcher = FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateUObject(this, &UEEOSConnectSubsystem::TickConnectIdentity), 0.5f);
 }
 
 void UEEOSConnectSubsystem::Deinitialize()
 {
-	// Clear any pending login delegate so the identity interface doesn't hold a stale binding
-	if (LoginCompleteDelegateHandle.IsValid())
-	{
-		if (IOnlineSubsystem* EOSSub = GetEOSOnlineSubsystem())
-		{
-			if (IOnlineIdentityPtr IdentityInterface = EOSSub->GetIdentityInterface())
-			{
-				IdentityInterface->OnLoginCompleteDelegates->Remove(LoginCompleteDelegateHandle);
-			}
-		}
-		LoginCompleteDelegateHandle.Reset();
-	}
+	BeginEOSShutdown(); bShuttingDown = true;
+	if (ConnectWatcher.IsValid()) FTSTicker::GetCoreTicker().RemoveTicker(ConnectWatcher);
+	ConnectWatcher.Reset(); CancelSDKMutation();
+	CachedContinuanceToken = nullptr;
+	EEOSIdentity::FRetired::Hold(OperationIdentity, IdentityLease, GetOwningEOSInstanceName(), false);
+	if (OperationIdentity.IsValid()) OperationIdentity->ClearOnLoginCompleteDelegate_Handle(0, LoginCompleteDelegateHandle);
+	IdentityLease.Reset(); OperationIdentity.Reset();
+	LoginCompleteDelegateHandle.Reset();
 
 	bIsConnected = false;
 	CachedProductUserId.Empty();
@@ -55,7 +59,7 @@ bool UEEOSConnectSubsystem::ConnectLogin()
 	IOnlineIdentityPtr IdentityInterface = EOSSub->GetIdentityInterface();
 	if (!IdentityInterface.IsValid())
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSConnectSubsystem::ConnectLogin — Identity interface not available"));
+		FEEOSNativeOperationLease::ReportRepeated(GetOwningEOSInstanceName(), TEXT("ConnectLogin"), TEXT("CapabilityUnavailable"));
 		OnConnectLoginComplete.Broadcast(false, TEXT(""));
 		return false;
 	}
@@ -64,12 +68,12 @@ bool UEEOSConnectSubsystem::ConnectLogin()
 	// After Auth login, the OSS automatically creates a Product User ID.
 	// ToString() is the composite "<EpicAccountId>|<ProductUserId>" — cache only the PUID half.
 	FUniqueNetIdPtr UserId = IdentityInterface->GetUniquePlayerId(0);
-	const FString ProductUserId = UserId.IsValid() ? UEEOSBlueprintLibrary::ExtractProductUserId(UserId->ToString()) : FString();
-	if (!ProductUserId.IsEmpty())
+	const FString ProductUserId = UserId.IsValid() && UserId->IsValid() && IdentityInterface->GetLoginStatus(0) == ELoginStatus::LoggedIn ? UEEOSBlueprintLibrary::ExtractProductUserId(UserId->ToString()) : FString();
+	if (!ProductUserId.IsEmpty() && GetEOSReadiness().bConnectLoggedIn)
 	{
 		CachedProductUserId = ProductUserId;
 		bIsConnected = true;
-		UE_LOG(LogExtendedEOS, Log, TEXT("EEOSConnectSubsystem::ConnectLogin — Connected with Product User ID: %s"), *CachedProductUserId);
+		UE_LOG(LogExtendedEOS, Log, TEXT("EEOSConnectSubsystem::ConnectLogin — Connected with Product User ID: %s"), *FEEOSNativeOperationLease::SafeField(CachedProductUserId));
 		OnConnectLoginComplete.Broadcast(true, CachedProductUserId);
 		return true;
 	}
@@ -84,9 +88,9 @@ bool UEEOSConnectSubsystem::CreateDeviceId()
 	// In-flight guard FIRST (R1): a device-id identity login is already pending (from
 	// CreateDeviceId or LoginWithDeviceId — they share the delegate slot). A rejection
 	// must not echo on the shared delegates; no delegate fires for this call.
-	if (LoginCompleteDelegateHandle.IsValid())
+	if (bShuttingDown || IdentityLease.IsValid() || LoginCompleteDelegateHandle.IsValid())
 	{
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSConnectSubsystem::CreateDeviceId — A device-id login/creation is already in progress, rejecting this call (no delegate will fire for it)"));
+		RejectOperation(TEXT("CreateDeviceId"), EEOSOperationCode::Busy, TEXT("Another admitted request already owns this operation."));
 		return false;
 	}
 
@@ -111,40 +115,65 @@ bool UEEOSConnectSubsystem::CreateDeviceId()
 	Credentials.Id = FPlatformProcess::ComputerName();
 	Credentials.Token = TEXT("");
 
+	if (!IdentityLease.TryAcquire(IdentityInterface.Get(), TEXT("Identity0"), this, TEXT("CreateDeviceId")))
+	{
+		RejectOperation(TEXT("CreateDeviceId"), EEOSOperationCode::Busy, TEXT("Another plugin identity operation is pending.")); return false;
+	}
+	OperationIdentity = IdentityInterface; NativeLoginContext = CaptureEOSContext();
+	const int64 Request = BeginOperation(TEXT("CreateDeviceId"), FString(), IdentityLease.GetRequestId());
 	LoginCompleteDelegateHandle = IdentityInterface->OnLoginCompleteDelegates->AddWeakLambda(this,
-		[this, IdentityInterface](int32 LocalUserNum, bool bWasSuccessful, const FUniqueNetId& NewUserId, const FString& ErrorStr)
+		[this, IdentityInterface, Request](int32 LocalUserNum, bool bWasSuccessful, const FUniqueNetId& NewUserId, const FString& ErrorStr)
 		{
+			if (bShuttingDown || LocalUserNum != 0 || !LoginCompleteDelegateHandle.IsValid() || IdentityLease.GetRequestId() != Request)
+			{ LogCallbackDisposition(TEXT("DeviceLogin"), Request, bShuttingDown ? TEXT("ShutdownInternalOnly") : TEXT("DifferentOwner")); return; }
+			const bool bCurrent = IsEOSContextCurrent(NativeLoginContext, false);
+			LogCallbackDisposition(TEXT("DeviceLogin"), Request, bCurrent ? TEXT("Consumed") : TEXT("StaleGeneration"), NativeLoginContext.Generation);
 			// Remove ourselves to prevent accumulation on next call
 			IdentityInterface->OnLoginCompleteDelegates->Remove(LoginCompleteDelegateHandle);
-			LoginCompleteDelegateHandle.Reset();
+			LoginCompleteDelegateHandle.Reset(); IdentityLease.Reset(); OperationIdentity.Reset();
 
 			// ToString() is the composite "<EpicAccountId>|<ProductUserId>" — cache only the PUID half
 			const FString ProductUserId = bWasSuccessful ? UEEOSBlueprintLibrary::ExtractProductUserId(NewUserId.ToString()) : FString();
-			const bool bSuccess = bWasSuccessful && !ProductUserId.IsEmpty();
+			const auto NativeLocal = IdentityInterface->GetUniquePlayerId(0);
+			const bool bReady = bCurrent && NativeLocal.IsValid() && *NativeLocal == NewUserId && bWasSuccessful && NewUserId.IsValid() && IdentityInterface->GetLoginStatus(0) == ELoginStatus::LoggedIn && !ProductUserId.IsEmpty();
+			const auto Outcome = CompleteOperation(TEXT("CreateDeviceId"), bReady, !bCurrent ? EEOSOperationCode::Canceled : bReady ? EEOSOperationCode::Succeeded : EEOSOperationCode::NativeFailure, !bCurrent ? TEXT("Original identity/platform retired.") : ErrorStr.IsEmpty() && !bReady ? TEXT("Device login completed without a usable Product User ID.") : ErrorStr, FString(), bWasSuccessful ? TEXT("Success") : TEXT("Failure"), EEOSResultSource::NativeCallback);
+			FEEOSOutcomeDispatchScope Dispatch(this, Outcome);
+			const bool bSuccess = bReady;
 			if (bSuccess)
 			{
+				LastIdentityGeneration = CaptureEOSContext().Generation;
 				CachedProductUserId = ProductUserId;
 				bIsConnected = true;
-				UE_LOG(LogExtendedEOS, Log, TEXT("EEOSConnectSubsystem: Device ID created and logged in: %s"), *CachedProductUserId);
+				UE_LOG(LogExtendedEOS, Log, TEXT("EEOSConnectSubsystem: Device ID created and logged in: %s"), *FEEOSNativeOperationLease::SafeField(CachedProductUserId));
 			}
 			else if (bWasSuccessful)
 			{
-				UE_LOG(LogExtendedEOS, Error, TEXT("EEOSConnectSubsystem: Device ID login reported success but the net id '%s' has no Product User ID"), *NewUserId.ToString());
+				UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSConnectSubsystem: Device ID login reported success but the net id '%s' has no Product User ID"), *FEEOSNativeOperationLease::SafeField(NewUserId.ToString()));
 			}
 			else
 			{
-				UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSConnectSubsystem: Device ID creation failed — %s"), *ErrorStr);
+				UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSConnectSubsystem: Device ID creation failed — %s"), *FEEOSNativeOperationLease::SafeField(ErrorStr));
 			}
-			OnDeviceIdCreated.Broadcast(bSuccess);
+			OnDeviceIdCreated.Broadcast(bSuccess); OnOperationCompleted.Broadcast(Outcome);
 		});
 
-	IdentityInterface->Login(0, Credentials);
+	const bool bStarted = IdentityInterface->Login(0, Credentials);
+	if (!bStarted && LoginCompleteDelegateHandle.IsValid() && IdentityLease.GetRequestId() == Request)
+	{
+		IdentityInterface->ClearOnLoginCompleteDelegate_Handle(0, LoginCompleteDelegateHandle);
+		LoginCompleteDelegateHandle.Reset(); IdentityLease.Reset(); OperationIdentity.Reset();
+		const auto Outcome = CompleteOperation(TEXT("CreateDeviceId"), false, EEOSOperationCode::NativeStartRejected, TEXT("Native device login refused submission."));
+		FEEOSOutcomeDispatchScope Dispatch(this, Outcome);
+		OnDeviceIdCreated.Broadcast(false); OnOperationCompleted.Broadcast(Outcome);
+	}
+	if (!bStarted) return false;
 	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSConnectSubsystem::CreateDeviceId — Creating device ID..."));
 	return true;
 }
 
 bool UEEOSConnectSubsystem::DeleteDeviceId()
 {
+	if (bShuttingDown) return false;
 	if (!IsEOSAvailable())
 	{
 		LogEOSUnavailable(TEXT("DeleteDeviceId"));
@@ -155,7 +184,7 @@ bool UEEOSConnectSubsystem::DeleteDeviceId()
 	EOS_HPlatform PlatformHandle = GetPlatformHandle();
 	if (!PlatformHandle)
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSConnectSubsystem::DeleteDeviceId — Platform handle not available"));
+		FEEOSNativeOperationLease::ReportRepeated(GetOwningEOSInstanceName(), TEXT("DeleteDeviceId"), TEXT("CapabilityUnavailable"));
 		OnDeviceIdDeleted.Broadcast(false);
 		return false;
 	}
@@ -163,7 +192,7 @@ bool UEEOSConnectSubsystem::DeleteDeviceId()
 	EOS_HConnect ConnectHandle = EOS_Platform_GetConnectInterface(PlatformHandle);
 	if (!ConnectHandle)
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSConnectSubsystem::DeleteDeviceId — Connect interface not available"));
+		FEEOSNativeOperationLease::ReportRepeated(GetOwningEOSInstanceName(), TEXT("DeleteDeviceId"), TEXT("CapabilityUnavailable"));
 		OnDeviceIdDeleted.Broadcast(false);
 		return false;
 	}
@@ -173,12 +202,20 @@ bool UEEOSConnectSubsystem::DeleteDeviceId()
 
 	// Store weak ref for the static callback — the EOS platform outlives this subsystem
 	TWeakObjectPtr<UEEOSConnectSubsystem> WeakThis(this);
-	EOS_Connect_DeleteDeviceId(ConnectHandle, &Options, new FEEOSConnectCallbackContext{WeakThis},
+	auto* Context = BeginSDKMutation(TEXT("DeleteDeviceId"));
+	if (!Context) return false;
+	EOS_Connect_DeleteDeviceId(ConnectHandle, &Options, Context,
 		[](const EOS_Connect_DeleteDeviceIdCallbackInfo* Data)
 		{
+			if (!Data || !EOS_EResult_IsOperationComplete(Data->ResultCode)) return;
 			TUniquePtr<FEEOSConnectCallbackContext> Ctx(static_cast<FEEOSConnectCallbackContext*>(Data->ClientData));
 			UEEOSConnectSubsystem* Self = Ctx.IsValid() ? Ctx->Self.Get() : nullptr;
-			if (!Self) return;
+			if (!Self || Self->bShuttingDown || Self->ActiveSDKMutation != Ctx->RequestId) return;
+			if (!Self->IsEOSContextCurrent(Ctx->Context))
+			{ Self->LogCallbackDisposition(Ctx->Operation, Ctx->RequestId, TEXT("StaleGeneration"), Ctx->Context.Generation); Ctx->Lease.Reset(); Self->CancelSDKMutation(); return; }
+			Ctx->Lease.Reset();
+			const auto Outcome = Self->FinishSDKMutation(Data->ResultCode == EOS_EResult::EOS_Success, ANSI_TO_TCHAR(EOS_EResult_ToString(Data->ResultCode)));
+			FEEOSOutcomeDispatchScope Dispatch(Self, Outcome);
 
 			const bool bSuccess = (Data->ResultCode == EOS_EResult::EOS_Success);
 			if (bSuccess)
@@ -189,7 +226,7 @@ bool UEEOSConnectSubsystem::DeleteDeviceId()
 			{
 				UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSConnectSubsystem::DeleteDeviceId — Failed: %s"), ANSI_TO_TCHAR(EOS_EResult_ToString(Data->ResultCode)));
 			}
-			Self->OnDeviceIdDeleted.Broadcast(bSuccess);
+			Self->OnDeviceIdDeleted.Broadcast(bSuccess); Self->OnOperationCompleted.Broadcast(Outcome);
 		});
 
 	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSConnectSubsystem::DeleteDeviceId — Deleting device ID..."));
@@ -201,9 +238,9 @@ bool UEEOSConnectSubsystem::LoginWithDeviceId(const FString& DisplayName)
 	// In-flight guard FIRST (R1): a device-id identity login is already pending (from
 	// CreateDeviceId or LoginWithDeviceId — they share the delegate slot). A rejection
 	// must not echo on the shared delegates; no delegate fires for this call.
-	if (LoginCompleteDelegateHandle.IsValid())
+	if (bShuttingDown || IdentityLease.IsValid() || LoginCompleteDelegateHandle.IsValid())
 	{
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSConnectSubsystem::LoginWithDeviceId — A device-id login/creation is already in progress, rejecting this call (no delegate will fire for it)"));
+		RejectOperation(TEXT("LoginWithDeviceId"), EEOSOperationCode::Busy, TEXT("Another admitted request already owns this operation."));
 		return false;
 	}
 
@@ -229,41 +266,66 @@ bool UEEOSConnectSubsystem::LoginWithDeviceId(const FString& DisplayName)
 	Credentials.Id = DisplayName;
 	Credentials.Token = TEXT("");
 
+	if (!IdentityLease.TryAcquire(IdentityInterface.Get(), TEXT("Identity0"), this, TEXT("LoginWithDeviceId")))
+	{
+		RejectOperation(TEXT("LoginWithDeviceId"), EEOSOperationCode::Busy, TEXT("Another plugin identity operation is pending.")); return false;
+	}
+	OperationIdentity = IdentityInterface; NativeLoginContext = CaptureEOSContext();
+	const int64 Request = BeginOperation(TEXT("LoginWithDeviceId"), FString(), IdentityLease.GetRequestId());
 	LoginCompleteDelegateHandle = IdentityInterface->OnLoginCompleteDelegates->AddWeakLambda(this,
-		[this, IdentityInterface](int32 LocalUserNum, bool bWasSuccessful, const FUniqueNetId& NewUserId, const FString& ErrorStr)
+		[this, IdentityInterface, Request](int32 LocalUserNum, bool bWasSuccessful, const FUniqueNetId& NewUserId, const FString& ErrorStr)
 		{
+			if (bShuttingDown || LocalUserNum != 0 || !LoginCompleteDelegateHandle.IsValid() || IdentityLease.GetRequestId() != Request)
+			{ LogCallbackDisposition(TEXT("DeviceLogin"), Request, bShuttingDown ? TEXT("ShutdownInternalOnly") : TEXT("DifferentOwner")); return; }
+			const bool bCurrent = IsEOSContextCurrent(NativeLoginContext, false);
+			LogCallbackDisposition(TEXT("DeviceLogin"), Request, bCurrent ? TEXT("Consumed") : TEXT("StaleGeneration"), NativeLoginContext.Generation);
 			// Remove ourselves to prevent accumulation on next call
 			IdentityInterface->OnLoginCompleteDelegates->Remove(LoginCompleteDelegateHandle);
-			LoginCompleteDelegateHandle.Reset();
+			LoginCompleteDelegateHandle.Reset(); IdentityLease.Reset(); OperationIdentity.Reset();
 
 			// ToString() is the composite "<EpicAccountId>|<ProductUserId>" — cache only the PUID half
 			const FString ProductUserId = bWasSuccessful ? UEEOSBlueprintLibrary::ExtractProductUserId(NewUserId.ToString()) : FString();
-			if (bWasSuccessful && !ProductUserId.IsEmpty())
+			const auto NativeLocal = IdentityInterface->GetUniquePlayerId(0);
+			const bool bReady = bCurrent && NativeLocal.IsValid() && *NativeLocal == NewUserId && bWasSuccessful && NewUserId.IsValid() && IdentityInterface->GetLoginStatus(0) == ELoginStatus::LoggedIn && !ProductUserId.IsEmpty();
+			const auto Outcome = CompleteOperation(TEXT("LoginWithDeviceId"), bReady, !bCurrent ? EEOSOperationCode::Canceled : bReady ? EEOSOperationCode::Succeeded : EEOSOperationCode::NativeFailure, !bCurrent ? TEXT("Original identity/platform retired.") : ErrorStr.IsEmpty() && !bReady ? TEXT("Device login completed without a usable Product User ID.") : ErrorStr, FString(), bWasSuccessful ? TEXT("Success") : TEXT("Failure"), EEOSResultSource::NativeCallback);
+			FEEOSOutcomeDispatchScope Dispatch(this, Outcome);
+			if (bReady)
 			{
+				LastIdentityGeneration = CaptureEOSContext().Generation;
 				CachedProductUserId = ProductUserId;
 				bIsConnected = true;
-				UE_LOG(LogExtendedEOS, Log, TEXT("EEOSConnectSubsystem: Device ID login succeeded: %s"), *CachedProductUserId);
-				OnConnectLoginComplete.Broadcast(true, CachedProductUserId);
+				UE_LOG(LogExtendedEOS, Log, TEXT("EEOSConnectSubsystem: Device ID login succeeded: %s"), *FEEOSNativeOperationLease::SafeField(CachedProductUserId));
+				OnConnectLoginComplete.Broadcast(true, CachedProductUserId); OnOperationCompleted.Broadcast(Outcome);
 			}
 			else if (bWasSuccessful)
 			{
-				UE_LOG(LogExtendedEOS, Error, TEXT("EEOSConnectSubsystem: Device ID login reported success but the net id '%s' has no Product User ID"), *NewUserId.ToString());
-				OnConnectLoginComplete.Broadcast(false, TEXT(""));
+				UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSConnectSubsystem: Device ID login reported success but the net id '%s' has no Product User ID"), *FEEOSNativeOperationLease::SafeField(NewUserId.ToString()));
+				OnConnectLoginComplete.Broadcast(false, TEXT("")); OnOperationCompleted.Broadcast(Outcome);
 			}
 			else
 			{
-				UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSConnectSubsystem: Device ID login failed — %s"), *ErrorStr);
-				OnConnectLoginComplete.Broadcast(false, TEXT(""));
+				UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSConnectSubsystem: Device ID login failed — %s"), *FEEOSNativeOperationLease::SafeField(ErrorStr));
+				OnConnectLoginComplete.Broadcast(false, TEXT("")); OnOperationCompleted.Broadcast(Outcome);
 			}
 		});
 
-	IdentityInterface->Login(0, Credentials);
-	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSConnectSubsystem::LoginWithDeviceId — Logging in as '%s'..."), *DisplayName);
+	const bool bStarted = IdentityInterface->Login(0, Credentials);
+	if (!bStarted && LoginCompleteDelegateHandle.IsValid() && IdentityLease.GetRequestId() == Request)
+	{
+		IdentityInterface->ClearOnLoginCompleteDelegate_Handle(0, LoginCompleteDelegateHandle);
+		LoginCompleteDelegateHandle.Reset(); IdentityLease.Reset(); OperationIdentity.Reset();
+		const auto Outcome = CompleteOperation(TEXT("LoginWithDeviceId"), false, EEOSOperationCode::NativeStartRejected, TEXT("Native device login refused submission."));
+		FEEOSOutcomeDispatchScope Dispatch(this, Outcome);
+		OnConnectLoginComplete.Broadcast(false, TEXT("")); OnOperationCompleted.Broadcast(Outcome);
+	}
+	if (!bStarted) return false;
+	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSConnectSubsystem::LoginWithDeviceId — Logging in as '%s'..."), *FEEOSNativeOperationLease::SafeField(DisplayName));
 	return true;
 }
 
 bool UEEOSConnectSubsystem::LinkAccount(EEOSExternalCredentialType CredentialType, const FString& Token)
 {
+	if (bShuttingDown) return false;
 	if (!IsEOSAvailable())
 	{
 		LogEOSUnavailable(TEXT("LinkAccount"));
@@ -273,7 +335,7 @@ bool UEEOSConnectSubsystem::LinkAccount(EEOSExternalCredentialType CredentialTyp
 
 	if (!CachedContinuanceToken)
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSConnectSubsystem::LinkAccount — No ContinuanceToken available. "
+		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSConnectSubsystem::LinkAccount — No ContinuanceToken available. "
 			"A ContinuanceToken is obtained when a Connect login returns EOS_InvalidUser. "
 			"Listen for OnInvalidUserDetected and call LinkAccount within that flow."));
 		OnAccountLinked.Broadcast(false);
@@ -283,7 +345,7 @@ bool UEEOSConnectSubsystem::LinkAccount(EEOSExternalCredentialType CredentialTyp
 	EOS_HPlatform PlatformHandle = GetPlatformHandle();
 	if (!PlatformHandle)
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSConnectSubsystem::LinkAccount — Platform handle not available"));
+		FEEOSNativeOperationLease::ReportRepeated(GetOwningEOSInstanceName(), TEXT("LinkAccount"), TEXT("CapabilityUnavailable"));
 		OnAccountLinked.Broadcast(false);
 		return false;
 	}
@@ -291,7 +353,7 @@ bool UEEOSConnectSubsystem::LinkAccount(EEOSExternalCredentialType CredentialTyp
 	EOS_HConnect ConnectHandle = EOS_Platform_GetConnectInterface(PlatformHandle);
 	if (!ConnectHandle)
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSConnectSubsystem::LinkAccount — Connect interface not available"));
+		FEEOSNativeOperationLease::ReportRepeated(GetOwningEOSInstanceName(), TEXT("LinkAccount"), TEXT("CapabilityUnavailable"));
 		OnAccountLinked.Broadcast(false);
 		return false;
 	}
@@ -307,19 +369,28 @@ bool UEEOSConnectSubsystem::LinkAccount(EEOSExternalCredentialType CredentialTyp
 	// the cache before the SDK call) so a fresh token stored mid-flight by a new
 	// EOS_InvalidUser login can never be clobbered when this call's callback lands (m4).
 	const EOS_ContinuanceToken ConsumedToken = CachedContinuanceToken;
-	CachedContinuanceToken = nullptr;
+
 
 	EOS_Connect_LinkAccountOptions Options = {};
 	Options.ApiVersion = EOS_CONNECT_LINKACCOUNT_API_LATEST;
 	Options.ContinuanceToken = ConsumedToken;
 	Options.LocalUserId = LocalPUID;
 
-	EOS_Connect_LinkAccount(ConnectHandle, &Options, new FEEOSConnectCallbackContext{this},
+	auto* Context = BeginSDKMutation(TEXT("LinkAccount"));
+	if (!Context) return false;
+	CachedContinuanceToken = nullptr;
+	EOS_Connect_LinkAccount(ConnectHandle, &Options, Context,
 		[](const EOS_Connect_LinkAccountCallbackInfo* Data)
 		{
+			if (!Data || !EOS_EResult_IsOperationComplete(Data->ResultCode)) return;
 			TUniquePtr<FEEOSConnectCallbackContext> Ctx(static_cast<FEEOSConnectCallbackContext*>(Data->ClientData));
 			UEEOSConnectSubsystem* Self = Ctx.IsValid() ? Ctx->Self.Get() : nullptr;
-			if (!Self) return;
+			if (!Self || Self->bShuttingDown || Self->ActiveSDKMutation != Ctx->RequestId) return;
+			if (!Self->IsEOSContextCurrent(Ctx->Context))
+			{ Self->LogCallbackDisposition(Ctx->Operation, Ctx->RequestId, TEXT("StaleGeneration"), Ctx->Context.Generation); Ctx->Lease.Reset(); Self->CancelSDKMutation(); return; }
+			Ctx->Lease.Reset();
+			const auto Outcome = Self->FinishSDKMutation(Data->ResultCode == EOS_EResult::EOS_Success, ANSI_TO_TCHAR(EOS_EResult_ToString(Data->ResultCode)));
+			FEEOSOutcomeDispatchScope Dispatch(Self, Outcome);
 
 			// The consumed ContinuanceToken was already cleared from the cache at call
 			// time (single-use, m4) — do NOT clear the member here: it may already hold
@@ -336,13 +407,13 @@ bool UEEOSConnectSubsystem::LinkAccount(EEOSExternalCredentialType CredentialTyp
 					Self->CachedProductUserId = ANSI_TO_TCHAR(PUIDBuffer);
 				}
 				Self->bIsConnected = true;
-				UE_LOG(LogExtendedEOS, Log, TEXT("EEOSConnectSubsystem::LinkAccount — Account linked successfully. PUID: %s"), *Self->CachedProductUserId);
+				UE_LOG(LogExtendedEOS, Log, TEXT("EEOSConnectSubsystem::LinkAccount — Account linked successfully. PUID: %s"), *FEEOSNativeOperationLease::SafeField(Self->CachedProductUserId));
 			}
 			else
 			{
 				UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSConnectSubsystem::LinkAccount — Failed: %s"), ANSI_TO_TCHAR(EOS_EResult_ToString(Data->ResultCode)));
 			}
-			Self->OnAccountLinked.Broadcast(bSuccess);
+			Self->OnAccountLinked.Broadcast(bSuccess); Self->OnOperationCompleted.Broadcast(Outcome);
 		});
 
 	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSConnectSubsystem::LinkAccount — Linking account (type=%d) with ContinuanceToken..."), static_cast<int32>(CredentialType));
@@ -351,6 +422,7 @@ bool UEEOSConnectSubsystem::LinkAccount(EEOSExternalCredentialType CredentialTyp
 
 bool UEEOSConnectSubsystem::UnlinkAccount(EEOSExternalCredentialType CredentialType)
 {
+	if (bShuttingDown) return false;
 	if (!IsEOSAvailable())
 	{
 		LogEOSUnavailable(TEXT("UnlinkAccount"));
@@ -361,7 +433,7 @@ bool UEEOSConnectSubsystem::UnlinkAccount(EEOSExternalCredentialType CredentialT
 	EOS_HPlatform PlatformHandle = GetPlatformHandle();
 	if (!PlatformHandle)
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSConnectSubsystem::UnlinkAccount — Platform handle not available"));
+		FEEOSNativeOperationLease::ReportRepeated(GetOwningEOSInstanceName(), TEXT("UnlinkAccount"), TEXT("CapabilityUnavailable"));
 		OnAccountUnlinked.Broadcast(false);
 		return false;
 	}
@@ -369,7 +441,7 @@ bool UEEOSConnectSubsystem::UnlinkAccount(EEOSExternalCredentialType CredentialT
 	EOS_HConnect ConnectHandle = EOS_Platform_GetConnectInterface(PlatformHandle);
 	if (!ConnectHandle)
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSConnectSubsystem::UnlinkAccount — Connect interface not available"));
+		FEEOSNativeOperationLease::ReportRepeated(GetOwningEOSInstanceName(), TEXT("UnlinkAccount"), TEXT("CapabilityUnavailable"));
 		OnAccountUnlinked.Broadcast(false);
 		return false;
 	}
@@ -379,7 +451,7 @@ bool UEEOSConnectSubsystem::UnlinkAccount(EEOSExternalCredentialType CredentialT
 	IOnlineIdentityPtr IdentityInterface = EOSSub->GetIdentityInterface();
 	if (!IdentityInterface.IsValid() || !IdentityInterface->GetUniquePlayerId(0).IsValid())
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSConnectSubsystem::UnlinkAccount — No logged in user"));
+		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSConnectSubsystem::UnlinkAccount — No logged in user"));
 		OnAccountUnlinked.Broadcast(false);
 		return false;
 	}
@@ -392,7 +464,7 @@ bool UEEOSConnectSubsystem::UnlinkAccount(EEOSExternalCredentialType CredentialT
 	const FString ProductUserIdStr = UEEOSBlueprintLibrary::ExtractProductUserId(IdentityInterface->GetUniquePlayerId(0)->ToString());
 	if (ProductUserIdStr.IsEmpty())
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSConnectSubsystem::UnlinkAccount — Logged-in user has no Product User ID (no Connect session)"));
+		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSConnectSubsystem::UnlinkAccount — Logged-in user has no Product User ID (no Connect session)"));
 		OnAccountUnlinked.Broadcast(false);
 		return false;
 	}
@@ -402,12 +474,20 @@ bool UEEOSConnectSubsystem::UnlinkAccount(EEOSExternalCredentialType CredentialT
 	Options.ApiVersion = EOS_CONNECT_UNLINKACCOUNT_API_LATEST;
 	Options.LocalUserId = ProductUserId;
 
-	EOS_Connect_UnlinkAccount(ConnectHandle, &Options, new FEEOSConnectCallbackContext{this},
+	auto* Context = BeginSDKMutation(TEXT("UnlinkAccount"));
+	if (!Context) return false;
+	EOS_Connect_UnlinkAccount(ConnectHandle, &Options, Context,
 		[](const EOS_Connect_UnlinkAccountCallbackInfo* Data)
 		{
+			if (!Data || !EOS_EResult_IsOperationComplete(Data->ResultCode)) return;
 			TUniquePtr<FEEOSConnectCallbackContext> Ctx(static_cast<FEEOSConnectCallbackContext*>(Data->ClientData));
 			UEEOSConnectSubsystem* Self = Ctx.IsValid() ? Ctx->Self.Get() : nullptr;
-			if (!Self) return;
+			if (!Self || Self->bShuttingDown || Self->ActiveSDKMutation != Ctx->RequestId) return;
+			if (!Self->IsEOSContextCurrent(Ctx->Context))
+			{ Self->LogCallbackDisposition(Ctx->Operation, Ctx->RequestId, TEXT("StaleGeneration"), Ctx->Context.Generation); Ctx->Lease.Reset(); Self->CancelSDKMutation(); return; }
+			Ctx->Lease.Reset();
+			const auto Outcome = Self->FinishSDKMutation(Data->ResultCode == EOS_EResult::EOS_Success, ANSI_TO_TCHAR(EOS_EResult_ToString(Data->ResultCode)));
+			FEEOSOutcomeDispatchScope Dispatch(Self, Outcome);
 
 			const bool bSuccess = (Data->ResultCode == EOS_EResult::EOS_Success);
 			if (bSuccess)
@@ -418,7 +498,7 @@ bool UEEOSConnectSubsystem::UnlinkAccount(EEOSExternalCredentialType CredentialT
 			{
 				UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSConnectSubsystem::UnlinkAccount — Failed: %s"), ANSI_TO_TCHAR(EOS_EResult_ToString(Data->ResultCode)));
 			}
-			Self->OnAccountUnlinked.Broadcast(bSuccess);
+			Self->OnAccountUnlinked.Broadcast(bSuccess); Self->OnOperationCompleted.Broadcast(Outcome);
 		});
 
 	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSConnectSubsystem::UnlinkAccount — Unlinking account (type=%d)..."), static_cast<int32>(CredentialType));
@@ -427,6 +507,7 @@ bool UEEOSConnectSubsystem::UnlinkAccount(EEOSExternalCredentialType CredentialT
 
 bool UEEOSConnectSubsystem::TransferDeviceIdAccount(const FString& DeviceIdProductUserId, const FString& ExternalProductUserId, bool bKeepExternalAccountProgression)
 {
+	if (bShuttingDown) return false;
 	if (!IsEOSAvailable())
 	{
 		LogEOSUnavailable(TEXT("TransferDeviceIdAccount"));
@@ -437,7 +518,7 @@ bool UEEOSConnectSubsystem::TransferDeviceIdAccount(const FString& DeviceIdProdu
 	EOS_HPlatform PlatformHandle = GetPlatformHandle();
 	if (!PlatformHandle)
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSConnectSubsystem::TransferDeviceIdAccount — Platform handle not available"));
+		FEEOSNativeOperationLease::ReportRepeated(GetOwningEOSInstanceName(), TEXT("TransferDeviceIdAccount"), TEXT("CapabilityUnavailable"));
 		OnDeviceIdAccountTransferred.Broadcast(false, TEXT(""));
 		return false;
 	}
@@ -445,7 +526,7 @@ bool UEEOSConnectSubsystem::TransferDeviceIdAccount(const FString& DeviceIdProdu
 	EOS_HConnect ConnectHandle = EOS_Platform_GetConnectInterface(PlatformHandle);
 	if (!ConnectHandle)
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSConnectSubsystem::TransferDeviceIdAccount — Connect interface not available"));
+		FEEOSNativeOperationLease::ReportRepeated(GetOwningEOSInstanceName(), TEXT("TransferDeviceIdAccount"), TEXT("CapabilityUnavailable"));
 		OnDeviceIdAccountTransferred.Broadcast(false, TEXT(""));
 		return false;
 	}
@@ -455,7 +536,7 @@ bool UEEOSConnectSubsystem::TransferDeviceIdAccount(const FString& DeviceIdProdu
 	const FString DevicePUIDStr = UEEOSBlueprintLibrary::ExtractProductUserId(DeviceIdProductUserId);
 	if (DevicePUIDStr.IsEmpty())
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSConnectSubsystem::TransferDeviceIdAccount — Invalid Device ID Product User ID: %s"), *DeviceIdProductUserId);
+		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSConnectSubsystem::TransferDeviceIdAccount — Invalid Device ID Product User ID: %s"), *FEEOSNativeOperationLease::SafeField(DeviceIdProductUserId));
 		OnDeviceIdAccountTransferred.Broadcast(false, TEXT(""));
 		return false;
 	}
@@ -463,7 +544,7 @@ bool UEEOSConnectSubsystem::TransferDeviceIdAccount(const FString& DeviceIdProdu
 	const FString ExternalPUIDStr = UEEOSBlueprintLibrary::ExtractProductUserId(ExternalProductUserId);
 	if (ExternalPUIDStr.IsEmpty())
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSConnectSubsystem::TransferDeviceIdAccount — Invalid external-account Product User ID: %s"), *ExternalProductUserId);
+		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSConnectSubsystem::TransferDeviceIdAccount — Invalid external-account Product User ID: %s"), *FEEOSNativeOperationLease::SafeField(ExternalProductUserId));
 		OnDeviceIdAccountTransferred.Broadcast(false, TEXT(""));
 		return false;
 	}
@@ -483,12 +564,20 @@ bool UEEOSConnectSubsystem::TransferDeviceIdAccount(const FString& DeviceIdProdu
 	Options.LocalDeviceUserId = DeviceUserId;
 	Options.ProductUserIdToPreserve = bKeepExternalAccountProgression ? ExternalUserId : DeviceUserId;
 
-	EOS_Connect_TransferDeviceIdAccount(ConnectHandle, &Options, new FEEOSConnectCallbackContext{this},
+	auto* Context = BeginSDKMutation(TEXT("TransferDeviceIdAccount"));
+	if (!Context) return false;
+	EOS_Connect_TransferDeviceIdAccount(ConnectHandle, &Options, Context,
 		[](const EOS_Connect_TransferDeviceIdAccountCallbackInfo* Data)
 		{
+			if (!Data || !EOS_EResult_IsOperationComplete(Data->ResultCode)) return;
 			TUniquePtr<FEEOSConnectCallbackContext> Ctx(static_cast<FEEOSConnectCallbackContext*>(Data->ClientData));
 			UEEOSConnectSubsystem* Self = Ctx.IsValid() ? Ctx->Self.Get() : nullptr;
-			if (!Self) return;
+			if (!Self || Self->bShuttingDown || Self->ActiveSDKMutation != Ctx->RequestId) return;
+			if (!Self->IsEOSContextCurrent(Ctx->Context))
+			{ Self->LogCallbackDisposition(Ctx->Operation, Ctx->RequestId, TEXT("StaleGeneration"), Ctx->Context.Generation); Ctx->Lease.Reset(); Self->CancelSDKMutation(); return; }
+			Ctx->Lease.Reset();
+			const auto Outcome = Self->FinishSDKMutation(Data->ResultCode == EOS_EResult::EOS_Success, ANSI_TO_TCHAR(EOS_EResult_ToString(Data->ResultCode)));
+			FEEOSOutcomeDispatchScope Dispatch(Self, Outcome);
 
 			if (Data->ResultCode == EOS_EResult::EOS_Success)
 			{
@@ -513,29 +602,30 @@ bool UEEOSConnectSubsystem::TransferDeviceIdAccount(const FString& DeviceIdProdu
 				// user, so an empty id is safer than a stale one.
 				Self->CachedProductUserId = PreservedPUID;
 				Self->bIsConnected = true;
-				UE_LOG(LogExtendedEOS, Log, TEXT("EEOSConnectSubsystem::TransferDeviceIdAccount — Transfer successful, preserved PUID: %s"), *PreservedPUID);
-				Self->OnDeviceIdAccountTransferred.Broadcast(true, PreservedPUID);
+				UE_LOG(LogExtendedEOS, Log, TEXT("EEOSConnectSubsystem::TransferDeviceIdAccount — Transfer successful, preserved PUID: %s"), *FEEOSNativeOperationLease::SafeField(PreservedPUID));
+				Self->OnDeviceIdAccountTransferred.Broadcast(true, PreservedPUID); Self->OnOperationCompleted.Broadcast(Outcome);
 			}
 			else
 			{
 				UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSConnectSubsystem::TransferDeviceIdAccount — Failed: %s"), ANSI_TO_TCHAR(EOS_EResult_ToString(Data->ResultCode)));
-				Self->OnDeviceIdAccountTransferred.Broadcast(false, TEXT(""));
+				Self->OnDeviceIdAccountTransferred.Broadcast(false, TEXT("")); Self->OnOperationCompleted.Broadcast(Outcome);
 			}
 		});
 
 	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSConnectSubsystem::TransferDeviceIdAccount — Transferring Device ID login '%s' into external account user '%s' (preserving %s)..."),
-		*DevicePUIDStr, *ExternalPUIDStr, bKeepExternalAccountProgression ? TEXT("external-account progression") : TEXT("device-id progression"));
+		*FEEOSNativeOperationLease::SafeField(DevicePUIDStr), *FEEOSNativeOperationLease::SafeField(ExternalPUIDStr), bKeepExternalAccountProgression ? TEXT("external-account progression") : TEXT("device-id progression"));
 	return true;
 }
 
 FString UEEOSConnectSubsystem::GetProductUserId() const
 {
-	return CachedProductUserId;
+	const auto Context = CaptureEOSContext();
+	return GetEOSReadiness().bConnectLoggedIn ? UEEOSBlueprintLibrary::ExtractProductUserId(Context.LocalId) : FString();
 }
 
 bool UEEOSConnectSubsystem::IsConnected() const
 {
-	return bIsConnected;
+	return GetEOSReadiness().bConnectLoggedIn;
 }
 
 FString UEEOSConnectSubsystem::GetDeviceIdDisplayName() const
@@ -545,7 +635,7 @@ FString UEEOSConnectSubsystem::GetDeviceIdDisplayName() const
 
 bool UEEOSConnectSubsystem::HasContinuanceToken() const
 {
-	return CachedContinuanceToken != nullptr;
+	return CaptureEOSContext().Generation == LastIdentityGeneration && CachedContinuanceToken != nullptr;
 }
 
 void UEEOSConnectSubsystem::StoreContinuanceToken(EOS_ContinuanceToken Token)
@@ -556,4 +646,51 @@ void UEEOSConnectSubsystem::StoreContinuanceToken(EOS_ContinuanceToken Token)
 		UE_LOG(LogExtendedEOS, Log, TEXT("EEOSConnectSubsystem: ContinuanceToken stored — LinkAccount is now available"));
 		OnInvalidUserDetected.Broadcast(true);
 	}
+}
+
+FEEOSConnectCallbackContext* UEEOSConnectSubsystem::BeginSDKMutation(FName Operation)
+{
+	const auto Context = CaptureEOSContext();
+	if (bShuttingDown || !Context.Platform.IsValid() || !Context.Identity.IsValid())
+	{ RejectOperation(Operation, EEOSOperationCode::UnsupportedCapability, TEXT("Owning identity/platform unavailable.")); return nullptr; }
+	if (!SDKMutationLease.TryAcquire(Context.Identity.Get(), TEXT("Identity0"), this, Operation))
+	{ RejectOperation(Operation, EEOSOperationCode::Busy, TEXT("Another mutation owns the native identity.")); return nullptr; }
+	SDKMutationContext = Context; ActiveSDKOperation = Operation;
+	ActiveSDKMutation = BeginOperation(Operation, FString(), SDKMutationLease.GetRequestId());
+	return new FEEOSConnectCallbackContext{this, Context.Platform, Context, SDKMutationLease, ActiveSDKMutation, Operation};
+}
+FEEOSOperationOutcome UEEOSConnectSubsystem::FinishSDKMutation(bool bSuccess, const FString& SDKResult, bool bCanceled)
+{
+	const auto Outcome = CompleteOperation(ActiveSDKOperation, bSuccess, bCanceled ? EEOSOperationCode::Canceled : bSuccess ? EEOSOperationCode::Succeeded : EEOSOperationCode::NativeFailure,
+		bCanceled ? TEXT("Original identity/platform retired; SDK result unobserved.") : bSuccess ? TEXT("Connect mutation completed.") : TEXT("Connect mutation failed."),
+		FString(), FString(), bCanceled ? EEOSResultSource::Plugin : EEOSResultSource::SDKCallback, SDKResult);
+	SDKMutationLease.Reset(); ActiveSDKMutation = 0; ActiveSDKOperation = NAME_None; return Outcome;
+}
+void UEEOSConnectSubsystem::CancelSDKMutation()
+{
+	if (!ActiveSDKMutation) return;
+	const FName Operation = ActiveSDKOperation;
+	const auto Outcome = FinishSDKMutation(false, FString(), true);
+	if (bShuttingDown) return;
+	FEEOSOutcomeDispatchScope Dispatch(this, Outcome);
+	if (Operation == TEXT("DeleteDeviceId")) OnDeviceIdDeleted.Broadcast(false);
+	else if (Operation == TEXT("LinkAccount")) OnAccountLinked.Broadcast(false);
+	else if (Operation == TEXT("UnlinkAccount")) OnAccountUnlinked.Broadcast(false);
+	else if (Operation == TEXT("TransferDeviceIdAccount")) OnDeviceIdAccountTransferred.Broadcast(false, FString());
+	OnOperationCompleted.Broadcast(Outcome);
+}
+bool UEEOSConnectSubsystem::TickConnectIdentity(float)
+{
+	if (bShuttingDown) return false;
+	const auto Context = CaptureEOSContext();
+	if (LastIdentityGeneration != Context.Generation)
+	{
+		LastIdentityGeneration = Context.Generation;
+		CachedContinuanceToken = nullptr; CachedProductUserId.Empty(); CachedDeviceDisplayName.Empty(); bIsConnected = false;
+	}
+	if (ActiveSDKMutation && !IsEOSContextCurrent(SDKMutationContext)) CancelSDKMutation();
+	const auto Readiness = GetEOSReadiness();
+	bIsConnected = Readiness.bConnectLoggedIn;
+	CachedProductUserId = bIsConnected ? UEEOSBlueprintLibrary::ExtractProductUserId(Context.LocalId) : FString();
+	return true;
 }

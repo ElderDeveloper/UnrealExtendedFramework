@@ -4,6 +4,8 @@
 
 #include "CoreMinimal.h"
 #include "Shared/EEOSSubsystem.h"
+#include "Shared/EEOSNativeOperation.h"
+#include "Interfaces/OnlineSessionInterface.h"
 #include "Interfaces/OnlineSessionInterface.h"
 #include "Engine/TimerHandle.h"
 #include "EEOSMatchmakingSubsystem.generated.h"
@@ -28,10 +30,11 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnEOSMatchmakingStatusChanged, cons
  * UEEOSSessionSubsystem::CreateSessionAdvanced's CustomSettings map under the key
  * "MATCHMAKINGPOOL", e.g. Settings.CustomSettings.Add(TEXT("MATCHMAKINGPOOL"), TEXT("Default")).
  *
- * Return-value contract: true means the request really took effect. false means it was
- * rejected or failed pre-flight — and NO delegate fires for a false return (rejections are
- * log-only; they never broadcast the cycle-terminal OnMatchmakingComplete while a cycle is
- * alive). The one exception is documented on StartMatchmaking.
+ * true accepts a cycle, join, cancellation, or offer decision; it does not imply a
+ * successful native join. Guard rejections have no cycle terminal event and can have a
+ * detailed OnOperationRejected record. Start preflight failure, and AcceptMatch native
+ * submission refusal after admission, complete the cycle even when they return false.
+ * Shutdown records terminal outcomes internally without gameplay-facing delivery.
  */
 UCLASS()
 class UNREALEXTENDEDEOS_API UEEOSMatchmakingSubsystem : public UEEOSSubsystem
@@ -42,12 +45,14 @@ public:
 
 	virtual void Initialize(FSubsystemCollectionBase& Collection) override;
 	virtual void Deinitialize() override;
+	UFUNCTION(BlueprintPure, Category = "EOS|Matchmaking")
+	int64 GetMatchmakingCycleId() const { return CycleRequestId; }
 
 	// ── Actions ──────────────────────────────────────────────────────────────
 
 	/** Start matchmaking with the given queue name.
 	 *  @return false if rejected (a matchmaking cycle is already in flight — logged, and NO
-	 *  delegate fires for this call) or failed pre-flight with no cycle in flight (EOS
+	 *  legacy cycle terminal fires for this call) or failed pre-flight with no cycle in flight (EOS
 	 *  unavailable / session interface missing — these DO broadcast
 	 *  OnMatchmakingComplete(false) since no legitimate cycle waiter exists); true if a new
 	 *  cycle started (it ends with exactly one OnMatchmakingComplete or
@@ -61,7 +66,7 @@ public:
 	bool StartMatchmakingWithAttributes(const FString& QueueName, const TMap<FString, FString>& Attributes);
 
 	/** Cancel the current matchmaking request.
-	 *  @return false if there was nothing to cancel (logged; NO delegate fires); true if the
+	 *  @return false if there was nothing to cancel (logged; NO legacy completion fires); true if the
 	 *  cycle was cancelled (OnMatchmakingCancelled fires exactly once). */
 	UFUNCTION(BlueprintCallable, Category = "EOS|Matchmaking")
 	bool CancelMatchmaking();
@@ -72,15 +77,15 @@ public:
 	 *  Sessions.JoinSession share the single "GameSession" name the travel code expects,
 	 *  so only one may hold it at a time.)
 	 *  @return false if rejected (no match pending / a match join already in flight / a
-	 *  "GameSession" already exists / EOS or interface unavailable) — logged, and NO delegate
-	 *  fires, the cycle stays alive; true if the join started (the cycle then ends with
-	 *  exactly one OnMatchmakingComplete). */
+	 *  "GameSession" already exists / EOS or interface unavailable) — recorded without a legacy cycle terminal, the cycle stays alive; true if the join started (the cycle then ends with
+	 *  one OnMatchmakingComplete). A native JoinSession refusal after admission
+	 *  returns false and completes the child request and cycle with failure. */
 	UFUNCTION(BlueprintCallable, Category = "EOS|Matchmaking")
 	bool AcceptMatch();
 
 	/** Reject a found match and re-queue.
 	 *  @return false if rejected (no match pending / a match join already in flight / EOS
-	 *  unavailable) — logged, NO delegate fires, the cycle state is untouched; true if the
+	 *  unavailable) — logged, NO legacy completion fires, the cycle state is untouched; true if the
 	 *  match was rejected and the cycle re-queued. */
 	UFUNCTION(BlueprintCallable, Category = "EOS|Matchmaking")
 	bool RejectMatch();
@@ -133,6 +138,11 @@ public:
 private:
 
 	bool bIsMatchmaking = false;
+	int64 CycleRequestId = 0;
+	int64 OfferRequestId = 0;
+	FEEOSRequestContext CycleContext;
+	FEEOSRequestContext MatchJoinContext;
+	FEEOSOperationOutcome CompleteCycle(bool bSuccess, EEOSOperationCode Code, const FString& Message);
 	FString CurrentQueueName;
 	double MatchmakingStartTime = 0.0;
 
@@ -159,6 +169,11 @@ private:
 
 	/** Delegate handle for join session completion in AcceptMatch (valid == a match join is in flight) */
 	FDelegateHandle JoinSessionDelegateHandle;
+	FEEOSNativeOperationLease JoinLease;
+	IOnlineSessionPtr JoinSessions;
+	IOnlineSessionPtr SearchSessions;
+	bool bShuttingDown = false;
+	bool bJoinSubmissionRejected = false;
 
 	/** Session name the pending AcceptMatch join was started with (filters the interface-wide join delegate) */
 	FName PendingAcceptSessionName;

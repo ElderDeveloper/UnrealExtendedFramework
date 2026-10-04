@@ -334,6 +334,12 @@ private:
 	FEGInteractionPresentation FocusedPresentation;
 	FHitResult LastHitResult;
 	TWeakObjectPtr<AActor> ActiveInteractionActor;
+	// Release bookkeeping survives rejection of the optimistic local hold.
+	TWeakObjectPtr<AActor> RequestedInteractionActor;
+	int64 NextInteractionAttemptId = 0;
+	int64 RequestedInteractionAttemptId = 0;
+	int64 ServerInteractionAttemptId = 0;
+	int64 LastServerInteractionAttemptId = 0;
 
 	float TraceAccumulator = 0.0f;
 	float LostFocusRemaining = 0.0f;
@@ -348,13 +354,13 @@ private:
 	uint32 InteractionCanceledBindingHandle = 0;
 
 	UFUNCTION(Server, Reliable)
-	void ServerInteractionStart(AActor* TargetActor, FHitResult ClientHitResult);
+	void ServerInteractionStart(int64 AttemptId, AActor* TargetActor, FHitResult ClientHitResult);
 
 	UFUNCTION(Server, Reliable)
-	void ServerInteractionEnd(AActor* TargetActor);
+	void ServerInteractionEnd(int64 AttemptId);
 
 	UFUNCTION(Client, Reliable)
-	void ClientInteractionResult(bool bSuccess, AActor* TargetActor, FHitResult ConfirmedHitResult, const FText& FailureReason);
+	void ClientInteractionResult(int64 AttemptId, bool bSuccess, bool bFinished, AActor* TargetActor, const FText& FailureReason);
 
 	// Trace
 	void PerformTrace();

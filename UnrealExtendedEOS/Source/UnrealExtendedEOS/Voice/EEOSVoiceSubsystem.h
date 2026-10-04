@@ -111,6 +111,8 @@ public:
 	/** Set the input (microphone) volume: 0 silent, 1 unchanged, 2 the most EOS boosts (the engine's own range). */
 	UFUNCTION(BlueprintCallable, Category = "EOS|Voice")
 	void SetInputVolume(float Volume);
+	UFUNCTION(BlueprintPure, Category = "EOS|Voice")
+	FEEOSAudioSettingsSnapshot GetAudioSettingsSnapshot() const;
 
 	/** Get the current input volume */
 	UFUNCTION(BlueprintPure, Category = "EOS|Voice")
@@ -383,6 +385,11 @@ private:
 	bool bLocalMuted = false;
 	bool bLocalMuteApplied = false;
 	float CurrentInputVolume = 1.0f;
+	TOptional<float> AppliedInputVolume;
+	TOptional<float> AppliedOutputVolume;
+	mutable TArray<FEEOSVoiceDeviceInfo> CachedInputDevices, CachedOutputDevices;
+	mutable bool bInputDevicesCached = false, bOutputDevicesCached = false;
+	TOptional<FString> RequestedInputDevice, RequestedOutputDevice;
 
 	/** Cached voice chat user. OSS route: an engine-owned wrapper (never Login/Logout/Release it).
 	 *  Standalone route: owned by this subsystem, released per the orphan-safe pattern below. */
@@ -416,6 +423,7 @@ private:
 	/** EOS_Lobby_AddNotifyRTCRoomConnectionChanged id, and the platform it lives on (a gone platform took it along). */
 	uint64 LobbyRTCConnectionNotifyId = 0;
 	TWeakPtr<IEOSPlatformHandle, ESPMode::ThreadSafe> LobbyRTCPlatform;
+	FEEOSRequestContext RTCNotificationContext;
 	friend struct FEEOSVoiceLobbyRTCCallbacks;
 
 	friend class FDOPVoiceRuntimeRegressionTest;
@@ -430,6 +438,7 @@ private:
 
 	// Delegate handle on the identity interface (login status → resolve/teardown voice user)
 	FDelegateHandle IdentityStatusChangedHandle;
+	IOnlineIdentityPtr WatchedVoiceIdentity;
 
 	// Component room refcounts
 	TMap<FString, int32> RoomRefCounts;
@@ -444,4 +453,11 @@ private:
 
 	/** Periodic stale-contribution sweep (see PurgeStaleVolumeContributions). */
 	FTSTicker::FDelegateHandle StaleContributionSweepHandle;
+	FTSTicker::FDelegateHandle CadenceTicker;
+	double LastCadenceTick = 0, CadenceDelayStart = 0, LastCadenceSummary = 0, CadenceRecoveryStart = 0, MaximumCadenceGap = 0;
+	int32 DelayedCadenceTicks = 0;
+	bool TickCadence(float DeltaTime);
+	FString DisconnectedRTCLobby;
+	int64 DisconnectedRTCGeneration = 0;
+	FEEOSRequestContext DisconnectedRTCContext;
 };

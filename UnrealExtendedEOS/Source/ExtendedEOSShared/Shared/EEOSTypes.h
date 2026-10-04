@@ -3,6 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Shared/EEOSOperationTypes.h"
 #include "EEOSTypes.generated.h"
 
 
@@ -197,6 +198,11 @@ struct EXTENDEDEOSSHARED_API FEEOSSessionSettings
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "EOS|Sessions")
 	bool bUseLobbiesVoiceChatIfAvailable = false;
+	/** Otherwise generic lobby creation uses the plugin migration setting. No server handoff is performed. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "EOS|Sessions")
+	bool bOverrideLobbyHostMigration = false;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "EOS|Sessions", meta = (EditCondition = "bOverrideLobbyHostMigration"))
+	bool bAllowLobbyHostMigration = false;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "EOS|Sessions")
 	bool bUsesStats = false;
@@ -223,6 +229,34 @@ USTRUCT(BlueprintType)
 struct EXTENDEDEOSSHARED_API FEEOSSessionSearchResult
 {
 	GENERATED_BODY()
+	UPROPERTY(BlueprintReadOnly, Category = "EOS|Sessions")
+	FEEOSCapacitySnapshot Capacity;
+	UPROPERTY(BlueprintReadOnly, Category = "EOS|Sessions")
+	int64 SearchGeneration = 0;
+	/** Age of the retained snapshot when returned; capacity may change after this observation. */
+	UPROPERTY(BlueprintReadOnly, Category = "EOS|Sessions")
+	double SnapshotAgeSeconds = -1;
+	UPROPERTY(BlueprintReadOnly, Category = "EOS|Sessions")
+	FString OwnerId;
+	UPROPERTY(BlueprintReadOnly, Category = "EOS|Sessions")
+	bool bOwnerKnown = false;
+	/** These flags describe native settings; SDK permission level is not inferred from them. */
+	UPROPERTY(BlueprintReadOnly, Category = "EOS|Sessions")
+	bool bNativeFlagsKnown = false;
+	UPROPERTY(BlueprintReadOnly, Category = "EOS|Sessions")
+	bool bShouldAdvertise = false;
+	UPROPERTY(BlueprintReadOnly, Category = "EOS|Sessions")
+	bool bAllowInvites = false;
+	UPROPERTY(BlueprintReadOnly, Category = "EOS|Sessions")
+	bool bAllowJoinViaPresence = false;
+	UPROPERTY(BlueprintReadOnly, Category = "EOS|Sessions")
+	bool bAllowJoinInProgress = false;
+	/** Permission comes only from copied SDK information, never inferred from advertising. */
+	UPROPERTY(BlueprintReadOnly, Category = "EOS|Sessions")
+	EEOSLobbyPermission Permission = EEOSLobbyPermission::Unknown;
+	/** Opaque application attributes. The generic plugin assigns no admission semantics. */
+	UPROPERTY(BlueprintReadOnly, Category = "EOS|Sessions")
+	TMap<FName, FString> ApplicationAttributes;
 
 	UPROPERTY(BlueprintReadOnly, Category = "EOS|Sessions")
 	FString SessionId;
@@ -244,6 +278,26 @@ struct EXTENDEDEOSSHARED_API FEEOSSessionSearchResult
 
 	UPROPERTY(BlueprintReadOnly, Category = "EOS|Sessions")
 	TMap<FName, FString> Settings;
+};
+
+
+/** A retained invitation observation. The native authorized details remain owned by the subsystem. */
+USTRUCT(BlueprintType)
+struct EXTENDEDEOSSHARED_API FEEOSSessionInvite
+{
+	GENERATED_BODY()
+	UPROPERTY(BlueprintReadOnly, Category = "EOS|Sessions")
+	int64 RequestId = 0;
+	UPROPERTY(BlueprintReadOnly, Category = "EOS|Sessions")
+	bool bValid = false;
+	UPROPERTY(BlueprintReadOnly, Category = "EOS|Sessions")
+	int32 LocalUserNum = -1;
+	UPROPERTY(BlueprintReadOnly, Category = "EOS|Sessions")
+	FString RecipientId;
+	UPROPERTY(BlueprintReadOnly, Category = "EOS|Sessions")
+	FDateTime ReceivedAtUtc;
+	UPROPERTY(BlueprintReadOnly, Category = "EOS|Sessions")
+	FEEOSSessionSearchResult Target;
 };
 
 

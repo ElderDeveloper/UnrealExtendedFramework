@@ -4,6 +4,10 @@
 
 #include "CoreMinimal.h"
 #include "Shared/EEOSSubsystem.h"
+#include "Shared/EEOSNativeOperation.h"
+#include "Interfaces/OnlineIdentityInterface.h"
+#include "Containers/Ticker.h"
+#include "TimerManager.h"
 #include "EEOSAuthSubsystem.generated.h"
 
 class FOnlineAccountCredentials;
@@ -31,7 +35,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOnEOSAuthConnectLoginComplete, b
  *           delegate WILL fire with the result.
  * - false = rejected / failed to start. When the rejection is because an operation of
  *           the SAME kind is already in flight (login-while-login-pending,
- *           logout-while-logout-pending, already-logged-in), NO delegate fires for THIS
+ *           logout-while-logout-pending, already-logged-in), NO legacy completion fires for THIS
  *           call — rejections are never echoed on the shared completion delegates, so
  *           the in-flight operation's waiters cannot be poisoned by a duplicate call.
  *           Other pre-flight failures (EOS unavailable, bad arguments, missing settings)
@@ -61,7 +65,7 @@ public:
 	 *
 	 * @return true = login started; OnLoginComplete will fire. false = rejected/failed
 	 *         to start. If rejected because a login is already in flight or the user is
-	 *         already logged in, NO delegate fires for THIS call; other pre-flight
+	 *         already logged in, NO legacy completion fires for THIS call; other pre-flight
 	 *         failures broadcast OnLoginComplete(false, ...) when no login is in flight.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "EOS|Auth")
@@ -80,7 +84,7 @@ public:
 	 *                          the token's account or login fails (eos_auth_types.h, EOS_LCT_ExternalAuth).
 	 * @return true = login started; OnLoginComplete will fire. false = rejected/failed
 	 *         to start (same rules as Login — an in-flight/already-logged-in rejection
-	 *         fires NO delegate for this call).
+	 *         fires NO legacy completion for this call).
 	 */
 	UFUNCTION(BlueprintCallable, Category = "EOS|Auth")
 	bool LoginWithExternalAuth(EEOSExternalCredentialType CredentialType, const FString& Token, const FString& ExternalAccountId = TEXT(""));
@@ -131,7 +135,7 @@ public:
 	 *
 	 * @return true = deletion started; OnPersistentAuthDeleted will fire with the
 	 *         result. false = rejected/failed to start. If rejected because a logout is
-	 *         already in flight, NO delegate fires for THIS call; other pre-flight
+	 *         already in flight, NO legacy completion fires for THIS call; other pre-flight
 	 *         failures broadcast OnPersistentAuthDeleted(false).
 	 */
 	UFUNCTION(BlueprintCallable, Category = "EOS|Auth")
@@ -148,7 +152,7 @@ public:
 	 * @param DisplayName Optional display name (required for DeviceId, Apple, Google, Nintendo)
 	 * @return true = Connect login started; OnConnectLoginComplete will fire.
 	 *         false = rejected/failed to start. If rejected because a Connect login is
-	 *         already in flight, NO delegate fires for THIS call; other pre-flight
+	 *         already in flight, NO legacy completion fires for THIS call; other pre-flight
 	 *         failures broadcast OnConnectLoginComplete(false, ...).
 	 */
 	UFUNCTION(BlueprintCallable, Category = "EOS|Connect")
@@ -161,7 +165,7 @@ public:
 	 *
 	 * @return true = device-id create→login chain started; OnConnectLoginComplete will
 	 *         fire. false = rejected/failed to start (same rules as ConnectLogin — an
-	 *         in-flight rejection fires NO delegate for this call).
+	 *         in-flight rejection fires NO legacy completion for this call).
 	 */
 	UFUNCTION(BlueprintCallable, Category = "EOS|Connect")
 	bool ConnectLoginWithDeviceId(const FString& DisplayName = TEXT("Player"));
@@ -239,7 +243,8 @@ public:
 	FOnEOSAuthConnectLoginComplete OnConnectLoginComplete;
 
 	/** Internal: called by static EOS callbacks to update Connect login state. Not intended for Blueprint use. */
-	void SetConnectLoginResult(bool bSuccess, const FString& ProductUserId, const FString& Error);
+	void SetConnectLoginResult(bool bSuccess, const FString& ProductUserId, const FString& Error, int64 RequestId = 0, const FString& SDKResult = FString());
+	bool IsConnectRequestCurrent(int64 RequestId) const { return !bShuttingDown && RequestId && RequestId == ActiveSDKConnectRequest && IsEOSContextCurrent(SDKConnectContext); }
 
 private:
 
@@ -248,6 +253,20 @@ private:
 
 	FDelegateHandle LoginDelegateHandle;
 	FDelegateHandle LogoutDelegateHandle;
+	FEEOSNativeOperationLease IdentityLease;
+	IOnlineIdentityPtr OperationIdentity;
+	FEEOSRequestContext NativeIdentityContext;
+	FEEOSNativeOperationLease ConnectLease;
+	IOnlineIdentityPtr ConnectOperationIdentity;
+	int64 ActiveSDKConnectRequest = 0;
+	FEEOSRequestContext SDKConnectContext;
+	int64 ActivePersistentAuthRequest = 0;
+	bool bIdentitySubmissionRejected = false;
+	bool bNativeIdentitySubmitted = false;
+	bool bShuttingDown = false;
+	FTimerHandle AutoLoginTimer;
+	FTSTicker::FDelegateHandle IdentityTicker;
+	bool TickNativeIdentity(float DeltaTime);
 
 	/** Cached Product User ID from EOS Connect login */
 	FString CachedProductUserId;
@@ -305,7 +324,7 @@ private:
 #if WITH_EOS_SDK
 	/**
 	 * Internal: perform the actual EOS_Connect_Login SDK call. Returns true when the SDK
-	 * call was issued; false on in-flight rejection (no broadcast) or pre-flight failure
+	 * call was issued; false on in-flight rejection (no legacy completion) or pre-flight failure
 	 * (broadcasts OnConnectLoginComplete(false, ...)).
 	 */
 	bool PerformConnectLogin(EEOSConnectLoginType LoginType, const FString& Token, const FString& DisplayName);

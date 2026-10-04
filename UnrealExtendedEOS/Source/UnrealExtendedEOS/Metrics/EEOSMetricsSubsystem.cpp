@@ -1,6 +1,7 @@
 // Copyright Kemal Erdem YILMAZ. All Rights Reserved.
 
 #include "EEOSMetricsSubsystem.h"
+#include "Shared/EEOSNativeOperation.h"
 #include "Shared/EEOSSettings.h"
 #include "Shared/EEOSBlueprintLibrary.h"
 #include "OnlineSubsystemUtils.h"
@@ -23,6 +24,7 @@ void UEEOSMetricsSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 
 void UEEOSMetricsSubsystem::Deinitialize()
 {
+	BeginEOSShutdown(); bShuttingDown = true;
 	if (bSessionActive)
 	{
 		EndPlayerSession();
@@ -30,57 +32,35 @@ void UEEOSMetricsSubsystem::Deinitialize()
 	Super::Deinitialize();
 }
 
-#if WITH_EOS_SDK
-static EOS_HMetrics GetMetricsHandle()
-{
-	IEOSSDKManager* SDKManager = IEOSSDKManager::Get();
-	if (!SDKManager) return nullptr;
-
-	TArray<IEOSPlatformHandlePtr> Platforms = SDKManager->GetActivePlatforms();
-	if (Platforms.Num() == 0) return nullptr;
-
-	EOS_HPlatform PlatformHandle = *Platforms[0];
-	return EOS_Platform_GetMetricsInterface(PlatformHandle);
-}
-#endif
 
 void UEEOSMetricsSubsystem::BeginPlayerSession(const FString& GameSessionId, const FString& ServerIp, const FString& GameMode)
 {
+	if (bShuttingDown) return;
 	if (bSessionActive)
 	{
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSMetricsSubsystem::BeginPlayerSession — Session already active (ID=%s)"), *ActiveSessionId);
+		RejectOperation(TEXT("BeginPlayerSession"), EEOSOperationCode::Busy, TEXT("Another admitted request already owns this operation."));
 		return;
 	}
 
 #if WITH_EOS_SDK
-	EOS_HMetrics MetricsHandle = GetMetricsHandle();
+	const auto Platform = GetOwningEOSPlatform();
+	EOS_HMetrics MetricsHandle = Platform.IsValid() ? EOS_Platform_GetMetricsInterface(*Platform) : nullptr;
 	if (MetricsHandle)
 	{
-		// Get Epic Account ID
 		EOS_EpicAccountId EpicAccountId = nullptr;
-		IEOSSDKManager* SDKManager = IEOSSDKManager::Get();
-		if (SDKManager)
+		IOnlineSubsystem* OSS = GetExistingEOSOnlineSubsystem();
+		const auto Identity = OSS ? OSS->GetIdentityInterface() : IOnlineIdentityPtr();
+		const auto Local = Identity.IsValid() ? Identity->GetUniquePlayerId(0) : FUniqueNetIdPtr();
+		if (!Local.IsValid() || !Local->IsValid() || Identity->GetLoginStatus(0) != ELoginStatus::LoggedIn)
 		{
-			TArray<IEOSPlatformHandlePtr> Platforms = SDKManager->GetActivePlatforms();
-			if (Platforms.Num() > 0)
-			{
-				EOS_HPlatform PlatformHandle = *Platforms[0];
-				EOS_HAuth AuthHandle = EOS_Platform_GetAuthInterface(PlatformHandle);
-				if (AuthHandle)
-				{
-					int32_t NumAccounts = EOS_Auth_GetLoggedInAccountsCount(AuthHandle);
-					if (NumAccounts > 0)
-					{
-						EpicAccountId = EOS_Auth_GetLoggedInAccountByIndex(AuthHandle, 0);
-					}
-				}
-			}
+			RejectOperation(TEXT("BeginMetricsSession"), EEOSOperationCode::IdentityUnavailable, TEXT("Metrics require the owning native local identity.")); return;
 		}
+		const FString Eas = UEEOSBlueprintLibrary::ExtractEpicAccountId(Local->ToString());
+		if (!Eas.IsEmpty()) EpicAccountId = EOS_EpicAccountId_FromString(TCHAR_TO_UTF8(*Eas));
 
 		// Resolve the identity to open the session with. Epic-account logins use the EAS id;
 		// everyone else uses a STABLE per-user external id — the local PUID from the identity
-		// net id (its ToString() is the composite "<EpicAccountId>|<ProductUserId>"). "local"
-		// is only a last resort: a constant collapses every non-Epic player into one identity.
+		// net id (its ToString() is the composite "<EpicAccountId>|<ProductUserId>"). An unknown native identity is rejected before sending metrics.
 		bool bUseEpicAccount = false;
 		FString AccountIdStr;
 		if (EpicAccountId)
@@ -97,10 +77,10 @@ void UEEOSMetricsSubsystem::BeginPlayerSession(const FString& GameSessionId, con
 		{
 			if (IOnlineSubsystem* EOSSub = GetEOSOnlineSubsystem())
 			{
-				IOnlineIdentityPtr Identity = EOSSub->GetIdentityInterface();
-				if (Identity.IsValid())
+				IOnlineIdentityPtr FallbackIdentity = EOSSub->GetIdentityInterface();
+				if (FallbackIdentity.IsValid())
 				{
-					FUniqueNetIdPtr LocalUserId = Identity->GetUniquePlayerId(0);
+					FUniqueNetIdPtr LocalUserId = FallbackIdentity->GetUniquePlayerId(0);
 					if (LocalUserId.IsValid())
 					{
 						AccountIdStr = UEEOSBlueprintLibrary::ExtractProductUserId(LocalUserId->ToString());
@@ -109,8 +89,8 @@ void UEEOSMetricsSubsystem::BeginPlayerSession(const FString& GameSessionId, con
 			}
 			if (AccountIdStr.IsEmpty())
 			{
-				UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSMetricsSubsystem::BeginPlayerSession — No Epic account and no Product User ID available; falling back to the constant external id \"local\" (all such players share one metrics identity)"));
-				AccountIdStr = TEXT("local");
+				UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSMetricsSubsystem::BeginPlayerSession — No Epic account or stable Product User ID available; metrics submission rejected"));
+				RejectOperation(TEXT("BeginMetricsSession"), EEOSOperationCode::IdentityUnavailable, TEXT("Metrics require a stable account identifier.")); return;
 			}
 		}
 
@@ -145,7 +125,7 @@ void UEEOSMetricsSubsystem::BeginPlayerSession(const FString& GameSessionId, con
 		{
 			// Cache the exact identity used so EndPlayerSession closes THIS backend session
 			// even if the login state changes mid-session
-			bSessionBeganViaSDK = true;
+			bSessionBeganViaSDK = true; SessionPlatform = Platform;
 			bSessionUsedEpicAccount = bUseEpicAccount;
 			SessionAccountId = AccountIdStr;
 
@@ -154,7 +134,7 @@ void UEEOSMetricsSubsystem::BeginPlayerSession(const FString& GameSessionId, con
 			ActiveSessionId = GameSessionId.IsEmpty() ? FGuid::NewGuid().ToString() : GameSessionId;
 			ActiveGameMode = GameMode;
 			ActiveServerIp = ServerIp;
-			UE_LOG(LogExtendedEOS, Log, TEXT("EEOSMetricsSubsystem: Player session started (SDK) — ID=%s"), *ActiveSessionId);
+			UE_LOG(LogExtendedEOS, Log, TEXT("EEOSMetricsSubsystem: Player session started (SDK) — ID=%s"), *FEEOSNativeOperationLease::SafeField(ActiveSessionId));
 			OnPlayerSessionStarted.Broadcast(ActiveSessionId);
 			return;
 		}
@@ -172,7 +152,7 @@ void UEEOSMetricsSubsystem::BeginPlayerSession(const FString& GameSessionId, con
 	ActiveSessionId = GameSessionId.IsEmpty() ? FGuid::NewGuid().ToString() : GameSessionId;
 	ActiveGameMode = GameMode;
 	ActiveServerIp = ServerIp;
-	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSMetricsSubsystem: Player session started (local) — ID=%s"), *ActiveSessionId);
+	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSMetricsSubsystem: Player session started (local) — ID=%s"), *FEEOSNativeOperationLease::SafeField(ActiveSessionId));
 	OnPlayerSessionStarted.Broadcast(ActiveSessionId);
 }
 
@@ -190,7 +170,7 @@ void UEEOSMetricsSubsystem::EndPlayerSession()
 	// If the SDK Begin never succeeded there is no backend session to close.
 	if (bSessionBeganViaSDK)
 	{
-		EOS_HMetrics MetricsHandle = GetMetricsHandle();
+		EOS_HMetrics MetricsHandle = SessionPlatform.IsValid() ? EOS_Platform_GetMetricsInterface(*SessionPlatform) : nullptr;
 		if (MetricsHandle && !SessionAccountId.IsEmpty())
 		{
 			EOS_Metrics_EndPlayerSessionOptions Options = {};
@@ -213,7 +193,7 @@ void UEEOSMetricsSubsystem::EndPlayerSession()
 			EOS_EResult Result = EOS_Metrics_EndPlayerSession(MetricsHandle, &Options);
 			if (Result == EOS_EResult::EOS_Success)
 			{
-				UE_LOG(LogExtendedEOS, Log, TEXT("EEOSMetricsSubsystem: Player session ended (SDK) — ID=%s"), *ActiveSessionId);
+				UE_LOG(LogExtendedEOS, Log, TEXT("EEOSMetricsSubsystem: Player session ended (SDK) — ID=%s"), *FEEOSNativeOperationLease::SafeField(ActiveSessionId));
 			}
 			else
 			{
@@ -223,7 +203,7 @@ void UEEOSMetricsSubsystem::EndPlayerSession()
 		}
 		else
 		{
-			UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSMetricsSubsystem::EndPlayerSession — Metrics interface no longer available; backend session ID=%s could not be closed"), *ActiveSessionId);
+			UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSMetricsSubsystem::EndPlayerSession — Metrics interface no longer available; backend session ID=%s could not be closed"), *FEEOSNativeOperationLease::SafeField(ActiveSessionId));
 		}
 	}
 #endif
@@ -231,15 +211,15 @@ void UEEOSMetricsSubsystem::EndPlayerSession()
 	// Clear the cached Begin identity along with the session
 	bSessionBeganViaSDK = false;
 	bSessionUsedEpicAccount = false;
-	SessionAccountId.Empty();
+	SessionAccountId.Empty(); SessionPlatform.Reset();
 
 	FString EndedSessionId = ActiveSessionId;
 	bSessionActive = false;
 	ActiveSessionId.Empty();
 	ActiveGameMode.Empty();
 	ActiveServerIp.Empty();
-	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSMetricsSubsystem: Player session ended — ID=%s"), *EndedSessionId);
-	OnPlayerSessionEnded.Broadcast(EndedSessionId);
+	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSMetricsSubsystem: Player session ended — ID=%s"), *FEEOSNativeOperationLease::SafeField(EndedSessionId));
+	if (!bShuttingDown) OnPlayerSessionEnded.Broadcast(EndedSessionId);
 }
 
 bool UEEOSMetricsSubsystem::IsSessionActive() const

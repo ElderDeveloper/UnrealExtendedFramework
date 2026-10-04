@@ -246,6 +246,7 @@ public:
 
 	// ── Internal SDK-callback handlers (game thread; do NOT call from game code) ──
 
+	bool CanDeliverNotification(const FEEOSRequestContext& Context, uint64 Generation) const;
 	void HandleMessageToPeer(EOS_AntiCheatCommon_ClientHandle TargetHandle, const TArray<uint8>& Payload);
 	void HandlePeerActionRequired(EOS_AntiCheatCommon_ClientHandle PeerHandle, EEOSAntiCheatAction Action, const FString& Message);
 	void HandlePeerAuthStatusChanged(EOS_AntiCheatCommon_ClientHandle PeerHandle, bool bAuthenticated);
@@ -254,6 +255,7 @@ private:
 
 	/** True only between a SUCCESSFUL EOS_AntiCheatClient_BeginSession and the matching EndSession. Never set on failure. */
 	bool bSessionActive = false;
+	uint64 SessionGeneration = 0;
 
 	/** Bare PUID of the local user, cached on successful BeginSession (used to resolve EOS_ANTICHEATCLIENT_PEER_SELF). */
 	FString CachedLocalPuid;

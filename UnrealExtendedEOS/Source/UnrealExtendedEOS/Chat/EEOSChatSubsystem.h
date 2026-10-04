@@ -3,7 +3,9 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "OnlineSubsystem.h"
 #include "Shared/EEOSSubsystem.h"
+#include "Interfaces/OnlineChatInterface.h"
 #include "EEOSChatSubsystem.generated.h"
 
 USTRUCT(BlueprintType)
@@ -75,6 +77,9 @@ class UNREALEXTENDEDEOS_API UEEOSChatSubsystem : public UEEOSSubsystem
 	GENERATED_BODY()
 
 public:
+	/** Native submission capability is independent of locally retained channel/history state. */
+	UFUNCTION(BlueprintPure, Category = "EOS|Chat")
+	FEEOSChatCapabilitySnapshot GetChatCapability() const;
 
 	virtual void Initialize(FSubsystemCollectionBase& Collection) override;
 	virtual void Deinitialize() override;
@@ -156,6 +161,14 @@ public:
 	FOnEOSChatUserLeft OnUserLeft;
 
 private:
+	FEEOSRequestContext ChatBindingContext;
+	FTSTicker::FDelegateHandle ChatBindingTicker;
+	void BindNativeChat();
+	void UnbindNativeChat();
+	bool TickNativeChat(float DeltaTime);
+	IOnlineChatPtr BoundChat;
+	bool bShuttingDown = false;
+
 
 	/** Joined channels */
 	TMap<FString, FEEOSChatChannel> JoinedChannels;

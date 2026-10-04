@@ -522,12 +522,16 @@ void UEOSAsyncCreateSession::Activate()
 	auto* Sub = GetSubsystem<UEEOSSessionSubsystem>(WorldContext.Get());
 	if (!Sub)
 	{
+		bCompleted = true;
+		FEEOSOperationOutcome Missing; Missing.Operation = TEXT("CreateSession"); Missing.Code = EEOSOperationCode::UnsupportedCapability; Missing.Phase = TEXT("Rejected"); Missing.Message = TEXT("EOS subsystem unavailable.");
+		OnDetailedCompleted.Broadcast(Missing);
 		OnFailure.Broadcast(TEXT("SessionSubsystem not available"));
 		SetReadyToDestroy();
 		return;
 	}
 
 	Subsystem = Sub;
+	IgnoredRequestId = Sub->GetActiveOperationOutcome(TEXT("CreateSession")).RequestId;
 	Sub->OnSessionCreated.AddDynamic(this, &UEOSAsyncCreateSession::HandleComplete);
 	if (!Sub->CreateSession(MaxPlayers, bIsLAN, bIsPresence, SessionName) && !bCompleted)
 	{
@@ -535,25 +539,31 @@ void UEOSAsyncCreateSession::Activate()
 		// pre-flight cases broadcast OnSessionCreated(false) synchronously and were consumed
 		// by the handler above.
 		Sub->OnSessionCreated.RemoveDynamic(this, &UEOSAsyncCreateSession::HandleComplete);
-		OnFailure.Broadcast(FString::Printf(TEXT("CreateSession '%s' could not be started (a session create/destroy is already in flight)"), *SessionName));
+		bCompleted = true;
+		auto Rejection = Sub->GetLastOperationRejection();
+		if (Rejection.Operation != TEXT("CreateSession")) { Rejection = FEEOSOperationOutcome(); Rejection.Operation = TEXT("CreateSession"); Rejection.Code = EEOSOperationCode::NativeStartRejected; Rejection.Message = TEXT("Request could not be started."); }
+		OnDetailedCompleted.Broadcast(Rejection);
+		OnFailure.Broadcast(Rejection.Operation == TEXT("CreateSession") && !Rejection.Message.IsEmpty() ? Rejection.Message : TEXT("CreateSession could not be started."));
 		SetReadyToDestroy();
 	}
+	if (!bCompleted) ExpectedRequestId = Sub->GetActiveOperationOutcome(TEXT("CreateSession")).RequestId;
 }
 
 void UEOSAsyncCreateSession::HandleComplete(bool bSuccess, const FString& InSessionName)
 {
-	// Correlate by session name: a completion for a different in-flight create is not ours —
-	// stay bound and wait for our own.
-	if (InSessionName != SessionName) return;
-
-	bCompleted = true;
+	// Match the dispatch-scoped terminal request; ignore the operation active before Activate.
 	auto* Sub = Subsystem.Get();
+	const auto Completion = Sub ? Sub->GetLastOperationOutcome(TEXT("CreateSession")) : FEEOSOperationOutcome();
+	if (bCompleted || !Completion.RequestId || Completion.RequestId == IgnoredRequestId
+		|| (ExpectedRequestId && Completion.RequestId != ExpectedRequestId)) return;
+	bCompleted = true;
 	if (Sub) Sub->OnSessionCreated.RemoveDynamic(this, &UEOSAsyncCreateSession::HandleComplete);
+	OnDetailedCompleted.Broadcast(Completion);
 
 	if (bSuccess)
 		OnSuccess.Broadcast(InSessionName);
 	else
-		OnFailure.Broadcast(FString::Printf(TEXT("CreateSession '%s' failed"), *InSessionName));
+		OnFailure.Broadcast(Sub ? Sub->GetLastOperationOutcome(TEXT("CreateSession")).Message : TEXT("CreateSession failed"));
 
 	SetReadyToDestroy();
 }
@@ -576,12 +586,16 @@ void UEOSAsyncFindSessions::Activate()
 	auto* Sub = GetSubsystem<UEEOSSessionSubsystem>(WorldContext.Get());
 	if (!Sub)
 	{
+		bCompleted = true;
+		FEEOSOperationOutcome Missing; Missing.Operation = TEXT("FindSessions"); Missing.Code = EEOSOperationCode::UnsupportedCapability; Missing.Phase = TEXT("Rejected"); Missing.Message = TEXT("EOS subsystem unavailable.");
+		OnDetailedCompleted.Broadcast(Missing);
 		OnFailure.Broadcast(TEXT("SessionSubsystem not available"));
 		SetReadyToDestroy();
 		return;
 	}
 
 	Subsystem = Sub;
+	IgnoredRequestId = Sub->GetActiveOperationOutcome(TEXT("FindSessions")).RequestId;
 	Sub->OnSessionsFound.AddDynamic(this, &UEOSAsyncFindSessions::HandleComplete);
 	if (!Sub->FindSessions(MaxResults) && !bCompleted)
 	{
@@ -589,25 +603,30 @@ void UEOSAsyncFindSessions::Activate()
 		// session/lobby search is already in flight). The OnFailure doc contract —
 		// "fires when the search could not be started" — is exactly this path.
 		Sub->OnSessionsFound.RemoveDynamic(this, &UEOSAsyncFindSessions::HandleComplete);
-		OnFailure.Broadcast(TEXT("FindSessions could not be started (another session/lobby search is already in flight)"));
+		bCompleted = true;
+		auto Rejection = Sub->GetLastOperationRejection();
+		if (Rejection.Operation != TEXT("FindSessions")) { Rejection = FEEOSOperationOutcome(); Rejection.Operation = TEXT("FindSessions"); Rejection.Code = EEOSOperationCode::NativeStartRejected; Rejection.Message = TEXT("Request could not be started."); }
+		OnDetailedCompleted.Broadcast(Rejection);
+		OnFailure.Broadcast(Rejection.Operation == TEXT("FindSessions") && !Rejection.Message.IsEmpty() ? Rejection.Message : TEXT("FindSessions could not be started."));
 		SetReadyToDestroy();
 	}
+	if (!bCompleted) ExpectedRequestId = Sub->GetActiveOperationOutcome(TEXT("FindSessions")).RequestId;
 }
 
 void UEOSAsyncFindSessions::HandleComplete(const TArray<FEEOSSessionSearchResult>& Results)
 {
-	// No request key in the delegate payload — first-completion semantics: if two REAL
-	// searches were somehow in flight, both nodes complete on whichever completion broadcasts
-	// first. (In-flight rejections no longer broadcast, so a rejected duplicate can no longer
-	// falsely complete this node with empty results — it fails fast in Activate instead.)
-	bCompleted = true;
+	// Match the dispatch-scoped terminal request; ignore the operation active before Activate.
 	auto* Sub = Subsystem.Get();
+	const auto Completion = Sub ? Sub->GetLastOperationOutcome(TEXT("FindSessions")) : FEEOSOperationOutcome();
+	if (bCompleted || !Completion.RequestId || Completion.RequestId == IgnoredRequestId
+		|| (ExpectedRequestId && Completion.RequestId != ExpectedRequestId)) return;
+	bCompleted = true;
 	if (Sub) Sub->OnSessionsFound.RemoveDynamic(this, &UEOSAsyncFindSessions::HandleComplete);
+	OnDetailedCompleted.Broadcast(Completion);
 
-	// A search that completed but found nothing is still a success — empty array maps to
-	// OnSuccess. (Pre-flight failures that broadcast deliver an empty result here too; only a
-	// search that could not be STARTED fires OnFailure, from Activate's false-return path.)
-	OnSuccess.Broadcast(Results);
+	const auto Outcome = Sub ? Sub->GetLastOperationOutcome(TEXT("FindSessions")) : FEEOSOperationOutcome();
+	if (Outcome.bSuccess) OnSuccess.Broadcast(Results);
+	else OnFailure.Broadcast(Outcome.Message.IsEmpty() ? TEXT("Native search failed.") : Outcome.Message);
 	SetReadyToDestroy();
 }
 
@@ -630,35 +649,45 @@ void UEOSAsyncJoinSession::Activate()
 	auto* Sub = GetSubsystem<UEEOSSessionSubsystem>(WorldContext.Get());
 	if (!Sub)
 	{
+		bCompleted = true;
+		FEEOSOperationOutcome Missing; Missing.Operation = TEXT("JoinSession"); Missing.Code = EEOSOperationCode::UnsupportedCapability; Missing.Phase = TEXT("Rejected"); Missing.Message = TEXT("EOS subsystem unavailable.");
+		OnDetailedCompleted.Broadcast(Missing);
 		OnFailure.Broadcast(TEXT("SessionSubsystem not available"));
 		SetReadyToDestroy();
 		return;
 	}
 
 	Subsystem = Sub;
+	IgnoredRequestId = Sub->GetActiveOperationOutcome(TEXT("JoinSession")).RequestId;
 	Sub->OnSessionJoined.AddDynamic(this, &UEOSAsyncJoinSession::HandleComplete);
 	if (!Sub->JoinSession(SearchResultIndex, SessionName) && !bCompleted)
 	{
 		Sub->OnSessionJoined.RemoveDynamic(this, &UEOSAsyncJoinSession::HandleComplete);
-		OnFailure.Broadcast(FString::Printf(TEXT("JoinSession '%s' could not be started (a join is already in flight)"), *SessionName));
+		bCompleted = true;
+		auto Rejection = Sub->GetLastOperationRejection();
+		if (Rejection.Operation != TEXT("JoinSession")) { Rejection = FEEOSOperationOutcome(); Rejection.Operation = TEXT("JoinSession"); Rejection.Code = EEOSOperationCode::NativeStartRejected; Rejection.Message = TEXT("Request could not be started."); }
+		OnDetailedCompleted.Broadcast(Rejection);
+		OnFailure.Broadcast(Rejection.Operation == TEXT("JoinSession") && !Rejection.Message.IsEmpty() ? Rejection.Message : TEXT("JoinSession could not be started."));
 		SetReadyToDestroy();
 	}
+	if (!bCompleted) ExpectedRequestId = Sub->GetActiveOperationOutcome(TEXT("JoinSession")).RequestId;
 }
 
 void UEOSAsyncJoinSession::HandleComplete(bool bSuccess, const FString& InSessionName)
 {
-	// Correlate by session name: a completion for a different in-flight join is not ours —
-	// stay bound and wait for our own.
-	if (InSessionName != SessionName) return;
-
-	bCompleted = true;
+	// Match the dispatch-scoped terminal request; ignore the operation active before Activate.
 	auto* Sub = Subsystem.Get();
+	const auto Completion = Sub ? Sub->GetLastOperationOutcome(TEXT("JoinSession")) : FEEOSOperationOutcome();
+	if (bCompleted || !Completion.RequestId || Completion.RequestId == IgnoredRequestId
+		|| (ExpectedRequestId && Completion.RequestId != ExpectedRequestId)) return;
+	bCompleted = true;
 	if (Sub) Sub->OnSessionJoined.RemoveDynamic(this, &UEOSAsyncJoinSession::HandleComplete);
+	OnDetailedCompleted.Broadcast(Completion);
 
 	if (bSuccess)
 		OnSuccess.Broadcast(InSessionName);
 	else
-		OnFailure.Broadcast(FString::Printf(TEXT("JoinSession '%s' failed"), *InSessionName));
+		OnFailure.Broadcast(Sub ? Sub->GetLastOperationOutcome(TEXT("JoinSession")).Message : TEXT("JoinSession failed"));
 
 	SetReadyToDestroy();
 }
@@ -683,35 +712,45 @@ void UEOSAsyncCreateLobby::Activate()
 	auto* Sub = GetSubsystem<UEEOSLobbySubsystem>(WorldContext.Get());
 	if (!Sub)
 	{
+		bCompleted = true;
+		FEEOSOperationOutcome Missing; Missing.Operation = TEXT("CreateLobby"); Missing.Code = EEOSOperationCode::UnsupportedCapability; Missing.Phase = TEXT("Rejected"); Missing.Message = TEXT("EOS subsystem unavailable.");
+		OnDetailedCompleted.Broadcast(Missing);
 		OnFailure.Broadcast(TEXT("LobbySubsystem not available"));
 		SetReadyToDestroy();
 		return;
 	}
 
 	Subsystem = Sub;
+	IgnoredRequestId = Sub->GetActiveOperationOutcome(TEXT("CreateLobby")).RequestId;
 	Sub->OnLobbyCreated.AddDynamic(this, &UEOSAsyncCreateLobby::HandleComplete);
 	if (!Sub->CreateLobby(MaxMembers, bIsPublic, bUseVoiceChat) && !bCompleted)
 	{
 		Sub->OnLobbyCreated.RemoveDynamic(this, &UEOSAsyncCreateLobby::HandleComplete);
-		OnFailure.Broadcast(TEXT("CreateLobby could not be started (a lobby create/destroy is already in flight)"));
+		bCompleted = true;
+		auto Rejection = Sub->GetLastOperationRejection();
+		if (Rejection.Operation != TEXT("CreateLobby")) { Rejection = FEEOSOperationOutcome(); Rejection.Operation = TEXT("CreateLobby"); Rejection.Code = EEOSOperationCode::NativeStartRejected; Rejection.Message = TEXT("Request could not be started."); }
+		OnDetailedCompleted.Broadcast(Rejection);
+		OnFailure.Broadcast(Rejection.Operation == TEXT("CreateLobby") && !Rejection.Message.IsEmpty() ? Rejection.Message : TEXT("CreateLobby could not be started."));
 		SetReadyToDestroy();
 	}
+	if (!bCompleted) ExpectedRequestId = Sub->GetActiveOperationOutcome(TEXT("CreateLobby")).RequestId;
 }
 
 void UEOSAsyncCreateLobby::HandleComplete(bool bSuccess, const FString& LobbyId)
 {
-	// No request key in the delegate payload (LobbyId is a result, not a request input) —
-	// first-completion semantics: if two REAL creates are in flight, both nodes complete on
-	// whichever completion broadcasts first. (In-flight rejections no longer broadcast, so a
-	// rejected duplicate can no longer falsely fail this node — it fails fast in Activate.)
-	bCompleted = true;
+	// Match the dispatch-scoped terminal request; ignore the operation active before Activate.
 	auto* Sub = Subsystem.Get();
+	const auto Completion = Sub ? Sub->GetLastOperationOutcome(TEXT("CreateLobby")) : FEEOSOperationOutcome();
+	if (bCompleted || !Completion.RequestId || Completion.RequestId == IgnoredRequestId
+		|| (ExpectedRequestId && Completion.RequestId != ExpectedRequestId)) return;
+	bCompleted = true;
 	if (Sub) Sub->OnLobbyCreated.RemoveDynamic(this, &UEOSAsyncCreateLobby::HandleComplete);
+	OnDetailedCompleted.Broadcast(Completion);
 
 	if (bSuccess)
 		OnSuccess.Broadcast(LobbyId);
 	else
-		OnFailure.Broadcast(TEXT("CreateLobby failed"));
+		OnFailure.Broadcast(Sub ? Sub->GetLastOperationOutcome(TEXT("CreateLobby")).Message : TEXT("CreateLobby failed"));
 
 	SetReadyToDestroy();
 }
@@ -734,12 +773,16 @@ void UEOSAsyncFindLobbies::Activate()
 	auto* Sub = GetSubsystem<UEEOSLobbySubsystem>(WorldContext.Get());
 	if (!Sub)
 	{
+		bCompleted = true;
+		FEEOSOperationOutcome Missing; Missing.Operation = TEXT("FindLobbies"); Missing.Code = EEOSOperationCode::UnsupportedCapability; Missing.Phase = TEXT("Rejected"); Missing.Message = TEXT("EOS subsystem unavailable.");
+		OnDetailedCompleted.Broadcast(Missing);
 		OnFailure.Broadcast(TEXT("LobbySubsystem not available"));
 		SetReadyToDestroy();
 		return;
 	}
 
 	Subsystem = Sub;
+	IgnoredRequestId = Sub->GetActiveOperationOutcome(TEXT("FindLobbies")).RequestId;
 	Sub->OnLobbiesFound.AddDynamic(this, &UEOSAsyncFindLobbies::HandleComplete);
 	if (!Sub->FindLobbies(MaxResults) && !bCompleted)
 	{
@@ -747,25 +790,30 @@ void UEOSAsyncFindLobbies::Activate()
 		// session/lobby search is already in flight). The OnFailure doc contract —
 		// "fires when the search could not be started" — is exactly this path.
 		Sub->OnLobbiesFound.RemoveDynamic(this, &UEOSAsyncFindLobbies::HandleComplete);
-		OnFailure.Broadcast(TEXT("FindLobbies could not be started (another session/lobby search is already in flight)"));
+		bCompleted = true;
+		auto Rejection = Sub->GetLastOperationRejection();
+		if (Rejection.Operation != TEXT("FindLobbies")) { Rejection = FEEOSOperationOutcome(); Rejection.Operation = TEXT("FindLobbies"); Rejection.Code = EEOSOperationCode::NativeStartRejected; Rejection.Message = TEXT("Request could not be started."); }
+		OnDetailedCompleted.Broadcast(Rejection);
+		OnFailure.Broadcast(Rejection.Operation == TEXT("FindLobbies") && !Rejection.Message.IsEmpty() ? Rejection.Message : TEXT("FindLobbies could not be started."));
 		SetReadyToDestroy();
 	}
+	if (!bCompleted) ExpectedRequestId = Sub->GetActiveOperationOutcome(TEXT("FindLobbies")).RequestId;
 }
 
 void UEOSAsyncFindLobbies::HandleComplete(const TArray<FEEOSSessionSearchResult>& Results)
 {
-	// No request key in the delegate payload — first-completion semantics: if two REAL
-	// searches were somehow in flight, both nodes complete on whichever completion broadcasts
-	// first. (In-flight rejections no longer broadcast, so a rejected duplicate can no longer
-	// falsely complete this node with empty results — it fails fast in Activate instead.)
-	bCompleted = true;
+	// Match the dispatch-scoped terminal request; ignore the operation active before Activate.
 	auto* Sub = Subsystem.Get();
+	const auto Completion = Sub ? Sub->GetLastOperationOutcome(TEXT("FindLobbies")) : FEEOSOperationOutcome();
+	if (bCompleted || !Completion.RequestId || Completion.RequestId == IgnoredRequestId
+		|| (ExpectedRequestId && Completion.RequestId != ExpectedRequestId)) return;
+	bCompleted = true;
 	if (Sub) Sub->OnLobbiesFound.RemoveDynamic(this, &UEOSAsyncFindLobbies::HandleComplete);
+	OnDetailedCompleted.Broadcast(Completion);
 
-	// A search that completed but found nothing is still a success — empty array maps to
-	// OnSuccess. (Pre-flight failures that broadcast deliver an empty result here too; only a
-	// search that could not be STARTED fires OnFailure, from Activate's false-return path.)
-	OnSuccess.Broadcast(Results);
+	const auto Outcome = Sub ? Sub->GetLastOperationOutcome(TEXT("FindLobbies")) : FEEOSOperationOutcome();
+	if (Outcome.bSuccess) OnSuccess.Broadcast(Results);
+	else OnFailure.Broadcast(Outcome.Message.IsEmpty() ? TEXT("Native search failed.") : Outcome.Message);
 	SetReadyToDestroy();
 }
 
@@ -787,35 +835,45 @@ void UEOSAsyncJoinLobby::Activate()
 	auto* Sub = GetSubsystem<UEEOSLobbySubsystem>(WorldContext.Get());
 	if (!Sub)
 	{
+		bCompleted = true;
+		FEEOSOperationOutcome Missing; Missing.Operation = TEXT("JoinLobby"); Missing.Code = EEOSOperationCode::UnsupportedCapability; Missing.Phase = TEXT("Rejected"); Missing.Message = TEXT("EOS subsystem unavailable.");
+		OnDetailedCompleted.Broadcast(Missing);
 		OnFailure.Broadcast(TEXT("LobbySubsystem not available"));
 		SetReadyToDestroy();
 		return;
 	}
 
 	Subsystem = Sub;
+	IgnoredRequestId = Sub->GetActiveOperationOutcome(TEXT("JoinLobby")).RequestId;
 	Sub->OnLobbyJoined.AddDynamic(this, &UEOSAsyncJoinLobby::HandleComplete);
 	if (!Sub->JoinLobby(SearchResultIndex) && !bCompleted)
 	{
 		Sub->OnLobbyJoined.RemoveDynamic(this, &UEOSAsyncJoinLobby::HandleComplete);
-		OnFailure.Broadcast(TEXT("JoinLobby could not be started (a join-lobby is already in flight)"));
+		bCompleted = true;
+		auto Rejection = Sub->GetLastOperationRejection();
+		if (Rejection.Operation != TEXT("JoinLobby")) { Rejection = FEEOSOperationOutcome(); Rejection.Operation = TEXT("JoinLobby"); Rejection.Code = EEOSOperationCode::NativeStartRejected; Rejection.Message = TEXT("Request could not be started."); }
+		OnDetailedCompleted.Broadcast(Rejection);
+		OnFailure.Broadcast(Rejection.Operation == TEXT("JoinLobby") && !Rejection.Message.IsEmpty() ? Rejection.Message : TEXT("JoinLobby could not be started."));
 		SetReadyToDestroy();
 	}
+	if (!bCompleted) ExpectedRequestId = Sub->GetActiveOperationOutcome(TEXT("JoinLobby")).RequestId;
 }
 
 void UEOSAsyncJoinLobby::HandleComplete(bool bSuccess, const FString& LobbyId)
 {
-	// No request key in the delegate payload (LobbyId is a result; the request input is an
-	// index) — first-completion semantics: if two REAL joins are in flight, both nodes
-	// complete on whichever completion broadcasts first. (In-flight rejections no longer
-	// broadcast, so a rejected duplicate can no longer falsely fail this node.)
-	bCompleted = true;
+	// Match the dispatch-scoped terminal request; ignore the operation active before Activate.
 	auto* Sub = Subsystem.Get();
+	const auto Completion = Sub ? Sub->GetLastOperationOutcome(TEXT("JoinLobby")) : FEEOSOperationOutcome();
+	if (bCompleted || !Completion.RequestId || Completion.RequestId == IgnoredRequestId
+		|| (ExpectedRequestId && Completion.RequestId != ExpectedRequestId)) return;
+	bCompleted = true;
 	if (Sub) Sub->OnLobbyJoined.RemoveDynamic(this, &UEOSAsyncJoinLobby::HandleComplete);
+	OnDetailedCompleted.Broadcast(Completion);
 
 	if (bSuccess)
 		OnSuccess.Broadcast(LobbyId);
 	else
-		OnFailure.Broadcast(TEXT("JoinLobby failed"));
+		OnFailure.Broadcast(Sub ? Sub->GetLastOperationOutcome(TEXT("JoinLobby")).Message : TEXT("JoinLobby failed"));
 
 	SetReadyToDestroy();
 }
@@ -838,12 +896,16 @@ void UEOSAsyncStartMatchmaking::Activate()
 	auto* Sub = GetSubsystem<UEEOSMatchmakingSubsystem>(WorldContext.Get());
 	if (!Sub)
 	{
-		OnFailure.Broadcast(TEXT("MatchmakingSubsystem not available"));
+		bCompleted = true;
+		FEEOSOperationOutcome Outcome; Outcome.Operation = TEXT("StartMatchmaking"); Outcome.Code = EEOSOperationCode::UnsupportedCapability;
+		Outcome.Phase = TEXT("Rejected"); Outcome.Message = TEXT("MatchmakingSubsystem not available");
+		OnDetailedCompleted.Broadcast(Outcome);
+		OnFailure.Broadcast(Outcome.Message);
 		SetReadyToDestroy();
 		return;
 	}
 
-	Subsystem = Sub;
+	Subsystem = Sub; IgnoredCycleId = Sub->GetMatchmakingCycleId();
 	Sub->OnMatchFound.AddDynamic(this, &UEOSAsyncStartMatchmaking::HandleMatchFound);
 	Sub->OnMatchmakingComplete.AddDynamic(this, &UEOSAsyncStartMatchmaking::HandleComplete);
 	// A cancelled cycle broadcasts ONLY OnMatchmakingCancelled — without this binding the
@@ -856,10 +918,13 @@ void UEOSAsyncStartMatchmaking::Activate()
 		// false without a broadcast = rejected (a matchmaking cycle is already in flight);
 		// the no-cycle pre-flight failures broadcast OnMatchmakingComplete(false)
 		// synchronously and were consumed by the handler above.
+		bCompleted = true;
 		UnbindAll();
+		OnDetailedCompleted.Broadcast(Sub->GetLastOperationRejection());
 		OnFailure.Broadcast(TEXT("StartMatchmaking could not be started (a matchmaking cycle is already in flight)"));
 		SetReadyToDestroy();
 	}
+	if (!bCompleted) ExpectedCycleId = Sub->GetMatchmakingCycleId();
 }
 
 void UEOSAsyncStartMatchmaking::UnbindAll()
@@ -874,21 +939,33 @@ void UEOSAsyncStartMatchmaking::UnbindAll()
 
 void UEOSAsyncStartMatchmaking::HandleMatchFound(const FString& SessionId)
 {
+	auto* Sub = Subsystem.Get();
+	const auto Outcome = Sub ? Sub->GetLastOperationOutcome(TEXT("MatchOffer")) : FEEOSOperationOutcome();
+	const int64 Cycle = Outcome.ParentRequestId;
+	if (bCompleted || !Cycle || Cycle == IgnoredCycleId || (ExpectedCycleId && Cycle != ExpectedCycleId)) return;
+
 	// No request key in the delegate payload — first-completion semantics: the subsystem
 	// allows one cycle at a time and duplicate starts are log-only rejected (they fail fast
 	// in Activate), so the only remaining overlap is two nodes bound to the SAME real cycle —
 	// both then complete on this event.
 	bCompleted = true;
 	UnbindAll();
+	OnDetailedCompleted.Broadcast(Outcome);
 	OnSuccess.Broadcast(SessionId);
 	SetReadyToDestroy();
 }
 
 void UEOSAsyncStartMatchmaking::HandleComplete(bool bSuccess, const FString& ErrorMessage)
 {
+	auto* Sub = Subsystem.Get();
+	const auto Outcome = Sub ? Sub->GetLastOperationOutcome(TEXT("Matchmaking")) : FEEOSOperationOutcome();
+	const int64 Cycle = Outcome.RequestId;
+	if (bCompleted || !Cycle || Cycle == IgnoredCycleId || (ExpectedCycleId && Cycle != ExpectedCycleId)) return;
+
 	// See HandleMatchFound for the first-completion semantics note.
 	bCompleted = true;
 	UnbindAll();
+	OnDetailedCompleted.Broadcast(Outcome);
 
 	// Every branch must fire exactly one pin. A successful completion reaching this handler
 	// means matchmaking finished (e.g. match accepted and joined) without this node observing
@@ -904,10 +981,16 @@ void UEOSAsyncStartMatchmaking::HandleComplete(bool bSuccess, const FString& Err
 
 void UEOSAsyncStartMatchmaking::HandleCancelled()
 {
+	auto* Sub = Subsystem.Get();
+	const auto Outcome = Sub ? Sub->GetLastOperationOutcome(TEXT("Matchmaking")) : FEEOSOperationOutcome();
+	const int64 Cycle = Outcome.RequestId;
+	if (bCompleted || !Cycle || Cycle == IgnoredCycleId || (ExpectedCycleId && Cycle != ExpectedCycleId)) return;
+
 	// CancelMatchmaking ends the cycle with ONLY this broadcast (no OnMatchmakingComplete) —
 	// complete the node on its failure pin so exactly one pin always fires.
 	bCompleted = true;
 	UnbindAll();
+	OnDetailedCompleted.Broadcast(Outcome);
 	OnFailure.Broadcast(TEXT("Matchmaking cancelled"));
 	SetReadyToDestroy();
 }

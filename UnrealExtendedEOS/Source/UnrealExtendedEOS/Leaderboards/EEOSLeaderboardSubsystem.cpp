@@ -1,6 +1,7 @@
 // Copyright Kemal Erdem YILMAZ. All Rights Reserved.
 
 #include "EEOSLeaderboardSubsystem.h"
+#include "Shared/EEOSNativeOperation.h"
 #include "OnlineSubsystemUtils.h"
 #include "Interfaces/OnlineLeaderboardInterface.h"
 #include "Interfaces/OnlineIdentityInterface.h"
@@ -42,19 +43,9 @@ bool UEEOSLeaderboardSubsystem::IsLeaderboardsEnabled(const TCHAR* CallSite) con
 
 void UEEOSLeaderboardSubsystem::Deinitialize()
 {
-	// Clear our binding on the interface-wide read-complete list if a query is still in flight
-	if (LeaderboardReadCompleteHandle.IsValid())
-	{
-		if (IOnlineSubsystem* EOSSub = GetEOSOnlineSubsystem())
-		{
-			IOnlineLeaderboardsPtr LeaderboardInterface = EOSSub->GetLeaderboardsInterface();
-			if (LeaderboardInterface.IsValid())
-			{
-				LeaderboardInterface->ClearOnLeaderboardReadCompleteDelegate_Handle(LeaderboardReadCompleteHandle);
-			}
-		}
-		LeaderboardReadCompleteHandle.Reset();
-	}
+	BeginEOSShutdown();
+	if (PendingLeaderboardInterface.IsValid()) PendingLeaderboardInterface->ClearOnLeaderboardReadCompleteDelegate_Handle(LeaderboardReadCompleteHandle);
+	LeaderboardReadCompleteHandle.Reset(); PendingLeaderboardInterface.Reset();
 
 	CachedLeaderboardRead.Reset();
 	CachedEntries.Empty();
@@ -86,12 +77,11 @@ bool UEEOSLeaderboardSubsystem::RejectIfQueryInFlight(const TCHAR* FunctionName,
 	// In-flight = our read object exists, regardless of ReadState: the engine's deferred-
 	// failure paths (zero-friends, rank > 1000) never move the state past NotStarted, and a
 	// second query stomping the object/binding in that window would leak the first binding.
-	// Log-only rejection — broadcasting a failure here would be indistinguishable from the
+	// Rejection has a detailed record; broadcasting a legacy failure here would be indistinguishable from the
 	// in-flight query's real completion for its waiters on the shared delegate (R1).
 	if (CachedLeaderboardRead.IsValid())
 	{
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSLeaderboardSubsystem::%s — A leaderboard query ('%s') is already in flight, rejecting '%s' (no broadcast)"),
-			FunctionName, *CachedLeaderboardRead->LeaderboardName, *LeaderboardId);
+		RejectOperation(FName(FunctionName), EEOSOperationCode::Busy, TEXT("An admitted leaderboard query already owns the native read."), LeaderboardId);
 		return true;
 	}
 	return false;
@@ -99,6 +89,7 @@ bool UEEOSLeaderboardSubsystem::RejectIfQueryInFlight(const TCHAR* FunctionName,
 
 void UEEOSLeaderboardSubsystem::BindLeaderboardReadDelegate(IOnlineLeaderboardsPtr LeaderboardInterface)
 {
+	PendingLeaderboardInterface = LeaderboardInterface; LeaderboardContext = CaptureEOSContext();
 	// Bind with a handle on the interface-wide list — never RemoveAll(this): other systems
 	// (or a future second binding) must not be wiped when this one op is cleaned up
 	LeaderboardReadCompleteHandle = LeaderboardInterface->AddOnLeaderboardReadCompleteDelegate_Handle(
@@ -124,7 +115,7 @@ bool UEEOSLeaderboardSubsystem::QueryLeaderboard(const FString& LeaderboardId, i
 	IOnlineLeaderboardsPtr LeaderboardInterface = EOSSub->GetLeaderboardsInterface();
 	if (!LeaderboardInterface.IsValid())
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSLeaderboardSubsystem::QueryLeaderboard — Leaderboards interface not available"));
+		FEEOSNativeOperationLease::ReportRepeated(GetOwningEOSInstanceName(), TEXT("QueryLeaderboard"), TEXT("CapabilityUnavailable"));
 		OnLeaderboardQueried.Broadcast(false, TArray<FEEOSLeaderboardEntry>());
 		return false;
 	}
@@ -157,7 +148,7 @@ bool UEEOSLeaderboardSubsystem::QueryLeaderboard(const FString& LeaderboardId, i
 	BindLeaderboardReadDelegate(LeaderboardInterface);
 	LeaderboardInterface->ReadLeaderboardsAroundRank(CenterIndex, Range, ReadRef);
 
-	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSLeaderboardSubsystem::QueryLeaderboard — Querying top %d of '%s'..."), ClampedN, *LeaderboardId);
+	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSLeaderboardSubsystem::QueryLeaderboard — Querying top %d of '%s'..."), ClampedN, *FEEOSNativeOperationLease::SafeField(LeaderboardId));
 	return true;
 }
 
@@ -198,7 +189,7 @@ bool UEEOSLeaderboardSubsystem::QueryFriendsLeaderboard(const FString& Leaderboa
 	BindLeaderboardReadDelegate(LeaderboardInterface);
 	LeaderboardInterface->ReadLeaderboardsForFriends(0, ReadRef);
 
-	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSLeaderboardSubsystem::QueryFriendsLeaderboard — Querying friends for '%s'..."), *LeaderboardId);
+	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSLeaderboardSubsystem::QueryFriendsLeaderboard — Querying friends for '%s'..."), *FEEOSNativeOperationLease::SafeField(LeaderboardId));
 	return true;
 }
 
@@ -246,7 +237,7 @@ bool UEEOSLeaderboardSubsystem::QueryLeaderboardAroundPlayer(const FString& Lead
 	BindLeaderboardReadDelegate(LeaderboardInterface);
 	LeaderboardInterface->ReadLeaderboardsAroundUser(UserId->AsShared(), static_cast<uint32>(Range), ReadRef);
 
-	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSLeaderboardSubsystem::QueryLeaderboardAroundPlayer — '%s' (range=%d)"), *LeaderboardId, Range);
+	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSLeaderboardSubsystem::QueryLeaderboardAroundPlayer — '%s' (range=%d)"), *FEEOSNativeOperationLease::SafeField(LeaderboardId), Range);
 	return true;
 }
 
@@ -287,7 +278,7 @@ bool UEEOSLeaderboardSubsystem::QueryLeaderboardByRange(const FString& Leaderboa
 	}
 	if (EndRank < StartRank || StartRank > GMaxEOSRankings)
 	{
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSLeaderboardSubsystem::QueryLeaderboardByRange — Invalid range [%d-%d] for '%s'"), StartRank, EndRank, *LeaderboardId);
+		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSLeaderboardSubsystem::QueryLeaderboardByRange — Invalid range [%d-%d] for '%s'"), StartRank, EndRank, *FEEOSNativeOperationLease::SafeField(LeaderboardId));
 		OnLeaderboardQueried.Broadcast(false, TArray<FEEOSLeaderboardEntry>());
 		return false;
 	}
@@ -317,7 +308,7 @@ bool UEEOSLeaderboardSubsystem::QueryLeaderboardByRange(const FString& Leaderboa
 	BindLeaderboardReadDelegate(LeaderboardInterface);
 	LeaderboardInterface->ReadLeaderboardsAroundRank(CenterIndex, Range, ReadRef);
 
-	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSLeaderboardSubsystem::QueryLeaderboardByRange — '%s' [%d-%d]"), *LeaderboardId, StartRank, EndRank);
+	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSLeaderboardSubsystem::QueryLeaderboardByRange — '%s' [%d-%d]"), *FEEOSNativeOperationLease::SafeField(LeaderboardId), StartRank, EndRank);
 	return true;
 }
 
@@ -347,7 +338,7 @@ bool UEEOSLeaderboardSubsystem::UploadScore(const FString& LeaderboardId, int32 
 	EOS_HStats StatsHandle = PlatformHandle ? EOS_Platform_GetStatsInterface(PlatformHandle) : nullptr;
 	if (!StatsHandle)
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSLeaderboardSubsystem::UploadScore — Stats interface not available"));
+		FEEOSNativeOperationLease::ReportRepeated(GetOwningEOSInstanceName(), TEXT("UploadScore"), TEXT("CapabilityUnavailable"));
 		OnScoreUploaded.Broadcast(false, LeaderboardId);
 		return false;
 	}
@@ -366,7 +357,7 @@ bool UEEOSLeaderboardSubsystem::UploadScore(const FString& LeaderboardId, int32 
 	const FString LocalPUIDStr = UEEOSBlueprintLibrary::ExtractProductUserId(LocalUserId->ToString());
 	if (LocalPUIDStr.IsEmpty())
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSLeaderboardSubsystem::UploadScore — Logged-in user has no Product User ID (no Connect session)"));
+		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSLeaderboardSubsystem::UploadScore — Logged-in user has no Product User ID (no Connect session)"));
 		OnScoreUploaded.Broadcast(false, LeaderboardId);
 		return false;
 	}
@@ -378,7 +369,7 @@ bool UEEOSLeaderboardSubsystem::UploadScore(const FString& LeaderboardId, int32 
 	if (StatName != LeaderboardId)
 	{
 		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSLeaderboardSubsystem::UploadScore — Stat name '%s' is not upper case; ingesting as '%s' (EOS stat names are upper case in the Dev Portal)"),
-			*LeaderboardId, *StatName);
+			*FEEOSNativeOperationLease::SafeField(LeaderboardId), *FEEOSNativeOperationLease::SafeField(StatName));
 	}
 	const FTCHARToUTF8 StatNameUtf8(*StatName);
 
@@ -397,36 +388,38 @@ bool UEEOSLeaderboardSubsystem::UploadScore(const FString& LeaderboardId, int32 
 	struct FUploadScoreContext
 	{
 		TWeakObjectPtr<UEEOSLeaderboardSubsystem> Self;
+		FEEOSRequestContext Ownership;
 		FString LeaderboardId;
 	};
 
 	FUploadScoreContext* Context = new FUploadScoreContext();
-	Context->Self = this;
+	Context->Self = this; Context->Ownership = CaptureEOSContext();
 	Context->LeaderboardId = LeaderboardId;
 
 	EOS_Stats_IngestStat(StatsHandle, &Options, Context,
 		[](const EOS_Stats_IngestStatCompleteCallbackInfo* Data)
 		{
+			if (!Data || !EOS_EResult_IsOperationComplete(Data->ResultCode)) return;
 			TUniquePtr<FUploadScoreContext> Ctx(static_cast<FUploadScoreContext*>(Data->ClientData));
 			if (!Ctx) return;
 
 			UEEOSLeaderboardSubsystem* Self = Ctx->Self.Get();
-			if (!Self) return;
+			if (!Self || !Self->IsEOSContextCurrent(Ctx->Ownership)) return;
 
 			const bool bSuccess = Data->ResultCode == EOS_EResult::EOS_Success;
 			if (bSuccess)
 			{
-				UE_LOG(LogExtendedEOS, Log, TEXT("EEOSLeaderboardSubsystem: Score ingested for '%s'"), *Ctx->LeaderboardId);
+				UE_LOG(LogExtendedEOS, Log, TEXT("EEOSLeaderboardSubsystem: Score ingested for '%s'"), *FEEOSNativeOperationLease::SafeField(Ctx->LeaderboardId));
 			}
 			else
 			{
 				UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSLeaderboardSubsystem::UploadScore — EOS_Stats_IngestStat failed for '%s': %s"),
-					*Ctx->LeaderboardId, ANSI_TO_TCHAR(EOS_EResult_ToString(Data->ResultCode)));
+					*FEEOSNativeOperationLease::SafeField(Ctx->LeaderboardId), ANSI_TO_TCHAR(EOS_EResult_ToString(Data->ResultCode)));
 			}
 			Self->OnScoreUploaded.Broadcast(bSuccess, Ctx->LeaderboardId);
 		});
 
-	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSLeaderboardSubsystem::UploadScore — Ingesting '%s' = %d..."), *StatName, Score);
+	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSLeaderboardSubsystem::UploadScore — Ingesting '%s' = %d..."), *FEEOSNativeOperationLease::SafeField(StatName), Score);
 	return true;
 }
 
@@ -498,6 +491,7 @@ void UEEOSLeaderboardSubsystem::HandleLeaderboardReadComplete(bool bWasSuccessfu
 		return;
 	}
 
+	bWasSuccessful = bWasSuccessful && IsEOSContextCurrent(LeaderboardContext);
 	CachedEntries.Empty();
 
 	// Rank-window queries (top-N / by-range) over-fetch by up to one record because the
@@ -559,14 +553,8 @@ void UEEOSLeaderboardSubsystem::HandleLeaderboardReadComplete(bool bWasSuccessfu
 
 	// Clear only our own handle — never RemoveAll(this) — and do it BEFORE broadcasting so a
 	// listener can start a fresh query from the callback without us wiping its new binding
-	if (IOnlineSubsystem* EOSSub = GetEOSOnlineSubsystem())
-	{
-		IOnlineLeaderboardsPtr LB = EOSSub->GetLeaderboardsInterface();
-		if (LB.IsValid())
-		{
-			LB->ClearOnLeaderboardReadCompleteDelegate_Handle(LeaderboardReadCompleteHandle);
-		}
-	}
+	if (PendingLeaderboardInterface.IsValid()) PendingLeaderboardInterface->ClearOnLeaderboardReadCompleteDelegate_Handle(LeaderboardReadCompleteHandle);
+	PendingLeaderboardInterface.Reset();
 	LeaderboardReadCompleteHandle.Reset();
 
 	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSLeaderboardSubsystem: Leaderboard read %s (%d entries)"),

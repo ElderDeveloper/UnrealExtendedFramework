@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Shared/EEOSSubsystem.h"
+#include "Interfaces/OnlineTitleFileInterface.h"
 #include "EEOSTitleStorageSubsystem.generated.h"
 
 class IOnlineTitleFile;
@@ -81,10 +82,12 @@ public:
 	FOnEOSTitleFilesQueried OnTitleFilesQueried;
 
 private:
+	IOnlineTitleFilePtr BoundInterface;
+	FEEOSRequestContext BindingContext;
 
 	TArray<FString> CachedTitleFiles;
 
-	/** Interface-wide title-file delegates are bound once (lazily) and stay bound until Deinitialize */
+	/** Interface-wide title-file delegates bind lazily to an exact retained interface; idle context replacement rebinds them */
 	bool bTitleFileDelegatesBound = false;
 
 	/** File names with a read currently in flight — completions are filtered against this */
@@ -98,7 +101,7 @@ private:
 	bool bEnumerateInFlight = false;
 
 	/** Bind the interface-wide title-file completion delegates exactly once */
-	void EnsureTitleFileDelegatesBound(IOnlineTitleFile& TitleFileInterface);
+	bool EnsureTitleFileDelegatesBound(IOnlineTitleFile& TitleFileInterface);
 
 	void HandleEnumerateTitleFilesComplete(bool bWasSuccessful, const FString& Error);
 	void HandleReadTitleFileComplete(bool bWasSuccessful, const FString& FileName);

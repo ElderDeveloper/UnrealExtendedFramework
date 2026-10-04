@@ -1,6 +1,7 @@
 // Copyright Kemal Erdem YILMAZ. All Rights Reserved.
 
 #include "EEOSFriendsSubsystem.h"
+#include "Shared/EEOSNativeOperation.h"
 #include "OnlineSubsystemUtils.h"
 #include "Interfaces/OnlineFriendsInterface.h"
 #include "Interfaces/OnlinePresenceInterface.h"
@@ -13,6 +14,7 @@ void UEEOSFriendsSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 
 void UEEOSFriendsSubsystem::Deinitialize()
 {
+	BeginEOSShutdown();
 	CachedFriends.Empty();
 	Super::Deinitialize();
 }
@@ -33,7 +35,7 @@ bool UEEOSFriendsSubsystem::ReadFriendsList()
 	IOnlineFriendsPtr FriendsInterface = EOSSub->GetFriendsInterface();
 	if (!FriendsInterface.IsValid())
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSFriendsSubsystem::ReadFriendsList — Friends interface not available"));
+		FEEOSNativeOperationLease::ReportRepeated(GetOwningEOSInstanceName(), TEXT("ReadFriendsList"), TEXT("CapabilityUnavailable"));
 		OnFriendsListReady.Broadcast(TArray<FEEOSFriendInfo>());
 		return false;
 	}
@@ -42,7 +44,12 @@ bool UEEOSFriendsSubsystem::ReadFriendsList()
 	// (UserManagerEOS.cpp:2742-2749), so HandleReadFriendsListComplete fires exactly once
 	// whether this returns true or false.
 	const bool bStarted = FriendsInterface->ReadFriendsList(0, TEXT("default"),
-		FOnReadFriendsListComplete::CreateUObject(this, &UEEOSFriendsSubsystem::HandleReadFriendsListComplete));
+		FOnReadFriendsListComplete::CreateWeakLambda(this, [this, FriendsInterface, Ownership = CaptureEOSContext()](int32 LocalUserNum, bool bWasSuccessful, const FString& ListName, const FString& ErrorStr)
+		{
+			if (LocalUserNum != 0) return;
+			if (!IsEOSContextCurrent(Ownership)) { OnFriendsListReady.Broadcast(TArray<FEEOSFriendInfo>()); return; }
+			HandleReadFriendsListComplete(LocalUserNum, bWasSuccessful, ListName, ErrorStr, FriendsInterface);
+		}));
 
 	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSFriendsSubsystem::ReadFriendsList — Reading friends list... (%s)"),
 		bStarted ? TEXT("started") : TEXT("failed synchronously"));
@@ -62,7 +69,7 @@ bool UEEOSFriendsSubsystem::SendFriendInvite(const FString& FriendUserId)
 	IOnlineFriendsPtr FriendsInterface = EOSSub->GetFriendsInterface();
 	if (!FriendsInterface.IsValid())
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSFriendsSubsystem::SendFriendInvite — Friends interface not available"));
+		FEEOSNativeOperationLease::ReportRepeated(GetOwningEOSInstanceName(), TEXT("SendFriendInvite"), TEXT("CapabilityUnavailable"));
 		OnFriendInviteSent.Broadcast(false, FriendUserId);
 		return false;
 	}
@@ -74,7 +81,7 @@ bool UEEOSFriendsSubsystem::SendFriendInvite(const FString& FriendUserId)
 	const FUniqueNetIdPtr NetId = EOSSub->GetIdentityInterface()->CreateUniquePlayerId(FriendUserId);
 	if (!NetId.IsValid() || !NetId->IsValid())
 	{
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSFriendsSubsystem::SendFriendInvite — Could not parse user id '%s'"), *FriendUserId);
+		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSFriendsSubsystem::SendFriendInvite — Could not parse user id '%s'"), *FEEOSNativeOperationLease::SafeField(FriendUserId));
 		OnFriendInviteSent.Broadcast(false, FriendUserId);
 		return false;
 	}
@@ -86,21 +93,23 @@ bool UEEOSFriendsSubsystem::SendFriendInvite(const FString& FriendUserId)
 	// (UserManagerEOS.cpp:2927-2968).
 	const bool bStarted = FriendsInterface->SendInvite(0, *NetId, TEXT("default"),
 		FOnSendInviteComplete::CreateWeakLambda(this,
-			[this, FriendUserId](int32 LocalUserNum, bool bWasSuccessful, const FUniqueNetId& FriendId, const FString& ListName, const FString& ErrorStr)
+			[this, FriendUserId, Ownership = CaptureEOSContext()](int32 LocalUserNum, bool bWasSuccessful, const FUniqueNetId& FriendId, const FString& ListName, const FString& ErrorStr)
 			{
+				if (LocalUserNum != 0) return;
+				bWasSuccessful = bWasSuccessful && IsEOSContextCurrent(Ownership);
 				if (bWasSuccessful)
 				{
-					UE_LOG(LogExtendedEOS, Log, TEXT("EEOSFriendsSubsystem: Friend invite to %s sent"), *FriendUserId);
+					UE_LOG(LogExtendedEOS, Log, TEXT("EEOSFriendsSubsystem: Friend invite to %s sent"), *FEEOSNativeOperationLease::SafeField(FriendUserId));
 				}
 				else
 				{
-					UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSFriendsSubsystem: Friend invite to %s failed — %s"), *FriendUserId, *ErrorStr);
+					UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSFriendsSubsystem: Friend invite to %s failed — %s"), *FEEOSNativeOperationLease::SafeField(FriendUserId), *FEEOSNativeOperationLease::SafeField(ErrorStr));
 				}
 				OnFriendInviteSent.Broadcast(bWasSuccessful, FriendUserId);
 			}));
 
 	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSFriendsSubsystem::SendFriendInvite — Invite to %s %s"),
-		*FriendUserId, bStarted ? TEXT("started") : TEXT("failed synchronously"));
+		*FEEOSNativeOperationLease::SafeField(FriendUserId), bStarted ? TEXT("started") : TEXT("failed synchronously"));
 	return bStarted;
 }
 
@@ -117,7 +126,7 @@ bool UEEOSFriendsSubsystem::AcceptFriendInvite(const FString& FriendUserId)
 	IOnlineFriendsPtr FriendsInterface = EOSSub->GetFriendsInterface();
 	if (!FriendsInterface.IsValid())
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSFriendsSubsystem::AcceptFriendInvite — Friends interface not available, invite from '%s' NOT accepted"), *FriendUserId);
+		FEEOSNativeOperationLease::ReportRepeated(GetOwningEOSInstanceName(), TEXT("AcceptFriendInvite"), TEXT("CapabilityUnavailable"));
 		return false;
 	}
 
@@ -126,18 +135,18 @@ bool UEEOSFriendsSubsystem::AcceptFriendInvite(const FString& FriendUserId)
 	const FUniqueNetIdPtr NetId = EOSSub->GetIdentityInterface()->CreateUniquePlayerId(FriendUserId);
 	if (!NetId.IsValid() || !NetId->IsValid())
 	{
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSFriendsSubsystem::AcceptFriendInvite — Could not parse user id '%s', invite NOT accepted"), *FriendUserId);
+		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSFriendsSubsystem::AcceptFriendInvite — Could not parse user id '%s', invite NOT accepted"), *FEEOSNativeOperationLease::SafeField(FriendUserId));
 		return false;
 	}
 
 	const bool bStarted = FriendsInterface->AcceptInvite(0, *NetId, TEXT("default"));
 	if (bStarted)
 	{
-		UE_LOG(LogExtendedEOS, Log, TEXT("EEOSFriendsSubsystem::AcceptFriendInvite — Accepting invite from %s"), *FriendUserId);
+		UE_LOG(LogExtendedEOS, Log, TEXT("EEOSFriendsSubsystem::AcceptFriendInvite — Accepting invite from %s"), *FEEOSNativeOperationLease::SafeField(FriendUserId));
 	}
 	else
 	{
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSFriendsSubsystem::AcceptFriendInvite — Engine refused the accept for %s (unknown/invalid friend id?)"), *FriendUserId);
+		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSFriendsSubsystem::AcceptFriendInvite — Engine refused the accept for %s (unknown/invalid friend id?)"), *FEEOSNativeOperationLease::SafeField(FriendUserId));
 	}
 	return bStarted;
 }
@@ -155,7 +164,7 @@ bool UEEOSFriendsSubsystem::RejectFriendInvite(const FString& FriendUserId)
 	IOnlineFriendsPtr FriendsInterface = EOSSub->GetFriendsInterface();
 	if (!FriendsInterface.IsValid())
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSFriendsSubsystem::RejectFriendInvite — Friends interface not available, invite from '%s' NOT rejected"), *FriendUserId);
+		FEEOSNativeOperationLease::ReportRepeated(GetOwningEOSInstanceName(), TEXT("RejectFriendInvite"), TEXT("CapabilityUnavailable"));
 		return false;
 	}
 
@@ -164,18 +173,18 @@ bool UEEOSFriendsSubsystem::RejectFriendInvite(const FString& FriendUserId)
 	const FUniqueNetIdPtr NetId = EOSSub->GetIdentityInterface()->CreateUniquePlayerId(FriendUserId);
 	if (!NetId.IsValid() || !NetId->IsValid())
 	{
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSFriendsSubsystem::RejectFriendInvite — Could not parse user id '%s', invite NOT rejected"), *FriendUserId);
+		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSFriendsSubsystem::RejectFriendInvite — Could not parse user id '%s', invite NOT rejected"), *FEEOSNativeOperationLease::SafeField(FriendUserId));
 		return false;
 	}
 
 	const bool bStarted = FriendsInterface->RejectInvite(0, *NetId, TEXT("default"));
 	if (bStarted)
 	{
-		UE_LOG(LogExtendedEOS, Log, TEXT("EEOSFriendsSubsystem::RejectFriendInvite — Rejecting invite from %s"), *FriendUserId);
+		UE_LOG(LogExtendedEOS, Log, TEXT("EEOSFriendsSubsystem::RejectFriendInvite — Rejecting invite from %s"), *FEEOSNativeOperationLease::SafeField(FriendUserId));
 	}
 	else
 	{
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSFriendsSubsystem::RejectFriendInvite — Engine refused the reject for %s (unknown/invalid friend id?)"), *FriendUserId);
+		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSFriendsSubsystem::RejectFriendInvite — Engine refused the reject for %s (unknown/invalid friend id?)"), *FEEOSNativeOperationLease::SafeField(FriendUserId));
 	}
 	return bStarted;
 }
@@ -195,15 +204,14 @@ int32 UEEOSFriendsSubsystem::GetOnlineFriendCount() const
 	return Count;
 }
 
-void UEEOSFriendsSubsystem::HandleReadFriendsListComplete(int32 LocalUserNum, bool bWasSuccessful, const FString& ListName, const FString& ErrorStr)
+void UEEOSFriendsSubsystem::HandleReadFriendsListComplete(int32 LocalUserNum, bool bWasSuccessful, const FString& ListName, const FString& ErrorStr, const IOnlineFriendsPtr& FriendsInterface)
 {
 	CachedFriends.Empty();
 
 	if (bWasSuccessful)
 	{
-		if (IOnlineSubsystem* EOSSub = GetEOSOnlineSubsystem())
+		if (FriendsInterface.IsValid())
 		{
-			IOnlineFriendsPtr FriendsInterface = EOSSub->GetFriendsInterface();
 			if (FriendsInterface.IsValid())
 			{
 				TArray<TSharedRef<FOnlineFriend>> Friends;
@@ -227,7 +235,7 @@ void UEEOSFriendsSubsystem::HandleReadFriendsListComplete(int32 LocalUserNum, bo
 	}
 	else
 	{
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSFriendsSubsystem: Failed to read friends list — %s"), *ErrorStr);
+		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSFriendsSubsystem: Failed to read friends list — %s"), *FEEOSNativeOperationLease::SafeField(ErrorStr));
 	}
 
 	OnFriendsListReady.Broadcast(CachedFriends);

@@ -17,6 +17,8 @@ class UEnhancedInputComponent;
 class UInputAction;
 class UPrimitiveComponent;
 
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FEGInteractionExecutionFailed, int32, ActivationId, FText, Reason);
+
 /**
  * UEGInteractionSystemComponent
  *
@@ -228,6 +230,12 @@ public:
 	void NotifyInteractionStarted(UEGInteraction* Interaction);
 	void NotifyInteractionEnded(UEGInteraction* Interaction, bool bCancelled, bool bNotifyServer);
 	void NotifyActivationRejected(UEGInteraction* Interaction);
+
+	bool IsAwaitingServer(FGameplayTag InputTag) const;
+	void ReportExecutionFailure(int32 ActivationId, const FText& Reason);
+
+	UPROPERTY(BlueprintAssignable, Category = "Extended|Interaction System")
+	FEGInteractionExecutionFailed OnExecutionFailed;
 	void SetPromptProgress(int32 Handle, float Progress);
 
 	// -----------------------------------------------------------------
@@ -254,6 +262,10 @@ private:
 	// for a remote pawn, they are transient instances created per request.
 	UPROPERTY(Transient)
 	TArray<TObjectPtr<UEGInteraction>> Active;
+
+	/** Retain local instances until a correlated authoritative result arrives, including after focus loss. */
+	UPROPERTY(Transient)
+	TMap<int32, TObjectPtr<UEGInteraction>> PendingActivations;
 
 	UPROPERTY(Transient)
 	TArray<FEGInteractionPrompt> Prompts;
@@ -291,6 +303,9 @@ private:
 
 	UFUNCTION(Client, Reliable)
 	void ClientInteractionEnded(int32 ActivationId, bool bCancelled);
+
+	UFUNCTION(Client, Reliable)
+	void ClientExecutionFailed(int32 ActivationId, const FText& Reason);
 
 	// Authority
 	/** Validates a client request and builds the server instance without activating it. Null on refusal. */

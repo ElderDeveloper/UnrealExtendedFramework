@@ -1,42 +1,47 @@
 // Copyright Kemal Erdem YILMAZ. All Rights Reserved.
 
 #include "EEOSCustomInvitesSubsystem.h"
+#include "Shared/EEOSNativeOperation.h"
 #include "Shared/EEOSBlueprintLibrary.h"
 #include "UnrealExtendedEOS.h"
+#include "OnlineSubsystem.h"
+#include "Interfaces/OnlineIdentityInterface.h"
+#include "eos_connect.h"
 
 #if WITH_EOS_SDK
 #include "IEOSSDKManager.h"
 #include "eos_custominvites.h"
 #include "eos_sdk.h"
 
-// ── Static helper to get Custom Invites handle ──────────────────────────────
-
-static EOS_HCustomInvites GetCustomInvitesHandle()
+// Resolve SDK interfaces and the selected native local identity from the same EOS instance.
+EOS_HCustomInvites UEEOSCustomInvitesSubsystem::GetCustomInvitesHandle() const
 {
-	IEOSSDKManager* SDKManager = IEOSSDKManager::Get();
-	if (!SDKManager) return nullptr;
-
-	TArray<IEOSPlatformHandlePtr> Platforms = SDKManager->GetActivePlatforms();
-	if (Platforms.Num() == 0) return nullptr;
-
-	EOS_HPlatform PlatformHandle = *Platforms[0];
-	return EOS_Platform_GetCustomInvitesInterface(PlatformHandle);
+	const auto Platform = GetOwningEOSPlatform();
+	return Platform.IsValid() ? EOS_Platform_GetCustomInvitesInterface(*Platform) : nullptr;
 }
 
-static EOS_ProductUserId GetLocalProductUserId()
+EOS_ProductUserId UEEOSCustomInvitesSubsystem::GetLocalProductUserId() const
 {
-	IEOSSDKManager* SDKManager = IEOSSDKManager::Get();
-	if (!SDKManager) return nullptr;
-
-	TArray<IEOSPlatformHandlePtr> Platforms = SDKManager->GetActivePlatforms();
-	if (Platforms.Num() == 0) return nullptr;
-
-	EOS_HPlatform PlatformHandle = *Platforms[0];
-	EOS_HConnect ConnectHandle = EOS_Platform_GetConnectInterface(PlatformHandle);
-	if (!ConnectHandle) return nullptr;
-
-	return EOS_Connect_GetLoggedInUserByIndex(ConnectHandle, 0);
+	IOnlineSubsystem* OSS = GetExistingEOSOnlineSubsystem();
+	const auto Identity = OSS ? OSS->GetIdentityInterface() : IOnlineIdentityPtr();
+	const auto Local = Identity.IsValid() ? Identity->GetUniquePlayerId(0) : FUniqueNetIdPtr();
+	if (!Local.IsValid() || !Local->IsValid() || Identity->GetLoginStatus(0) != ELoginStatus::LoggedIn) return nullptr;
+	const FString Puid = UEEOSBlueprintLibrary::ExtractProductUserId(Local->ToString());
+	const auto Platform = GetOwningEOSPlatform();
+	if (Puid.IsEmpty() || !Platform.IsValid()) return nullptr;
+	const auto User = EOS_ProductUserId_FromString(TCHAR_TO_UTF8(*Puid));
+	return EOS_Connect_GetLoginStatus(EOS_Platform_GetConnectInterface(*Platform), User) == EOS_ELoginStatus::EOS_LS_LoggedIn ? User : nullptr;
 }
+
+/** One actual context type shared by every request submission and terminal callback. */
+struct FEEOSCustomInviteRequestContext
+{
+	TWeakObjectPtr<UEEOSCustomInvitesSubsystem> Self;
+	FString UserId;
+	TSharedPtr<IEOSPlatformHandle, ESPMode::ThreadSafe> Platform;
+	uint64 Generation;
+	FEEOSRequestContext Ownership;
+};
 
 /**
  * Build an EOS_ProductUserId from a user id string that may be either a bare PUID or the
@@ -59,7 +64,7 @@ static EOS_ProductUserId ResolveProductUserId(const FString& CompositeOrBareId)
  * Run EOS_CustomInvites_FinalizeInvite for a recorded invite. Shared by local accepts,
  * overlay accepts, and superseded-invite cleanup. Returns whether the SDK call succeeded.
  */
-static bool FinalizeInviteWithSdk(const FString& SenderId, const FString& CustomInviteId, EOS_EResult ProcessingResult)
+bool UEEOSCustomInvitesSubsystem::FinalizeInviteWithSdk(const FString& SenderId, const FString& CustomInviteId, EOS_EResult ProcessingResult)
 {
 	if (CustomInviteId.IsEmpty())
 	{
@@ -94,7 +99,7 @@ static bool FinalizeInviteWithSdk(const FString& SenderId, const FString& Custom
 	{
 		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSCustomInvites: FinalizeInvite (%s) for %s — %s"),
 			ProcessingResult == EOS_EResult::EOS_Success ? TEXT("accept") : TEXT("cancel/reject"),
-			*SenderId, ANSI_TO_TCHAR(EOS_EResult_ToString(Result)));
+			*FEEOSNativeOperationLease::SafeField(SenderId), ANSI_TO_TCHAR(EOS_EResult_ToString(Result)));
 		return false;
 	}
 	return true;
@@ -106,6 +111,7 @@ static void EOS_CALL OnInviteReceivedStatic(const EOS_CustomInvites_OnCustomInvi
 {
 	if (!Data || !Data->ClientData) return;
 	UEEOSCustomInvitesSubsystem* Self = static_cast<UEEOSCustomInvitesSubsystem*>(Data->ClientData);
+	if (!Self->CanReceiveNativeCallbacks() || !Self->IsNativeCallbackForLocalUser(Data->LocalUserId)) return;
 
 	char SenderBuf[EOS_PRODUCTUSERID_MAX_LENGTH + 1] = {};
 	int32_t SenderLen = sizeof(SenderBuf);
@@ -115,11 +121,11 @@ static void EOS_CALL OnInviteReceivedStatic(const EOS_CustomInvites_OnCustomInvi
 	// The SDK-issued invite id is required later by EOS_CustomInvites_FinalizeInvite — keep it
 	FString CustomInviteId(UTF8_TO_TCHAR(Data->CustomInviteId ? Data->CustomInviteId : ""));
 
-	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSCustomInvites: Invite received from %s (id: %s)"), *SenderId, *CustomInviteId);
+	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSCustomInvites: Invite received from %s (id: %s)"), *FEEOSNativeOperationLease::SafeField(SenderId), *FEEOSNativeOperationLease::SafeField(CustomInviteId));
 
-	AsyncTask(ENamedThreads::GameThread, [WeakSelf = TWeakObjectPtr<UEEOSCustomInvitesSubsystem>(Self), SenderId, CustomInviteId, Payload]()
+	AsyncTask(ENamedThreads::GameThread, [WeakSelf = TWeakObjectPtr<UEEOSCustomInvitesSubsystem>(Self), Generation = Self->GetNativeCallbackGeneration(), SenderId, CustomInviteId, Payload]()
 	{
-		if (UEEOSCustomInvitesSubsystem* S = WeakSelf.Get())
+		if (UEEOSCustomInvitesSubsystem* S = WeakSelf.Get(); S && S->CanReceiveNativeCallbacks() && S->GetNativeCallbackGeneration() == Generation)
 		{
 			S->HandleCustomInviteReceived(SenderId, CustomInviteId, Payload);
 		}
@@ -130,6 +136,7 @@ static void EOS_CALL OnInviteAcceptedStatic(const EOS_CustomInvites_OnCustomInvi
 {
 	if (!Data || !Data->ClientData) return;
 	UEEOSCustomInvitesSubsystem* Self = static_cast<UEEOSCustomInvitesSubsystem*>(Data->ClientData);
+	if (!Self->CanReceiveNativeCallbacks() || !Self->IsNativeCallbackForLocalUser(Data->LocalUserId)) return;
 
 	char SenderBuf[EOS_PRODUCTUSERID_MAX_LENGTH + 1] = {};
 	int32_t SenderLen = sizeof(SenderBuf);
@@ -139,11 +146,11 @@ static void EOS_CALL OnInviteAcceptedStatic(const EOS_CustomInvites_OnCustomInvi
 	// Overlay accepts must still be finalized (eos_custominvites.h:68-69) — carry the id through
 	FString CustomInviteId(UTF8_TO_TCHAR(Data->CustomInviteId ? Data->CustomInviteId : ""));
 
-	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSCustomInvites: Invite accepted (overlay) from %s (id: %s)"), *SenderId, *CustomInviteId);
+	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSCustomInvites: Invite accepted (overlay) from %s (id: %s)"), *FEEOSNativeOperationLease::SafeField(SenderId), *FEEOSNativeOperationLease::SafeField(CustomInviteId));
 
-	AsyncTask(ENamedThreads::GameThread, [WeakSelf = TWeakObjectPtr<UEEOSCustomInvitesSubsystem>(Self), SenderId, CustomInviteId, Payload]()
+	AsyncTask(ENamedThreads::GameThread, [WeakSelf = TWeakObjectPtr<UEEOSCustomInvitesSubsystem>(Self), Generation = Self->GetNativeCallbackGeneration(), SenderId, CustomInviteId, Payload]()
 	{
-		if (UEEOSCustomInvitesSubsystem* S = WeakSelf.Get())
+		if (UEEOSCustomInvitesSubsystem* S = WeakSelf.Get(); S && S->CanReceiveNativeCallbacks() && S->GetNativeCallbackGeneration() == Generation)
 		{
 			S->HandleCustomInviteAcceptedOverlay(SenderId, CustomInviteId, Payload);
 		}
@@ -154,17 +161,18 @@ static void EOS_CALL OnInviteRejectedStatic(const EOS_CustomInvites_CustomInvite
 {
 	if (!Data || !Data->ClientData) return;
 	UEEOSCustomInvitesSubsystem* Self = static_cast<UEEOSCustomInvitesSubsystem*>(Data->ClientData);
+	if (!Self->CanReceiveNativeCallbacks() || !Self->IsNativeCallbackForLocalUser(Data->LocalUserId)) return;
 
 	char SenderBuf[EOS_PRODUCTUSERID_MAX_LENGTH + 1] = {};
 	int32_t SenderLen = sizeof(SenderBuf);
 	EOS_ProductUserId_ToString(Data->TargetUserId, SenderBuf, &SenderLen);
 	FString SenderId(UTF8_TO_TCHAR(SenderBuf));
 
-	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSCustomInvites: Invite rejected (overlay) from %s"), *SenderId);
+	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSCustomInvites: Invite rejected (overlay) from %s"), *FEEOSNativeOperationLease::SafeField(SenderId));
 
-	AsyncTask(ENamedThreads::GameThread, [WeakSelf = TWeakObjectPtr<UEEOSCustomInvitesSubsystem>(Self), SenderId]()
+	AsyncTask(ENamedThreads::GameThread, [WeakSelf = TWeakObjectPtr<UEEOSCustomInvitesSubsystem>(Self), Generation = Self->GetNativeCallbackGeneration(), SenderId]()
 	{
-		if (UEEOSCustomInvitesSubsystem* S = WeakSelf.Get())
+		if (UEEOSCustomInvitesSubsystem* S = WeakSelf.Get(); S && S->CanReceiveNativeCallbacks() && S->GetNativeCallbackGeneration() == Generation)
 		{
 			S->HandleCustomInviteRejectedOverlay(SenderId);
 		}
@@ -175,17 +183,18 @@ static void EOS_CALL OnRTJReceivedStatic(const EOS_CustomInvites_RequestToJoinRe
 {
 	if (!Data || !Data->ClientData) return;
 	UEEOSCustomInvitesSubsystem* Self = static_cast<UEEOSCustomInvitesSubsystem*>(Data->ClientData);
+	if (!Self->CanReceiveNativeCallbacks() || !Self->IsNativeCallbackForLocalUser(Data->ToUserId)) return;
 
 	char FromBuf[EOS_PRODUCTUSERID_MAX_LENGTH + 1] = {};
 	int32_t FromLen = sizeof(FromBuf);
 	EOS_ProductUserId_ToString(Data->FromUserId, FromBuf, &FromLen);
 	FString FromUserId(UTF8_TO_TCHAR(FromBuf));
 
-	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSCustomInvites: Request-to-Join from %s"), *FromUserId);
+	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSCustomInvites: Request-to-Join from %s"), *FEEOSNativeOperationLease::SafeField(FromUserId));
 
-	AsyncTask(ENamedThreads::GameThread, [WeakSelf = TWeakObjectPtr<UEEOSCustomInvitesSubsystem>(Self), FromUserId]()
+	AsyncTask(ENamedThreads::GameThread, [WeakSelf = TWeakObjectPtr<UEEOSCustomInvitesSubsystem>(Self), Generation = Self->GetNativeCallbackGeneration(), FromUserId]()
 	{
-		if (UEEOSCustomInvitesSubsystem* S = WeakSelf.Get())
+		if (UEEOSCustomInvitesSubsystem* S = WeakSelf.Get(); S && S->CanReceiveNativeCallbacks() && S->GetNativeCallbackGeneration() == Generation)
 		{
 			S->HandleRequestToJoinReceived(FromUserId);
 		}
@@ -194,18 +203,16 @@ static void EOS_CALL OnRTJReceivedStatic(const EOS_CustomInvites_RequestToJoinRe
 
 static void EOS_CALL OnSendInviteCompleteStatic(const EOS_CustomInvites_SendCustomInviteCallbackInfo* Data)
 {
-	if (!Data || !Data->ClientData) return;
-
-	struct FSendContext { TWeakObjectPtr<UEEOSCustomInvitesSubsystem> Self; FString UserId; };
-	TUniquePtr<FSendContext> C(static_cast<FSendContext*>(Data->ClientData));
+	if (!Data || !Data->ClientData || !EOS_EResult_IsOperationComplete(Data->ResultCode)) return;
+	TUniquePtr<FEEOSCustomInviteRequestContext> C(static_cast<FEEOSCustomInviteRequestContext*>(Data->ClientData));
 	bool bSuccess = (Data->ResultCode == EOS_EResult::EOS_Success);
 
 	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSCustomInvites: SendCustomInvite to %s — %s"),
-		*C->UserId, bSuccess ? TEXT("Success") : ANSI_TO_TCHAR(EOS_EResult_ToString(Data->ResultCode)));
+		*FEEOSNativeOperationLease::SafeField(C->UserId), bSuccess ? TEXT("Success") : ANSI_TO_TCHAR(EOS_EResult_ToString(Data->ResultCode)));
 
-	AsyncTask(ENamedThreads::GameThread, [WeakSelf = C->Self, UserId = MoveTemp(C->UserId), bSuccess]()
+	AsyncTask(ENamedThreads::GameThread, [WeakSelf = C->Self, Generation = C->Generation, Ownership = C->Ownership, UserId = MoveTemp(C->UserId), bSuccess]()
 	{
-		if (UEEOSCustomInvitesSubsystem* S = WeakSelf.Get())
+		if (UEEOSCustomInvitesSubsystem* S = WeakSelf.Get(); S && S->CanReceiveNativeCallbacks() && S->GetNativeCallbackGeneration() == Generation && S->IsEOSContextCurrent(Ownership))
 		{
 			S->OnCustomInviteSent.Broadcast(bSuccess, UserId);
 		}
@@ -214,18 +221,16 @@ static void EOS_CALL OnSendInviteCompleteStatic(const EOS_CustomInvites_SendCust
 
 static void EOS_CALL OnSendRTJCompleteStatic(const EOS_CustomInvites_SendRequestToJoinCallbackInfo* Data)
 {
-	if (!Data || !Data->ClientData) return;
-
-	struct FRTJContext { TWeakObjectPtr<UEEOSCustomInvitesSubsystem> Self; FString UserId; };
-	TUniquePtr<FRTJContext> C(static_cast<FRTJContext*>(Data->ClientData));
+	if (!Data || !Data->ClientData || !EOS_EResult_IsOperationComplete(Data->ResultCode)) return;
+	TUniquePtr<FEEOSCustomInviteRequestContext> C(static_cast<FEEOSCustomInviteRequestContext*>(Data->ClientData));
 	bool bSuccess = (Data->ResultCode == EOS_EResult::EOS_Success);
 
 	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSCustomInvites: SendRequestToJoin to %s — %s"),
-		*C->UserId, bSuccess ? TEXT("Success") : ANSI_TO_TCHAR(EOS_EResult_ToString(Data->ResultCode)));
+		*FEEOSNativeOperationLease::SafeField(C->UserId), bSuccess ? TEXT("Success") : ANSI_TO_TCHAR(EOS_EResult_ToString(Data->ResultCode)));
 
-	AsyncTask(ENamedThreads::GameThread, [WeakSelf = C->Self, UserId = MoveTemp(C->UserId), bSuccess]()
+	AsyncTask(ENamedThreads::GameThread, [WeakSelf = C->Self, Generation = C->Generation, Ownership = C->Ownership, UserId = MoveTemp(C->UserId), bSuccess]()
 	{
-		if (UEEOSCustomInvitesSubsystem* S = WeakSelf.Get())
+		if (UEEOSCustomInvitesSubsystem* S = WeakSelf.Get(); S && S->CanReceiveNativeCallbacks() && S->GetNativeCallbackGeneration() == Generation && S->IsEOSContextCurrent(Ownership))
 		{
 			S->OnRequestToJoinSent.Broadcast(bSuccess, UserId);
 		}
@@ -234,22 +239,20 @@ static void EOS_CALL OnSendRTJCompleteStatic(const EOS_CustomInvites_SendRequest
 
 static void EOS_CALL OnAcceptRTJCompleteStatic(const EOS_CustomInvites_AcceptRequestToJoinCallbackInfo* Data)
 {
-	if (!Data || !Data->ClientData) return;
-
-	struct FAcceptCtx { TWeakObjectPtr<UEEOSCustomInvitesSubsystem> Self; FString UserId; };
-	TUniquePtr<FAcceptCtx> C(static_cast<FAcceptCtx*>(Data->ClientData));
+	if (!Data || !Data->ClientData || !EOS_EResult_IsOperationComplete(Data->ResultCode)) return;
+	TUniquePtr<FEEOSCustomInviteRequestContext> C(static_cast<FEEOSCustomInviteRequestContext*>(Data->ClientData));
 	bool bSuccess = (Data->ResultCode == EOS_EResult::EOS_Success);
 
 	if (!bSuccess)
 	{
 		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSCustomInvites: AcceptRequestToJoin for %s failed — %s"),
-			*C->UserId, ANSI_TO_TCHAR(EOS_EResult_ToString(Data->ResultCode)));
+			*FEEOSNativeOperationLease::SafeField(C->UserId), ANSI_TO_TCHAR(EOS_EResult_ToString(Data->ResultCode)));
 	}
 
 	// bAccepted reflects the real SDK result — a failed accept must not report as accepted
-	AsyncTask(ENamedThreads::GameThread, [WeakSelf = C->Self, UserId = MoveTemp(C->UserId), bSuccess]()
+	AsyncTask(ENamedThreads::GameThread, [WeakSelf = C->Self, Generation = C->Generation, Ownership = C->Ownership, UserId = MoveTemp(C->UserId), bSuccess]()
 	{
-		if (UEEOSCustomInvitesSubsystem* S = WeakSelf.Get())
+		if (UEEOSCustomInvitesSubsystem* S = WeakSelf.Get(); S && S->CanReceiveNativeCallbacks() && S->GetNativeCallbackGeneration() == Generation && S->IsEOSContextCurrent(Ownership))
 		{
 			S->OnRequestToJoinResponded.Broadcast(bSuccess, UserId);
 		}
@@ -258,21 +261,19 @@ static void EOS_CALL OnAcceptRTJCompleteStatic(const EOS_CustomInvites_AcceptReq
 
 static void EOS_CALL OnRejectRTJCompleteStatic(const EOS_CustomInvites_RejectRequestToJoinCallbackInfo* Data)
 {
-	if (!Data || !Data->ClientData) return;
-
-	struct FRejectCtx { TWeakObjectPtr<UEEOSCustomInvitesSubsystem> Self; FString UserId; };
-	TUniquePtr<FRejectCtx> C(static_cast<FRejectCtx*>(Data->ClientData));
+	if (!Data || !Data->ClientData || !EOS_EResult_IsOperationComplete(Data->ResultCode)) return;
+	TUniquePtr<FEEOSCustomInviteRequestContext> C(static_cast<FEEOSCustomInviteRequestContext*>(Data->ClientData));
 
 	if (Data->ResultCode != EOS_EResult::EOS_Success)
 	{
 		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSCustomInvites: RejectRequestToJoin for %s failed — %s"),
-			*C->UserId, ANSI_TO_TCHAR(EOS_EResult_ToString(Data->ResultCode)));
+			*FEEOSNativeOperationLease::SafeField(C->UserId), ANSI_TO_TCHAR(EOS_EResult_ToString(Data->ResultCode)));
 	}
 
 	// bAccepted = false: the local user responded with a rejection
-	AsyncTask(ENamedThreads::GameThread, [WeakSelf = C->Self, UserId = MoveTemp(C->UserId)]()
+	AsyncTask(ENamedThreads::GameThread, [WeakSelf = C->Self, Generation = C->Generation, Ownership = C->Ownership, UserId = MoveTemp(C->UserId)]()
 	{
-		if (UEEOSCustomInvitesSubsystem* S = WeakSelf.Get())
+		if (UEEOSCustomInvitesSubsystem* S = WeakSelf.Get(); S && S->CanReceiveNativeCallbacks() && S->GetNativeCallbackGeneration() == Generation && S->IsEOSContextCurrent(Ownership))
 		{
 			S->OnRequestToJoinResponded.Broadcast(false, UserId);
 		}
@@ -283,9 +284,12 @@ static void EOS_CALL OnRejectRTJCompleteStatic(const EOS_CustomInvites_RejectReq
 
 void UEEOSCustomInvitesSubsystem::RegisterNotificationCallbacks()
 {
-	EOS_HCustomInvites Handle = GetCustomInvitesHandle();
-	if (!Handle) return;
+	if (bShuttingDown || NotificationPlatform.IsValid()) return;
+	NotificationPlatform = GetOwningEOSPlatform();
+	EOS_HCustomInvites Handle = NotificationPlatform.IsValid() ? EOS_Platform_GetCustomInvitesInterface(*NotificationPlatform) : nullptr;
+	if (!Handle) { NotificationPlatform.Reset(); return; }
 
+	++NativeCallbackGeneration; NotificationLocalUser = GetLocalProductUserId(); NotificationContext = CaptureEOSContext();
 	EOS_CustomInvites_AddNotifyCustomInviteReceivedOptions ReceivedOpts = {};
 	ReceivedOpts.ApiVersion = EOS_CUSTOMINVITES_ADDNOTIFYCUSTOMINVITERECEIVED_API_LATEST;
 	NotifyCustomInviteReceivedId = EOS_CustomInvites_AddNotifyCustomInviteReceived(Handle, &ReceivedOpts, this, &OnInviteReceivedStatic);
@@ -307,8 +311,13 @@ void UEEOSCustomInvitesSubsystem::RegisterNotificationCallbacks()
 
 void UEEOSCustomInvitesSubsystem::UnregisterNotificationCallbacks()
 {
-	EOS_HCustomInvites Handle = GetCustomInvitesHandle();
-	if (!Handle) return;
+	++NativeCallbackGeneration; NotificationLocalUser = nullptr;
+	EOS_HCustomInvites Handle = NotificationPlatform.IsValid() ? EOS_Platform_GetCustomInvitesInterface(*NotificationPlatform) : nullptr;
+	if (!Handle)
+	{
+		NotifyCustomInviteReceivedId = NotifyCustomInviteAcceptedId = NotifyCustomInviteRejectedId = NotifyRequestToJoinReceivedId = EOS_INVALID_NOTIFICATIONID;
+		NotificationPlatform.Reset(); return;
+	}
 
 	if (NotifyCustomInviteReceivedId != EOS_INVALID_NOTIFICATIONID)
 	{
@@ -330,6 +339,7 @@ void UEEOSCustomInvitesSubsystem::UnregisterNotificationCallbacks()
 		EOS_CustomInvites_RemoveNotifyRequestToJoinReceived(Handle, NotifyRequestToJoinReceivedId);
 		NotifyRequestToJoinReceivedId = EOS_INVALID_NOTIFICATIONID;
 	}
+	NotificationPlatform.Reset();
 }
 #endif // WITH_EOS_SDK
 
@@ -338,14 +348,26 @@ void UEEOSCustomInvitesSubsystem::UnregisterNotificationCallbacks()
 void UEEOSCustomInvitesSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
 	Super::Initialize(Collection);
-
+	bShuttingDown = false;
 #if WITH_EOS_SDK
 	RegisterNotificationCallbacks();
+	NotificationTicker = FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateWeakLambda(this, [this](float)
+	{
+		if (bShuttingDown) return false;
+		if (NotificationPlatform != GetOwningEOSPlatform() || NotificationLocalUser != GetLocalProductUserId() || !IsEOSContextCurrent(NotificationContext))
+		{
+			UnregisterNotificationCallbacks(); PendingInvites.Empty(); PendingJoinRequests.Empty(); RegisterNotificationCallbacks();
+		}
+		return true;
+	}), 1.0f);
 #endif
 }
 
 void UEEOSCustomInvitesSubsystem::Deinitialize()
 {
+	BeginEOSShutdown(); bShuttingDown = true;
+	if (NotificationTicker.IsValid()) FTSTicker::GetCoreTicker().RemoveTicker(NotificationTicker);
+	NotificationTicker.Reset();
 #if WITH_EOS_SDK
 	UnregisterNotificationCallbacks();
 #endif
@@ -360,6 +382,7 @@ void UEEOSCustomInvitesSubsystem::Deinitialize()
 
 void UEEOSCustomInvitesSubsystem::HandleCustomInviteReceived(const FString& SenderId, const FString& CustomInviteId, const FString& Payload)
 {
+	if (bShuttingDown) return;
 	// A newer invite from the same sender supersedes the old one. The SDK still expects the
 	// OLD invite id to be finalized — nothing else ever will once we drop it — so close it
 	// out as Canceled before replacing.
@@ -368,7 +391,7 @@ void UEEOSCustomInvitesSubsystem::HandleCustomInviteReceived(const FString& Send
 		if (!Existing->CustomInviteId.IsEmpty() && Existing->CustomInviteId != CustomInviteId)
 		{
 			UE_LOG(LogExtendedEOS, Log, TEXT("EEOSCustomInvites: Invite %s from %s superseded — finalizing old invite as canceled"),
-				*Existing->CustomInviteId, *SenderId);
+				*FEEOSNativeOperationLease::SafeField(Existing->CustomInviteId), *FEEOSNativeOperationLease::SafeField(SenderId));
 #if WITH_EOS_SDK
 			FinalizeInviteWithSdk(SenderId, Existing->CustomInviteId, EOS_EResult::EOS_Canceled);
 #endif
@@ -386,6 +409,7 @@ void UEEOSCustomInvitesSubsystem::HandleCustomInviteReceived(const FString& Send
 
 void UEEOSCustomInvitesSubsystem::HandleCustomInviteAcceptedOverlay(const FString& SenderId, const FString& CustomInviteId, const FString& Payload)
 {
+	if (bShuttingDown) return;
 #if WITH_EOS_SDK
 	// Overlay accepts still require FinalizeInvite (eos_custominvites.h:68-69). Prefer the
 	// invite id carried by the notification; fall back to the recorded pending entry.
@@ -404,7 +428,7 @@ void UEEOSCustomInvitesSubsystem::HandleCustomInviteAcceptedOverlay(const FStrin
 	}
 	else
 	{
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSCustomInvites: Overlay accept from %s has no CustomInviteId — skipping FinalizeInvite"), *SenderId);
+		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSCustomInvites: Overlay accept from %s has no CustomInviteId — skipping FinalizeInvite"), *FEEOSNativeOperationLease::SafeField(SenderId));
 	}
 #endif
 
@@ -416,6 +440,7 @@ void UEEOSCustomInvitesSubsystem::HandleCustomInviteAcceptedOverlay(const FStrin
 
 void UEEOSCustomInvitesSubsystem::HandleCustomInviteRejectedOverlay(const FString& SenderId)
 {
+	if (bShuttingDown) return;
 	// Overlay rejects are auto-finalized inside the SDK (eos_custominvites.h:91-92) —
 	// no FinalizeInvite here, just drop the stale pending entry.
 	PendingInvites.Remove(SenderId);
@@ -425,6 +450,7 @@ void UEEOSCustomInvitesSubsystem::HandleCustomInviteRejectedOverlay(const FStrin
 
 void UEEOSCustomInvitesSubsystem::HandleRequestToJoinReceived(const FString& FromUserId)
 {
+	if (bShuttingDown) return;
 	PendingJoinRequests.AddUnique(FromUserId);
 	OnRequestToJoinReceived.Broadcast(FromUserId);
 }
@@ -433,40 +459,34 @@ void UEEOSCustomInvitesSubsystem::HandleRequestToJoinReceived(const FString& Fro
 
 void UEEOSCustomInvitesSubsystem::SetCustomInvitePayload(const FString& Payload)
 {
-	CurrentPayload = Payload;
-
+	if (bShuttingDown) return;
+	const FTCHARToUTF8 PayloadUtf8(*Payload);
 #if WITH_EOS_SDK
-	if (Payload.Len() > EOS_CUSTOMINVITES_MAX_PAYLOAD_LENGTH)
+	if (PayloadUtf8.Length() >= EOS_CUSTOMINVITES_MAX_PAYLOAD_LENGTH)
 	{
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSCustomInvites: Payload is %d chars — the SDK maximum is %d, EOS_CustomInvites_SetCustomInvite will reject it"),
-			Payload.Len(), EOS_CUSTOMINVITES_MAX_PAYLOAD_LENGTH);
+		RejectOperation(TEXT("SetInvitePayload"), EEOSOperationCode::InvalidInput, TEXT("Custom invite payload exceeds the UTF-8 byte limit.")); return;
 	}
-
 	EOS_HCustomInvites Handle = GetCustomInvitesHandle();
-	if (Handle)
+	const EOS_ProductUserId LocalUserId = GetLocalProductUserId();
+	if (Handle && LocalUserId)
 	{
-		EOS_ProductUserId LocalUserId = GetLocalProductUserId();
-		if (LocalUserId)
-		{
-			EOS_CustomInvites_SetCustomInviteOptions Options = {};
-			Options.ApiVersion = EOS_CUSTOMINVITES_SETCUSTOMINVITE_API_LATEST;
-			Options.LocalUserId = LocalUserId;
-			FTCHARToUTF8 PayloadUtf8(*Payload);
-			Options.Payload = PayloadUtf8.Get();
-
-			EOS_EResult Result = EOS_CustomInvites_SetCustomInvite(Handle, &Options);
-			UE_LOG(LogExtendedEOS, Log, TEXT("EEOSCustomInvites: SetCustomInvite (SDK) — %s"),
-				ANSI_TO_TCHAR(EOS_EResult_ToString(Result)));
-			return;
-		}
+		EOS_CustomInvites_SetCustomInviteOptions Options = {};
+		Options.ApiVersion = EOS_CUSTOMINVITES_SETCUSTOMINVITE_API_LATEST;
+		Options.LocalUserId = LocalUserId; Options.Payload = PayloadUtf8.Get();
+		const EOS_EResult Result = EOS_CustomInvites_SetCustomInvite(Handle, &Options);
+		const bool bApplied = Result == EOS_EResult::EOS_Success;
+		if (bApplied) CurrentPayload = Payload;
+		UE_LOG(LogExtendedEOS, Log, TEXT("EOSCustomInvitePayload Bytes=%d Applied=%d SDKResult=%s"), PayloadUtf8.Length(), bApplied, ANSI_TO_TCHAR(EOS_EResult_ToString(Result)));
+		return;
 	}
 #endif
-
-	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSCustomInvites: Payload set locally — '%s'"), *Payload);
+	CurrentPayload = Payload;
+	UE_LOG(LogExtendedEOS, Log, TEXT("EOSCustomInvitePayload Bytes=%d LocalOnly=1"), PayloadUtf8.Length());
 }
 
 bool UEEOSCustomInvitesSubsystem::SendCustomInvite(const FString& TargetUserId)
 {
+	if (bShuttingDown) return false;
 #if WITH_EOS_SDK
 	EOS_HCustomInvites Handle = GetCustomInvitesHandle();
 	if (Handle)
@@ -482,9 +502,7 @@ bool UEEOSCustomInvitesSubsystem::SendCustomInvite(const FString& TargetUserId)
 			Options.LocalUserId = LocalUserId;
 			Options.TargetUserIds = &TargetId;
 			Options.TargetUserIdsCount = 1;
-
-			struct FSendContext { TWeakObjectPtr<UEEOSCustomInvitesSubsystem> Self; FString UserId; };
-			FSendContext* Ctx = new FSendContext{this, TargetUserId};
+			FEEOSCustomInviteRequestContext* Ctx = new FEEOSCustomInviteRequestContext{this, TargetUserId, GetOwningEOSPlatform(), NativeCallbackGeneration, CaptureEOSContext()};
 
 			EOS_CustomInvites_SendCustomInvite(Handle, &Options, Ctx, &OnSendInviteCompleteStatic);
 			return true;
@@ -492,19 +510,20 @@ bool UEEOSCustomInvitesSubsystem::SendCustomInvite(const FString& TargetUserId)
 
 		if (!TargetId)
 		{
-			UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSCustomInvites: SendCustomInvite — '%s' has no Product User ID half"), *TargetUserId);
+			UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSCustomInvites: SendCustomInvite — '%s' has no Product User ID half"), *FEEOSNativeOperationLease::SafeField(TargetUserId));
 		}
 	}
 #endif
 
 	// No SDK / no login / bad target id: nothing was sent — never fake success
-	UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSCustomInvites: SendCustomInvite to %s failed — EOS SDK unavailable, not logged in, or invalid target id"), *TargetUserId);
+	FEEOSNativeOperationLease::ReportRepeated(GetOwningEOSInstanceName(), TEXT("SendCustomInvite"), TEXT("SDKOrIdentityUnavailable"));
 	OnCustomInviteSent.Broadcast(false, TargetUserId);
 	return false;
 }
 
 bool UEEOSCustomInvitesSubsystem::SendCustomInviteBatch(const TArray<FString>& TargetUserIds)
 {
+	if (bShuttingDown) return false;
 	bool bAllStarted = TargetUserIds.Num() > 0;
 	for (const FString& UserId : TargetUserIds)
 	{
@@ -515,12 +534,13 @@ bool UEEOSCustomInvitesSubsystem::SendCustomInviteBatch(const TArray<FString>& T
 
 bool UEEOSCustomInvitesSubsystem::AcceptCustomInvite(const FString& SenderId)
 {
+	if (bShuttingDown) return false;
 	// Pending invites are keyed by the bare sender PUID recorded from the receive
 	// notification — normalize composite inputs so both forms hit the same entry
 	const FString SenderKey = UEEOSBlueprintLibrary::ExtractProductUserId(SenderId);
 	if (SenderKey.IsEmpty())
 	{
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSCustomInvites: AcceptCustomInvite — '%s' has no Product User ID half"), *SenderId);
+		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSCustomInvites: AcceptCustomInvite — '%s' has no Product User ID half"), *FEEOSNativeOperationLease::SafeField(SenderId));
 		return false;
 	}
 
@@ -529,7 +549,7 @@ bool UEEOSCustomInvitesSubsystem::AcceptCustomInvite(const FString& SenderId)
 	FEEOSPendingCustomInvite Invite;
 	if (!PendingInvites.RemoveAndCopyValue(SenderKey, Invite))
 	{
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSCustomInvites: No pending invite from %s (already accepted/rejected, or never received)"), *SenderKey);
+		UE_LOG(LogExtendedEOS, Verbose, TEXT("EEOSCustomInvites: No pending invite from %s (already accepted/rejected, or never received)"), *FEEOSNativeOperationLease::SafeField(SenderKey));
 		return false;
 	}
 
@@ -540,17 +560,18 @@ bool UEEOSCustomInvitesSubsystem::AcceptCustomInvite(const FString& SenderId)
 	}
 	else
 	{
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSCustomInvites: Pending invite from %s has no CustomInviteId — skipping FinalizeInvite"), *SenderKey);
+		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSCustomInvites: Pending invite from %s has no CustomInviteId — skipping FinalizeInvite"), *FEEOSNativeOperationLease::SafeField(SenderKey));
 	}
 #endif
 
-	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSCustomInvites: Accepted invite from %s"), *SenderKey);
+	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSCustomInvites: Accepted invite from %s"), *FEEOSNativeOperationLease::SafeField(SenderKey));
 	OnCustomInviteAccepted.Broadcast(SenderKey, Invite.Payload);
 	return true;
 }
 
 bool UEEOSCustomInvitesSubsystem::RejectCustomInvite(const FString& SenderId)
 {
+	if (bShuttingDown) return false;
 	// Same key normalization as AcceptCustomInvite; a raw input without a PUID half cannot
 	// match any recorded invite, so fall back to the raw string for the local-only broadcast
 	const FString SenderKey = UEEOSBlueprintLibrary::ExtractProductUserId(SenderId);
@@ -568,11 +589,11 @@ bool UEEOSCustomInvitesSubsystem::RejectCustomInvite(const FString& SenderId)
 
 	if (!bHadPendingInvite)
 	{
-		UE_LOG(LogExtendedEOS, Verbose, TEXT("EEOSCustomInvites: No pending invite recorded from %s — rejecting locally only"), *SenderId);
+		UE_LOG(LogExtendedEOS, Verbose, TEXT("EEOSCustomInvites: No pending invite recorded from %s — rejecting locally only"), *FEEOSNativeOperationLease::SafeField(SenderId));
 	}
 
 	const FString& BroadcastId = !SenderKey.IsEmpty() ? SenderKey : SenderId;
-	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSCustomInvites: Rejected invite from %s"), *BroadcastId);
+	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSCustomInvites: Rejected invite from %s"), *FEEOSNativeOperationLease::SafeField(BroadcastId));
 	OnCustomInviteRejected.Broadcast(BroadcastId);
 	return bHadPendingInvite && (bFinalized || Invite.CustomInviteId.IsEmpty());
 }
@@ -581,6 +602,7 @@ bool UEEOSCustomInvitesSubsystem::RejectCustomInvite(const FString& SenderId)
 
 bool UEEOSCustomInvitesSubsystem::SendRequestToJoin(const FString& TargetUserId)
 {
+	if (bShuttingDown) return false;
 #if WITH_EOS_SDK
 	EOS_HCustomInvites Handle = GetCustomInvitesHandle();
 	if (Handle)
@@ -595,9 +617,7 @@ bool UEEOSCustomInvitesSubsystem::SendRequestToJoin(const FString& TargetUserId)
 			Options.ApiVersion = EOS_CUSTOMINVITES_SENDREQUESTTOJOIN_API_LATEST;
 			Options.LocalUserId = LocalUserId;
 			Options.TargetUserId = TargetId;
-
-			struct FRTJContext { TWeakObjectPtr<UEEOSCustomInvitesSubsystem> Self; FString UserId; };
-			FRTJContext* Ctx = new FRTJContext{this, TargetUserId};
+			FEEOSCustomInviteRequestContext* Ctx = new FEEOSCustomInviteRequestContext{this, TargetUserId, GetOwningEOSPlatform(), NativeCallbackGeneration, CaptureEOSContext()};
 
 			EOS_CustomInvites_SendRequestToJoin(Handle, &Options, Ctx, &OnSendRTJCompleteStatic);
 			return true;
@@ -605,24 +625,25 @@ bool UEEOSCustomInvitesSubsystem::SendRequestToJoin(const FString& TargetUserId)
 
 		if (!TargetId)
 		{
-			UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSCustomInvites: SendRequestToJoin — '%s' has no Product User ID half"), *TargetUserId);
+			UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSCustomInvites: SendRequestToJoin — '%s' has no Product User ID half"), *FEEOSNativeOperationLease::SafeField(TargetUserId));
 		}
 	}
 #endif
 
 	// No SDK / no login / bad target id: nothing was sent — never fake success
-	UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSCustomInvites: SendRequestToJoin to %s failed — EOS SDK unavailable, not logged in, or invalid target id"), *TargetUserId);
+	FEEOSNativeOperationLease::ReportRepeated(GetOwningEOSInstanceName(), TEXT("SendRequestToJoin"), TEXT("SDKOrIdentityUnavailable"));
 	OnRequestToJoinSent.Broadcast(false, TargetUserId);
 	return false;
 }
 
 bool UEEOSCustomInvitesSubsystem::AcceptRequestToJoin(const FString& FromUserId)
 {
+	if (bShuttingDown) return false;
 	// Pending join requests are recorded as bare PUIDs — normalize composite inputs
 	const FString FromKey = UEEOSBlueprintLibrary::ExtractProductUserId(FromUserId);
 	if (FromKey.IsEmpty())
 	{
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSCustomInvites: AcceptRequestToJoin — '%s' has no Product User ID half"), *FromUserId);
+		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSCustomInvites: AcceptRequestToJoin — '%s' has no Product User ID half"), *FEEOSNativeOperationLease::SafeField(FromUserId));
 		OnRequestToJoinResponded.Broadcast(false, FromUserId);
 		return false;
 	}
@@ -641,9 +662,7 @@ bool UEEOSCustomInvitesSubsystem::AcceptRequestToJoin(const FString& FromUserId)
 			Options.ApiVersion = EOS_CUSTOMINVITES_ACCEPTREQUESTTOJOIN_API_LATEST;
 			Options.LocalUserId = LocalUserId;
 			Options.TargetUserId = FromId;
-
-			struct FAcceptCtx { TWeakObjectPtr<UEEOSCustomInvitesSubsystem> Self; FString UserId; };
-			FAcceptCtx* Ctx = new FAcceptCtx{this, FromKey};
+			FEEOSCustomInviteRequestContext* Ctx = new FEEOSCustomInviteRequestContext{this, FromKey, GetOwningEOSPlatform(), NativeCallbackGeneration, CaptureEOSContext()};
 
 			EOS_CustomInvites_AcceptRequestToJoin(Handle, &Options, Ctx, &OnAcceptRTJCompleteStatic);
 			return true;
@@ -652,18 +671,19 @@ bool UEEOSCustomInvitesSubsystem::AcceptRequestToJoin(const FString& FromUserId)
 #endif
 
 	// No SDK / no login: the accept never reached the sender — never fake success
-	UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSCustomInvites: AcceptRequestToJoin from %s failed — EOS SDK unavailable or not logged in"), *FromKey);
+	FEEOSNativeOperationLease::ReportRepeated(GetOwningEOSInstanceName(), TEXT("AcceptRequestToJoin"), TEXT("SDKOrIdentityUnavailable"));
 	OnRequestToJoinResponded.Broadcast(false, FromKey);
 	return false;
 }
 
 bool UEEOSCustomInvitesSubsystem::RejectRequestToJoin(const FString& FromUserId)
 {
+	if (bShuttingDown) return false;
 	// Pending join requests are recorded as bare PUIDs — normalize composite inputs
 	const FString FromKey = UEEOSBlueprintLibrary::ExtractProductUserId(FromUserId);
 	if (FromKey.IsEmpty())
 	{
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSCustomInvites: RejectRequestToJoin — '%s' has no Product User ID half"), *FromUserId);
+		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSCustomInvites: RejectRequestToJoin — '%s' has no Product User ID half"), *FEEOSNativeOperationLease::SafeField(FromUserId));
 		OnRequestToJoinResponded.Broadcast(false, FromUserId);
 		return false;
 	}
@@ -682,9 +702,7 @@ bool UEEOSCustomInvitesSubsystem::RejectRequestToJoin(const FString& FromUserId)
 			Options.ApiVersion = EOS_CUSTOMINVITES_REJECTREQUESTTOJOIN_API_LATEST;
 			Options.LocalUserId = LocalUserId;
 			Options.TargetUserId = FromId;
-
-			struct FRejectCtx { TWeakObjectPtr<UEEOSCustomInvitesSubsystem> Self; FString UserId; };
-			FRejectCtx* Ctx = new FRejectCtx{this, FromKey};
+			FEEOSCustomInviteRequestContext* Ctx = new FEEOSCustomInviteRequestContext{this, FromKey, GetOwningEOSPlatform(), NativeCallbackGeneration, CaptureEOSContext()};
 
 			EOS_CustomInvites_RejectRequestToJoin(Handle, &Options, Ctx, &OnRejectRTJCompleteStatic);
 			return true;
@@ -694,7 +712,7 @@ bool UEEOSCustomInvitesSubsystem::RejectRequestToJoin(const FString& FromUserId)
 
 	// No SDK / no login: the rejection never reached the sender, but the local pending
 	// entry is dropped either way — broadcast the rejection response exactly once
-	UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSCustomInvites: RejectRequestToJoin from %s — EOS SDK unavailable, rejected locally only"), *FromKey);
+	FEEOSNativeOperationLease::ReportRepeated(GetOwningEOSInstanceName(), TEXT("RejectRequestToJoin"), TEXT("SDKOrIdentityUnavailable"));
 	OnRequestToJoinResponded.Broadcast(false, FromKey);
 	return false;
 }

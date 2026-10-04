@@ -166,6 +166,17 @@ void UEFModularSettingsMultiSelect::OnRep_SelectedIndex()
 
 void UEFModularSettingsMultiSelect::SetOptionLocked(const FString& OptionValue, bool bLocked)
 {
+  for (UObject* Outer = GetOuter(); Outer; Outer = Outer->GetOuter())
+  {
+    if (const UEFPlayerSettingsComponent* PlayerComp = Cast<UEFPlayerSettingsComponent>(Outer))
+    {
+      if (PlayerComp->GetOwnerRole() != ROLE_Authority && !PlayerComp->IsLocalPlayerComponent())
+      {
+        return;
+      }
+      break;
+    }
+  }
   // OnOptionLockChanged broadcasts OnSettingChanged, so firing it when the lock set is
   // unchanged is not merely wasteful: a listener that re-locks in response (a settings
   // object that recomputes ownership on change) recurses until the stack overflows.
@@ -196,7 +207,7 @@ void UEFModularSettingsMultiSelect::SetOptionLocked(const FString& OptionValue, 
   {
     if (UEFPlayerSettingsComponent* PlayerComp = Cast<UEFPlayerSettingsComponent>(CurrentOuter))
     {
-      if (PlayerComp->GetOwnerRole() != ROLE_Authority)
+      if (PlayerComp->GetOwnerRole() != ROLE_Authority && PlayerComp->IsLocalPlayerComponent())
       {
         PlayerComp->ServerSetOptionLocked(SettingTag, OptionValue, bLocked);
       }

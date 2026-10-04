@@ -414,6 +414,8 @@ public:
 	/** Fires if session creation fails or could not be started (a create/destroy is already in flight). */
 	UPROPERTY(BlueprintAssignable) FOnAsyncFailed OnFailure;
 
+	/** Additive typed terminal pin; includes rejection codes and optional native/SDK detail. */
+	UPROPERTY(BlueprintAssignable) FOnEEOSOperationOutcome OnDetailedCompleted;
 	virtual void Activate() override;
 
 private:
@@ -423,6 +425,8 @@ private:
 	FString SessionName;
 	TWeakObjectPtr<UObject> WorldContext;
 	TWeakObjectPtr<UEEOSSessionSubsystem> Subsystem;
+	int64 IgnoredRequestId = 0;
+	int64 ExpectedRequestId = 0;
 	bool bCompleted = false; // set by the handler once a pin fired — see Activate's false-return path
 
 	UFUNCTION() void HandleComplete(bool bSuccess, const FString& InSessionName);
@@ -445,21 +449,21 @@ public:
 	UFUNCTION(BlueprintCallable, meta = (BlueprintInternalUseOnly = "true", WorldContext = "WorldContext", DisplayName = "EOS: Find Sessions"), Category = "EOS|Async|Sessions")
 	static UEOSAsyncFindSessions* FindSessions(UObject* WorldContext, int32 MaxResults = 20);
 
-	/** Fires when the search completes. Provides the results array — may be empty (a search that
-	 *  found nothing is still a success). NOTE: pre-flight failures that broadcast (EOS unavailable,
-	 *  synchronous engine search failure) deliver an empty result and arrive HERE, not on OnFailure. */
+	/** Fires after a successful native search, including an empty results array. */
 	UPROPERTY(BlueprintAssignable) FOnAsyncSessionsFound OnSuccess;
-	/** Fires when the search could not be started: subsystem missing, or the call was rejected
-	 *  because another session/lobby search is already in flight (rejections fire no subsystem
-	 *  delegate — this node fails fast here instead of waiting forever). */
+	/** Fires on admission rejection, preflight failure, or native search failure. */
 	UPROPERTY(BlueprintAssignable) FOnAsyncFailed OnFailure;
 
+	/** Additive typed terminal pin; includes rejection codes and optional native/SDK detail. */
+	UPROPERTY(BlueprintAssignable) FOnEEOSOperationOutcome OnDetailedCompleted;
 	virtual void Activate() override;
 
 private:
 	int32 MaxResults;
 	TWeakObjectPtr<UObject> WorldContext;
 	TWeakObjectPtr<UEEOSSessionSubsystem> Subsystem;
+	int64 IgnoredRequestId = 0;
+	int64 ExpectedRequestId = 0;
 	bool bCompleted = false; // set by the handler once a pin fired — see Activate's false-return path
 
 	UFUNCTION() void HandleComplete(const TArray<FEEOSSessionSearchResult>& Results);
@@ -490,6 +494,8 @@ public:
 	 *  (a join is already in flight). */
 	UPROPERTY(BlueprintAssignable) FOnAsyncFailed OnFailure;
 
+	/** Additive typed terminal pin; includes rejection codes and optional native/SDK detail. */
+	UPROPERTY(BlueprintAssignable) FOnEEOSOperationOutcome OnDetailedCompleted;
 	virtual void Activate() override;
 
 private:
@@ -497,6 +503,8 @@ private:
 	FString SessionName;
 	TWeakObjectPtr<UObject> WorldContext;
 	TWeakObjectPtr<UEEOSSessionSubsystem> Subsystem;
+	int64 IgnoredRequestId = 0;
+	int64 ExpectedRequestId = 0;
 	bool bCompleted = false; // set by the handler once a pin fired — see Activate's false-return path
 
 	UFUNCTION() void HandleComplete(bool bSuccess, const FString& InSessionName);
@@ -537,6 +545,8 @@ public:
 	/** Fires if lobby creation fails or could not be started (a lobby create/destroy is already in flight). */
 	UPROPERTY(BlueprintAssignable) FOnAsyncFailed OnFailure;
 
+	/** Additive typed terminal pin; includes rejection codes and optional native/SDK detail. */
+	UPROPERTY(BlueprintAssignable) FOnEEOSOperationOutcome OnDetailedCompleted;
 	virtual void Activate() override;
 
 private:
@@ -545,6 +555,8 @@ private:
 	bool bUseVoiceChat;
 	TWeakObjectPtr<UObject> WorldContext;
 	TWeakObjectPtr<UEEOSLobbySubsystem> Subsystem;
+	int64 IgnoredRequestId = 0;
+	int64 ExpectedRequestId = 0;
 	bool bCompleted = false; // set by the handler once a pin fired — see Activate's false-return path
 
 	UFUNCTION() void HandleComplete(bool bSuccess, const FString& LobbyId);
@@ -567,21 +579,21 @@ public:
 	UFUNCTION(BlueprintCallable, meta = (BlueprintInternalUseOnly = "true", WorldContext = "WorldContext", DisplayName = "EOS: Find Lobbies"), Category = "EOS|Async|Lobbies")
 	static UEOSAsyncFindLobbies* FindLobbies(UObject* WorldContext, int32 MaxResults = 20);
 
-	/** Fires when the search completes. Provides the results array — may be empty (a search that
-	 *  found nothing is still a success). NOTE: pre-flight failures that broadcast (EOS unavailable,
-	 *  synchronous engine search failure) deliver an empty result and arrive HERE, not on OnFailure. */
+	/** Fires after a successful native search, including an empty results array. */
 	UPROPERTY(BlueprintAssignable) FOnAsyncLobbiesFound OnSuccess;
-	/** Fires when the search could not be started: subsystem missing, or the call was rejected
-	 *  because another session/lobby search is already in flight (rejections fire no subsystem
-	 *  delegate — this node fails fast here instead of waiting forever). */
+	/** Fires on admission rejection, preflight failure, or native search failure. */
 	UPROPERTY(BlueprintAssignable) FOnAsyncFailed OnFailure;
 
+	/** Additive typed terminal pin; includes rejection codes and optional native/SDK detail. */
+	UPROPERTY(BlueprintAssignable) FOnEEOSOperationOutcome OnDetailedCompleted;
 	virtual void Activate() override;
 
 private:
 	int32 MaxResults;
 	TWeakObjectPtr<UObject> WorldContext;
 	TWeakObjectPtr<UEEOSLobbySubsystem> Subsystem;
+	int64 IgnoredRequestId = 0;
+	int64 ExpectedRequestId = 0;
 	bool bCompleted = false; // set by the handler once a pin fired — see Activate's false-return path
 
 	UFUNCTION() void HandleComplete(const TArray<FEEOSSessionSearchResult>& Results);
@@ -610,12 +622,16 @@ public:
 	 *  (a join-lobby is already in flight). */
 	UPROPERTY(BlueprintAssignable) FOnAsyncFailed OnFailure;
 
+	/** Additive typed terminal pin; includes rejection codes and optional native/SDK detail. */
+	UPROPERTY(BlueprintAssignable) FOnEEOSOperationOutcome OnDetailedCompleted;
 	virtual void Activate() override;
 
 private:
 	int32 SearchResultIndex;
 	TWeakObjectPtr<UObject> WorldContext;
 	TWeakObjectPtr<UEEOSLobbySubsystem> Subsystem;
+	int64 IgnoredRequestId = 0;
+	int64 ExpectedRequestId = 0;
 	bool bCompleted = false; // set by the handler once a pin fired — see Activate's false-return path
 
 	UFUNCTION() void HandleComplete(bool bSuccess, const FString& LobbyId);
@@ -657,12 +673,15 @@ public:
 	 *  not be started (a matchmaking cycle is already in flight). */
 	UPROPERTY(BlueprintAssignable) FOnAsyncFailed OnFailure;
 
+	UPROPERTY(BlueprintAssignable) FOnEEOSOperationOutcome OnDetailedCompleted;
 	virtual void Activate() override;
 
 private:
 	FString QueueName;
 	TWeakObjectPtr<UObject> WorldContext;
 	TWeakObjectPtr<UEEOSMatchmakingSubsystem> Subsystem;
+	int64 IgnoredCycleId = 0;
+	int64 ExpectedCycleId = 0;
 	bool bCompleted = false; // set by the handlers once a pin fired — see Activate's false-return path
 
 	/** Unbind all three subsystem delegates this node binds. */

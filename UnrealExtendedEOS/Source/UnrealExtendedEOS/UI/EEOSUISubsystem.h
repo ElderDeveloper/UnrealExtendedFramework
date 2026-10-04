@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Shared/EEOSSubsystem.h"
+#include "Interfaces/OnlineExternalUIInterface.h"
 #include "EEOSUISubsystem.generated.h"
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnEOSOverlayStateChanged, bool, bIsVisible);
@@ -96,4 +97,8 @@ private:
 
 	bool bOverlayVisible = false;
 	FDelegateHandle ExternalUIChangeHandle;
+	IOnlineExternalUIPtr BoundExternalUI;
+	FEEOSRequestContext ExternalUIContext;
+	FTSTicker::FDelegateHandle ExternalUITicker;
+	bool TickExternalUI(float DeltaTime);
 };

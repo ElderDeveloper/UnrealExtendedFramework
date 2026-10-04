@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Shared/EEOSSubsystem.h"
+#include "Shared/EEOSNativeOperation.h"
 #include "Interfaces/OnlineSessionInterface.h"
 #include "OnlineSessionSettings.h"
 #include "Containers/Ticker.h"
@@ -17,18 +18,18 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnEOSSessionJoined, bool, bSuccess
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnEOSSessionDestroyed, bool, bSuccess, const FString&, SessionName);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnEOSSessionInviteAccepted, bool, bSuccess, const FString&, SessionId);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnEOSSessionStarted, bool, bSuccess);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnEOSSessionInviteDetailed, const FEEOSSessionInvite&, Invite);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnEOSSessionEnded, bool, bSuccess, const FString&, SessionName);
 
 /**
  * Manages EOS game sessions — create, find, join, leave, and destroy.
  *
- * Return-value contract (all async actions): true means the operation really started and its
- * completion delegate will fire exactly once. false means the call was rejected (an operation
- * of the same kind — or one sharing its state — is already in flight; logged, and NO completion
- * delegate fires for the rejected call) or failed pre-flight. Pre-flight failures that occur
- * with no same-kind operation in flight (EOS unavailable, session interface missing, invalid
- * search index) DO broadcast the operation's failure delegate — that is safe because no
- * legitimate waiter of that kind exists; each method documents its exceptions.
+ * Boolean acceptance and completion are separate. Busy/shared ownership rejection emits
+ * OnOperationRejected without a legacy completion. Idle preflight failures retain their
+ * method's legacy failure event; immediate attribute setters and submission/travel helpers
+ * are exceptions documented below. Accepted membership/search work has a detailed terminal
+ * outcome. During shutdown terminal records are internal and gameplay events are suppressed.
+ * Docs/EOSOperations.md describes admission, retained updates, and native result limits.
  */
 UCLASS()
 class UNREALEXTENDEDEOS_API UEEOSSessionSubsystem : public UEEOSSubsystem
@@ -43,7 +44,7 @@ public:
 	// ── Actions ──────────────────────────────────────────────────────────────
 
 	/** Create a new game session (basic).
-	 *  @return false if rejected (a create or destroy is already in flight — no delegate will
+	 *  @return false if rejected (a create or destroy is already in flight — no legacy completion will
 	 *  fire) or failed pre-flight (EOS unavailable / interface missing — these DO broadcast
 	 *  OnSessionCreated(false)); true if the create started (OnSessionCreated fires once). */
 	UFUNCTION(BlueprintCallable, Category = "EOS|Sessions")
@@ -56,7 +57,7 @@ public:
 
 	/** Search for available sessions.
 	 *  @return false if rejected (our own search, or any sibling subsystem's session/lobby
-	 *  search, is already in flight — no delegate will fire) or failed pre-flight (EOS
+	 *  search, is already in flight — no legacy completion will fire) or failed pre-flight (EOS
 	 *  unavailable / interface missing, and the synchronous engine FindSessions failure —
 	 *  these DO broadcast OnSessionsFound with empty results); true if the search started
 	 *  (OnSessionsFound fires once). */
@@ -68,30 +69,45 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "EOS|Sessions")
 	bool FindSessionsFiltered(int32 MaxResults, const TMap<FString, FString>& SearchFilters);
 
+	/** Explicit search route. Unknown selects the legacy default; LAN uses native LAN discovery. */
+	UFUNCTION(BlueprintCallable, Category = "EOS|Sessions")
+	bool FindSessionsForBackend(EEOSSessionBackend Backend, int32 MaxResults, const TMap<FString, FString>& SearchFilters);
+
 	/** Join a session from search results by index.
-	 *  @return false if rejected (a join is already in flight — no delegate will fire) or
+	 *  @return false if rejected (a named session operation is already in flight — no legacy completion will fire) or
 	 *  failed pre-flight (EOS unavailable / invalid index / interface missing — these DO
 	 *  broadcast OnSessionJoined(false)); true if the join started (OnSessionJoined fires once). */
 	UFUNCTION(BlueprintCallable, Category = "EOS|Sessions")
 	bool JoinSession(int32 SearchResultIndex, const FString& SessionName = TEXT("GameSession"));
 
+	/** Join the retained native invite result without converting it to a search index. */
+	UFUNCTION(BlueprintCallable, Category = "EOS|Sessions")
+	bool JoinAcceptedInvite(const FString& SessionName = TEXT("GameSession"));
+
+	/** Join native authorized details by value. EOS_Lobby remains reserved for the lobby subsystem. */
+	bool JoinSessionResult(const FOnlineSessionSearchResult& Result, const FString& SessionName = TEXT("GameSession"));
+	UFUNCTION(BlueprintPure, Category = "EOS|Sessions")
+	FEEOSSessionInvite GetAcceptedInvite() const;
+	UPROPERTY(BlueprintAssignable, Category = "EOS|Sessions")
+	FOnEOSSessionInviteDetailed OnSessionInviteDetailed;
+
 	/** Destroy the current session.
 	 *  @return false if rejected (a destroy, or a create chain that owns the session state, is
-	 *  already in flight — no delegate will fire) or failed pre-flight (EOS unavailable /
+	 *  already in flight — no legacy completion will fire) or failed pre-flight (EOS unavailable /
 	 *  interface missing — these DO broadcast OnSessionDestroyed(false)); true if the destroy
 	 *  started (OnSessionDestroyed fires once). */
 	UFUNCTION(BlueprintCallable, Category = "EOS|Sessions")
 	bool DestroySession(const FString& SessionName = TEXT("GameSession"));
 
 	/** Start the session (marks it InProgress, disables join if not AllowJoinInProgress).
-	 *  @return false if rejected (a start is already in flight — no delegate will fire) or
+	 *  @return false if rejected (a named session operation is already in flight — no legacy completion will fire) or
 	 *  failed pre-flight (EOS unavailable / interface missing — these DO broadcast
 	 *  OnSessionStarted(false)); true if the start began (OnSessionStarted fires once). */
 	UFUNCTION(BlueprintCallable, Category = "EOS|Sessions")
 	bool StartSession(const FString& SessionName = TEXT("GameSession"));
 
 	/** End the session (marks it Ended).
-	 *  @return false if rejected (an end is already in flight — no delegate will fire) or
+	 *  @return false if rejected (a named session operation is already in flight — no legacy completion will fire) or
 	 *  failed pre-flight (EOS unavailable / interface missing — these DO broadcast
 	 *  OnSessionEnded(false)); true if the end began (OnSessionEnded fires once). */
 	UFUNCTION(BlueprintCallable, Category = "EOS|Sessions")
@@ -134,6 +150,9 @@ public:
 	/** Check if currently in a session */
 	UFUNCTION(BlueprintPure, Category = "EOS|Sessions")
 	bool IsInSession() const;
+	/** True only for usable native membership in this owning instance and session name. */
+	UFUNCTION(BlueprintPure, Category = "EOS|Sessions")
+	bool IsInNamedSession(const FString& SessionName) const;
 
 	/** Get the current session state */
 	UFUNCTION(BlueprintPure, Category = "EOS|Sessions")
@@ -171,6 +190,23 @@ private:
 	TArray<FEEOSSessionSearchResult> CachedSearchResults;
 	TSharedPtr<class FOnlineSessionSearch> SessionSearch;
 	bool bInSession = false;
+	bool bShuttingDown = false;
+	FEEOSNativeOperationLease SessionLease;
+	IOnlineSessionPtr OperationSessions;
+	IOnlineSessionPtr SearchSessions;
+	FEEOSRequestContext SearchContext;
+	TSet<FName> MembershipNames;
+	FOnlineSessionSearchResult AcceptedInvite;
+	FEEOSSessionInvite AcceptedInviteDescriptor;
+	double SearchCompletedAtSeconds = 0;
+	EEOSSessionBackend SearchBackend = EEOSSessionBackend::Unknown;
+	int64 SearchGeneration = 0;
+	bool AdmitSessionOperation(FName Operation, FName SessionName);
+	bool BeginCreateSession(const FOnlineSessionSettings& Settings, const FString& SessionName);
+	bool SubmitSessionCreation();
+	bool BeginJoinSession(const FOnlineSessionSearchResult& Result, const FString& SessionName);
+	void FinishSessionOperation(FName Operation, FName SessionName, bool bSuccess, EEOSOperationCode Code,
+		const FString& Message, const FString& NativeResult = FString(), EEOSResultSource Source = EEOSResultSource::Plugin);
 
 	// ── Per-operation delegate scoping ───────────────────────────────────────
 	// The engine's IOnlineSession delegate lists are interface-wide: every subsystem
@@ -208,6 +244,11 @@ private:
 	// race); if the first registration attempt fails, a 1 Hz ticker retries until the OSS
 	// appears so invite notifications aren't silently dead for the whole session.
 
+	IOnlineSessionPtr NotificationSessions;
+	FEEOSRequestContext SessionOperationContext;
+	FTSTicker::FDelegateHandle MembershipWatcher;
+	int64 MembershipIdentityGeneration = 0;
+	bool TickMembership(float DeltaTime);
 	FDelegateHandle SessionInviteAcceptedHandle;
 	FTSTicker::FDelegateHandle NotificationRetryTickerHandle;
 

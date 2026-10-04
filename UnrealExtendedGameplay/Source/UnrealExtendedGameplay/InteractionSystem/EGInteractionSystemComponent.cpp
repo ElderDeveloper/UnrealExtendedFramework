@@ -284,10 +284,12 @@ void UEGInteractionSystemComponent::ReleaseSlot(FGameplayTag InputTag)
 		}
 	}
 
-	// ServerOnly requests still waiting on the server.
-	for (UEGInteraction* Interaction : Granted)
+	// Completed visuals and revoked focus still have a pending authoritative operation.
+	const auto PendingCopy = PendingActivations;
+	for (const auto& Pending : PendingCopy)
 	{
-		if (Interaction && Interaction->IsServerPending() && Interaction->GetActivationInputTag() == InputTag && !bAuthority)
+		UEGInteraction* Interaction = Pending.Value;
+		if (Interaction && !Interaction->IsActive() && Interaction->GetActivationInputTag() == InputTag && !bAuthority)
 		{
 			ServerInputReleased(Interaction->GetActivationId());
 		}
@@ -352,9 +354,26 @@ bool UEGInteractionSystemComponent::ActivateInstance(UEGInteraction* Interaction
 		return false;
 	}
 
+	for (UEGInteraction* Running : Active)
+	{
+		if (Running && Running != Interaction && Running->GetProvider() == Interaction->GetProvider()
+			&& Running->GetInteractionId() == Interaction->GetInteractionId())
+		{
+			return false;
+		}
+	}
+
 	if (!IsInteractionAllowed() || !Interaction->CanActivate())
 	{
 		return false;
+	}
+
+	for (const auto& Pending : PendingActivations)
+	{
+		if (Pending.Value && Pending.Value->GetTargetActor() == Interaction->GetTargetActor())
+		{
+			return false;
+		}
 	}
 
 	const bool bAuthority = HasAuthority();
@@ -373,6 +392,7 @@ bool UEGInteractionSystemComponent::ActivateInstance(UEGInteraction* Interaction
 			Interaction->BeginActivation(ActivationId, false);
 			return true;
 		}
+		PendingActivations.Add(ActivationId, Interaction);
 		Interaction->BeginActivation(ActivationId, true);
 		ServerActivate(Interaction->GetProvider(), Interaction->GetInteractionId(), Interaction->GetHitResult(), Interaction->GetHitComponent(), ActivationId);
 		return true;
@@ -383,6 +403,7 @@ bool UEGInteractionSystemComponent::ActivateInstance(UEGInteraction* Interaction
 			Interaction->BeginActivation(ActivationId, false);
 			return true;
 		}
+		PendingActivations.Add(ActivationId, Interaction);
 		Interaction->BeginServerPending(ActivationId);
 		ServerActivate(Interaction->GetProvider(), Interaction->GetInteractionId(), Interaction->GetHitResult(), Interaction->GetHitComponent(), ActivationId);
 		return true;
@@ -436,6 +457,10 @@ UEGInteraction* UEGInteractionSystemComponent::FindGrantedInteraction(FGameplayT
 
 UEGInteraction* UEGInteractionSystemComponent::FindByActivationId(int32 ActivationId) const
 {
+	if (const TObjectPtr<UEGInteraction>* Pending = PendingActivations.Find(ActivationId))
+	{
+		return Pending->Get();
+	}
 	for (UEGInteraction* Interaction : Active)
 	{
 		if (Interaction && Interaction->GetActivationId() == ActivationId)
@@ -483,7 +508,10 @@ void UEGInteractionSystemComponent::NotifyInteractionEnded(UEGInteraction* Inter
 	}
 
 	UE_CLOG(bDebugLog, LogEGInteractionSystem, Log, TEXT("[%s] %s ended %s (%s)"), *GetNameSafe(GetOwner()), HasAuthority() ? TEXT("[SERVER]") : TEXT("[CLIENT]"), *Interaction->GetInteractionId().ToString(), bCancelled ? TEXT("cancelled") : TEXT("completed"));
-	OnInteractionEnded.Broadcast(Interaction, bCancelled);
+	if (!PendingActivations.Contains(Interaction->GetActivationId()))
+	{
+		OnInteractionEnded.Broadcast(Interaction, bCancelled);
+	}
 
 	if (HasAuthority())
 	{
@@ -578,6 +606,10 @@ void UEGInteractionSystemComponent::ClientActivationResult_Implementation(int32 
 {
 	if (UEGInteraction* Interaction = FindByActivationId(ActivationId))
 	{
+		if (!bAccepted)
+		{
+			PendingActivations.Remove(ActivationId);
+		}
 		Interaction->HandleServerResult(bAccepted);
 	}
 }
@@ -586,6 +618,7 @@ void UEGInteractionSystemComponent::ClientInteractionEnded_Implementation(int32 
 {
 	if (UEGInteraction* Interaction = FindByActivationId(ActivationId))
 	{
+		PendingActivations.Remove(ActivationId);
 		Interaction->HandleServerEnded(bCancelled);
 	}
 }
@@ -601,6 +634,14 @@ UEGInteraction* UEGInteractionSystemComponent::PrepareServerActivation(UEGIntera
 	{
 		UE_CLOG(bDebugLog, LogEGInteractionSystem, Warning, TEXT("[%s] Rejected: activation id %d is already in use"), *GetNameSafe(GetOwner()), ActivationId);
 		return nullptr;
+	}
+
+	for (UEGInteraction* Running : Active)
+	{
+		if (Running && Running->GetProvider() == Provider && Running->GetInteractionId() == Id)
+		{
+			return nullptr;
+		}
 	}
 
 	FHitResult ServerHit;
@@ -1245,4 +1286,23 @@ void UEGInteractionSystemComponent::DrawDebugInfo(const FVector& Start, const FV
 
 	GEngine->AddOnScreenDebugMessage(static_cast<uint64>(GetUniqueID()), Lifetime, FColor::White, Text);
 #endif // ENABLE_DRAW_DEBUG
+}
+
+bool UEGInteractionSystemComponent::IsAwaitingServer(FGameplayTag InputTag) const
+{
+ for (const auto& Pending : PendingActivations)
+ {
+  if (Pending.Value && Pending.Value->GetActivationInputTag() == InputTag && !Pending.Value->IsActive()) return true;
+ }
+ return false;
+}
+
+void UEGInteractionSystemComponent::ReportExecutionFailure(int32 ActivationId, const FText& Reason)
+{
+ if (HasAuthority()) ClientExecutionFailed(ActivationId, Reason);
+}
+
+void UEGInteractionSystemComponent::ClientExecutionFailed_Implementation(int32 ActivationId, const FText& Reason)
+{
+ if (HasAuthority() || PendingActivations.Contains(ActivationId)) OnExecutionFailed.Broadcast(ActivationId, Reason);
 }

@@ -56,7 +56,8 @@ public:
 	 * Delete ALL submitted snapshot data for the local user from the EOS cloud (the SDK's
 	 * DeleteSnapshot is user-scoped, not per-snapshot). On success, a still-open local
 	 * snapshot with this id is ended SDK-side before its tracking is dropped. Returns true
-	 * when the request was handed to the SDK; false broadcasts a failure first.
+	 * when the request was handed to the SDK; idle preflight failure emits failure.
+	 * Pending submit/delete or retired snapshot context rejects without another completion.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "EOS|ProgressionSnapshot")
 	bool DeleteSnapshot(int32 SnapshotId);
@@ -99,6 +100,8 @@ private:
 
 	/** Maps our internal snapshot IDs to EOS SDK snapshot IDs */
 	TMap<int32, int32> SnapshotIdMapping;
+	TMap<int32, FEEOSRequestContext> SnapshotContexts;
+	TSet<int32> PendingSnapshots;
 
 	int32 NextSnapshotId = 1;
 };

@@ -1,6 +1,7 @@
 // Copyright Kemal Erdem YILMAZ. All Rights Reserved.
 
 #include "EEOSAntiCheatClientSubsystem.h"
+#include "Shared/EEOSNativeOperation.h"
 #include "UnrealExtendedEOS.h"
 
 // DEPRECATED SHIM — see the class comment in the header. Every method logs an
@@ -10,7 +11,7 @@
 // anti-cheat session.
 
 #define EEOS_AC_CLIENT_SHIM_ERROR(FuncName) \
-	UE_LOG(LogExtendedEOS, Error, TEXT("UEEOSAntiCheatClientSubsystem::" FuncName " — DEPRECATED shim, no-op. Use UEEOSAntiCheatSubsystem (peer-to-peer mode) instead."))
+	UE_LOG(LogExtendedEOS, Warning, TEXT("UEEOSAntiCheatClientSubsystem::" FuncName " — DEPRECATED shim, no-op. Use UEEOSAntiCheatSubsystem (peer-to-peer mode) instead."))
 
 void UEEOSAntiCheatClientSubsystem::BeginSession()
 {

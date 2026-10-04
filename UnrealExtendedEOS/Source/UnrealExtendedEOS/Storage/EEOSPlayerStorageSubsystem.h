@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Shared/EEOSSubsystem.h"
+#include "Interfaces/OnlineUserCloudInterface.h"
 #include "EEOSPlayerStorageSubsystem.generated.h"
 
 class USaveGame;
@@ -96,10 +97,12 @@ public:
 	FOnEOSPlayerDataDeleted OnPlayerDataDeleted;
 
 private:
+	IOnlineUserCloudPtr BoundInterface;
+	FEEOSRequestContext BindingContext;
 
 	TArray<FString> CachedFileList;
 
-	/** Interface-wide cloud delegates are bound once (lazily) and stay bound until Deinitialize */
+	/** Interface-wide cloud delegates bind lazily to an exact retained interface; idle context replacement rebinds them */
 	bool bCloudDelegatesBound = false;
 
 	/** File names with an operation currently in flight — completions are filtered against these */
@@ -112,7 +115,7 @@ private:
 	bool bEnumerateInFlight = false;
 
 	/** Bind the four interface-wide cloud completion delegates exactly once */
-	void EnsureCloudDelegatesBound(IOnlineUserCloud& CloudInterface);
+	bool EnsureCloudDelegatesBound(IOnlineUserCloud& CloudInterface);
 
 	void HandleWriteUserFileComplete(bool bWasSuccessful, const FUniqueNetId& UserId, const FString& FileName);
 	void HandleReadUserFileComplete(bool bWasSuccessful, const FUniqueNetId& UserId, const FString& FileName);

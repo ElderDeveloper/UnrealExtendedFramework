@@ -3,8 +3,10 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "OnlineSubsystem.h"
 #include "Online/CoreOnline.h"
 #include "Shared/EEOSSubsystem.h"
+#include "Interfaces/OnlineUserInterface.h"
 #include "EEOSUserInfoSubsystem.generated.h"
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnEOSUserInfoQueried, bool, bSuccess, const FEEOSUserInfo&, UserInfo);
@@ -20,7 +22,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnEOSExternalMappingsQueried, bool
  *    delegate will broadcast exactly once.
  *  - returns false with a failure broadcast → safe pre-flight failure (EOS unavailable,
  *    bad input, no login); waiters are released.
- *  - returns false WITHOUT any broadcast → rejected because the same kind of query is
+ *  - returns false WITHOUT a legacy completion → rejected because the same kind of query is
  *    already in flight; the pending operation's completion is NOT disturbed.
  */
 UCLASS()
@@ -96,9 +98,12 @@ private:
 
 	/** Delegate handles for query cleanup — prevents accumulation.
 	 *  Also act as the in-flight guards: a second query of the same kind is rejected while
-	 *  valid (log + return false, NO broadcast — the pending caller owns the delegate). */
+	 *  valid (log + return false, NO legacy completion — the pending caller owns the delegate). */
 	FDelegateHandle QueryUserInfoDelegateHandle;
 	FDelegateHandle QueryBatchDelegateHandle;
+	IOnlineUserPtr PendingUserInterface;
+	bool bShuttingDown = false;
+	bool bMappingsQueryInFlight = false;
 
 	/** In-flight guard for FindUserByDisplayName: it broadcasts on the shared
 	 *  OnUserSearchComplete, so a concurrent search would clobber CachedSearchResults and

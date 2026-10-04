@@ -1,6 +1,7 @@
 // Copyright Kemal Erdem YILMAZ. All Rights Reserved.
 
 #include "EEOSEcomSubsystem.h"
+#include "Shared/EEOSNativeOperation.h"
 #include "OnlineSubsystemUtils.h"
 #include "Interfaces/OnlineStoreInterfaceV2.h"
 #include "Interfaces/OnlinePurchaseInterface.h"
@@ -14,21 +15,11 @@ void UEEOSEcomSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 
 void UEEOSEcomSubsystem::Deinitialize()
 {
-	// Remove any still-registered per-operation bindings from the interface-wide list
-	if (EntitlementsQueryHandle.IsValid() || OwnershipQueryHandle.IsValid())
-	{
-		if (IOnlineSubsystem* EOSSub = GetEOSOnlineSubsystem())
-		{
-			IOnlineEntitlementsPtr EntitlementsInterface = EOSSub->GetEntitlementsInterface();
-			if (EntitlementsInterface.IsValid())
-			{
-				EntitlementsInterface->OnQueryEntitlementsCompleteDelegates.Remove(EntitlementsQueryHandle);
-				EntitlementsInterface->OnQueryEntitlementsCompleteDelegates.Remove(OwnershipQueryHandle);
-			}
-		}
-		EntitlementsQueryHandle.Reset();
-		OwnershipQueryHandle.Reset();
-	}
+	BeginEOSShutdown();
+	if (PendingEntitlementsInterface.IsValid()) PendingEntitlementsInterface->OnQueryEntitlementsCompleteDelegates.Remove(EntitlementsQueryHandle);
+	if (PendingOwnershipInterface.IsValid()) PendingOwnershipInterface->OnQueryEntitlementsCompleteDelegates.Remove(OwnershipQueryHandle);
+	EntitlementsQueryHandle.Reset(); OwnershipQueryHandle.Reset();
+	PendingEntitlementsInterface.Reset(); PendingOwnershipInterface.Reset();
 
 	CachedOffers.Empty();
 	CachedEntitlements.Empty();
@@ -51,7 +42,7 @@ bool UEEOSEcomSubsystem::QueryOffers()
 	IOnlineStoreV2Ptr StoreInterface = EOSSub->GetStoreV2Interface();
 	if (!StoreInterface.IsValid())
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSEcomSubsystem::QueryOffers — StoreV2 interface not available"));
+		FEEOSNativeOperationLease::ReportRepeated(GetOwningEOSInstanceName(), TEXT("QueryOffers"), TEXT("CapabilityUnavailable"));
 		OnOffersQueried.Broadcast(false, TArray<FEEOSCatalogOffer>());
 		return false;
 	}
@@ -67,8 +58,9 @@ bool UEEOSEcomSubsystem::QueryOffers()
 	// is skipped if this subsystem is destroyed while the query is in flight
 	StoreInterface->QueryOffersById(*UserId, TArray<FUniqueOfferId>(),
 		FOnQueryOnlineStoreOffersComplete::CreateWeakLambda(this,
-			[this, StoreInterface](bool bWasSuccessful, const TArray<FUniqueOfferId>& OfferIds, const FString& Error)
+			[this, StoreInterface, RequestContext = CaptureEOSContext()](bool bWasSuccessful, const TArray<FUniqueOfferId>& OfferIds, const FString& Error)
 			{
+				if (!IsEOSContextCurrent(RequestContext)) { OnOffersQueried.Broadcast(false, TArray<FEEOSCatalogOffer>()); return; }
 				CachedOffers.Empty();
 
 				if (bWasSuccessful)
@@ -95,7 +87,7 @@ bool UEEOSEcomSubsystem::QueryOffers()
 				}
 				else
 				{
-					UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSEcomSubsystem: QueryOffers failed — %s"), *Error);
+					UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSEcomSubsystem: QueryOffers failed — %s"), *FEEOSNativeOperationLease::SafeField(Error));
 				}
 
 				OnOffersQueried.Broadcast(bWasSuccessful, CachedOffers);
@@ -139,7 +131,7 @@ bool UEEOSEcomSubsystem::QueryEntitlements()
 	IOnlineEntitlementsPtr EntitlementsInterface = EOSSub->GetEntitlementsInterface();
 	if (!EntitlementsInterface.IsValid())
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSEcomSubsystem::QueryEntitlements — Entitlements interface not available"));
+		FEEOSNativeOperationLease::ReportRepeated(GetOwningEOSInstanceName(), TEXT("QueryEntitlements"), TEXT("CapabilityUnavailable"));
 		OnEntitlementsQueried.Broadcast(false, TArray<FEEOSEntitlement>());
 		return false;
 	}
@@ -157,14 +149,15 @@ bool UEEOSEcomSubsystem::QueryEntitlements()
 	// waiters (R1).
 	if (EntitlementsQueryHandle.IsValid())
 	{
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSEcomSubsystem::QueryEntitlements — An entitlements query is already in flight, rejecting (no broadcast)"));
+		RejectOperation(TEXT("QueryEntitlements"), EEOSOperationCode::Busy, TEXT("Another admitted request already owns this operation."));
 		return false;
 	}
 
 	// FOnQueryEntitlementsComplete is a MULTICAST delegate — bind via the interface
 	// Store the handle so we can remove ONLY our own binding in the callback
+	PendingEntitlementsInterface = EntitlementsInterface;
 	EntitlementsQueryHandle = EntitlementsInterface->OnQueryEntitlementsCompleteDelegates.AddWeakLambda(this,
-		[this, EntitlementsInterface, UserId](bool bWasSuccessful, const FUniqueNetId& InUserId, const FString& Namespace, const FString& Error)
+		[this, EntitlementsInterface, UserId, RequestContext = CaptureEOSContext()](bool bWasSuccessful, const FUniqueNetId& InUserId, const FString& Namespace, const FString& Error)
 		{
 			// The list is interface-wide — ignore completions for other users (another
 			// system's query) and keep our binding until our completion arrives
@@ -175,7 +168,8 @@ bool UEEOSEcomSubsystem::QueryEntitlements()
 
 			// Remove only our own binding — QueryOwnership may have its own pending handler
 			EntitlementsInterface->OnQueryEntitlementsCompleteDelegates.Remove(EntitlementsQueryHandle);
-			EntitlementsQueryHandle.Reset();
+			EntitlementsQueryHandle.Reset(); PendingEntitlementsInterface.Reset();
+			if (!IsEOSContextCurrent(RequestContext)) { OnEntitlementsQueried.Broadcast(false, TArray<FEEOSEntitlement>()); return; }
 
 			// Replace the cache only on SUCCESS — a transient failure must keep the
 			// last-known-good entitlements instead of turning into "you own nothing"
@@ -200,7 +194,7 @@ bool UEEOSEcomSubsystem::QueryEntitlements()
 			}
 			else
 			{
-				UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSEcomSubsystem: QueryEntitlements failed — %s (keeping last-known-good cache)"), *Error);
+				UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSEcomSubsystem: QueryEntitlements failed — %s (keeping last-known-good cache)"), *FEEOSNativeOperationLease::SafeField(Error));
 			}
 
 			OnEntitlementsQueried.Broadcast(bWasSuccessful, CachedEntitlements);
@@ -274,7 +268,7 @@ bool UEEOSEcomSubsystem::QueryOwnership(const TArray<FString>& CatalogItemIds)
 	IOnlineEntitlementsPtr EntitlementsInterface = EOSSub->GetEntitlementsInterface();
 	if (!EntitlementsInterface.IsValid())
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSEcomSubsystem::QueryOwnership — Entitlements interface not available, falling back to cached data"));
+		FEEOSNativeOperationLease::ReportRepeated(GetOwningEOSInstanceName(), TEXT("QueryOwnership"), TEXT("CapabilityUnavailable"));
 		// Degraded path: answer from the last-known-good entitlements cache, but report
 		// FAILURE — cache-derived results must never masquerade as a fresh backend answer
 		// (an empty cache would otherwise read as an authoritative "you own nothing")
@@ -295,7 +289,7 @@ bool UEEOSEcomSubsystem::QueryOwnership(const TArray<FString>& CatalogItemIds)
 	// be indistinguishable from the in-flight query's real completion for its waiters (R1).
 	if (OwnershipQueryHandle.IsValid())
 	{
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSEcomSubsystem::QueryOwnership — An ownership query is already in flight, rejecting (no broadcast)"));
+		RejectOperation(TEXT("QueryOwnership"), EEOSOperationCode::Busy, TEXT("Another admitted request already owns this operation."));
 		return false;
 	}
 
@@ -306,8 +300,9 @@ bool UEEOSEcomSubsystem::QueryOwnership(const TArray<FString>& CatalogItemIds)
 
 	// Same interface-wide list as QueryEntitlements, but a SEPARATE member handle so the two
 	// operations never remove each other's binding
+	PendingOwnershipInterface = EntitlementsInterface;
 	OwnershipQueryHandle = EntitlementsInterface->OnQueryEntitlementsCompleteDelegates.AddWeakLambda(this,
-		[this, ItemIdsCopy, EntitlementsInterface, UserId](bool bWasSuccessful, const FUniqueNetId& EntUserId, const FString& Namespace, const FString& Error)
+		[this, ItemIdsCopy, EntitlementsInterface, UserId, RequestContext = CaptureEOSContext()](bool bWasSuccessful, const FUniqueNetId& EntUserId, const FString& Namespace, const FString& Error)
 		{
 			// Ignore completions for other users — keep our binding until ours arrives
 			if (UserId.IsValid() && EntUserId != *UserId)
@@ -317,7 +312,8 @@ bool UEEOSEcomSubsystem::QueryOwnership(const TArray<FString>& CatalogItemIds)
 
 			// Remove only our own binding — a pending QueryEntitlements keeps its own handle
 			EntitlementsInterface->OnQueryEntitlementsCompleteDelegates.Remove(OwnershipQueryHandle);
-			OwnershipQueryHandle.Reset();
+			OwnershipQueryHandle.Reset(); PendingOwnershipInterface.Reset();
+			if (!IsEOSContextCurrent(RequestContext)) { OnOwnershipQueried.Broadcast(false, TArray<FEEOSOwnership>()); return; }
 
 			if (bWasSuccessful)
 			{
@@ -326,7 +322,7 @@ bool UEEOSEcomSubsystem::QueryOwnership(const TArray<FString>& CatalogItemIds)
 				IOnlineSubsystem* EOSSub = GetEOSOnlineSubsystem();
 				if (EOSSub)
 				{
-					IOnlineEntitlementsPtr EntIf = EOSSub->GetEntitlementsInterface();
+					IOnlineEntitlementsPtr EntIf = EntitlementsInterface;
 					if (EntIf.IsValid())
 					{
 						TArray<TSharedRef<FOnlineEntitlement>> Entitlements;
@@ -345,7 +341,7 @@ bool UEEOSEcomSubsystem::QueryOwnership(const TArray<FString>& CatalogItemIds)
 			}
 			else
 			{
-				UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSEcomSubsystem::QueryOwnership — Entitlement refresh failed (%s), serving last-known-good cache with bSuccess=false"), *Error);
+				UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSEcomSubsystem::QueryOwnership — Entitlement refresh failed (%s), serving last-known-good cache with bSuccess=false"), *FEEOSNativeOperationLease::SafeField(Error));
 			}
 
 			// Build ownership results from the (refreshed or last-known-good) entitlements.
@@ -401,7 +397,7 @@ bool UEEOSEcomSubsystem::Checkout(const FString& OfferId)
 	IOnlinePurchasePtr PurchaseInterface = EOSSub->GetPurchaseInterface();
 	if (!PurchaseInterface.IsValid())
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSEcomSubsystem::Checkout — Purchase interface not available"));
+		FEEOSNativeOperationLease::ReportRepeated(GetOwningEOSInstanceName(), TEXT("Checkout"), TEXT("CapabilityUnavailable"));
 		OnCheckoutComplete.Broadcast(false, TEXT(""));
 		return false;
 	}
@@ -420,21 +416,21 @@ bool UEEOSEcomSubsystem::Checkout(const FString& OfferId)
 	// is skipped if this subsystem is destroyed while checkout is in flight
 	PurchaseInterface->Checkout(*UserId, Request,
 		FOnPurchaseCheckoutComplete::CreateWeakLambda(this,
-			[this, OfferId](const FOnlineError& Result, const TSharedRef<FPurchaseReceipt>& Receipt)
+			[this, OfferId, RequestContext = CaptureEOSContext()](const FOnlineError& Result, const TSharedRef<FPurchaseReceipt>& Receipt)
 			{
-				if (Result.bSucceeded)
+				if (IsEOSContextCurrent(RequestContext) && Result.bSucceeded)
 				{
 					FString TransactionId = Receipt->TransactionId;
-					UE_LOG(LogExtendedEOS, Log, TEXT("EEOSEcomSubsystem: Checkout succeeded — TransactionId=%s"), *TransactionId);
+					UE_LOG(LogExtendedEOS, Log, TEXT("EEOSEcomSubsystem: Checkout succeeded — TransactionId=%s"), *FEEOSNativeOperationLease::SafeField(TransactionId));
 					OnCheckoutComplete.Broadcast(true, TransactionId);
 				}
 				else
 				{
-					UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSEcomSubsystem: Checkout failed — %s"), *Result.ErrorMessage.ToString());
+					UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSEcomSubsystem: Checkout failed — %s"), *FEEOSNativeOperationLease::SafeField(Result.ErrorMessage.ToString()));
 					OnCheckoutComplete.Broadcast(false, TEXT(""));
 				}
 			}));
 
-	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSEcomSubsystem::Checkout — Purchasing offer '%s'..."), *OfferId);
+	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSEcomSubsystem::Checkout — Purchasing offer '%s'..."), *FEEOSNativeOperationLease::SafeField(OfferId));
 	return true;
 }

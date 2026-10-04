@@ -4,6 +4,8 @@
 
 #include "CoreMinimal.h"
 #include "Shared/EEOSSubsystem.h"
+#include "OnlineSubsystem.h"
+#include "Interfaces/OnlineAchievementsInterface.h"
 #include "EEOSAchievementSubsystem.generated.h"
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnEOSAchievementsQueried, bool, bSuccess, const TArray<FEEOSAchievement>&, Achievements);
@@ -124,5 +126,5 @@ private:
 	 *  reflects it without a re-query. */
 	void MarkAchievementUnlockedInCache(const FString& AchievementId);
 
-	void HandleQueryAchievementsComplete(const FUniqueNetId& PlayerId, const bool bWasSuccessful);
+	void HandleQueryAchievementsComplete(const FUniqueNetId& PlayerId, const bool bWasSuccessful, const IOnlineAchievementsPtr& AchievementsInterface);
 };

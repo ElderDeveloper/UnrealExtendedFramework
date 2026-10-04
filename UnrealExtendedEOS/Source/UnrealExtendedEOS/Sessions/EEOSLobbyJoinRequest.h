@@ -24,6 +24,11 @@ struct FEEOSLobbyJoinRequest
 		Phase = EPhase::Joining;
 		return true;
 	}
+	/** Preflight may observe the original named session already removed by the backend. */
+	void CompletePreflight(bool bHasExistingSession)
+	{
+		if (IsActive()) Phase = bHasExistingSession ? EPhase::Leaving : EPhase::Joining;
+	}
 
 	void Reset()
 	{

@@ -32,11 +32,17 @@ public:
 		Values.Reset();
 		DisplayNames.Reset();
 
+		// The system (Windows) default always comes first, and is what a fresh install selects. It is a
+		// real choice rather than a placeholder: selecting it makes the subsystem follow the OS default
+		// (an empty mixer device id for output), so the game keeps up when the player changes their
+		// default device in Windows. The subsystem appends its own copy of this entry at the END of the
+		// device list; that copy is skipped below so it is listed exactly once.
+		Values.Add(DefaultValue);
+		DisplayNames.Add(GetDefaultDeviceDisplayName());
+
 		UEFAudioDeviceSubsystem* AudioDeviceSubsystem = UEFAudioDeviceSubsystem::GetAudioDeviceSubsystem(this);
 		if (!AudioDeviceSubsystem)
 		{
-			Values.Add(DefaultValue);
-			DisplayNames.Add(GetDefaultDeviceDisplayName());
 			SelectedIndex = 0;
 			return;
 		}
@@ -49,46 +55,33 @@ public:
 
 		for (const FEFAudioDeviceInfo& DeviceInfo : Devices)
 		{
+			if (IsDefaultDeviceValue(DeviceInfo.DeviceID) || DeviceInfo.Backend == EEFAudioDeviceBackend::PlatformDefault)
+			{
+				continue;
+			}
 			Values.Add(DeviceInfo.DeviceID);
 			DisplayNames.Add(FText::FromString(DeviceInfo.DeviceName));
 		}
 
-		if (Values.Num() == 0)
+		// Nothing saved yet (fresh install) -> the system default. A saved device keeps its place; one
+		// that is no longer connected also falls back to the system default rather than to whichever
+		// device happens to be listed first.
+		FString DesiredValue = PreviouslySelectedValue.IsEmpty() ? DefaultValue : PreviouslySelectedValue;
+		if (!IsDefaultDeviceValue(DesiredValue))
 		{
-			Values.Add(DefaultValue);
-			DisplayNames.Add(GetDefaultDeviceDisplayName());
+			DesiredValue = AudioDeviceSubsystem->ResolvePreferredDeviceID(GetDeviceType(), DesiredValue);
 		}
 
-		const FEFAudioDeviceInfo ActiveDevice = GetDeviceType() == EEFAudioDeviceType::Input
-			? AudioDeviceSubsystem->GetActiveInputDevice()
-			: AudioDeviceSubsystem->GetActiveOutputDevice();
-
-		FString DesiredValue = PreviouslySelectedValue;
-		if (DesiredValue.IsEmpty() && !ActiveDevice.DeviceID.IsEmpty())
-		{
-			DesiredValue = ActiveDevice.DeviceID;
-		}
-
-		if (DesiredValue.IsEmpty())
-		{
-			DesiredValue = DefaultValue;
-		}
-
-		DesiredValue = AudioDeviceSubsystem->ResolvePreferredDeviceID(GetDeviceType(), DesiredValue);
-
-		int32 DesiredIndex = Values.Find(DesiredValue);
-		if (DesiredIndex == INDEX_NONE && !ActiveDevice.DeviceID.IsEmpty())
-		{
-			DesiredIndex = Values.Find(ActiveDevice.DeviceID);
-		}
-
+		const int32 DesiredIndex = Values.Find(DesiredValue);
 		SelectedIndex = DesiredIndex != INDEX_NONE ? DesiredIndex : 0;
 	}
 
 	virtual void SetValueFromString(const FString& Value) override
 	{
+		// The default entry is passed through untouched: resolving it could pin it to the concrete
+		// device that is the default right now, which would stop it following the OS default.
 		UEFAudioDeviceSubsystem* AudioDeviceSubsystem = UEFAudioDeviceSubsystem::GetAudioDeviceSubsystem(this);
-		const FString ResolvedValue = AudioDeviceSubsystem
+		const FString ResolvedValue = AudioDeviceSubsystem && !IsDefaultDeviceValue(Value)
 			? AudioDeviceSubsystem->ResolvePreferredDeviceID(GetDeviceType(), Value)
 			: Value;
 
@@ -133,6 +126,12 @@ protected:
 	virtual FText GetDefaultDeviceDisplayName() const
 	{
 		return NSLOCTEXT("Settings", "DefaultAudioDevice", "System Default Device");
+	}
+
+	/** True for the "follow the OS default device" value (empty counts too, as the subsystem treats it). */
+	bool IsDefaultDeviceValue(const FString& Value) const
+	{
+		return Value.IsEmpty() || Value.Equals(DefaultValue, ESearchCase::IgnoreCase);
 	}
 };
 

@@ -1,6 +1,11 @@
 // Copyright Kemal Erdem YILMAZ. All Rights Reserved.
 
 #include "EEOSP2PSubsystem.h"
+#include "Shared/EEOSNativeOperation.h"
+#include "Misc/ConfigCacheIni.h"
+#include "Interfaces/OnlineIdentityInterface.h"
+#include "Shared/EEOSBlueprintLibrary.h"
+#include "OnlineSubsystem.h"
 #include "Shared/EEOSSettings.h"
 #include "UnrealExtendedEOS.h"
 #include "IEOSSDKManager.h"
@@ -18,6 +23,7 @@
 struct FEEOSP2PNotifyContext
 {
 	TWeakObjectPtr<UEEOSP2PSubsystem> Self;
+	FEEOSRequestContext Ownership;
 };
 
 /** Parse the DefaultRelayMode settings string ("NoRelays" | "AllowRelays" | "ForceRelays", case-insensitive).
@@ -37,13 +43,22 @@ static EEOSRelayControl UEEOSP2PSubsystem_ParseRelayMode(const FString& RelayMod
 		return EEOSRelayControl::ForceRelays;
 	}
 
-	UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSP2PSubsystem: Unknown DefaultRelayMode '%s' in Extended EOS settings — falling back to AllowRelays"), *RelayModeString);
+	UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSP2PSubsystem: Unknown DefaultRelayMode '%s' in Extended EOS settings — falling back to AllowRelays"), *FEEOSNativeOperationLease::SafeField(RelayModeString));
 	return EEOSRelayControl::AllowRelays;
 }
 
 void UEEOSP2PSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
 	Super::Initialize(Collection);
+	static TSet<FName> ReportedConfiguration;
+	bool bLegacyP2P = false;
+	const FName Instance = GetOwningEOSInstanceName();
+	if (!ReportedConfiguration.Contains(Instance) && GConfig && (GConfig->GetBool(TEXT("/Script/OnlineSubsystemEOS.NetDriverEOS"), TEXT("bIsUsingP2PSockets"), bLegacyP2P, GEngineIni)
+		|| GConfig->GetBool(TEXT("/Script/SocketSubsystemEOS.NetDriverEOSBase"), TEXT("bIsUsingP2PSockets"), bLegacyP2P, GEngineIni)))
+	{
+		ReportedConfiguration.Add(Instance);
+		UE_LOG(LogExtendedEOS, Log, TEXT("EOSP2PConfig Instance=%s DeprecatedKey=bIsUsingP2PSockets ConfiguredValue=%d Policy=ProjectOwned NoSettingsChanged=1"), *FEEOSNativeOperationLease::SafeField(Instance.ToString()), bLegacyP2P);
+	}
 
 	const UEEOSSettings* Settings = GetEOSSettings();
 	if (Settings && !Settings->bEnableP2P)
@@ -65,6 +80,7 @@ void UEEOSP2PSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 
 void UEEOSP2PSubsystem::Deinitialize()
 {
+	BeginEOSShutdown();
 	// Stop the ticker first — this also stops lazy-init retries if init never completed
 	if (ReceiveTickerHandle.IsValid())
 	{
@@ -88,21 +104,9 @@ void UEEOSP2PSubsystem::Deinitialize()
 
 // ── Lazy Initialization ──────────────────────────────────────────────────────
 
-EOS_HPlatform UEEOSP2PSubsystem::GetPlatformHandleQuiet()
+EOS_HPlatform UEEOSP2PSubsystem::GetPlatformHandleQuiet() const
 {
-	// Same lookup as the Shared base's GetPlatformHandle(), WITHOUT its unconditional
-	// "not available" warning: the lazy-init/receive ticker calls this every frame while
-	// waiting for the platform to come up, which would otherwise log 60+ warnings/second.
-	// (The Shared base is owned by another module and is not changed here.)
-	if (IEOSSDKManager* SDKManager = IEOSSDKManager::Get())
-	{
-		TArray<IEOSPlatformHandlePtr> ActivePlatforms = SDKManager->GetActivePlatforms();
-		if (ActivePlatforms.Num() > 0 && ActivePlatforms[0].IsValid())
-		{
-			return *ActivePlatforms[0];
-		}
-	}
-	return nullptr;
+	return GetPlatformHandle();
 }
 
 bool UEEOSP2PSubsystem::IsPlatformStillActive(EOS_HPlatform PlatformHandle)
@@ -125,27 +129,17 @@ bool UEEOSP2PSubsystem::IsPlatformStillActive(EOS_HPlatform PlatformHandle)
 	return false;
 }
 
-EOS_ProductUserId UEEOSP2PSubsystem::GetLocalProductUserId(EOS_HPlatform PlatformHandle)
+EOS_ProductUserId UEEOSP2PSubsystem::GetLocalProductUserId(EOS_HPlatform PlatformHandle) const
 {
-	if (!PlatformHandle)
-	{
-		return nullptr;
-	}
-
-	EOS_HConnect ConnectHandle = EOS_Platform_GetConnectInterface(PlatformHandle);
-	if (!ConnectHandle)
-	{
-		return nullptr;
-	}
-
-	// Index 0 = first locally logged-in Connect user. Returns an invalid ID before login.
-	EOS_ProductUserId LocalUserId = EOS_Connect_GetLoggedInUserByIndex(ConnectHandle, 0);
-	if (!EOS_ProductUserId_IsValid(LocalUserId))
-	{
-		return nullptr;
-	}
-
-	return LocalUserId;
+	if (!PlatformHandle) return nullptr;
+	IOnlineSubsystem* OSS = GetExistingEOSOnlineSubsystem();
+	const auto Identity = OSS ? OSS->GetIdentityInterface() : IOnlineIdentityPtr();
+	const auto Local = Identity.IsValid() ? Identity->GetUniquePlayerId(0) : FUniqueNetIdPtr();
+	if (!Local.IsValid() || !Local->IsValid() || Identity->GetLoginStatus(0) != ELoginStatus::LoggedIn) return nullptr;
+	const FString Puid = UEEOSBlueprintLibrary::ExtractProductUserId(Local->ToString());
+	EOS_ProductUserId User = Puid.IsEmpty() ? nullptr : EOS_ProductUserId_FromString(TCHAR_TO_ANSI(*Puid));
+	EOS_HConnect Connect = EOS_Platform_GetConnectInterface(PlatformHandle);
+	return User && EOS_ProductUserId_IsValid(User) && Connect && EOS_Connect_GetLoginStatus(Connect, User) == EOS_ELoginStatus::EOS_LS_LoggedIn ? User : nullptr;
 }
 
 void UEEOSP2PSubsystem::TeardownNotifications(const FString& CloseReason)
@@ -156,11 +150,11 @@ void UEEOSP2PSubsystem::TeardownNotifications(const FString& CloseReason)
 	}
 
 	// Remove the notifications from the platform they were REGISTERED on. GetPlatformHandle()
-	// returns ActivePlatforms[0] *at call time* — under platform churn / multi-instance PIE
+	// resolves the current owning instance — under platform churn / multi-instance PIE
 	// that can be a different platform, where the RemoveNotify calls would silently no-op
 	// while the original platform keeps calling into the (about to be freed) notify context.
 	bool bNotificationsRemoved = false;
-	if (IsPlatformStillActive(RegisteredPlatform))
+	if (NotifyContext && NotifyContext->Ownership.Platform.IsValid())
 	{
 		EOS_HP2P P2PHandle = EOS_Platform_GetP2PInterface(RegisteredPlatform);
 		if (P2PHandle)
@@ -212,7 +206,7 @@ void UEEOSP2PSubsystem::TeardownNotifications(const FString& CloseReason)
 	PeerSockets.Reset();
 	for (const FString& PeerId : ClosedPeers)
 	{
-		UE_LOG(LogExtendedEOS, Log, TEXT("EEOSP2PSubsystem: Connection to %s ended with the local identity — %s"), *PeerId, *CloseReason);
+		UE_LOG(LogExtendedEOS, Log, TEXT("EEOSP2PSubsystem: Connection to %s ended with the local identity — %s"), *FEEOSNativeOperationLease::SafeField(PeerId), *FEEOSNativeOperationLease::SafeField(CloseReason));
 		OnConnectionClosed.Broadcast(PeerId, CloseReason);
 	}
 
@@ -248,7 +242,7 @@ bool UEEOSP2PSubsystem::TryLazyInitNotifications()
 	}
 
 	// Shared heap context with a weak self pointer for all persistent notifications
-	NotifyContext = new FEEOSP2PNotifyContext{this};
+	NotifyContext = new FEEOSP2PNotifyContext{this, CaptureEOSContext()};
 
 	// Register connection request notification so incoming connections trigger OnConnectionRequest
 	EOS_P2P_AddNotifyPeerConnectionRequestOptions RequestOptions = {};
@@ -261,7 +255,7 @@ bool UEEOSP2PSubsystem::TryLazyInitNotifications()
 		{
 			const FEEOSP2PNotifyContext* Ctx = static_cast<const FEEOSP2PNotifyContext*>(Data->ClientData);
 			UEEOSP2PSubsystem* Self = Ctx ? Ctx->Self.Get() : nullptr;
-			if (!Self) return;
+			if (!Self || !Self->IsEOSContextCurrent(Ctx->Ownership)) return;
 
 			char RemoteUserIdStr[EOS_PRODUCTUSERID_MAX_LENGTH + 1];
 			int32_t BufferLen = sizeof(RemoteUserIdStr);
@@ -269,7 +263,7 @@ bool UEEOSP2PSubsystem::TryLazyInitNotifications()
 			{
 				FString RemoteId = ANSI_TO_TCHAR(RemoteUserIdStr);
 				FString SocketName = Data->SocketId ? ANSI_TO_TCHAR(Data->SocketId->SocketName) : FString();
-				UE_LOG(LogExtendedEOS, Log, TEXT("EEOSP2PSubsystem: Incoming connection request from %s on socket '%s'"), *RemoteId, *SocketName);
+				UE_LOG(LogExtendedEOS, Log, TEXT("EEOSP2PSubsystem: Incoming connection request from %s on socket '%s'"), *FEEOSNativeOperationLease::SafeField(RemoteId), *FEEOSNativeOperationLease::SafeField(SocketName));
 				// Carry the requesting socket name through so AcceptConnection can accept on it
 				Self->OnConnectionRequest.Broadcast(RemoteId, SocketName);
 			}
@@ -286,7 +280,7 @@ bool UEEOSP2PSubsystem::TryLazyInitNotifications()
 		{
 			const FEEOSP2PNotifyContext* Ctx = static_cast<const FEEOSP2PNotifyContext*>(Data->ClientData);
 			UEEOSP2PSubsystem* Self = Ctx ? Ctx->Self.Get() : nullptr;
-			if (!Self) return;
+			if (!Self || !Self->IsEOSContextCurrent(Ctx->Ownership)) return;
 
 			char RemoteUserIdStr[EOS_PRODUCTUSERID_MAX_LENGTH + 1];
 			int32_t BufferLen = sizeof(RemoteUserIdStr);
@@ -312,7 +306,7 @@ bool UEEOSP2PSubsystem::TryLazyInitNotifications()
 				default: break;
 				}
 
-				UE_LOG(LogExtendedEOS, Log, TEXT("EEOSP2PSubsystem: Connection closed from %s — %s"), *RemoteId, *ReasonStr);
+				UE_LOG(LogExtendedEOS, Log, TEXT("EEOSP2PSubsystem: Connection closed from %s — %s"), *FEEOSNativeOperationLease::SafeField(RemoteId), *FEEOSNativeOperationLease::SafeField(ReasonStr));
 				// This notification is the single source of OnConnectionClosed broadcasts —
 				// CloseConnection deliberately does not broadcast locally.
 				Self->OnConnectionClosed.Broadcast(RemoteId, ReasonStr);
@@ -330,7 +324,7 @@ bool UEEOSP2PSubsystem::TryLazyInitNotifications()
 		{
 			const FEEOSP2PNotifyContext* Ctx = static_cast<const FEEOSP2PNotifyContext*>(Data->ClientData);
 			UEEOSP2PSubsystem* Self = Ctx ? Ctx->Self.Get() : nullptr;
-			if (!Self) return;
+			if (!Self || !Self->IsEOSContextCurrent(Ctx->Ownership)) return;
 
 			char RemoteUserIdStr[EOS_PRODUCTUSERID_MAX_LENGTH + 1];
 			int32_t BufferLen = sizeof(RemoteUserIdStr);
@@ -349,7 +343,7 @@ bool UEEOSP2PSubsystem::TryLazyInitNotifications()
 					Self->PeerSockets.Add(RemoteId, SocketName);
 				}
 
-				UE_LOG(LogExtendedEOS, Log, TEXT("EEOSP2PSubsystem: Connection established with %s on socket '%s'"), *RemoteId, *SocketName);
+				UE_LOG(LogExtendedEOS, Log, TEXT("EEOSP2PSubsystem: Connection established with %s on socket '%s'"), *FEEOSNativeOperationLease::SafeField(RemoteId), *FEEOSNativeOperationLease::SafeField(SocketName));
 				Self->OnConnectionEstablished.Broadcast(RemoteId, SocketName);
 			}
 		});
@@ -386,7 +380,7 @@ bool UEEOSP2PSubsystem::PollIncomingPackets(float DeltaTime)
 			UE_LOG(LogExtendedEOS, Log, TEXT("EEOSP2PSubsystem: Registration platform disappeared — tearing down P2P state and re-initializing"));
 			TeardownNotifications(TEXT("PlatformLost"));
 		}
-		else if (GetLocalProductUserId(RegisteredPlatform) != RegisteredLocalUserId)
+		else if (!NotifyContext || !IsEOSContextCurrent(NotifyContext->Ownership) || GetLocalProductUserId(RegisteredPlatform) != RegisteredLocalUserId)
 		{
 			// The Connect identity changed under us: logout (now nullptr) or a re-login as a
 			// different user (device-id transfer / account switch). The per-user-filtered
@@ -496,14 +490,14 @@ bool UEEOSP2PSubsystem::SendPacket(const FString& RemoteUserId, const TArray<uin
 	EOS_HPlatform PlatformHandle = GetPlatformHandle();
 	if (!PlatformHandle)
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSP2PSubsystem::SendPacket — Platform handle not available"));
+		FEEOSNativeOperationLease::ReportRepeated(GetOwningEOSInstanceName(), TEXT("SendPacket"), TEXT("CapabilityUnavailable"));
 		return false;
 	}
 
 	EOS_HP2P P2PHandle = EOS_Platform_GetP2PInterface(PlatformHandle);
 	if (!P2PHandle)
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSP2PSubsystem::SendPacket — P2P interface not available"));
+		FEEOSNativeOperationLease::ReportRepeated(GetOwningEOSInstanceName(), TEXT("SendPacket"), TEXT("CapabilityUnavailable"));
 		return false;
 	}
 
@@ -517,7 +511,7 @@ bool UEEOSP2PSubsystem::SendPacket(const FString& RemoteUserId, const TArray<uin
 	EOS_ProductUserId RemotePUID = EOS_ProductUserId_FromString(TCHAR_TO_ANSI(*RemoteUserId));
 	if (!EOS_ProductUserId_IsValid(RemotePUID))
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSP2PSubsystem::SendPacket — Invalid remote user ID: %s"), *RemoteUserId);
+		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSP2PSubsystem::SendPacket — Invalid remote user ID: %s"), *FEEOSNativeOperationLease::SafeField(RemoteUserId));
 		return false;
 	}
 
@@ -557,7 +551,7 @@ bool UEEOSP2PSubsystem::SendPacket(const FString& RemoteUserId, const TArray<uin
 	if (Result != EOS_EResult::EOS_Success)
 	{
 		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSP2PSubsystem::SendPacket — Failed to send %d bytes to %s: %s"),
-			Data.Num(), *RemoteUserId, ANSI_TO_TCHAR(EOS_EResult_ToString(Result)));
+			Data.Num(), *FEEOSNativeOperationLease::SafeField(RemoteUserId), ANSI_TO_TCHAR(EOS_EResult_ToString(Result)));
 		return false;
 	}
 
@@ -593,14 +587,14 @@ bool UEEOSP2PSubsystem::AcceptConnection(const FString& RemoteUserId, const FStr
 	EOS_HPlatform PlatformHandle = GetPlatformHandle();
 	if (!PlatformHandle)
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSP2PSubsystem::AcceptConnection — Platform handle not available"));
+		FEEOSNativeOperationLease::ReportRepeated(GetOwningEOSInstanceName(), TEXT("AcceptConnection"), TEXT("CapabilityUnavailable"));
 		return false;
 	}
 
 	EOS_HP2P P2PHandle = EOS_Platform_GetP2PInterface(PlatformHandle);
 	if (!P2PHandle)
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSP2PSubsystem::AcceptConnection — P2P interface not available"));
+		FEEOSNativeOperationLease::ReportRepeated(GetOwningEOSInstanceName(), TEXT("AcceptConnection"), TEXT("CapabilityUnavailable"));
 		return false;
 	}
 
@@ -614,7 +608,7 @@ bool UEEOSP2PSubsystem::AcceptConnection(const FString& RemoteUserId, const FStr
 	EOS_ProductUserId RemotePUID = EOS_ProductUserId_FromString(TCHAR_TO_ANSI(*RemoteUserId));
 	if (!EOS_ProductUserId_IsValid(RemotePUID))
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSP2PSubsystem::AcceptConnection — Invalid remote user ID: %s"), *RemoteUserId);
+		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSP2PSubsystem::AcceptConnection — Invalid remote user ID: %s"), *FEEOSNativeOperationLease::SafeField(RemoteUserId));
 		return false;
 	}
 
@@ -636,7 +630,7 @@ bool UEEOSP2PSubsystem::AcceptConnection(const FString& RemoteUserId, const FStr
 		// Track the socket per peer — deliberately does NOT retarget CurrentSocketName,
 		// which only governs connections we initiate.
 		PeerSockets.Add(RemoteUserId, SocketName);
-		UE_LOG(LogExtendedEOS, Log, TEXT("EEOSP2PSubsystem::AcceptConnection — Accepted connection from %s on socket '%s'"), *RemoteUserId, *SocketName);
+		UE_LOG(LogExtendedEOS, Log, TEXT("EEOSP2PSubsystem::AcceptConnection — Accepted connection from %s on socket '%s'"), *FEEOSNativeOperationLease::SafeField(RemoteUserId), *FEEOSNativeOperationLease::SafeField(SocketName));
 		// Note: OnConnectionEstablished will fire from the notification callback when the connection is actually established
 		return true;
 	}
@@ -656,7 +650,7 @@ void UEEOSP2PSubsystem::CloseConnection(const FString& RemoteUserId, const FStri
 	EOS_HPlatform PlatformHandle = GetPlatformHandle();
 	if (!PlatformHandle)
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSP2PSubsystem::CloseConnection — Platform handle not available"));
+		FEEOSNativeOperationLease::ReportRepeated(GetOwningEOSInstanceName(), TEXT("CloseConnection"), TEXT("CapabilityUnavailable"));
 		return;
 	}
 
@@ -697,7 +691,7 @@ void UEEOSP2PSubsystem::CloseConnection(const FString& RemoteUserId, const FStri
 	EOS_EResult Result = EOS_P2P_CloseConnection(P2PHandle, &Options);
 	if (Result == EOS_EResult::EOS_Success)
 	{
-		UE_LOG(LogExtendedEOS, Log, TEXT("EEOSP2PSubsystem::CloseConnection — Closed connection to %s on socket '%s'"), *RemoteUserId, *ResolvedSocketName);
+		UE_LOG(LogExtendedEOS, Log, TEXT("EEOSP2PSubsystem::CloseConnection — Closed connection to %s on socket '%s'"), *FEEOSNativeOperationLease::SafeField(RemoteUserId), *FEEOSNativeOperationLease::SafeField(ResolvedSocketName));
 		ConnectedPeers.Remove(RemoteUserId);
 		PeerSockets.Remove(RemoteUserId);
 		// No local OnConnectionClosed broadcast here: the PeerConnectionClosed notification
@@ -726,14 +720,14 @@ void UEEOSP2PSubsystem::SetRelayControl(EEOSRelayControl RelayMode)
 	EOS_HPlatform PlatformHandle = GetPlatformHandle();
 	if (!PlatformHandle)
 	{
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSP2PSubsystem::SetRelayControl — Platform handle not available; relay mode not applied"));
+		FEEOSNativeOperationLease::ReportRepeated(GetOwningEOSInstanceName(), TEXT("SetRelayControl"), TEXT("CapabilityUnavailable"));
 		return;
 	}
 
 	EOS_HP2P P2PHandle = EOS_Platform_GetP2PInterface(PlatformHandle);
 	if (!P2PHandle)
 	{
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSP2PSubsystem::SetRelayControl — P2P interface not available; relay mode not applied"));
+		FEEOSNativeOperationLease::ReportRepeated(GetOwningEOSInstanceName(), TEXT("SetRelayControl"), TEXT("CapabilityUnavailable"));
 		return;
 	}
 
@@ -790,7 +784,7 @@ bool UEEOSP2PSubsystem::QueryNATType()
 	EOS_HP2P P2PHandle = EOS_Platform_GetP2PInterface(PlatformHandle);
 	if (!P2PHandle)
 	{
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSP2PSubsystem::QueryNATType — P2P interface not available"));
+		FEEOSNativeOperationLease::ReportRepeated(GetOwningEOSInstanceName(), TEXT("QueryNATType"), TEXT("CapabilityUnavailable"));
 		return false;
 	}
 
@@ -803,17 +797,18 @@ bool UEEOSP2PSubsystem::QueryNATType()
 	struct FQueryNATTypeContext
 	{
 		TWeakObjectPtr<UEEOSP2PSubsystem> Self;
+		FEEOSRequestContext Ownership;
 	};
-	FQueryNATTypeContext* Context = new FQueryNATTypeContext{this};
+	FQueryNATTypeContext* Context = new FQueryNATTypeContext{this, CaptureEOSContext()};
 
 	EOS_P2P_QueryNATType(P2PHandle, &Options, Context,
 		[](const EOS_P2P_OnQueryNATTypeCompleteInfo* Data)
 		{
-			if (!Data || !Data->ClientData) return;
+			if (!Data || !Data->ClientData || !EOS_EResult_IsOperationComplete(Data->ResultCode)) return;
 			TUniquePtr<FQueryNATTypeContext> Ctx(static_cast<FQueryNATTypeContext*>(Data->ClientData));
 
 			UEEOSP2PSubsystem* Self = Ctx->Self.Get();
-			if (!Self) return;
+			if (!Self || !Self->IsEOSContextCurrent(Ctx->Ownership)) return;
 
 			if (Data->ResultCode == EOS_EResult::EOS_Success)
 			{

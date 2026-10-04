@@ -4,8 +4,12 @@
 
 #include "CoreMinimal.h"
 #include "Shared/EEOSSubsystem.h"
+#include "Shared/EEOSNativeOperation.h"
+#include "Interfaces/OnlineIdentityInterface.h"
 #include "eos_connect_types.h"
 #include "EEOSConnectSubsystem.generated.h"
+
+struct FEEOSConnectCallbackContext;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnEOSConnectLoginComplete, bool, bSuccess, const FString&, ProductUserId);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnEOSDeviceIdCreated, bool, bSuccess);
@@ -18,14 +22,12 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnEOSDeviceIdAccountTransferred, b
  * Handles the EOS Connect interface for cross-platform identity.
  * The Connect interface manages Product User IDs used by game services (stats, lobbies, etc.)
  *
- * Return-value convention (all action methods):
- * - true  = the operation was started (or completed synchronously); its completion
- *           delegate WILL fire with the result.
- * - false = rejected / failed to start. When the rejection is because an operation of
- *           the SAME kind is already in flight (CreateDeviceId/LoginWithDeviceId share
- *           one identity-login slot), NO delegate fires for THIS call — rejections are
- *           never echoed on the shared completion delegates. Other pre-flight failures
- *           still broadcast a failure.
+ * Return-value convention (action methods): true accepts work or a synchronous result.
+ * Busy rejects without a legacy completion and emits OnOperationRejected instead. This
+ * includes cross-operation identity/SDK mutation ownership, not only the same method.
+ * Other preflight failures use the method's legacy failure delegate. Accepted work has
+ * a detailed terminal outcome; teardown records it internally without gameplay events.
+ * IsConnected reads the owning platform's live Connect status, not the last callback.
  */
 UCLASS()
 class UNREALEXTENDEDEOS_API UEEOSConnectSubsystem : public UEEOSSubsystem
@@ -53,7 +55,7 @@ public:
 	 * Create a Device ID for anonymous authentication.
 	 * @return true = started; OnDeviceIdCreated will fire. false = rejected/failed to
 	 *         start. If rejected because a device-id login/creation is already in
-	 *         flight, NO delegate fires for THIS call; other pre-flight failures
+	 *         flight, NO legacy completion fires for THIS call; other pre-flight failures
 	 *         broadcast OnDeviceIdCreated(false).
 	 */
 	UFUNCTION(BlueprintCallable, Category = "EOS|Connect")
@@ -61,8 +63,8 @@ public:
 
 	/**
 	 * Delete the local device ID.
-	 * @return true = started; OnDeviceIdDeleted will fire. false = failed to start
-	 *         (OnDeviceIdDeleted(false) is broadcast).
+	 * @return true = started; OnDeviceIdDeleted will fire. false = rejected/failed to start. Busy emits only a detailed rejection;
+	 *         other preflight failures broadcast OnDeviceIdDeleted(false).
 	 */
 	UFUNCTION(BlueprintCallable, Category = "EOS|Connect")
 	bool DeleteDeviceId();
@@ -71,7 +73,7 @@ public:
 	 * Login with Device ID (creates if needed, then connects).
 	 * @return true = started; OnConnectLoginComplete will fire. false = rejected/failed
 	 *         to start. If rejected because a device-id login/creation is already in
-	 *         flight, NO delegate fires for THIS call; other pre-flight failures
+	 *         flight, NO legacy completion fires for THIS call; other pre-flight failures
 	 *         broadcast OnConnectLoginComplete(false, "").
 	 */
 	UFUNCTION(BlueprintCallable, Category = "EOS|Connect")
@@ -85,16 +87,16 @@ public:
 	 * flight fails the token check — obtain a fresh token by attempting the Connect
 	 * login again.
 	 *
-	 * @return true = started; OnAccountLinked will fire. false = failed to start
-	 *         (OnAccountLinked(false) is broadcast).
+	 * @return true = started; OnAccountLinked will fire while the recipient is active.
+	 *         Busy emits only a detailed rejection; other preflight failures emit false.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "EOS|Connect")
 	bool LinkAccount(EEOSExternalCredentialType CredentialType, const FString& Token);
 
 	/**
 	 * Unlink an external account from the current Product User ID.
-	 * @return true = started; OnAccountUnlinked will fire. false = failed to start
-	 *         (OnAccountUnlinked(false) is broadcast).
+	 * @return true = started; OnAccountUnlinked will fire while the recipient is active.
+	 *         Busy emits only a detailed rejection; other preflight failures emit false.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "EOS|Connect")
 	bool UnlinkAccount(EEOSExternalCredentialType CredentialType);
@@ -113,15 +115,16 @@ public:
 	 *        true → the external-account user's PUID is preserved; false → the Device ID user's PUID is
 	 *        preserved. The OTHER product user is discarded forever.
 	 *
-	 * Completion is reported via OnDeviceIdAccountTransferred on every path.
+	 * Completion is reported via OnDeviceIdAccountTransferred for accepted work and idle preflight failures.
+	 * Busy emits only a detailed rejection; shutdown suppresses gameplay delivery.
 	 *
 	 * Edge: if the transfer succeeds but the preserved PUID cannot be stringified,
 	 * success is still broadcast with an EMPTY PreservedProductUserId; the cached
 	 * Product User ID is cleared (the old value may describe the discarded user) and
-	 * IsConnected() reports true. A warning is logged.
+	 * IsConnected() still reads the live owning-platform status. A warning is logged.
 	 *
-	 * @return true = started; OnDeviceIdAccountTransferred will fire. false = failed to
-	 *         start (OnDeviceIdAccountTransferred(false, "") is broadcast).
+	 * @return true = started; OnDeviceIdAccountTransferred will fire while the recipient is active.
+	 *         Busy emits only a detailed rejection; other preflight failures emit false.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "EOS|Connect")
 	bool TransferDeviceIdAccount(const FString& DeviceIdProductUserId, const FString& ExternalProductUserId, bool bKeepExternalAccountProgression = true);
@@ -190,6 +193,20 @@ private:
 
 	/** Delegate handle for login complete — prevents accumulation on repeated calls */
 	FDelegateHandle LoginCompleteDelegateHandle;
+	FEEOSNativeOperationLease IdentityLease;
+	IOnlineIdentityPtr OperationIdentity;
+	bool bShuttingDown = false;
+	FEEOSRequestContext NativeLoginContext;
+	FEEOSNativeOperationLease SDKMutationLease;
+	int64 ActiveSDKMutation = 0;
+	FName ActiveSDKOperation;
+	FEEOSRequestContext SDKMutationContext;
+	int64 LastIdentityGeneration = 0;
+	FTSTicker::FDelegateHandle ConnectWatcher;
+	bool TickConnectIdentity(float DeltaTime);
+	FEEOSConnectCallbackContext* BeginSDKMutation(FName Operation);
+	FEEOSOperationOutcome FinishSDKMutation(bool bSuccess, const FString& SDKResult, bool bCanceled = false);
+	void CancelSDKMutation();
 
 	/** ContinuanceToken from a prior EOS_InvalidUser login, needed by LinkAccount */
 	EOS_ContinuanceToken CachedContinuanceToken = nullptr;

@@ -36,7 +36,8 @@ public class ExtendedEOSShared : ModuleRules
 			{
 				"UnrealExtendedFrameworkLog",
 				"EOSShared",
-				"EOSSDK"
+				"EOSSDK",
+				"OnlineSubsystemEOS"
 			}
 			);
 	}

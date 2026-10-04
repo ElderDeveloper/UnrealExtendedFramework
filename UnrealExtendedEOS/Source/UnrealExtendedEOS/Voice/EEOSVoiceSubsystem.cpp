@@ -1,6 +1,8 @@
 // Copyright Kemal Erdem YILMAZ. All Rights Reserved.
 
 #include "EEOSVoiceSubsystem.h"
+#include "Shared/EEOSNativeOperation.h"
+#include "Sessions/EEOSLobbySubsystem.h"
 #include "EEOSVoiceCaptureState.h"
 #include "Shared/EEOSSettings.h"
 #include "Shared/EEOSBlueprintLibrary.h"
@@ -12,6 +14,7 @@
 #include "IOnlineSubsystemEOS.h"
 #include "VoiceChat.h"
 #include "Async/Async.h"
+#include "UObject/UnrealType.h"
 #include "UnrealExtendedEOS.h"
 
 #if WITH_EOS_SDK
@@ -24,7 +27,7 @@ struct FEEOSVoiceLobbyRTCCallbacks
 {
 	static void EOS_CALL OnRoomConnectionChanged(const EOS_Lobby_RTCRoomConnectionChangedCallbackInfo* Data)
 	{
-		if (!Data || !Data->ClientData || Data->bIsConnected != EOS_TRUE)
+		if (!Data || !Data->ClientData)
 		{
 			return;
 		}
@@ -36,7 +39,32 @@ struct FEEOSVoiceLobbyRTCCallbacks
 		{
 			LocalUserId = UTF8_TO_TCHAR(Buffer);
 		}
-		static_cast<UEEOSVoiceSubsystem*>(Data->ClientData)->HandleLobbyRTCRoomConnected(LocalUserId);
+		auto* Self = static_cast<UEEOSVoiceSubsystem*>(Data->ClientData);
+		const bool bLocal = Self->CachedVoiceChatUser && Self->bVoiceUserLoggedIn && !LocalUserId.IsEmpty()
+			&& LocalUserId.Equals(Self->CachedVoiceChatUser->GetLoggedInPlayerName(), ESearchCase::IgnoreCase);
+		const auto* Lobby = Self->GetGameInstance() ? Self->GetGameInstance()->GetSubsystem<UEEOSLobbySubsystem>() : nullptr;
+		if (!Self->IsEOSContextCurrent(Self->RTCNotificationContext))
+		{ Self->LogCallbackDisposition(TEXT("LobbyRTC"), 0, TEXT("StaleGeneration"), Self->RTCNotificationContext.Generation); return; }
+		const bool bLeaving = Lobby && Lobby->IsLobbyExitInProgress();
+		const FString LobbyId = Data->LobbyId ? UTF8_TO_TCHAR(Data->LobbyId) : FString();
+		const bool bMember = Lobby && Lobby->IsInLobby() && Lobby->GetCurrentLobbyId() == LobbyId;
+		const int64 Generation = Lobby ? Lobby->GetLobbyGeneration() : 0;
+		const bool bConnected = Data->bIsConnected == EOS_TRUE;
+		const bool bRecovered = bConnected && bMember && Self->DisconnectedRTCLobby == LobbyId
+			&& Self->DisconnectedRTCGeneration == Generation && Self->IsEOSContextCurrent(Self->DisconnectedRTCContext);
+		const TCHAR* Classification = bConnected ? bRecovered ? TEXT("RecoveredSameMembership") : TEXT("Connected")
+			: bLeaving ? TEXT("KnownLocalExit") : !bMember ? TEXT("NativeMembershipRemovalObserved") : TEXT("UnexplainedLossAwaitingReconnect");
+		const FString RemovalReason = Lobby ? Lobby->GetObservedRemovalReason(LobbyId) : FString();
+		const auto Readiness = Self->GetEOSReadiness();
+		const int64 ParentRequest = Lobby ? Lobby->GetLobbyCorrelationId() : 0;
+		UE_LOG(LogExtendedEOS, Log, TEXT("EOSLobbyRTC Instance=%s Lobby=%s Generation=%lld ParentRequest=%lld ContextGeneration=%lld Route=%s Connected=%d LocalUserMatches=%d ConnectReady=%d PlatformReady=%d Classification=%s ObservedMembershipReason=%s SDKReason=%s"),
+			*Self->GetOwningEOSInstanceName().ToString(), *FEEOSNativeOperationLease::SafeField(LobbyId), Generation, ParentRequest,
+			Readiness.Generation, Self->bOwnsVoiceUser ? TEXT("Standalone") : TEXT("OwningOSS"), bConnected, bLocal,
+			Readiness.bConnectLoggedIn, Readiness.bPlatformAvailable, Classification, RemovalReason.IsEmpty() ? TEXT("Unknown") : *FEEOSNativeOperationLease::SafeField(RemovalReason), ANSI_TO_TCHAR(EOS_EResult_ToString(Data->DisconnectReason)));
+		if (!bConnected && bLocal && bMember && !bLeaving)
+		{ Self->DisconnectedRTCLobby = LobbyId; Self->DisconnectedRTCGeneration = Generation; Self->DisconnectedRTCContext = Self->CaptureEOSContext(); }
+		if (bConnected && bLocal) { Self->DisconnectedRTCLobby.Empty(); Self->HandleLobbyRTCRoomConnected(LocalUserId); }
+
 	}
 };
 #endif
@@ -59,6 +87,7 @@ void UEEOSVoiceSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 		UE_LOG(LogExtendedEOS, Log, TEXT("EEOSVoiceSubsystem: Voice chat is disabled in settings — subsystem inactive"));
 		return;
 	}
+	CadenceTicker = FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateUObject(this, &UEEOSVoiceSubsystem::TickCadence), 0.0f);
 
 	// Watch identity login status: the voice user can only be resolved once the local player
 	// has a logged-in EOS identity (the OSS logs the voice user in with the Product User Id),
@@ -69,7 +98,8 @@ void UEEOSVoiceSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 		IOnlineIdentityPtr Identity = EOSSub->GetIdentityInterface();
 		if (Identity.IsValid())
 		{
-			IdentityStatusChangedHandle = Identity->AddOnLoginStatusChangedDelegate_Handle(0,
+			WatchedVoiceIdentity = Identity;
+		IdentityStatusChangedHandle = Identity->AddOnLoginStatusChangedDelegate_Handle(0,
 				FOnLoginStatusChangedDelegate::CreateUObject(this, &UEEOSVoiceSubsystem::HandleIdentityLoginStatusChanged));
 		}
 	}
@@ -87,6 +117,9 @@ void UEEOSVoiceSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 
 void UEEOSVoiceSubsystem::Deinitialize()
 {
+	BeginEOSShutdown();
+	if (CadenceTicker.IsValid()) FTSTicker::GetCoreTicker().RemoveTicker(CadenceTicker);
+	CadenceTicker.Reset(); DisconnectedRTCLobby.Empty();
 	if (StaleContributionSweepHandle.IsValid())
 	{
 		FTSTicker::GetCoreTicker().RemoveTicker(StaleContributionSweepHandle);
@@ -98,26 +131,13 @@ void UEEOSVoiceSubsystem::Deinitialize()
 	// spinning up an online subsystem mid-teardown is itself harmful.
 
 	// Unhook the identity watcher first (the identity interface may already be gone at shutdown).
-	if (IdentityStatusChangedHandle.IsValid())
-	{
-		if (IOnlineSubsystem::DoesInstanceExist(EOS_SUBSYSTEM))
-		{
-			if (IOnlineSubsystem* EOSSub = IOnlineSubsystem::Get(EOS_SUBSYSTEM))
-			{
-				IOnlineIdentityPtr Identity = EOSSub->GetIdentityInterface();
-				if (Identity.IsValid())
-				{
-					Identity->ClearOnLoginStatusChangedDelegate_Handle(0, IdentityStatusChangedHandle);
-				}
-			}
-		}
-		IdentityStatusChangedHandle.Reset();
-	}
+	if (WatchedVoiceIdentity.IsValid()) WatchedVoiceIdentity->ClearOnLoginStatusChangedDelegate_Handle(0, IdentityStatusChangedHandle);
+	IdentityStatusChangedHandle.Reset(); WatchedVoiceIdentity.Reset();
 
 	// If the OSS instance is already destroyed, an OSS-managed voice user wrapper died with it —
 	// touching it (even to unbind its delegates) would be use-after-free. Just forget the
 	// pointer; TearDownVoiceUser below then has nothing to unbind.
-	if (CachedVoiceChatUser && !bOwnsVoiceUser && !IOnlineSubsystem::DoesInstanceExist(EOS_SUBSYSTEM))
+	if (CachedVoiceChatUser && !bOwnsVoiceUser && !IOnlineSubsystem::DoesInstanceExist(GetOwningEOSInstanceName()))
 	{
 		CachedVoiceChatUser = nullptr;
 	}
@@ -284,14 +304,20 @@ void UEEOSVoiceSubsystem::ResolveVoiceUser()
 	IOnlineIdentityPtr Identity = EOSSub->GetIdentityInterface();
 	if (!Identity.IsValid())
 	{
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSVoiceSubsystem: Identity interface not available — voice user resolution deferred"));
+		FEEOSNativeOperationLease::ReportRepeated(GetOwningEOSInstanceName(), TEXT("ResolveVoiceUser"), TEXT("IdentityUnavailable"));
 		return;
 	}
 
 	// The OSS may not have existed at Initialize (subsystem init order is undefined) — make
 	// sure the identity watcher is bound the first time it is reachable.
+	if (WatchedVoiceIdentity != Identity)
+	{
+		if (WatchedVoiceIdentity.IsValid()) WatchedVoiceIdentity->ClearOnLoginStatusChangedDelegate_Handle(0, IdentityStatusChangedHandle);
+		IdentityStatusChangedHandle.Reset();
+	}
 	if (!IdentityStatusChangedHandle.IsValid())
 	{
+		WatchedVoiceIdentity = Identity;
 		IdentityStatusChangedHandle = Identity->AddOnLoginStatusChangedDelegate_Handle(0,
 			FOnLoginStatusChangedDelegate::CreateUObject(this, &UEEOSVoiceSubsystem::HandleIdentityLoginStatusChanged));
 	}
@@ -338,7 +364,7 @@ void UEEOSVoiceSubsystem::ResolveVoiceUser()
 	// Only reachable when the OSS voice route is unavailable (WITH_EOSVOICECHAT disabled or
 	// the engine's voice bring-up failed). NOTE: a standalone IVoiceChat runs its own EOS
 	// platform instance, so lobby RTC rooms joined by the game's OSS will NOT appear on it.
-	UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSVoiceSubsystem: OSS voice route unavailable — falling back to standalone IVoiceChat (lobby RTC rooms will not be visible on this path)"));
+	FEEOSNativeOperationLease::ReportRepeated(GetOwningEOSInstanceName(), TEXT("ResolveVoiceUser"), TEXT("NativeLobbyVoiceRouteUnavailable"));
 
 	const FString ProductUserId = UEEOSBlueprintLibrary::ExtractProductUserId(UserId->ToString());
 	if (ProductUserId.IsEmpty())
@@ -355,7 +381,7 @@ void UEEOSVoiceSubsystem::ResolveStandaloneVoiceUser(const FString& ProductUserI
 	IVoiceChat* VoiceChat = IVoiceChat::Get();
 	if (!VoiceChat)
 	{
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSVoiceSubsystem: IVoiceChat interface not available — voice will not function"));
+		FEEOSNativeOperationLease::ReportRepeated(GetOwningEOSInstanceName(), TEXT("ResolveVoiceUser"), TEXT("VoiceInterfaceUnavailable"));
 		return;
 	}
 
@@ -372,17 +398,17 @@ void UEEOSVoiceSubsystem::ResolveStandaloneVoiceUser(const FString& ProductUserI
 	}
 
 	VoiceChat->Connect(FOnVoiceChatConnectCompleteDelegate::CreateLambda(
-		[WeakThis = TWeakObjectPtr<UEEOSVoiceSubsystem>(this), ProductUserId](const FVoiceChatResult& Result)
+		[WeakThis = TWeakObjectPtr<UEEOSVoiceSubsystem>(this), ProductUserId, Context = CaptureEOSContext()](const FVoiceChatResult& Result)
 		{
 			UEEOSVoiceSubsystem* Self = WeakThis.Get();
-			if (!Self)
+			if (!Self || !Self->IsEOSContextCurrent(Context))
 			{
 				return; // no user was created yet — nothing to release
 			}
 
 			if (!Result.IsSuccess())
 			{
-				UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSVoiceSubsystem: IVoiceChat::Connect failed — %s"), *Result.ErrorDesc);
+				UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSVoiceSubsystem: IVoiceChat::Connect failed — %s"), *FEEOSNativeOperationLease::SafeField(Result.ErrorDesc));
 				return;
 			}
 
@@ -421,9 +447,11 @@ void UEEOSVoiceSubsystem::CreateAndLoginStandaloneUser(const FString& ProductUse
 	// silently never fire. Raw `this` is never touched; access goes through the weak ptr.
 	CachedVoiceChatUser->Login(PlatformUserId, ProductUserId, TEXT(""),
 		FOnVoiceChatLoginCompleteDelegate::CreateLambda(
-			[WeakThis = TWeakObjectPtr<UEEOSVoiceSubsystem>(this), LoginUser = CachedVoiceChatUser](const FString& LoggedInUserId, const FVoiceChatResult& Result)
+			[WeakThis = TWeakObjectPtr<UEEOSVoiceSubsystem>(this), LoginUser = CachedVoiceChatUser, Context = CaptureEOSContext()](const FString& LoggedInUserId, const FVoiceChatResult& Result)
 			{
 				UEEOSVoiceSubsystem* Self = WeakThis.Get();
+				if (Self && Self->CachedVoiceChatUser == LoginUser && !Self->IsEOSContextCurrent(Context))
+				{ Self->bVoiceLoginPending = false; Self->TearDownVoiceUser(); return; }
 				if (!Self || Self->CachedVoiceChatUser != LoginUser)
 				{
 					// Subsystem was destroyed or deinitialized while the login was pending —
@@ -439,12 +467,12 @@ void UEEOSVoiceSubsystem::CreateAndLoginStandaloneUser(const FString& ProductUse
 				Self->bVoiceLoginPending = false;
 				if (Result.IsSuccess())
 				{
-					UE_LOG(LogExtendedEOS, Log, TEXT("EEOSVoiceSubsystem: Standalone voice user logged in as '%s'"), *LoggedInUserId);
+					UE_LOG(LogExtendedEOS, Log, TEXT("EEOSVoiceSubsystem: Standalone voice user logged in as '%s'"), *FEEOSNativeOperationLease::SafeField(LoggedInUserId));
 					// Defaults apply from the OnVoiceChatLoggedIn event handler.
 				}
 				else
 				{
-					UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSVoiceSubsystem: Standalone voice login failed — %s"), *Result.ErrorDesc);
+					UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSVoiceSubsystem: Standalone voice login failed — %s"), *FEEOSNativeOperationLease::SafeField(Result.ErrorDesc));
 				}
 			}));
 }
@@ -512,6 +540,9 @@ void UEEOSVoiceSubsystem::TearDownVoiceUser()
 
 	TGuardValue<bool> TeardownGuard(bTearingDownVoiceUser, true);
 	bLocalMuteApplied = false;
+	AppliedInputVolume.Reset(); AppliedOutputVolume.Reset();
+	bInputDevicesCached = bOutputDevicesCached = false; CachedInputDevices.Empty(); CachedOutputDevices.Empty();
+	RequestedInputDevice.Reset(); RequestedOutputDevice.Reset();
 	++VoiceUserGeneration;
 	const TSet<FString> JoinsToFail = MoveTemp(PendingJoins);
 	const TSet<FString> LeavesToFail = MoveTemp(PendingLeaves);
@@ -630,8 +661,11 @@ void UEEOSVoiceSubsystem::HandleVoiceChatLoggedIn(const FString& PlayerName)
 	}
 	bVoiceUserLoggedIn = true;
 	bLocalMuteApplied = false;
+	AppliedInputVolume.Reset(); AppliedOutputVolume.Reset();
+	bInputDevicesCached = bOutputDevicesCached = false; CachedInputDevices.Empty(); CachedOutputDevices.Empty();
+	RequestedInputDevice.Reset(); RequestedOutputDevice.Reset();
 
-	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSVoiceSubsystem: Voice chat user logged in as '%s'"), *PlayerName);
+	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSVoiceSubsystem: Voice chat user logged in as '%s'"), *FEEOSNativeOperationLease::SafeField(PlayerName));
 	ApplyVoiceDefaults();
 
 	if (CachedVoiceChatUser && !CaptureReadHandle.IsValid())
@@ -648,13 +682,16 @@ void UEEOSVoiceSubsystem::HandleVoiceChatLoggedOut(const FString& PlayerName)
 	bVoiceUserLoggedIn = false;
 	bDefaultsApplied = false;
 	bLocalMuteApplied = false;
-	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSVoiceSubsystem: Voice chat user '%s' logged out"), *PlayerName);
+	AppliedInputVolume.Reset(); AppliedOutputVolume.Reset();
+	bInputDevicesCached = bOutputDevicesCached = false; CachedInputDevices.Empty(); CachedOutputDevices.Empty();
+	RequestedInputDevice.Reset(); RequestedOutputDevice.Reset();
+	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSVoiceSubsystem: Voice chat user '%s' logged out"), *FEEOSNativeOperationLease::SafeField(PlayerName));
 }
 
 void UEEOSVoiceSubsystem::HandleChannelJoined(const FString& ChannelName)
 {
 	JoinedRooms.Add(ChannelName);
-	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSVoiceSubsystem: Joined voice room '%s'"), *ChannelName);
+	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSVoiceSubsystem: Joined voice room '%s'"), *FEEOSNativeOperationLease::SafeField(ChannelName));
 
 	// A registered transmit room may just have become live.
 	RecomputeTransmitChannels();
@@ -671,8 +708,8 @@ void UEEOSVoiceSubsystem::HandleChannelExited(const FString& ChannelName, const 
 	{
 		if (Player.Value.Remove(ChannelName) && Player.Value.IsEmpty()) OnPlayerTalking.Broadcast(Player.Key, false);
 	}
-	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSVoiceSubsystem: Left voice room '%s'%s%s"), *ChannelName,
-		Reason.IsSuccess() ? TEXT("") : TEXT(" — "), Reason.IsSuccess() ? TEXT("") : *Reason.ErrorDesc);
+	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSVoiceSubsystem: Left voice room '%s'%s%s"), *FEEOSNativeOperationLease::SafeField(ChannelName),
+		Reason.IsSuccess() ? TEXT("") : TEXT(" — "), Reason.IsSuccess() ? TEXT("") : *FEEOSNativeOperationLease::SafeField(Reason.ErrorDesc));
 
 	RecomputeTransmitChannels();
 
@@ -718,6 +755,8 @@ void UEEOSVoiceSubsystem::HandleAvailableAudioDevicesChanged()
 		return;
 	}
 
+	bInputDevicesCached = bOutputDevicesCached = false;
+	RequestedInputDevice.Reset(); RequestedOutputDevice.Reset();
 	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSVoiceSubsystem: Audio devices changed (%d input, %d output)"),
 		GetInputDevices().Num(), GetOutputDevices().Num());
 	OnAudioDevicesChanged.Broadcast();
@@ -855,7 +894,7 @@ bool UEEOSVoiceSubsystem::RegisterVoiceRoomUser(const FString& RoomName, bool bT
 
 	const bool bJoined = IsInRoom(RoomName);
 	UE_LOG(LogExtendedEOS, Verbose, TEXT("EEOSVoiceSubsystem: Component registered on room '%s' (refs=%d, transmit=%s, joined=%s)"),
-		*RoomName, RoomRefCounts[RoomName], bTransmit ? TEXT("yes") : TEXT("no"), bJoined ? TEXT("yes") : TEXT("no"));
+		*FEEOSNativeOperationLease::SafeField(RoomName), RoomRefCounts[RoomName], bTransmit ? TEXT("yes") : TEXT("no"), bJoined ? TEXT("yes") : TEXT("no"));
 	return bJoined;
 }
 
@@ -873,7 +912,7 @@ void UEEOSVoiceSubsystem::UnregisterVoiceRoomUser(const FString& RoomName, bool 
 			RoomRefCounts.Remove(RoomName);
 			// Last user out: the room drops from the transmit set below. Channel membership
 			// itself is owned by the lobby and ends when the lobby is left — nothing to leave here.
-			UE_LOG(LogExtendedEOS, Log, TEXT("EEOSVoiceSubsystem: Last component left room '%s' — removed from transmit composition (channel membership stays with the lobby)"), *RoomName);
+			UE_LOG(LogExtendedEOS, Log, TEXT("EEOSVoiceSubsystem: Last component left room '%s' — removed from transmit composition (channel membership stays with the lobby)"), *FEEOSNativeOperationLease::SafeField(RoomName));
 		}
 	}
 
@@ -1144,15 +1183,17 @@ void UEEOSVoiceSubsystem::HandleLobbyRTCRoomConnected(const FString& LocalUserId
 void UEEOSVoiceSubsystem::BindLobbyRTCNotification()
 {
 #if WITH_EOS_SDK
-	if (LobbyRTCConnectionNotifyId != 0 || bOwnsVoiceUser)
+	if (bOwnsVoiceUser) return;
+	if (LobbyRTCConnectionNotifyId != 0)
 	{
-		return;
+		if (IsEOSContextCurrent(RTCNotificationContext)) return;
+		UnbindLobbyRTCNotification();
 	}
 
 	// The OSS's own platform, not the first active one: with several PIE clients in one process each
 	// OSS instance has its own platform and its own lobbies.
 	IOnlineSubsystem* EOSSub = GetEOSOnlineSubsystem();
-	const IEOSPlatformHandlePtr Platform = EOSSub ? static_cast<IOnlineSubsystemEOS*>(EOSSub)->GetEOSPlatformHandle() : nullptr;
+	const IEOSPlatformHandlePtr Platform = GetOwningEOSPlatform();
 	const EOS_HLobby Lobby = Platform.IsValid() ? EOS_Platform_GetLobbyInterface(*Platform) : nullptr;
 	if (!Lobby)
 	{
@@ -1169,7 +1210,7 @@ void UEEOSVoiceSubsystem::BindLobbyRTCNotification()
 		LobbyRTCConnectionNotifyId = 0;
 		return;
 	}
-	LobbyRTCPlatform = Platform;
+	LobbyRTCPlatform = Platform; RTCNotificationContext = CaptureEOSContext();
 #endif
 }
 
@@ -1190,7 +1231,7 @@ void UEEOSVoiceSubsystem::UnbindLobbyRTCNotification()
 		}
 	}
 	LobbyRTCConnectionNotifyId = 0;
-	LobbyRTCPlatform.Reset();
+	LobbyRTCPlatform.Reset(); RTCNotificationContext = FEEOSRequestContext();
 #endif
 }
 
@@ -1225,7 +1266,7 @@ void UEEOSVoiceSubsystem::SetPlayerMutedIfChanged(const FString& UserId, const b
 	if (!CachedVoiceChatUser || !bVoiceUserLoggedIn || UserId.IsEmpty())
 	{
 		UE_LOG(LogExtendedEOS, Verbose, TEXT("EEOSVoiceSubsystem: %s '%s' skipped — no logged-in voice user"),
-			bMuted ? TEXT("Mute") : TEXT("Unmute"), *UserId);
+			bMuted ? TEXT("Mute") : TEXT("Unmute"), *FEEOSNativeOperationLease::SafeField(UserId));
 		return;
 	}
 
@@ -1235,7 +1276,7 @@ void UEEOSVoiceSubsystem::SetPlayerMutedIfChanged(const FString& UserId, const b
 	}
 
 	CachedVoiceChatUser->SetPlayerMuted(UserId, bMuted);
-	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSVoiceSubsystem: %s '%s'"), bMuted ? TEXT("Muted") : TEXT("Unmuted"), *UserId);
+	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSVoiceSubsystem: %s '%s'"), bMuted ? TEXT("Muted") : TEXT("Unmuted"), *FEEOSNativeOperationLease::SafeField(UserId));
 }
 
 void UEEOSVoiceSubsystem::SetPlayerVolume(const FString& UserId, float Volume)
@@ -1285,10 +1326,11 @@ bool UEEOSVoiceSubsystem::IsPlayerMuted(const FString& UserId) const
 void UEEOSVoiceSubsystem::SetOutputVolume(float Volume)
 {
 	Volume = FMath::Clamp(Volume, 0.f, 1.f);
-	if (CachedVoiceChatUser)
+	if (CachedVoiceChatUser && bVoiceUserLoggedIn && (!AppliedOutputVolume.IsSet() || !FMath::IsNearlyEqual(AppliedOutputVolume.GetValue(), Volume)))
 	{
+		AppliedOutputVolume = Volume;
 		CachedVoiceChatUser->SetAudioOutputVolume(Volume);
-		UE_LOG(LogExtendedEOS, Log, TEXT("EEOSVoiceSubsystem: Output volume set to %.2f"), Volume);
+		UE_LOG(LogExtendedEOS, Log, TEXT("EOSVoiceAudio OutputRequested=%.2f SubmissionMade=1 AcceptedKnown=0 EffectiveGainKnown=0 Adapter=IVoiceChatUser"), Volume);
 	}
 }
 
@@ -1299,10 +1341,11 @@ void UEEOSVoiceSubsystem::SetInputVolume(float Volume)
 	Volume = FMath::Clamp(Volume, 0.f, 2.f);
 	CurrentInputVolume = Volume;
 
-	if (CachedVoiceChatUser)
+	if (CachedVoiceChatUser && bVoiceUserLoggedIn && (!AppliedInputVolume.IsSet() || !FMath::IsNearlyEqual(AppliedInputVolume.GetValue(), Volume)))
 	{
+		AppliedInputVolume = Volume;
 		CachedVoiceChatUser->SetAudioInputVolume(Volume);
-		UE_LOG(LogExtendedEOS, Log, TEXT("EEOSVoiceSubsystem: Input volume set to %.2f"), Volume);
+		UE_LOG(LogExtendedEOS, Log, TEXT("EOSVoiceAudio InputRequested=%.2f SubmissionMade=1 AcceptedKnown=0 EffectiveGainKnown=0 PostAGCGainKnown=0 Adapter=IVoiceChatUser"), Volume);
 	}
 }
 
@@ -1313,7 +1356,7 @@ float UEEOSVoiceSubsystem::GetInputVolume() const
 
 void UEEOSVoiceSubsystem::SetLocalMuted(bool bMuted)
 {
-	const bool bNeedsApply = CachedVoiceChatUser && (!bLocalMuteApplied || bLocalMuted != bMuted);
+	const bool bNeedsApply = CachedVoiceChatUser && bVoiceUserLoggedIn && (!bLocalMuteApplied || bLocalMuted != bMuted);
 	bLocalMuted = bMuted;
 
 	if (bNeedsApply)
@@ -1350,7 +1393,7 @@ void UEEOSVoiceSubsystem::TransmitToSelectedRoom(const FString& RoomName)
 		TSet<FString> Channels;
 		Channels.Add(RoomName);
 		CachedVoiceChatUser->TransmitToSpecificChannels(Channels);
-		UE_LOG(LogExtendedEOS, Log, TEXT("EEOSVoiceSubsystem: Transmitting to '%s'"), *RoomName);
+		UE_LOG(LogExtendedEOS, Log, TEXT("EEOSVoiceSubsystem: Transmitting to '%s'"), *FEEOSNativeOperationLease::SafeField(RoomName));
 	}
 }
 
@@ -1371,6 +1414,7 @@ void UEEOSVoiceSubsystem::TransmitToNoRoom()
 
 TArray<FEEOSVoiceDeviceInfo> UEEOSVoiceSubsystem::GetInputDevices() const
 {
+	if (bInputDevicesCached) return CachedInputDevices;
 	TArray<FEEOSVoiceDeviceInfo> Devices;
 
 	if (CachedVoiceChatUser)
@@ -1385,11 +1429,13 @@ TArray<FEEOSVoiceDeviceInfo> UEEOSVoiceSubsystem::GetInputDevices() const
 		}
 	}
 
+	if (CachedVoiceChatUser) { CachedInputDevices = Devices; bInputDevicesCached = true; }
 	return Devices;
 }
 
 TArray<FEEOSVoiceDeviceInfo> UEEOSVoiceSubsystem::GetOutputDevices() const
 {
+	if (bOutputDevicesCached) return CachedOutputDevices;
 	TArray<FEEOSVoiceDeviceInfo> Devices;
 
 	if (CachedVoiceChatUser)
@@ -1404,24 +1450,27 @@ TArray<FEEOSVoiceDeviceInfo> UEEOSVoiceSubsystem::GetOutputDevices() const
 		}
 	}
 
+	if (CachedVoiceChatUser) { CachedOutputDevices = Devices; bOutputDevicesCached = true; }
 	return Devices;
 }
 
 void UEEOSVoiceSubsystem::SetInputDevice(const FString& DeviceId)
 {
-	if (CachedVoiceChatUser)
+	if (CachedVoiceChatUser && bVoiceUserLoggedIn && (!RequestedInputDevice.IsSet() || RequestedInputDevice.GetValue() != DeviceId))
 	{
+		RequestedInputDevice = DeviceId;
 		CachedVoiceChatUser->SetInputDeviceId(DeviceId);
-		UE_LOG(LogExtendedEOS, Log, TEXT("EEOSVoiceSubsystem: Input device set to '%s'"), *DeviceId);
+		UE_LOG(LogExtendedEOS, Log, TEXT("EOSVoiceAudio InputDeviceSelectionSubmitted=1 RequestedDefaultDevice=%d AcceptedKnown=0 EffectiveSampleRateKnown=0 Adapter=IVoiceChatUser"), DeviceId.IsEmpty());
 	}
 }
 
 void UEEOSVoiceSubsystem::SetOutputDevice(const FString& DeviceId)
 {
-	if (CachedVoiceChatUser)
+	if (CachedVoiceChatUser && bVoiceUserLoggedIn && (!RequestedOutputDevice.IsSet() || RequestedOutputDevice.GetValue() != DeviceId))
 	{
+		RequestedOutputDevice = DeviceId;
 		CachedVoiceChatUser->SetOutputDeviceId(DeviceId);
-		UE_LOG(LogExtendedEOS, Log, TEXT("EEOSVoiceSubsystem: Output device set to '%s'"), *DeviceId);
+		UE_LOG(LogExtendedEOS, Log, TEXT("EOSVoiceAudio OutputDeviceSelectionSubmitted=1 RequestedDefaultDevice=%d AcceptedKnown=0 EffectiveSampleRateKnown=0 Adapter=IVoiceChatUser"), DeviceId.IsEmpty());
 	}
 }
 
@@ -1526,4 +1575,50 @@ void UEEOSVoiceSubsystem::UnregisterCaptureState(const UObject* Source)
 {
 	FScopeLock Lock(&CaptureStatesMutex);
 	CaptureStates.Remove(FObjectKey(Source));
+}
+
+FEEOSAudioSettingsSnapshot UEEOSVoiceSubsystem::GetAudioSettingsSnapshot() const
+{
+	FEEOSAudioSettingsSnapshot Result;
+	Result.bVoiceUserAvailable = CachedVoiceChatUser && bVoiceUserLoggedIn;
+	Result.RequestedInputVolume = CurrentInputVolume;
+	Result.RequestedOutputVolume = AppliedOutputVolume.Get(1.0f);
+	Result.bInputSubmissionMade = AppliedInputVolume.IsSet(); Result.bOutputSubmissionMade = AppliedOutputVolume.IsSet();
+	Result.bInputDeviceSubmissionMade = RequestedInputDevice.IsSet(); Result.bOutputDeviceSubmissionMade = RequestedOutputDevice.IsSet();
+	return Result;
+}
+bool UEEOSVoiceSubsystem::TickCadence(float)
+{
+	const double Now = FPlatformTime::Seconds();
+	const double Gap = LastCadenceTick > 0 ? Now - LastCadenceTick : 0; LastCadenceTick = Now;
+	if (Gap > 0.25)
+	{
+		++DelayedCadenceTicks; MaximumCadenceGap = FMath::Max(MaximumCadenceGap, Gap); CadenceRecoveryStart = 0;
+		if (CadenceDelayStart == 0) CadenceDelayStart = Now;
+		const double Interval = FMath::Clamp(double(GetEOSSettings()->DiagnosticSummaryIntervalSeconds), 1.0, 3600.0);
+		if (LastCadenceSummary == 0 || Now - LastCadenceSummary >= Interval)
+		{
+			bool bThrottleKnown = false, bThrottle = false;
+#if WITH_EDITOR
+			if (auto* Class = FindObject<UClass>(nullptr, TEXT("/Script/UnrealEd.EditorPerformanceSettings")))
+				if (const auto* Property = FindFProperty<FBoolProperty>(Class, TEXT("bThrottleCPUWhenNotForeground")))
+				{ bThrottleKnown = true; bThrottle = Property->GetPropertyValue_InContainer(Class->GetDefaultObject()); }
+#endif
+			UE_LOG(LogExtendedEOS, Warning, TEXT("EOSVoiceCadence Instance=%s Phase=GameThreadDelay MeasuredInterval=CoreTicker DelayedTicks=%d MaximumGapMs=%.0f DurationSeconds=%.1f EditorThrottleKnown=%d EditorThrottle=%d ForegroundKnown=0 SDKRTCIntervalKnown=0"),
+				*GetOwningEOSInstanceName().ToString(), DelayedCadenceTicks, MaximumCadenceGap * 1000, Now - CadenceDelayStart, bThrottleKnown, bThrottle);
+			LastCadenceSummary = Now;
+		}
+	}
+	else if (CadenceDelayStart > 0)
+	{
+		if (Gap < 0.15 && CadenceRecoveryStart == 0) CadenceRecoveryStart = Now;
+		if (Gap >= 0.15) CadenceRecoveryStart = 0;
+		if (CadenceRecoveryStart > 0 && Now - CadenceRecoveryStart >= 1)
+		{
+			UE_LOG(LogExtendedEOS, Log, TEXT("EOSVoiceCadence Instance=%s Phase=GameThreadRecovered DelayedTicks=%d MaximumGapMs=%.0f DurationSeconds=%.1f SDKRTCIntervalKnown=0"),
+				*GetOwningEOSInstanceName().ToString(), DelayedCadenceTicks, MaximumCadenceGap * 1000, Now - CadenceDelayStart);
+			CadenceDelayStart = LastCadenceSummary = CadenceRecoveryStart = MaximumCadenceGap = 0; DelayedCadenceTicks = 0;
+		}
+	}
+	return true;
 }

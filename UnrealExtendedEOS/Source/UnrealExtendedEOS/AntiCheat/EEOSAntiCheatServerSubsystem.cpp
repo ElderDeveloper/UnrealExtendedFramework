@@ -1,6 +1,7 @@
 // Copyright Kemal Erdem YILMAZ. All Rights Reserved.
 
 #include "EEOSAntiCheatServerSubsystem.h"
+#include "Shared/EEOSNativeOperation.h"
 #include "UnrealExtendedEOS.h"
 
 // DEPRECATED SHIM — see the class comment in the header. Every method logs an
@@ -10,7 +11,7 @@
 // no longer half-start an anti-cheat session.
 
 #define EEOS_AC_SERVER_SHIM_ERROR(FuncName) \
-	UE_LOG(LogExtendedEOS, Error, TEXT("UEEOSAntiCheatServerSubsystem::" FuncName " — DEPRECATED shim, no-op. This game has no dedicated servers; use UEEOSAntiCheatSubsystem (peer-to-peer mode) instead."))
+	UE_LOG(LogExtendedEOS, Warning, TEXT("UEEOSAntiCheatServerSubsystem::" FuncName " — DEPRECATED shim, no-op. This game has no dedicated servers; use UEEOSAntiCheatSubsystem (peer-to-peer mode) instead."))
 
 void UEEOSAntiCheatServerSubsystem::BeginSession()
 {

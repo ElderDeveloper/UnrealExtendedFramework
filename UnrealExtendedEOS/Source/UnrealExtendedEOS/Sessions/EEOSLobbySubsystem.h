@@ -10,9 +10,11 @@
 #include "Engine/EngineBaseTypes.h"
 #include "EEOSLobbyJoinRequest.h"
 #include "EEOSLobbyExitRequest.h"
+#include "Shared/EEOSNativeOperation.h"
 #include "EEOSLobbySubsystem.generated.h"
 
 class UEEOSSearchCoordinator;
+class UNetDriver;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnEOSLobbyCreated, bool, bSuccess, const FString&, LobbyId);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnEOSLobbiesFound, const TArray<FEEOSSessionSearchResult>&, Results);
@@ -20,6 +22,8 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnEOSLobbyJoined, bool, bSuccess, 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnEOSLobbyMemberJoined, const FString&, MemberId);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnEOSLobbyMemberLeft, const FString&, MemberId);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnEOSLobbyAttributeChanged, const FString&, Key, const FString&, Value);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnEOSLobbyAttributeRemoved, const FString&, Key);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnEOSLobbyRemoved, const FString&, LobbyId, const FString&, Reason);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnEOSLobbyOwnerChanged, const FString&, NewOwnerId);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnEOSLobbyPromotionComplete, bool, bSuccess, const FString&, MemberId);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnEOSLobbyDestroyed, bool, bSuccess, const FString&, LobbyId);
@@ -27,13 +31,12 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnEOSLobbyDestroyed, bool, bSucces
 /**
  * Manages EOS lobbies with member management, attribute syncing, and lobby discovery.
  *
- * Return-value contract (all async actions): true means the operation really started and its
- * completion delegate will fire exactly once. false means the call was rejected (an operation
- * of the same kind is already in flight — logged, and NO completion delegate fires for the
- * rejected call) or failed pre-flight. Pre-flight failures that occur with no same-kind
- * operation in flight (EOS unavailable, interface missing, invalid index, not in a lobby)
- * DO broadcast the operation's failure delegate where the method historically did — each
- * method documents its exceptions.
+ * Boolean acceptance and completion are separate. Busy/shared ownership rejection emits
+ * OnOperationRejected without a legacy completion. Idle preflight failures retain their
+ * method's legacy failure event; immediate attribute setters and submission/travel helpers
+ * are exceptions documented below. Accepted membership/search work has a detailed terminal
+ * outcome. During shutdown terminal records are internal and gameplay events are suppressed.
+ * Docs/EOSOperations.md describes admission, retained updates, and native result limits.
  */
 UCLASS()
 class UNREALEXTENDEDEOS_API UEEOSLobbySubsystem : public UEEOSSubsystem
@@ -55,7 +58,7 @@ public:
 
 	/** Create a new lobby. If a lobby already exists its owner deletes it (other members leave) first and the create
 	 *  runs from the destroy completion. Completion: OnLobbyCreated (exactly once).
-	 *  @return false if rejected (a lobby membership operation is already in flight — no delegate
+	 *  @return false if rejected (a lobby membership operation is already in flight — no legacy completion
 	 *  will fire) or failed pre-flight (EOS unavailable / interface missing — these DO
 	 *  broadcast OnLobbyCreated(false)); true if the create started. */
 	UFUNCTION(BlueprintCallable, Category = "EOS|Lobbies")
@@ -63,7 +66,7 @@ public:
 
 	/** Search for available lobbies.
 	 *  @return false if rejected (our own lobby search, or any sibling subsystem's
-	 *  session/lobby search, is already in flight — no delegate will fire) or failed
+	 *  session/lobby search, is already in flight — no legacy completion will fire) or failed
 	 *  pre-flight (EOS unavailable / interface missing, and the synchronous engine
 	 *  FindSessions failure — these DO broadcast OnLobbiesFound with empty results);
 	 *  true if the search started (OnLobbiesFound fires once). */
@@ -77,11 +80,17 @@ public:
 
 	/** Join a lobby from search results. An existing owned lobby is deleted; other members leave first. The target
 	 *  result is retained until leaving finishes. Membership operations cannot overlap.
-	 *  @return false if rejected (a membership operation is already in flight — no delegate will fire)
+	 *  @return false if rejected (a membership operation is already in flight — no legacy completion will fire)
 	 *  or failed pre-flight (EOS unavailable / invalid index / interface missing — these DO
 	 *  broadcast OnLobbyJoined(false)); true if the join started (OnLobbyJoined fires once). */
 	UFUNCTION(BlueprintCallable, Category = "EOS|Lobbies")
 	bool JoinLobby(int32 SearchResultIndex);
+
+	/** Join a lobby from the last search by its id rather than its position. An index stays valid only while the
+	 *  search it came from is the last one; once another search replaces the results it names a different lobby,
+	 *  where an id that is no longer there fails instead. Same completion contract as JoinLobby. */
+	UFUNCTION(BlueprintCallable, Category = "EOS|Lobbies")
+	bool JoinLobbyById(const FString& LobbyId);
 
 	/**
 	 * Join a lobby from an invite or other result that is not in the last search list.
@@ -90,7 +99,7 @@ public:
 	bool JoinLobbyResult(const FOnlineSessionSearchResult& SearchResult);
 
 	/** Leave the current lobby (any member). Completion: OnLobbyDestroyed (exactly once).
-	 *  @return false if rejected (a lobby membership operation is already in flight — no delegate
+	 *  @return false if rejected (a lobby membership operation is already in flight — no legacy completion
 	 *  will fire) or failed pre-flight (not in a lobby / EOS unavailable / interface missing —
 	 *  these DO broadcast OnLobbyDestroyed(false)); true if the leave started. */
 	UFUNCTION(BlueprintCallable, Category = "EOS|Lobbies")
@@ -99,7 +108,7 @@ public:
 	/** Destroy the current lobby (owner only — non-owners should call LeaveLobby).
 	 *  Uses EOS_Lobby_DestroyLobby, removing it for every member regardless of host migration.
 	 *  Completion: OnLobbyDestroyed after local session/voice cleanup (exactly once).
-	 *  @return false if rejected (a lobby membership operation is already in flight — no delegate
+	 *  @return false if rejected (a lobby membership operation is already in flight — no legacy completion
 	 *  will fire) or failed pre-flight (not in a lobby / not the owner / EOS unavailable /
 	 *  interface missing — these DO broadcast OnLobbyDestroyed(false)); true if the destroy
 	 *  started. */
@@ -111,8 +120,8 @@ public:
 	/** Set a lobby-level attribute (owner only; synced to all members).
 	 *  OnLobbyAttributeChanged broadcasts from the update completion on success.
 	 *  @return false if rejected (another lobby update is in flight) or failed pre-flight
-	 *  (EOS unavailable / not the owner / interface or settings missing); no delegate fires
-	 *  for a false return. */
+	 *  (EOS unavailable / not the owner / interface or settings missing); no legacy change event fires
+	 *  for a false return. Detailed rejection/completion records remain separate. */
 	UFUNCTION(BlueprintCallable, Category = "EOS|Lobbies")
 	bool SetLobbyAttribute(const FString& Key, const FString& Value);
 
@@ -129,9 +138,27 @@ public:
 	/** Set a per-member attribute for the LOCAL member (e.g., ready status, character selection).
 	 *  Any member may call this; it is published to the lobby via the engine's MemberSettings path.
 	 *  @return false if rejected (another lobby update is in flight) or failed pre-flight;
-	 *  no delegate fires for a false return. */
+	 *  no legacy completion fires for a false return. Detailed records are separate. */
 	UFUNCTION(BlueprintCallable, Category = "EOS|Lobbies")
 	bool SetMemberAttribute(const FString& Key, const FString& Value);
+
+	/** Retained writes. A nonzero request ID is accepted work; follow OnLobbyUpdateCompleted.
+	 * Queued writes are bounded and generation-scoped. Replaced pending writes are Superseded. */
+	UFUNCTION(BlueprintCallable, Category = "EOS|Lobbies")
+	int64 QueueLobbyAttribute(const FString& Key, const FString& Value);
+	UFUNCTION(BlueprintCallable, Category = "EOS|Lobbies")
+	int64 QueueMemberAttribute(const FString& Key, const FString& Value);
+	UFUNCTION(BlueprintCallable, Category = "EOS|Lobbies")
+	int64 QueueLobbyVisibility(bool bIsPublic);
+	/** Owner-only capacity update; rejects shrinking below current membership. */
+	UFUNCTION(BlueprintCallable, Category = "EOS|Lobbies")
+	int64 QueueLobbyCapacity(int32 MaxMembers);
+	UPROPERTY(BlueprintAssignable, Category = "EOS|Lobbies")
+	FOnEEOSOperationOutcome OnLobbyUpdateCompleted;
+	UFUNCTION(BlueprintPure, Category = "EOS|Lobbies")
+	FEEOSOperationOutcome GetLobbyUpdateOutcome(int64 RequestId) const;
+	UPROPERTY(BlueprintAssignable, Category = "EOS|Lobbies")
+	FOnEOSLobbyAttributeRemoved OnLobbyAttributeRemoved;
 
 	/** Get a member attribute by user ID (composite net-id string or bare Product User ID) and key */
 	UFUNCTION(BlueprintPure, Category = "EOS|Lobbies")
@@ -144,9 +171,25 @@ public:
 	UFUNCTION(BlueprintPure, Category = "EOS|Lobbies")
 	TArray<FString> GetLobbyMembers() const;
 
-	/** Get the current member count */
+	/** Current SDK/native member-count observation, or -1 when unavailable. */
 	UFUNCTION(BlueprintPure, Category = "EOS|Lobbies")
 	int32 GetLobbyMemberCount() const;
+	/** Cached SDK/native observation; unknown values remain unknown and do not guarantee a join slot. */
+	UFUNCTION(BlueprintPure, Category = "EOS|Lobbies")
+	FEEOSCapacitySnapshot GetLobbyCapacity() const;
+	UFUNCTION(BlueprintPure, Category = "EOS|Lobbies")
+	FEEOSLobbyVisibilitySnapshot GetConfirmedLobbyVisibility() const { return ConfirmedVisibility; }
+	UFUNCTION(BlueprintPure, Category = "EOS|Diagnostics")
+	int64 GetLobbyGeneration() const { return int64(LobbyGeneration); }
+	/** Observed local removal reason for this exact lobby; empty means no observed reason. */
+	UFUNCTION(BlueprintPure, Category = "EOS|Diagnostics")
+	FString GetObservedRemovalReason(const FString& LobbyId) const { return LobbyId == LastRemovedLobbyId ? LastRemovalReason : FString(); }
+	/** Root request for the latest membership transition; useful for voice/travel correlation. */
+	UFUNCTION(BlueprintPure, Category = "EOS|Diagnostics")
+	int64 GetLobbyCorrelationId() const { return MembershipLease.IsValid() ? MembershipLease.GetRequestId() : LastMembershipRequestId; }
+	/** Involuntary local removal, distinct from owner-requested backend deletion. */
+	UPROPERTY(BlueprintAssignable, Category = "EOS|Lobbies")
+	FOnEOSLobbyRemoved OnLobbyRemoved;
 
 	/** Get the lobby owner's user ID */
 	UFUNCTION(BlueprintPure, Category = "EOS|Lobbies")
@@ -169,7 +212,7 @@ public:
 	 *  OnLobbyPromotionComplete reports SDK success/failure once. OnLobbyOwnerChanged fires
 	 *  when the native owner changes, including remote/automatic promotion, without duplicates.
 	 *  @return false if the request could not be issued (EOS unavailable / not in a lobby /
-	 *  not the owner / transfer disabled / unparsable ids); no delegate fires for a false return. */
+	 *  not the owner / transfer disabled / unparsable ids); no legacy completion fires for a false return. Detailed records are separate. */
 	UFUNCTION(BlueprintCallable, Category = "EOS|Lobbies")
 	bool PromoteMember(const FString& MemberId);
 
@@ -179,7 +222,7 @@ public:
 	 *  through UpdateSession, so it shares the single in-flight lobby-update slot with
 	 *  SetLobbyAttribute/SetMemberAttribute.
 	 *  @return false if rejected (another lobby update is in flight) or failed pre-flight;
-	 *  no delegate fires for a false return. */
+	 *  no legacy completion fires for a false return. Detailed records are separate. */
 	UFUNCTION(BlueprintCallable, Category = "EOS|Lobbies")
 	bool SetLobbyJoinable(bool bIsPublic);
 
@@ -194,6 +237,10 @@ public:
 	/** Check if currently in a lobby */
 	UFUNCTION(BlueprintPure, Category = "EOS|Lobbies")
 	bool IsInLobby() const;
+
+	/** Whether local leave/backend closure is still draining callbacks. */
+	UFUNCTION(BlueprintPure, Category = "EOS|Lobbies")
+	bool IsLobbyExitInProgress() const;
 
 	/** Get the current lobby's backend id (the real EOS lobby id) */
 	UFUNCTION(BlueprintPure, Category = "EOS|Lobbies")
@@ -241,7 +288,36 @@ public:
 private:
 
 	FString CurrentLobbyId;
+	int64 LastMembershipRequestId = 0;
+	int64 ExitChildRequestId = 0;
+	uint64 LobbyGeneration = 0;
+	int64 LobbySearchGeneration = 0;
+	double LobbySearchTime = 0;
+	FEEOSNativeOperationLease MembershipLease;
+	FEEOSNativeOperationLease UpdateLease;
+	IOnlineSessionPtr OperationSessions;
+	IOnlineSessionPtr SearchSessions;
+	FEEOSRequestContext SearchContext;
+	IOnlineSessionPtr NotificationSessions;
+	FEEOSRequestContext MembershipContext;
+	FEEOSRequestContext LobbyContext;
+	FEEOSRequestContext UpdateContext;
+	FEEOSLobbyVisibilitySnapshot ConfirmedVisibility;
+	FString LastRemovedLobbyId;
+	FString LastRemovalReason;
+	bool bJoinTargetAuthorizedDetails = false;
+	bool CanDeliverLobbyNotification(FName SessionName, bool bAllowRemoval = false) const;
+	void UnbindLifetimeNotifications();
+	void RetireActiveLobbyUpdate(const FString& Reason);
 	bool bInLobby = false;
+	/** Lobby the engine has reported joining whose member list it is still resolving.
+	 *  FOnlineSessionEOS fires the join completion before it fills MemberSettings (member ids
+	 *  resolve asynchronously), so for this lobby alone a successful native join stands in for
+	 *  the member-list check. Cleared once MemberSettings lists the local user, or when the
+	 *  named lobby is gone or replaced. */
+	FString JoinedLobbyAwaitingMemberList;
+	/** Owner, listed member, or the lobby the engine just reported joining (see above). */
+	bool IsLocalLobbyMember(const FNamedOnlineSession* Session, const FUniqueNetIdPtr& Local) const;
 	TMap<FString, FString> CachedLobbyAttributes;
 	TSharedPtr<class FOnlineSessionSearch> LobbySearch;
 
@@ -251,15 +327,18 @@ private:
 	// delegate handle (a valid handle == operation in flight; new calls are rejected),
 	// and every handler filters on LOBBY_SESSION_NAME before clearing its handle or
 	// broadcasting. Find is the exception: its completion carries no session name, so it
-	// is correlated by the shared UEEOSSearchCoordinator — while we hold the search slot,
-	// ANY find-completion received while our find handle is bound is OUR terminal event.
+	// is serialized across plugin callers by UEEOSSearchCoordinator. An external native
+	// caller bypassing that coordinator cannot be attributed by a name-less completion.
 
 	FDelegateHandle CreateLobbyCompleteHandle;
 	FDelegateHandle FindLobbiesCompleteHandle;
 	FDelegateHandle JoinLobbyCompleteHandle;
 	FEEOSLobbyJoinRequest JoinRequest;
 	FEEOSLobbyExitRequest ExitRequest;
+	FString ExitSDKResult;
 	EOS_HPlatform ExitPlatform = nullptr;
+	TSharedPtr<IEOSPlatformHandle, ESPMode::ThreadSafe> ExitPlatformOwner;
+	TSharedPtr<struct FEEOSLateLobbyCleanup> ExitDrain;
 	uint64 ExitClosedNotificationId = 0;
 	int32 ExpectedNativeExitCompletions = 0;
 	int32 NativeExitCompletions = 0;
@@ -271,6 +350,7 @@ private:
 	bool bDeinitialized = false;
 	FTSTicker::FDelegateHandle LobbyOwnerTickerHandle;
 	FString LastLobbyJoinError;
+	int64 LastStallWarningRequest = 0;
 	bool bShuttingDown = false;
 	FDelegateHandle NetworkFailureHandle;
 	FDelegateHandle TravelFailureHandle;
@@ -313,10 +393,45 @@ private:
 
 	/** Which UpdateSession-driven operation is in flight — the engine's update completion
 	 *  carries only the session name, so a single in-flight update is correlated by kind. */
-	enum class EPendingLobbyUpdate : uint8 { None, LobbyAttribute, MemberAttribute, Joinability };
+	enum class EPendingLobbyUpdate : uint8 { None, LobbyAttribute, MemberAttribute, Joinability, Capacity };
 	EPendingLobbyUpdate PendingUpdateKind = EPendingLobbyUpdate::None;
 	FString PendingAttributeKey;
 	FString PendingAttributeValue;
+	FString PendingUpdateLobbyId;
+	uint64 PendingUpdateGeneration = 0;
+	int64 PendingUpdateRequestId = 0;
+	bool bUpdateSubmissionRejected = false;
+	TOptional<FOnlineSessionSetting> PreviousUpdateSetting;
+	bool bPreviousVisibility = false;
+	int32 PreviousPublicConnections = 0;
+	int32 PreviousPrivateConnections = 0;
+	bool bCreatedMemberEntry = false;
+	FUniqueNetIdPtr PendingUpdateMember;
+	IOnlineSessionPtr UpdateSessions;
+	struct FQueuedLobbyUpdate
+	{
+		int64 RequestId = 0;
+		FString LobbyId;
+		uint64 Generation = 0;
+		EPendingLobbyUpdate Kind = EPendingLobbyUpdate::None;
+		FString Key, Value;
+	};
+	TArray<FQueuedLobbyUpdate> QueuedUpdates;
+	TArray<int64> UpdateFollowers;
+	TMap<int64, FEEOSOperationOutcome> UpdateOutcomeHistory;
+	TMap<int64, FEEOSOperationOutcome> AcceptedUpdateMetadata;
+	TMap<int64, double> AcceptedUpdateStartSeconds;
+	TArray<int64> UpdateOutcomeOrder;
+	void PublishLobbyUpdateOutcome(const FEEOSOperationOutcome& Outcome);
+	bool AcquireLobbyMembership(FName Operation, const FString& TargetId = FString());
+	bool SubmitLobbyCreation();
+	void FinishLobbyCreation(bool bSuccess, EEOSOperationCode Code, const FString& Message, EEOSResultSource Source = EEOSResultSource::Plugin, const FString& NativeResult = FString());
+	bool StartLobbyUpdate(EPendingLobbyUpdate Kind, const FString& Key, const FString& Value, int64 RequestId = 0);
+	int64 EnqueueLobbyUpdate(EPendingLobbyUpdate Kind, const FString& Key, const FString& Value);
+	void PumpLobbyUpdates();
+	void CancelQueuedLobbyUpdates();
+	void RollbackStagedLobbyUpdate();
+	void EmitQueuedUpdateOutcome(const FQueuedLobbyUpdate& Request, EEOSOperationCode Code, const FString& Message);
 
 	/** Bare PUIDs kicked by our own EOS_Lobby_KickMember call. The SDK completion is the single
 	 *  OnLobbyMemberLeft source for those members; the engine's participant-left notification is
@@ -338,12 +453,12 @@ private:
 	void HandleFindSessionsComplete(bool bWasSuccessful);
 	bool IsMembershipOperationInFlight() const;
 	bool StartLobbyExit(const IOnlineSessionPtr& Sessions, bool bDeleteBackend, FEEOSLobbyExitRequest::EContinuation Continuation);
-	void HandleBackendLobbyDeleted(uint64 Token, const FString& LobbyId, bool bDeleted);
+	void HandleBackendLobbyDeleted(uint64 Token, const FString& LobbyId, bool bDeleted, const FString& SDKResult);
 	void FinishLobbyExit(bool bNativeSuccess);
 	void ObserveBackendLobbyClosed(const FString& LobbyId);
 	void RemoveExitCloseNotification();
 	void StartNativeLobbyCleanup(const IOnlineSessionPtr& Sessions);
-	void HandlePromotionComplete(uint64 Token, const FString& LobbyId, const FString& MemberId, bool bSuccess);
+	void HandlePromotionComplete(uint64 Token, uint64 Generation, const FString& LobbyId, const FString& MemberId, bool bSuccess);
 	bool TickLobbyOwner(float DeltaTime);
 	void RefreshLobbyOwner();
 	bool UpdateCachedLobbyOwner(const FString& OwnerId);
@@ -351,7 +466,10 @@ private:
 	void ReconcileRemoteLobbyExit(const FNamedOnlineSession* Session, bool bWasSuccessful);
 	bool BeginJoinLobby(const FOnlineSessionSearchResult& SearchResult);
 	bool StartJoiningLobby();
-	void FinishJoiningLobby(bool bSuccess, const FString& Error);
+	bool RefreshJoinTargetCapacity(const FString& ExistingLobbyId);
+	void HandleJoinCapacityPreflight(int64 RequestId, const FString& ExistingLobbyId, const FEEOSCapacitySnapshot& Capacity, const FString& SDKResult);
+	void FinishJoiningLobby(bool bSuccess, const FString& Error, EEOSOperationCode Code = EEOSOperationCode::NativeFailure,
+		const FString& NativeResult = FString(), EEOSResultSource Source = EEOSResultSource::Plugin, const FString& SDKResult = FString());
 	void RefreshLobbyState(const FNamedOnlineSession* Session);
 	void HandleNetworkFailure(UWorld* World, UNetDriver* NetDriver, ENetworkFailure::Type FailureType, const FString& Error);
 	void HandleTravelFailure(UWorld* World, ETravelFailure::Type FailureType, const FString& Error);

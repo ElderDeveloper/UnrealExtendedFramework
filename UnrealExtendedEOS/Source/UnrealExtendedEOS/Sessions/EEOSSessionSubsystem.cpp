@@ -1,15 +1,25 @@
 // Copyright Kemal Erdem YILMAZ. All Rights Reserved.
 
 #include "EEOSSessionSubsystem.h"
+#include "Shared/EEOSNativeOperation.h"
+#include "EEOSCapacity.h"
+#include "eos_sessions_types.h"
+#include "EEOSRetiredSessionOperation.h"
+#include "Interfaces/OnlineIdentityInterface.h"
+#include "Shared/EEOSBlueprintLibrary.h"
+#include "eos_lobby_types.h"
 #include "EEOSSearchCoordinator.h"
 #include "OnlineSubsystemUtils.h"
 #include "OnlineSessionSettings.h"
+#include "Online/OnlineSessionNames.h"
 #include "Shared/EEOSSettings.h"
 #include "UnrealExtendedEOS.h"
 #include "GameFramework/PlayerController.h"
 #include "Engine/GameInstance.h"
 #include "Engine/World.h"
+#include "Engine/NetDriver.h"
 #include "Kismet/GameplayStatics.h"
+#include "HAL/PlatformTime.h"
 
 /** Owner tag this subsystem uses with the shared UEEOSSearchCoordinator. */
 static const FName SessionsSearchOwner(TEXT("EEOSSessionSubsystem"));
@@ -17,6 +27,8 @@ static const FName SessionsSearchOwner(TEXT("EEOSSessionSubsystem"));
 void UEEOSSessionSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
 	Super::Initialize(Collection);
+	MembershipIdentityGeneration = CaptureEOSContext().Generation;
+	MembershipWatcher = FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateUObject(this, &UEEOSSessionSubsystem::TickMembership), 0.5f);
 
 	// Listen for session invite acceptance. The OSS may not be loaded yet (the Shared base
 	// documents that its lookup retries for exactly this reason) — if registration fails,
@@ -31,39 +43,30 @@ void UEEOSSessionSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 
 void UEEOSSessionSubsystem::Deinitialize()
 {
+	BeginEOSShutdown(); bShuttingDown = true;
+	if (MembershipWatcher.IsValid()) FTSTicker::GetCoreTicker().RemoveTicker(MembershipWatcher);
+	MembershipWatcher.Reset();
+	if (NotificationSessions.IsValid()) NotificationSessions->ClearOnSessionUserInviteAcceptedDelegate_Handle(SessionInviteAcceptedHandle);
+	NotificationSessions.Reset();
+	if (SessionLease.IsValid())
+	{
+		using Kind = FEEOSRetiredSessionOperation::EKind;
+		const Kind PendingKind = CreateSessionCompleteHandle.IsValid() ? Kind::Create : JoinSessionCompleteHandle.IsValid() ? Kind::Join
+			: StartSessionCompleteHandle.IsValid() ? Kind::Start : EndSessionCompleteHandle.IsValid() ? Kind::End : Kind::Destroy;
+		const FName Name = CreateSessionCompleteHandle.IsValid() || DestroyForCreateHandle.IsValid() ? PendingCreateSessionName
+			: JoinSessionCompleteHandle.IsValid() ? PendingJoinSessionName : StartSessionCompleteHandle.IsValid() ? PendingStartSessionName
+			: EndSessionCompleteHandle.IsValid() ? PendingEndSessionName : PendingDestroySessionName;
+		FEEOSRetiredSessionOperation::Hold(OperationSessions, SessionLease, GetOwningEOSInstanceName(), Name, PendingKind, true);
+	}
+	if (UEEOSSearchCoordinator* Coordinator = GetSearchCoordinator()) Coordinator->Retire(SessionsSearchOwner);
 	if (NotificationRetryTickerHandle.IsValid())
 	{
 		FTSTicker::GetCoreTicker().RemoveTicker(NotificationRetryTickerHandle);
 		NotificationRetryTickerHandle.Reset();
 	}
 
-	if (IOnlineSubsystem* EOSSub = GetEOSOnlineSubsystem())
-	{
-		IOnlineSessionPtr SessionInterface = EOSSub->GetSessionInterface();
-		if (SessionInterface.IsValid())
-		{
-			if (SessionInviteAcceptedHandle.IsValid())	SessionInterface->ClearOnSessionUserInviteAcceptedDelegate_Handle(SessionInviteAcceptedHandle);
-
-			// Clear any still-pending per-operation handles so late completions can't
-			// reach a dead subsystem.
-			if (CreateSessionCompleteHandle.IsValid())	SessionInterface->ClearOnCreateSessionCompleteDelegate_Handle(CreateSessionCompleteHandle);
-			if (DestroyForCreateHandle.IsValid())		SessionInterface->ClearOnDestroySessionCompleteDelegate_Handle(DestroyForCreateHandle);
-			if (FindSessionsCompleteHandle.IsValid())	SessionInterface->ClearOnFindSessionsCompleteDelegate_Handle(FindSessionsCompleteHandle);
-			if (JoinSessionCompleteHandle.IsValid())	SessionInterface->ClearOnJoinSessionCompleteDelegate_Handle(JoinSessionCompleteHandle);
-			if (DestroySessionCompleteHandle.IsValid())	SessionInterface->ClearOnDestroySessionCompleteDelegate_Handle(DestroySessionCompleteHandle);
-			if (StartSessionCompleteHandle.IsValid())	SessionInterface->ClearOnStartSessionCompleteDelegate_Handle(StartSessionCompleteHandle);
-			if (EndSessionCompleteHandle.IsValid())		SessionInterface->ClearOnEndSessionCompleteDelegate_Handle(EndSessionCompleteHandle);
-		}
-	}
 
 	SessionInviteAcceptedHandle.Reset();
-	CreateSessionCompleteHandle.Reset();
-	DestroyForCreateHandle.Reset();
-	FindSessionsCompleteHandle.Reset();
-	JoinSessionCompleteHandle.Reset();
-	DestroySessionCompleteHandle.Reset();
-	StartSessionCompleteHandle.Reset();
-	EndSessionCompleteHandle.Reset();
 
 	// If a search of ours was still in flight, free the cross-subsystem search slot.
 	ReleaseSearchSlot();
@@ -76,6 +79,24 @@ void UEEOSSessionSubsystem::Deinitialize()
 
 	CachedSearchResults.Empty();
 	SessionSearch.Reset();
+	if (OperationSessions.IsValid())
+	{
+		OperationSessions->ClearOnCreateSessionCompleteDelegate_Handle(CreateSessionCompleteHandle);
+		OperationSessions->ClearOnDestroySessionCompleteDelegate_Handle(DestroyForCreateHandle);
+		OperationSessions->ClearOnJoinSessionCompleteDelegate_Handle(JoinSessionCompleteHandle);
+		OperationSessions->ClearOnDestroySessionCompleteDelegate_Handle(DestroySessionCompleteHandle);
+		OperationSessions->ClearOnStartSessionCompleteDelegate_Handle(StartSessionCompleteHandle);
+		OperationSessions->ClearOnEndSessionCompleteDelegate_Handle(EndSessionCompleteHandle);
+	}
+	if (SearchSessions.IsValid()) SearchSessions->ClearOnFindSessionsCompleteDelegate_Handle(FindSessionsCompleteHandle);
+	CreateSessionCompleteHandle.Reset();
+	DestroyForCreateHandle.Reset();
+	FindSessionsCompleteHandle.Reset();
+	JoinSessionCompleteHandle.Reset();
+	DestroySessionCompleteHandle.Reset();
+	StartSessionCompleteHandle.Reset();
+	EndSessionCompleteHandle.Reset();
+	SessionLease.Reset(); OperationSessions.Reset(); SearchSessions.Reset(); AcceptedInvite = FOnlineSessionSearchResult(); AcceptedInviteDescriptor = FEEOSSessionInvite(); MembershipNames.Empty();
 	Super::Deinitialize();
 }
 
@@ -85,7 +106,10 @@ bool UEEOSSessionSubsystem::TryRegisterLifetimeNotifications()
 {
 	if (SessionInviteAcceptedHandle.IsValid())
 	{
-		return true;
+		IOnlineSubsystem* Existing = GetExistingEOSOnlineSubsystem();
+		if (Existing && Existing->GetSessionInterface() == NotificationSessions) return true;
+		if (NotificationSessions.IsValid()) NotificationSessions->ClearOnSessionUserInviteAcceptedDelegate_Handle(SessionInviteAcceptedHandle);
+		SessionInviteAcceptedHandle.Reset(); NotificationSessions.Reset();
 	}
 
 	if (IOnlineSubsystem* EOSSub = GetEOSOnlineSubsystem())
@@ -93,6 +117,7 @@ bool UEEOSSessionSubsystem::TryRegisterLifetimeNotifications()
 		IOnlineSessionPtr SessionInterface = EOSSub->GetSessionInterface();
 		if (SessionInterface.IsValid())
 		{
+			NotificationSessions = SessionInterface;
 			SessionInviteAcceptedHandle = SessionInterface->AddOnSessionUserInviteAcceptedDelegate_Handle(
 				FOnSessionUserInviteAcceptedDelegate::CreateUObject(this, &UEEOSSessionSubsystem::HandleSessionInviteAccepted));
 			UE_LOG(LogExtendedEOS, Verbose, TEXT("EEOSSessionSubsystem — Lifetime session notifications registered"));
@@ -111,7 +136,7 @@ bool UEEOSSessionSubsystem::TickRetryRegisterNotifications(float /*DeltaTime*/)
 	}
 	// EOS platform creation is permanently exhausted (invalid credentials/config) — every
 	// further retry would just re-boot the SDK into the same failure. Give up for this session.
-	if (IsEOSCreationExhausted())
+	if (IsOwningEOSCreationExhausted())
 	{
 		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSSessionSubsystem — EOS unavailable for this session; stopping notification registration retries."));
 		NotificationRetryTickerHandle.Reset();
@@ -143,7 +168,8 @@ bool UEEOSSessionSubsystem::TryAcquireSearchSlot()
 	UEEOSSearchCoordinator* Coordinator = GetSearchCoordinator();
 	// No coordinator only happens during GameInstance teardown — nothing else can be
 	// searching then, so proceed rather than deadlock.
-	return Coordinator ? Coordinator->TryAcquire(SessionsSearchOwner) : true;
+	IOnlineSubsystem* OSS = GetEOSOnlineSubsystem();
+	return Coordinator && OSS && Coordinator->TryAcquire(SessionsSearchOwner, OSS->GetSessionInterface(), this, TEXT("FindSessions"));
 }
 
 void UEEOSSessionSubsystem::ReleaseSearchSlot()
@@ -212,431 +238,183 @@ static FOnlineSessionSettings UEEOSSessionSubsystem_BuildNativeSettings(const FE
 
 bool UEEOSSessionSubsystem::CreateSession(int32 MaxPlayers, bool bIsLAN, bool bIsPresence, const FString& SessionName)
 {
-	// In-flight rejections come FIRST and never broadcast: the legitimate in-flight caller
-	// is waiting on the same delegate, and a failure broadcast here would be misreported as
-	// its completion.
-	if (CreateSessionCompleteHandle.IsValid() || DestroyForCreateHandle.IsValid())
-	{
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSSessionSubsystem::CreateSession — A create-session operation is already in flight ('%s'); rejecting '%s' (no delegate will fire)"), *PendingCreateSessionName.ToString(), *SessionName);
-		return false;
-	}
-	// Symmetric guard: a destroy in flight owns the named-session state a create would race
-	// (the engine silently skips overlapping ops and the chain can recreate the session).
-	if (DestroySessionCompleteHandle.IsValid())
-	{
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSSessionSubsystem::CreateSession — A destroy operation is in flight ('%s'); rejecting create of '%s' (no delegate will fire)"), *PendingDestroySessionName.ToString(), *SessionName);
-		return false;
-	}
-
-	if (!IsEOSAvailable())
-	{
-		LogEOSUnavailable(TEXT("CreateSession"));
-		OnSessionCreated.Broadcast(false, SessionName);
-		return false;
-	}
-
-	IOnlineSubsystem* EOSSub = GetEOSOnlineSubsystem();
-	IOnlineSessionPtr SessionInterface = EOSSub->GetSessionInterface();
-	if (!SessionInterface.IsValid())
-	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSSessionSubsystem::CreateSession — Session interface not available"));
-		OnSessionCreated.Broadcast(false, SessionName);
-		return false;
-	}
-
-	PendingCreateSessionName = FName(*SessionName);
-
-	// Project-level defaults. CreateSessionAdvanced deliberately does NOT consult these — it
-	// carries an explicit FEEOSSessionSettings, and an explicit value must beat a default.
-	const UEEOSSettings* EOSSettings = GetEOSSettings();
-	const bool bShouldAdvertise = EOSSettings ? EOSSettings->bPublicSessionsByDefault : true;
-
 	FOnlineSessionSettings Settings;
-	Settings.NumPublicConnections = MaxPlayers;
-	Settings.bIsLANMatch = bIsLAN;
-	Settings.bShouldAdvertise = bShouldAdvertise;
-	Settings.bUsesPresence = bIsPresence;
-	Settings.bAllowJoinInProgress = true;
-	Settings.bAllowJoinViaPresence = bIsPresence;
-	Settings.bUseLobbiesIfAvailable = UseLobbiesByDefault();
-	PendingCreateSettings = MoveTemp(Settings);
-
-	// Same existing-session handling as CreateSessionAdvanced: destroy first, then create
-	// inside HandleDestroyThenCreateComplete (handle-scoped and name-filtered so an unrelated
-	// destroy — e.g. the lobby's — can't trigger the create).
-	if (SessionInterface->GetNamedSession(PendingCreateSessionName) != nullptr)
-	{
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSSessionSubsystem::CreateSession — Session '%s' already exists, destroying first"), *SessionName);
-
-		DestroyForCreateHandle = SessionInterface->AddOnDestroySessionCompleteDelegate_Handle(
-			FOnDestroySessionCompleteDelegate::CreateUObject(this, &UEEOSSessionSubsystem::HandleDestroyThenCreateComplete));
-
-		SessionInterface->DestroySession(PendingCreateSessionName);
-		return true;
-	}
-
-	CreateSessionCompleteHandle = SessionInterface->AddOnCreateSessionCompleteDelegate_Handle(
-		FOnCreateSessionCompleteDelegate::CreateUObject(this, &UEEOSSessionSubsystem::HandleCreateSessionComplete));
-
-	SessionInterface->CreateSession(0, PendingCreateSessionName, PendingCreateSettings);
-	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSSessionSubsystem::CreateSession — Creating session '%s' with %d max players"), *SessionName, MaxPlayers);
-	return true;
+	Settings.NumPublicConnections = MaxPlayers; Settings.bIsLANMatch = bIsLAN;
+	Settings.bShouldAdvertise = !GetEOSSettings() || GetEOSSettings()->bPublicSessionsByDefault;
+	Settings.bUsesPresence = bIsPresence; Settings.bAllowJoinViaPresence = bIsPresence;
+	Settings.bAllowJoinInProgress = true; Settings.bUseLobbiesIfAvailable = !bIsLAN && UseLobbiesByDefault();
+	if (Settings.bUseLobbiesIfAvailable) Settings.Set(SETTING_HOST_MIGRATION, GetEOSSettings()->bAllowLobbyHostMigration, EOnlineDataAdvertisementType::DontAdvertise);
+	return BeginCreateSession(Settings, SessionName);
 }
 
 bool UEEOSSessionSubsystem::CreateSessionAdvanced(const FEEOSSessionSettings& Settings, const FString& SessionName)
 {
-	// See CreateSession: in-flight rejections never broadcast.
-	if (CreateSessionCompleteHandle.IsValid() || DestroyForCreateHandle.IsValid())
-	{
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSSessionSubsystem::CreateSessionAdvanced — A create-session operation is already in flight ('%s'); rejecting '%s' (no delegate will fire)"), *PendingCreateSessionName.ToString(), *SessionName);
-		return false;
-	}
-	if (DestroySessionCompleteHandle.IsValid())
-	{
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSSessionSubsystem::CreateSessionAdvanced — A destroy operation is in flight ('%s'); rejecting create of '%s' (no delegate will fire)"), *PendingDestroySessionName.ToString(), *SessionName);
-		return false;
-	}
-
-	if (!IsEOSAvailable())
-	{
-		LogEOSUnavailable(TEXT("CreateSessionAdvanced"));
-		OnSessionCreated.Broadcast(false, SessionName);
-		return false;
-	}
-
-	IOnlineSubsystem* EOSSub = GetEOSOnlineSubsystem();
-	IOnlineSessionPtr SessionInterface = EOSSub->GetSessionInterface();
-	if (!SessionInterface.IsValid())
-	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSSessionSubsystem::CreateSessionAdvanced — Session interface not available"));
-		OnSessionCreated.Broadcast(false, SessionName);
-		return false;
-	}
-
-	PendingCreateSessionName = FName(*SessionName);
-	PendingCreateSettings = UEEOSSessionSubsystem_BuildNativeSettings(Settings);
-
-	// Destroy existing session first if one exists, then create in the completion handler
-	auto ExistingSession = SessionInterface->GetNamedSession(PendingCreateSessionName);
-	if (ExistingSession != nullptr)
-	{
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSSessionSubsystem::CreateSessionAdvanced — Session '%s' already exists, destroying first"), *SessionName);
-
-		// Chain: destroy → create inside HandleDestroyThenCreateComplete. Handle-scoped and
-		// name-filtered so an unrelated destroy (e.g. the lobby's) can't trigger the create.
-		DestroyForCreateHandle = SessionInterface->AddOnDestroySessionCompleteDelegate_Handle(
-			FOnDestroySessionCompleteDelegate::CreateUObject(this, &UEEOSSessionSubsystem::HandleDestroyThenCreateComplete));
-
-		SessionInterface->DestroySession(PendingCreateSessionName);
-		return true;
-	}
-
-	CreateSessionCompleteHandle = SessionInterface->AddOnCreateSessionCompleteDelegate_Handle(
-		FOnCreateSessionCompleteDelegate::CreateUObject(this, &UEEOSSessionSubsystem::HandleCreateSessionComplete));
-
-	SessionInterface->CreateSession(0, PendingCreateSessionName, PendingCreateSettings);
-	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSSessionSubsystem::CreateSessionAdvanced — Creating advanced session '%s' with %d public + %d private slots"),
-		*SessionName, Settings.MaxPlayers, Settings.NumPrivateConnections);
-	return true;
+	FOnlineSessionSettings Native = UEEOSSessionSubsystem_BuildNativeSettings(Settings);
+	if (Native.bUseLobbiesIfAvailable) Native.Set(SETTING_HOST_MIGRATION,
+		Settings.bOverrideLobbyHostMigration ? Settings.bAllowLobbyHostMigration : GetEOSSettings()->bAllowLobbyHostMigration, EOnlineDataAdvertisementType::DontAdvertise);
+	return BeginCreateSession(Native, SessionName);
 }
 
 bool UEEOSSessionSubsystem::FindSessions(int32 MaxResults)
 {
-	// In-flight rejection: never broadcast (the legitimate search's waiters listen on the
-	// same OnSessionsFound and would consume an empty result as their completion).
-	if (FindSessionsCompleteHandle.IsValid())
-	{
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSSessionSubsystem::FindSessions — A session search is already in flight; rejecting new search (no delegate will fire)"));
-		return false;
-	}
-
-	if (!IsEOSAvailable())
-	{
-		LogEOSUnavailable(TEXT("FindSessions"));
-		OnSessionsFound.Broadcast(TArray<FEEOSSessionSearchResult>());
-		return false;
-	}
-
-	IOnlineSubsystem* EOSSub = GetEOSOnlineSubsystem();
-	IOnlineSessionPtr SessionInterface = EOSSub->GetSessionInterface();
-	if (!SessionInterface.IsValid())
-	{
-		OnSessionsFound.Broadcast(TArray<FEEOSSessionSearchResult>());
-		return false;
-	}
-
-	// The engine cannot run concurrent searches (see UEEOSSearchCoordinator) — a sibling
-	// subsystem's search in flight means ours must be rejected, with in-flight semantics
-	// (no broadcast).
-	if (!TryAcquireSearchSlot())
-	{
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSSessionSubsystem::FindSessions — Another session/lobby search is in flight; rejecting (no delegate will fire)"));
-		return false;
-	}
-
-	FindSessionsCompleteHandle = SessionInterface->AddOnFindSessionsCompleteDelegate_Handle(
-		FOnFindSessionsCompleteDelegate::CreateUObject(this, &UEEOSSessionSubsystem::HandleFindSessionsComplete));
-
-	SessionSearch = MakeShareable(new FOnlineSessionSearch());
-	SessionSearch->MaxSearchResults = MaxResults;
-	SessionSearch->bIsLanQuery = false;
-	// Deliberately NO query attributes here beyond the lobby-backend switch. The 5.8 EOS OSS
-	// forwards every QuerySettings key (outside a small skip-list) verbatim as an EOS attribute
-	// filter, so a key like the old "PRESENCESEARCH" — which no session ever advertises — made
-	// every plain search return 0 results. The engine adds its own bucket-id and
-	// NumPublicConnections >= 1 filters. LOBBYSEARCH is in the skip-list: it selects the lobby
-	// backend rather than becoming an attribute filter, and it must be set whenever
-	// bUseLobbiesByDefault made CreateSession produce lobby-backed sessions.
-	if (UseLobbiesByDefault())
-	{
-		SessionSearch->QuerySettings.Set(GEEOSLobbySearchKey, true, EOnlineComparisonOp::Equals);
-	}
-
-	// A synchronous false return means the engine fires NO delegate at all (unique to the
-	// find path) — clean up and fail here or the handle wedges forever. Broadcasting is safe:
-	// we hold the coordinator slot, so no sibling search is in flight.
-	if (!SessionInterface->FindSessions(0, SessionSearch.ToSharedRef()))
-	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSSessionSubsystem::FindSessions — FindSessions failed to start (synchronous failure; no delegate will fire from the engine)"));
-		SessionInterface->ClearOnFindSessionsCompleteDelegate_Handle(FindSessionsCompleteHandle);
-		FindSessionsCompleteHandle.Reset();
-		SessionSearch.Reset();
-		ReleaseSearchSlot();
-		CachedSearchResults.Empty();
-		OnSessionsFound.Broadcast(CachedSearchResults);
-		return false;
-	}
-
-	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSSessionSubsystem::FindSessions — Searching for sessions (max %d)..."), MaxResults);
-	return true;
+	return FindSessionsFiltered(MaxResults, TMap<FString, FString>());
 }
 
 bool UEEOSSessionSubsystem::FindSessionsFiltered(int32 MaxResults, const TMap<FString, FString>& SearchFilters)
 {
-	// See FindSessions: in-flight rejections never broadcast.
-	if (FindSessionsCompleteHandle.IsValid())
-	{
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSSessionSubsystem::FindSessionsFiltered — A session search is already in flight; rejecting new search (no delegate will fire)"));
-		return false;
-	}
+	return FindSessionsForBackend(EEOSSessionBackend::Unknown, MaxResults, SearchFilters);
+}
 
-	if (!IsEOSAvailable())
+bool UEEOSSessionSubsystem::FindSessionsForBackend(EEOSSessionBackend Backend, int32 MaxResults, const TMap<FString, FString>& SearchFilters)
+{
+	if (bShuttingDown || FindSessionsCompleteHandle.IsValid())
 	{
-		LogEOSUnavailable(TEXT("FindSessionsFiltered"));
-		OnSessionsFound.Broadcast(TArray<FEEOSSessionSearchResult>());
-		return false;
+		RejectOperation(TEXT("FindSessions"), EEOSOperationCode::Busy, TEXT("Session search is already pending or shutting down.")); return false;
 	}
-
-	IOnlineSubsystem* EOSSub = GetEOSOnlineSubsystem();
-	IOnlineSessionPtr SessionInterface = EOSSub->GetSessionInterface();
-	if (!SessionInterface.IsValid())
+	const auto Fail = [this](EEOSOperationCode Code, const FString& Message)
 	{
-		OnSessionsFound.Broadcast(TArray<FEEOSSessionSearchResult>());
-		return false;
-	}
-
+		CachedSearchResults.Empty(); SessionSearch.Reset();
+		const auto Outcome = CompleteOperation(TEXT("FindSessions"), false, Code, Message);
+		FEEOSOutcomeDispatchScope Dispatch(this, Outcome);
+		OnSessionsFound.Broadcast(CachedSearchResults); OnOperationCompleted.Broadcast(Outcome); return false;
+	};
+	if (MaxResults < 1 || MaxResults > EOS_LOBBY_MAX_SEARCH_RESULTS)
+		return Fail(EEOSOperationCode::InvalidInput, TEXT("Search limit is outside the SDK range."));
+	for (const auto& Filter : SearchFilters)
+		if (Filter.Key.IsEmpty() || FName(*Filter.Key) == FName(TEXT("LOBBYSEARCH")) || FName(*Filter.Key) == FName(TEXT("PRESENCESEARCH")) || FTCHARToUTF8(*Filter.Key).Length() > EOS_LOBBYMODIFICATION_MAX_ATTRIBUTE_LENGTH)
+			return Fail(EEOSOperationCode::InvalidInput, TEXT("Invalid search attribute name."));
+	IOnlineSubsystem* OSS = GetEOSOnlineSubsystem();
+	const auto Sessions = OSS ? OSS->GetSessionInterface() : IOnlineSessionPtr();
+	if (!Sessions.IsValid()) return Fail(EEOSOperationCode::UnsupportedCapability, TEXT("EOS session interface is unavailable."));
 	if (!TryAcquireSearchSlot())
 	{
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSSessionSubsystem::FindSessionsFiltered — Another session/lobby search is in flight; rejecting (no delegate will fire)"));
-		return false;
+		RejectOperation(TEXT("FindSessions"), EEOSOperationCode::Busy, TEXT("Another native search is pending.")); return false;
 	}
-
-	FindSessionsCompleteHandle = SessionInterface->AddOnFindSessionsCompleteDelegate_Handle(
+	SearchGeneration = BeginOperation(TEXT("FindSessions"), FString(), GetSearchCoordinator()->GetRequestId()); const int64 Token = SearchGeneration;
+	SearchSessions = Sessions; SearchContext = CaptureEOSContext(); SearchBackend = Backend == EEOSSessionBackend::Unknown
+		? (UseLobbiesByDefault() ? EEOSSessionBackend::Lobby : EEOSSessionBackend::Session) : Backend;
+	SessionSearch = MakeShared<FOnlineSessionSearch>(); SessionSearch->MaxSearchResults = MaxResults;
+	SessionSearch->bIsLanQuery = SearchBackend == EEOSSessionBackend::LAN;
+	if (SearchBackend == EEOSSessionBackend::Lobby) SessionSearch->QuerySettings.Set(FName(TEXT("LOBBYSEARCH")), true, EOnlineComparisonOp::Equals);
+	for (const auto& Filter : SearchFilters) SessionSearch->QuerySettings.Set(FName(*Filter.Key), Filter.Value, EOnlineComparisonOp::Equals);
+	FindSessionsCompleteHandle = Sessions->AddOnFindSessionsCompleteDelegate_Handle(
 		FOnFindSessionsCompleteDelegate::CreateUObject(this, &UEEOSSessionSubsystem::HandleFindSessionsComplete));
-
-	SessionSearch = MakeShareable(new FOnlineSessionSearch());
-	SessionSearch->MaxSearchResults = MaxResults;
-	SessionSearch->bIsLanQuery = false;
-
-	// See FindSessions: selects the lobby backend, must match what CreateSession produced.
-	// Set before the caller's filters so an explicit "LOBBYSEARCH" in the map still wins.
-	if (UseLobbiesByDefault())
+	const auto Submitted = SessionSearch.ToSharedRef();
+	const bool bStarted = Sessions->FindSessions(0, Submitted);
+	if (!bStarted && FindSessionsCompleteHandle.IsValid() && SearchGeneration == Token)
 	{
-		SessionSearch->QuerySettings.Set(GEEOSLobbySearchKey, true, EOnlineComparisonOp::Equals);
+		Sessions->ClearOnFindSessionsCompleteDelegate_Handle(FindSessionsCompleteHandle);
+		FindSessionsCompleteHandle.Reset(); SearchSessions.Reset(); ReleaseSearchSlot();
+		return Fail(EEOSOperationCode::NativeStartRejected, TEXT("Native search refused submission."));
 	}
-
-	// Apply custom search filters
-	for (const auto& Filter : SearchFilters)
-	{
-		SessionSearch->QuerySettings.Set(FName(*Filter.Key), Filter.Value, EOnlineComparisonOp::Equals);
-	}
-
-	// See FindSessions: a synchronous false fires no engine delegate.
-	if (!SessionInterface->FindSessions(0, SessionSearch.ToSharedRef()))
-	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSSessionSubsystem::FindSessionsFiltered — FindSessions failed to start (synchronous failure; no delegate will fire from the engine)"));
-		SessionInterface->ClearOnFindSessionsCompleteDelegate_Handle(FindSessionsCompleteHandle);
-		FindSessionsCompleteHandle.Reset();
-		SessionSearch.Reset();
-		ReleaseSearchSlot();
-		CachedSearchResults.Empty();
-		OnSessionsFound.Broadcast(CachedSearchResults);
-		return false;
-	}
-
-	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSSessionSubsystem::FindSessionsFiltered — Searching with %d filters (max %d results)..."), SearchFilters.Num(), MaxResults);
-	return true;
+	return bStarted;
 }
 
 bool UEEOSSessionSubsystem::JoinSession(int32 SearchResultIndex, const FString& SessionName)
 {
-	// In-flight rejection: never broadcast (would be misreported as the pending join's result).
-	if (JoinSessionCompleteHandle.IsValid())
+	if (bShuttingDown || SessionLease.IsValid())
 	{
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSSessionSubsystem::JoinSession — A join operation is already in flight ('%s'); rejecting '%s' (no delegate will fire)"), *PendingJoinSessionName.ToString(), *SessionName);
-		return false;
+		RejectOperation(TEXT("JoinSession"), EEOSOperationCode::Busy, TEXT("A named session operation is pending."), SessionName); return false;
 	}
-
-	if (!IsEOSAvailable())
-	{
-		LogEOSUnavailable(TEXT("JoinSession"));
-		OnSessionJoined.Broadcast(false, SessionName);
-		return false;
-	}
-
 	if (!SessionSearch.IsValid() || !SessionSearch->SearchResults.IsValidIndex(SearchResultIndex))
 	{
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSSessionSubsystem::JoinSession — Invalid search result index: %d"), SearchResultIndex);
-		OnSessionJoined.Broadcast(false, SessionName);
-		return false;
+		FinishSessionOperation(TEXT("JoinSession"), FName(*SessionName), false, EEOSOperationCode::InvalidTarget, TEXT("Invalid search result index.")); return false;
 	}
+	FOnlineSessionSearchResult Target = SessionSearch->SearchResults[SearchResultIndex];
+	Target.Session.SessionSettings.bUseLobbiesIfAvailable = SearchBackend == EEOSSessionBackend::Lobby;
+	if (SearchBackend == EEOSSessionBackend::Lobby) Target.Session.SessionSettings.bUsesPresence = true;
+	return BeginJoinSession(Target, SessionName);
+}
 
-	IOnlineSubsystem* EOSSub = GetEOSOnlineSubsystem();
-	IOnlineSessionPtr SessionInterface = EOSSub->GetSessionInterface();
-	if (!SessionInterface.IsValid())
+FEEOSSessionInvite UEEOSSessionSubsystem::GetAcceptedInvite() const
+{
+	auto Invite = AcceptedInviteDescriptor;
+	if (Invite.RequestId) Invite.Target.SnapshotAgeSeconds = (FDateTime::UtcNow() - Invite.ReceivedAtUtc).GetTotalSeconds();
+	return Invite;
+}
+
+bool UEEOSSessionSubsystem::JoinAcceptedInvite(const FString& SessionName)
+{
+	if (bShuttingDown || SessionLease.IsValid())
 	{
-		OnSessionJoined.Broadcast(false, SessionName);
-		return false;
+		RejectOperation(TEXT("JoinSession"), EEOSOperationCode::Busy, TEXT("A named session operation is pending."), SessionName); return false;
 	}
+	IOnlineSubsystem* OSS = GetExistingEOSOnlineSubsystem();
+	const auto Identity = OSS ? OSS->GetIdentityInterface() : IOnlineIdentityPtr();
+	const auto Local = Identity.IsValid() ? Identity->GetUniquePlayerId(0) : FUniqueNetIdPtr();
+	if (!AcceptedInviteDescriptor.bValid || !Local.IsValid() || !Local->IsValid()
+		|| Local->ToString() != AcceptedInviteDescriptor.RecipientId)
+	{
+		FinishSessionOperation(TEXT("JoinSession"), FName(*SessionName), false, EEOSOperationCode::StaleResult, TEXT("No valid invite for the current local identity is retained.")); return false;
+	}
+	return BeginJoinSession(AcceptedInvite, SessionName);
+}
 
-	PendingJoinSessionName = FName(*SessionName);
-	JoinSessionCompleteHandle = SessionInterface->AddOnJoinSessionCompleteDelegate_Handle(
-		FOnJoinSessionCompleteDelegate::CreateUObject(this, &UEEOSSessionSubsystem::HandleJoinSessionComplete));
-
-	// Engine-documented requirement (same class as the lobby join fix): bUsesPresence is
-	// false by default in search results and must be set game-side before JoinSession, or
-	// the joiner loses presence/invites. bUseLobbiesIfAvailable is forced to the configured
-	// backend rather than left as the search result reported it — the join must land on the
-	// same path CreateSession/FindSessions used (default false: game sessions are NOT lobbies
-	// and the join stays on the sessions path). Modify a local copy so the cached search
-	// results stay pristine.
-	FOnlineSessionSearchResult SearchResultCopy = SessionSearch->SearchResults[SearchResultIndex];
-	SearchResultCopy.Session.SessionSettings.bUsesPresence = true;
-	SearchResultCopy.Session.SessionSettings.bUseLobbiesIfAvailable = UseLobbiesByDefault();
-
-	SessionInterface->JoinSession(0, PendingJoinSessionName, SearchResultCopy);
-	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSSessionSubsystem::JoinSession — Joining session at index %d..."), SearchResultIndex);
-	return true;
+bool UEEOSSessionSubsystem::JoinSessionResult(const FOnlineSessionSearchResult& Result, const FString& SessionName)
+{
+	return BeginJoinSession(Result, SessionName);
 }
 
 bool UEEOSSessionSubsystem::DestroySession(const FString& SessionName)
 {
-	// In-flight rejections: never broadcast. This includes the create chain — the engine
-	// silently skips a destroy issued during a create, and the chain would then recreate
-	// the session the caller thought was gone.
-	if (DestroySessionCompleteHandle.IsValid())
+	const FName Name(*SessionName);
+	if (!AdmitSessionOperation(TEXT("DestroySession"), Name)) return false;
+	const auto Sessions = OperationSessions; const int64 Token = SessionLease.GetRequestId();
+	const auto* Native = Sessions->GetNamedSession(Name);
+	if (!Native || Native->SessionState == EOnlineSessionState::Creating || Native->SessionState == EOnlineSessionState::Destroying)
 	{
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSSessionSubsystem::DestroySession — A destroy operation is already in flight ('%s'); rejecting '%s' (no delegate will fire)"), *PendingDestroySessionName.ToString(), *SessionName);
-		return false;
+		FinishSessionOperation(TEXT("DestroySession"), Name, false, EEOSOperationCode::InvalidTarget, TEXT("Named session is absent or transitioning.")); return false;
 	}
-	if (CreateSessionCompleteHandle.IsValid() || DestroyForCreateHandle.IsValid())
-	{
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSSessionSubsystem::DestroySession — A create-session operation is in flight ('%s'); rejecting destroy of '%s' (no delegate will fire)"), *PendingCreateSessionName.ToString(), *SessionName);
-		return false;
-	}
-
-	if (!IsEOSAvailable())
-	{
-		LogEOSUnavailable(TEXT("DestroySession"));
-		OnSessionDestroyed.Broadcast(false, SessionName);
-		return false;
-	}
-
-	IOnlineSubsystem* EOSSub = GetEOSOnlineSubsystem();
-	IOnlineSessionPtr SessionInterface = EOSSub->GetSessionInterface();
-	if (!SessionInterface.IsValid())
-	{
-		OnSessionDestroyed.Broadcast(false, SessionName);
-		return false;
-	}
-
-	PendingDestroySessionName = FName(*SessionName);
-	DestroySessionCompleteHandle = SessionInterface->AddOnDestroySessionCompleteDelegate_Handle(
+	PendingDestroySessionName = Name;
+	DestroySessionCompleteHandle = Sessions->AddOnDestroySessionCompleteDelegate_Handle(
 		FOnDestroySessionCompleteDelegate::CreateUObject(this, &UEEOSSessionSubsystem::HandleDestroySessionComplete));
-
-	SessionInterface->DestroySession(PendingDestroySessionName);
-	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSSessionSubsystem::DestroySession — Destroying session '%s'..."), *SessionName);
-	return true;
+	const bool bStarted = Sessions->DestroySession(Name);
+	if (!bStarted && SessionLease.GetRequestId() == Token)
+		FinishSessionOperation(TEXT("DestroySession"), Name, false, EEOSOperationCode::NativeStartRejected, TEXT("Native destroy refused submission."));
+	return bStarted;
 }
 
 bool UEEOSSessionSubsystem::StartSession(const FString& SessionName)
 {
-	// In-flight rejection: never broadcast.
-	if (StartSessionCompleteHandle.IsValid())
+	const FName Name(*SessionName);
+	if (!AdmitSessionOperation(TEXT("StartSession"), Name)) return false;
+	const auto Sessions = OperationSessions; const int64 Token = SessionLease.GetRequestId();
+	const auto* Native = Sessions->GetNamedSession(Name);
+	if (!Native || Native->SessionState == EOnlineSessionState::Creating || Native->SessionState == EOnlineSessionState::Destroying)
 	{
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSSessionSubsystem::StartSession — A start operation is already in flight ('%s'); rejecting '%s' (no delegate will fire)"), *PendingStartSessionName.ToString(), *SessionName);
-		return false;
+		FinishSessionOperation(TEXT("StartSession"), Name, false, EEOSOperationCode::InvalidTarget, TEXT("Named session is absent or transitioning.")); return false;
 	}
-
-	if (!IsEOSAvailable())
-	{
-		LogEOSUnavailable(TEXT("StartSession"));
-		OnSessionStarted.Broadcast(false);
-		return false;
-	}
-
-	IOnlineSubsystem* EOSSub = GetEOSOnlineSubsystem();
-	IOnlineSessionPtr SessionInterface = EOSSub->GetSessionInterface();
-	if (!SessionInterface.IsValid())
-	{
-		OnSessionStarted.Broadcast(false);
-		return false;
-	}
-
-	PendingStartSessionName = FName(*SessionName);
-	StartSessionCompleteHandle = SessionInterface->AddOnStartSessionCompleteDelegate_Handle(
+	PendingStartSessionName = Name;
+	StartSessionCompleteHandle = Sessions->AddOnStartSessionCompleteDelegate_Handle(
 		FOnStartSessionCompleteDelegate::CreateUObject(this, &UEEOSSessionSubsystem::HandleStartSessionComplete));
-
-	SessionInterface->StartSession(PendingStartSessionName);
-	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSSessionSubsystem::StartSession — Starting session '%s'..."), *SessionName);
-	return true;
+	const bool bStarted = Sessions->StartSession(Name);
+	if (!bStarted && SessionLease.GetRequestId() == Token)
+		FinishSessionOperation(TEXT("StartSession"), Name, false, EEOSOperationCode::NativeStartRejected, TEXT("Native start refused submission."));
+	return bStarted;
 }
 
 bool UEEOSSessionSubsystem::EndSession(const FString& SessionName)
 {
-	// In-flight rejection: never broadcast.
-	if (EndSessionCompleteHandle.IsValid())
+	const FName Name(*SessionName);
+	if (!AdmitSessionOperation(TEXT("EndSession"), Name)) return false;
+	const auto Sessions = OperationSessions; const int64 Token = SessionLease.GetRequestId();
+	const auto* Native = Sessions->GetNamedSession(Name);
+	if (!Native || Native->SessionState == EOnlineSessionState::Creating || Native->SessionState == EOnlineSessionState::Destroying)
 	{
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSSessionSubsystem::EndSession — An end operation is already in flight ('%s'); rejecting '%s' (no delegate will fire)"), *PendingEndSessionName.ToString(), *SessionName);
-		return false;
+		FinishSessionOperation(TEXT("EndSession"), Name, false, EEOSOperationCode::InvalidTarget, TEXT("Named session is absent or transitioning.")); return false;
 	}
-
-	if (!IsEOSAvailable())
-	{
-		LogEOSUnavailable(TEXT("EndSession"));
-		OnSessionEnded.Broadcast(false, SessionName);
-		return false;
-	}
-
-	IOnlineSubsystem* EOSSub = GetEOSOnlineSubsystem();
-	IOnlineSessionPtr SessionInterface = EOSSub->GetSessionInterface();
-	if (!SessionInterface.IsValid())
-	{
-		OnSessionEnded.Broadcast(false, SessionName);
-		return false;
-	}
-
-	PendingEndSessionName = FName(*SessionName);
-	EndSessionCompleteHandle = SessionInterface->AddOnEndSessionCompleteDelegate_Handle(
+	PendingEndSessionName = Name;
+	EndSessionCompleteHandle = Sessions->AddOnEndSessionCompleteDelegate_Handle(
 		FOnEndSessionCompleteDelegate::CreateUObject(this, &UEEOSSessionSubsystem::HandleEndSessionComplete));
-
-	SessionInterface->EndSession(PendingEndSessionName);
-	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSSessionSubsystem::EndSession — Ending session '%s'"), *SessionName);
-	return true;
+	const bool bStarted = Sessions->EndSession(Name);
+	if (!bStarted && SessionLease.GetRequestId() == Token)
+		FinishSessionOperation(TEXT("EndSession"), Name, false, EEOSOperationCode::NativeStartRejected, TEXT("Native end refused submission."));
+	return bStarted;
 }
 
 bool UEEOSSessionSubsystem::RegisterPlayer(const FString& SessionName, const FString& PlayerId, bool bWasInvited)
 {
+	if (bShuttingDown || FName(*SessionName) == FName(TEXT("EOS_Lobby")) || SessionLease.IsValid()) return false;
 	if (!IsEOSAvailable())
 	{
 		LogEOSUnavailable(TEXT("RegisterPlayer"));
@@ -651,19 +429,20 @@ bool UEEOSSessionSubsystem::RegisterPlayer(const FString& SessionName, const FSt
 	if (!IdentityInterface.IsValid()) return false;
 
 	FUniqueNetIdPtr UniqueId = IdentityInterface->CreateUniquePlayerId(PlayerId);
-	if (!UniqueId.IsValid())
+	if (!UniqueId.IsValid() || !UniqueId->IsValid())
 	{
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSSessionSubsystem::RegisterPlayer — Could not parse player id '%s'"), *PlayerId);
+		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSSessionSubsystem::RegisterPlayer — Could not parse player id '%s'"), *FEEOSNativeOperationLease::SafeField(PlayerId));
 		return false;
 	}
 
-	SessionInterface->RegisterPlayer(FName(*SessionName), *UniqueId, bWasInvited);
-	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSSessionSubsystem::RegisterPlayer — Registered '%s' in session '%s'"), *PlayerId, *SessionName);
-	return true;
+	const bool bSubmitted = SessionInterface->RegisterPlayer(FName(*SessionName), *UniqueId, bWasInvited);
+	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSSessionSubsystem::RegisterPlayer — Player=%s Session=%s Submitted=%d"), *FEEOSNativeOperationLease::SafeField(PlayerId), *FEEOSNativeOperationLease::SafeField(SessionName), bSubmitted);
+	return bSubmitted;
 }
 
 bool UEEOSSessionSubsystem::UnRegisterPlayer(const FString& SessionName, const FString& PlayerId)
 {
+	if (bShuttingDown || FName(*SessionName) == FName(TEXT("EOS_Lobby")) || SessionLease.IsValid()) return false;
 	if (!IsEOSAvailable())
 	{
 		LogEOSUnavailable(TEXT("UnRegisterPlayer"));
@@ -678,49 +457,39 @@ bool UEEOSSessionSubsystem::UnRegisterPlayer(const FString& SessionName, const F
 	if (!IdentityInterface.IsValid()) return false;
 
 	FUniqueNetIdPtr UniqueId = IdentityInterface->CreateUniquePlayerId(PlayerId);
-	if (!UniqueId.IsValid())
+	if (!UniqueId.IsValid() || !UniqueId->IsValid())
 	{
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSSessionSubsystem::UnRegisterPlayer — Could not parse player id '%s'"), *PlayerId);
+		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSSessionSubsystem::UnRegisterPlayer — Could not parse player id '%s'"), *FEEOSNativeOperationLease::SafeField(PlayerId));
 		return false;
 	}
 
-	SessionInterface->UnregisterPlayer(FName(*SessionName), *UniqueId);
-	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSSessionSubsystem::UnRegisterPlayer — Unregistered '%s' from session '%s'"), *PlayerId, *SessionName);
-	return true;
+	const bool bSubmitted = SessionInterface->UnregisterPlayer(FName(*SessionName), *UniqueId);
+	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSSessionSubsystem::UnRegisterPlayer — Player=%s Session=%s Submitted=%d"), *FEEOSNativeOperationLease::SafeField(PlayerId), *FEEOSNativeOperationLease::SafeField(SessionName), bSubmitted);
+	return bSubmitted;
 }
 
 bool UEEOSSessionSubsystem::ServerTravel(const UObject* WorldContextObject, const FString& MapPath)
 {
-	if (!WorldContextObject)
-	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSSessionSubsystem::ServerTravel — Invalid world context"));
-		return false;
-	}
-
-	UWorld* World = WorldContextObject->GetWorld();
-	if (!World)
-	{
-		return false;
-	}
-
-	const FString TravelURL = MapPath + TEXT("?listen");
-	World->ServerTravel(TravelURL);
-	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSSessionSubsystem::ServerTravel — Travelling to '%s'"), *TravelURL);
-	return true;
+	UWorld* World = WorldContextObject ? WorldContextObject->GetWorld() : nullptr;
+	if (bShuttingDown || !World || World->GetGameInstance() != GetGameInstance() || World->GetNetMode() == NM_Client || MapPath.IsEmpty()) return false;
+	const FString URL = MapPath.Contains(TEXT("?listen")) ? MapPath : MapPath + TEXT("?listen");
+	const bool bStarted = World->ServerTravel(URL);
+	UE_LOG(LogExtendedEOS, Log, TEXT("EOSSessionTravel Phase=ServerTravelRequested Accepted=%d"), bStarted);
+	return bStarted;
 }
 
 bool UEEOSSessionSubsystem::ClientTravel(const UObject* WorldContextObject, const FString& SessionName)
 {
-	if (!WorldContextObject)
+	if (bShuttingDown || !WorldContextObject || !WorldContextObject->GetWorld() || WorldContextObject->GetWorld()->GetGameInstance() != GetGameInstance())
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSSessionSubsystem::ClientTravel — Invalid world context"));
+		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSSessionSubsystem::ClientTravel — Invalid world context"));
 		return false;
 	}
 
 	FString ConnectionInfo = GetResolvedConnectString(SessionName);
 	if (ConnectionInfo.IsEmpty())
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSSessionSubsystem::ClientTravel — Could not resolve connection string for session '%s'"), *SessionName);
+		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSSessionSubsystem::ClientTravel — Could not resolve connection string for session '%s'"), *FEEOSNativeOperationLease::SafeField(SessionName));
 		return false;
 	}
 
@@ -731,7 +500,13 @@ bool UEEOSSessionSubsystem::ClientTravel(const UObject* WorldContextObject, cons
 	}
 
 	PC->ClientTravel(ConnectionInfo, TRAVEL_Absolute);
-	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSSessionSubsystem::ClientTravel — Travelling to '%s'"), *ConnectionInfo);
+	IOnlineSubsystem* OSS = GetExistingEOSOnlineSubsystem();
+		const auto Sessions = OSS ? OSS->GetSessionInterface() : IOnlineSessionPtr();
+		const auto* Native = Sessions.IsValid() ? Sessions->GetNamedSession(FName(*SessionName)) : nullptr;
+		const auto Joined = GetLastOperationOutcome(TEXT("JoinSession"));
+		UE_LOG(LogExtendedEOS, Log, TEXT("EOSSessionTravel ParentRequest=%lld Name=%s Backend=%s Driver=%s Destination=ResolvedNativeSession ClientTravelSubmitted=1 GameplayConnectionObserved=0"),
+			Joined.RequestId, *FEEOSNativeOperationLease::SafeField(SessionName), Native ? Native->SessionSettings.bUseLobbiesIfAvailable ? TEXT("Lobby") : Native->SessionSettings.bIsLANMatch ? TEXT("LAN") : TEXT("Session") : TEXT("Unknown"),
+			*GetNameSafe(WorldContextObject->GetWorld()->GetNetDriver()));
 	return true;
 }
 
@@ -750,12 +525,27 @@ FString UEEOSSessionSubsystem::GetResolvedConnectString(const FString& SessionNa
 
 TArray<FEEOSSessionSearchResult> UEEOSSessionSubsystem::GetSearchResults() const
 {
-	return CachedSearchResults;
+	auto Results = CachedSearchResults;
+	for (auto& Result : Results) Result.SnapshotAgeSeconds = SearchCompletedAtSeconds > 0 ? FPlatformTime::Seconds() - SearchCompletedAtSeconds : -1;
+	for (auto& Result : Results) Result.Capacity.SnapshotAgeSeconds = Result.SnapshotAgeSeconds;
+	return Results;
 }
 
 bool UEEOSSessionSubsystem::IsInSession() const
 {
-	return bInSession;
+	for (FName Name : MembershipNames) if (IsInNamedSession(Name.ToString())) return true;
+	return false;
+}
+
+bool UEEOSSessionSubsystem::IsInNamedSession(const FString& SessionName) const
+{
+	IOnlineSubsystem* OSS = GetExistingEOSOnlineSubsystem();
+	const auto Sessions = OSS ? OSS->GetSessionInterface() : IOnlineSessionPtr();
+	const auto* Native = Sessions.IsValid() ? Sessions->GetNamedSession(FName(*SessionName)) : nullptr;
+	if (!GetEOSReadiness().bNativeLoggedIn && !(Native && Native->SessionSettings.bIsLANMatch)) return false;
+	return Native && Native->SessionInfo.IsValid() && Native->SessionInfo->IsValid()
+		&& Native->SessionState != EOnlineSessionState::NoSession && Native->SessionState != EOnlineSessionState::Creating
+		&& Native->SessionState != EOnlineSessionState::Destroying;
 }
 
 EEOSSessionState UEEOSSessionSubsystem::GetSessionState(const FString& SessionName) const
@@ -799,216 +589,333 @@ FString UEEOSSessionSubsystem::GenerateSessionCode(int32 CodeLength)
 
 void UEEOSSessionSubsystem::HandleCreateSessionComplete(FName InSessionName, bool bWasSuccessful)
 {
-	// Interface-wide delegate: ignore completions that belong to another operation/subsystem
-	// (e.g. the lobby's create) — without clearing our handle or broadcasting.
-	if (InSessionName != PendingCreateSessionName)
-	{
-		return;
-	}
-
-	if (IOnlineSubsystem* EOSSub = GetEOSOnlineSubsystem())
-	{
-		IOnlineSessionPtr SessionInterface = EOSSub->GetSessionInterface();
-		if (SessionInterface.IsValid())
-		{
-			SessionInterface->ClearOnCreateSessionCompleteDelegate_Handle(CreateSessionCompleteHandle);
-		}
-	}
-	CreateSessionCompleteHandle.Reset();
-	PendingCreateSessionName = NAME_None;
-
-	bInSession = bWasSuccessful;
-	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSSessionSubsystem: Create session '%s' %s"), *InSessionName.ToString(), bWasSuccessful ? TEXT("succeeded") : TEXT("failed"));
-	OnSessionCreated.Broadcast(bWasSuccessful, InSessionName.ToString());
+	if (!CreateSessionCompleteHandle.IsValid() || InSessionName != PendingCreateSessionName)
+	{ LogCallbackDisposition(TEXT("HandleCreateSessionComplete"), SessionLease.GetRequestId(), InSessionName != PendingCreateSessionName ? TEXT("DifferentOwner") : TEXT("Duplicate"), SessionOperationContext.Generation); return; }
+	LogCallbackDisposition(TEXT("HandleCreateSessionComplete"), SessionLease.GetRequestId(), bShuttingDown ? TEXT("ShutdownInternalOnly") : IsEOSContextCurrent(SessionOperationContext) ? TEXT("Consumed") : TEXT("StaleGeneration"), SessionOperationContext.Generation);
+	FinishSessionOperation(TEXT("CreateSession"), InSessionName, bWasSuccessful,
+		bWasSuccessful ? EEOSOperationCode::Succeeded : EEOSOperationCode::NativeFailure,
+		bWasSuccessful ? TEXT("Session create completed.") : TEXT("Native session create failed."),
+		bWasSuccessful ? TEXT("Success") : TEXT("Failure"), EEOSResultSource::NativeCallback);
 }
 
 void UEEOSSessionSubsystem::HandleDestroyThenCreateComplete(FName InSessionName, bool bWasSuccessful)
 {
-	// One-shot continuation of the destroy-then-create chain shared by CreateSession and
-	// CreateSessionAdvanced (both stage their settings in PendingCreateSettings).
-	// Ignore destroys of other sessions (e.g. the lobby's) without clearing or broadcasting.
-	if (InSessionName != PendingCreateSessionName)
-	{
-		return;
-	}
-
-	IOnlineSessionPtr SessionInterface;
-	if (IOnlineSubsystem* EOSSub = GetEOSOnlineSubsystem())
-	{
-		SessionInterface = EOSSub->GetSessionInterface();
-	}
-	if (SessionInterface.IsValid())
-	{
-		SessionInterface->ClearOnDestroySessionCompleteDelegate_Handle(DestroyForCreateHandle);
-	}
+	if (!DestroyForCreateHandle.IsValid() || InSessionName != PendingCreateSessionName)
+	{ LogCallbackDisposition(TEXT("HandleDestroyThenCreateComplete"), SessionLease.GetRequestId(), InSessionName != PendingCreateSessionName ? TEXT("DifferentOwner") : TEXT("Duplicate"), SessionOperationContext.Generation); return; }
+	LogCallbackDisposition(TEXT("HandleDestroyThenCreateComplete"), SessionLease.GetRequestId(), bShuttingDown ? TEXT("ShutdownInternalOnly") : IsEOSContextCurrent(SessionOperationContext) ? TEXT("Consumed") : TEXT("StaleGeneration"), SessionOperationContext.Generation);
+	const auto Sessions = OperationSessions;
+	if (Sessions.IsValid()) Sessions->ClearOnDestroySessionCompleteDelegate_Handle(DestroyForCreateHandle);
 	DestroyForCreateHandle.Reset();
-
-	if (!bWasSuccessful || !SessionInterface.IsValid())
+	if (bShuttingDown || !IsEOSContextCurrent(SessionOperationContext) || !bWasSuccessful || !Sessions.IsValid() || Sessions->GetNamedSession(InSessionName))
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSSessionSubsystem: Create-session chain — Failed to destroy existing session '%s'"), *InSessionName.ToString());
-		PendingCreateSessionName = NAME_None;
-		OnSessionCreated.Broadcast(false, InSessionName.ToString());
-		return;
+		FinishSessionOperation(TEXT("CreateSession"), InSessionName, false, EEOSOperationCode::ExistingLobbyCloseFailed,
+			TEXT("Existing session close failed or has not drained; creation was not started.")); return;
 	}
-
-	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSSessionSubsystem: Create-session chain — Old session destroyed, now creating '%s'"), *InSessionName.ToString());
-	CreateSessionCompleteHandle = SessionInterface->AddOnCreateSessionCompleteDelegate_Handle(
-		FOnCreateSessionCompleteDelegate::CreateUObject(this, &UEEOSSessionSubsystem::HandleCreateSessionComplete));
-	SessionInterface->CreateSession(0, PendingCreateSessionName, PendingCreateSettings);
+	SubmitSessionCreation();
 }
 
 void UEEOSSessionSubsystem::HandleFindSessionsComplete(bool bWasSuccessful)
 {
-	// This handler is only bound while OUR search is in flight, and the search coordinator
-	// guarantees no sibling subsystem (Lobby/Matchmaking) search overlaps ours — so ANY
-	// trigger here is OUR search's terminal event. Do NOT gate on the search object's
-	// SearchState: the engine's zero-result path fires this delegate without ever setting
-	// it (OnlineSessionEOS.cpp:2675-2679) — an "InProgress means not ours" check would
-	// ignore our own completion and wedge the handle (and the search slot) forever.
-	if (IOnlineSubsystem* EOSSub = GetEOSOnlineSubsystem())
-	{
-		IOnlineSessionPtr SessionInterface = EOSSub->GetSessionInterface();
-		if (SessionInterface.IsValid())
-		{
-			SessionInterface->ClearOnFindSessionsCompleteDelegate_Handle(FindSessionsCompleteHandle);
-		}
-	}
+	if (!FindSessionsCompleteHandle.IsValid()) { LogCallbackDisposition(TEXT("FindSessions"), SearchGeneration, TEXT("Duplicate"), SearchContext.Generation); return; }
+	LogCallbackDisposition(TEXT("FindSessions"), SearchGeneration, bShuttingDown ? TEXT("ShutdownInternalOnly") : IsEOSContextCurrent(SearchContext) ? TEXT("Consumed") : TEXT("StaleGeneration"), SearchContext.Generation);
+	if (SearchSessions.IsValid()) SearchSessions->ClearOnFindSessionsCompleteDelegate_Handle(FindSessionsCompleteHandle);
+	SearchSessions.Reset();
 	FindSessionsCompleteHandle.Reset();
 	ReleaseSearchSlot();
 
 	CachedSearchResults.Empty();
+	SearchCompletedAtSeconds = FPlatformTime::Seconds();
 
 	// Read results from OUR search object; the trigger's payload carries success. Empty
 	// results with bWasSuccessful == true is a legitimate successful (empty) search.
+	const bool bNativeSuccess = bWasSuccessful;
+	const bool bContextCurrent = IsEOSContextCurrent(SearchContext);
+	bWasSuccessful = bWasSuccessful && bContextCurrent;
+	const int32 NativeSeen = SessionSearch.IsValid() ? SessionSearch->SearchResults.Num() : 0;
+	int32 InvalidTarget = 0, InvalidDetails = 0, OwnerUnknown = 0;
+	if (SessionSearch.IsValid())
+		SessionSearch->SearchResults.RemoveAll([&](const FOnlineSessionSearchResult& Native)
+		{
+			if (!Native.IsValid()) { ++InvalidTarget; return true; }
+			if (!Native.Session.SessionInfo.IsValid() || !Native.Session.SessionInfo->IsValid()) { ++InvalidDetails; return true; }
+			if (!Native.Session.OwningUserId.IsValid() || !Native.Session.OwningUserId->IsValid()) ++OwnerUnknown;
+			return false;
+		});
 	if (bWasSuccessful && SessionSearch.IsValid())
 	{
 		for (const auto& SearchResult : SessionSearch->SearchResults)
 		{
-			FEEOSSessionSearchResult Result;
-			Result.SessionId = SearchResult.GetSessionIdStr();
-			Result.OwnerName = SearchResult.Session.OwningUserName;
-
-			// 5.8 OnlineSessionEOS::AddSearchResult puts the open-slot count in
-			// Session.NumOpenPrivateConnections and never writes NumOpenPublicConnections
-			// (it stays 0), while SessionSettings.NumPublicConnections is restored from the
-			// advertised "NumPublicConnections" attribute in CopyAttributes.
-			const int32 MaxPlayers = SearchResult.Session.SessionSettings.NumPublicConnections;
-			Result.MaxPlayers = MaxPlayers;
-			Result.CurrentPlayers = FMath::Clamp(MaxPlayers - SearchResult.Session.NumOpenPrivateConnections, 0, MaxPlayers);
-
-			Result.Ping = SearchResult.PingInMs;
-			Result.bIsDedicatedServer = SearchResult.Session.SessionSettings.bIsDedicated;
-
-			// Surface the advertised custom attributes (e.g. "REGION") as strings. Engine-known
-			// keys (NumPublicConnections, bIsDedicated, ...) are folded into typed fields by
-			// CopyAttributes and never appear in this map.
-			for (const auto& SettingPair : SearchResult.Session.SessionSettings.Settings)
-			{
-				Result.Settings.Add(SettingPair.Key, SettingPair.Value.Data.ToString());
-			}
+			FEEOSSessionSearchResult Result = EEOSCapacity::Describe(SearchResult, SearchBackend, SearchGeneration);
+			UE_LOG(LogExtendedEOS, Verbose, TEXT("EOSSessionSearch Request=%lld Target=%s Backend=%d OwnerKnown=%d CapacityKnown=%d Max=%d Members=%d Slots=%d OpenPublic=%d OpenPrivate=%d Source=%s Advertise=%d Invites=%d PresenceJoin=%d JoinInProgress=%d"),
+				SearchGeneration, *FEEOSNativeOperationLease::SafeField(Result.SessionId), int32(SearchBackend), Result.bOwnerKnown, Result.Capacity.bKnown, Result.MaxPlayers, Result.CurrentPlayers,
+				Result.Capacity.AvailableSlots, Result.Capacity.RawOpenPublic, Result.Capacity.RawOpenPrivate, *FEEOSNativeOperationLease::SafeField(Result.Capacity.Source),
+				Result.bShouldAdvertise, Result.bAllowInvites, Result.bAllowJoinViaPresence, Result.bAllowJoinInProgress);
 
 			CachedSearchResults.Add(Result);
 		}
 	}
 
+	UE_LOG(LogExtendedEOS, Log, TEXT("EOSSessionSearch Request=%lld NativeSeen=%d ValidEmitted=%d DroppedInvalidTarget=%d DroppedInvalidDetails=%d OwnerUnknownObserved=%d HiddenNativeResultsKnown=0 ContextCurrent=%d"), SearchGeneration, NativeSeen, CachedSearchResults.Num(), InvalidTarget, InvalidDetails, OwnerUnknown, bContextCurrent);
 	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSSessionSubsystem: Found %d sessions (search %s)"), CachedSearchResults.Num(), bWasSuccessful ? TEXT("succeeded") : TEXT("failed"));
-	OnSessionsFound.Broadcast(CachedSearchResults);
+	const auto Outcome = CompleteOperation(TEXT("FindSessions"), bWasSuccessful, !bContextCurrent ? EEOSOperationCode::Canceled : bWasSuccessful ? EEOSOperationCode::Succeeded : EEOSOperationCode::NativeFailure,
+		!bContextCurrent ? TEXT("Session search context retired before completion.") : bWasSuccessful ? TEXT("Session search succeeded.") : TEXT("Native session search failed."), FString(), bNativeSuccess ? TEXT("Success") : TEXT("Failure"), EEOSResultSource::NativeCallback);
+	FEEOSOutcomeDispatchScope Dispatch(this, Outcome);
+	const auto Results = CachedSearchResults;
+	if (!bShuttingDown) { OnSessionsFound.Broadcast(Results); OnOperationCompleted.Broadcast(Outcome); }
 }
 
 void UEEOSSessionSubsystem::HandleJoinSessionComplete(FName InSessionName, EOnJoinSessionCompleteResult::Type Result)
 {
-	if (InSessionName != PendingJoinSessionName)
-	{
-		return;
-	}
-
-	if (IOnlineSubsystem* EOSSub = GetEOSOnlineSubsystem())
-	{
-		IOnlineSessionPtr SessionInterface = EOSSub->GetSessionInterface();
-		if (SessionInterface.IsValid())
-		{
-			SessionInterface->ClearOnJoinSessionCompleteDelegate_Handle(JoinSessionCompleteHandle);
-		}
-	}
-	JoinSessionCompleteHandle.Reset();
-	PendingJoinSessionName = NAME_None;
-
-	const bool bSuccess = (Result == EOnJoinSessionCompleteResult::Success);
-	bInSession = bSuccess;
-	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSSessionSubsystem: Join session '%s' %s"), *InSessionName.ToString(), bSuccess ? TEXT("succeeded") : TEXT("failed"));
-	OnSessionJoined.Broadcast(bSuccess, InSessionName.ToString());
+	if (!JoinSessionCompleteHandle.IsValid() || InSessionName != PendingJoinSessionName)
+	{ LogCallbackDisposition(TEXT("HandleJoinSessionComplete"), SessionLease.GetRequestId(), InSessionName != PendingJoinSessionName ? TEXT("DifferentOwner") : TEXT("Duplicate"), SessionOperationContext.Generation); return; }
+	LogCallbackDisposition(TEXT("HandleJoinSessionComplete"), SessionLease.GetRequestId(), bShuttingDown ? TEXT("ShutdownInternalOnly") : IsEOSContextCurrent(SessionOperationContext) ? TEXT("Consumed") : TEXT("StaleGeneration"), SessionOperationContext.Generation);
+	FinishSessionOperation(TEXT("JoinSession"), InSessionName, Result == EOnJoinSessionCompleteResult::Success,
+		Result == EOnJoinSessionCompleteResult::Success ? EEOSOperationCode::Succeeded : EEOSOperationCode::NativeFailure,
+		FString::Printf(TEXT("Native join returned %s; the SDK result is unavailable through this callback."), LexToString(Result)),
+		LexToString(Result), EEOSResultSource::NativeCallback);
 }
 
 void UEEOSSessionSubsystem::HandleDestroySessionComplete(FName InSessionName, bool bWasSuccessful)
 {
-	if (InSessionName != PendingDestroySessionName)
-	{
-		return;
-	}
-
-	if (IOnlineSubsystem* EOSSub = GetEOSOnlineSubsystem())
-	{
-		IOnlineSessionPtr SessionInterface = EOSSub->GetSessionInterface();
-		if (SessionInterface.IsValid())
-		{
-			SessionInterface->ClearOnDestroySessionCompleteDelegate_Handle(DestroySessionCompleteHandle);
-		}
-	}
-	DestroySessionCompleteHandle.Reset();
-	PendingDestroySessionName = NAME_None;
-
-	if (bWasSuccessful) bInSession = false;
-	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSSessionSubsystem: Destroy session '%s' %s"), *InSessionName.ToString(), bWasSuccessful ? TEXT("succeeded") : TEXT("failed"));
-	OnSessionDestroyed.Broadcast(bWasSuccessful, InSessionName.ToString());
+	if (!DestroySessionCompleteHandle.IsValid() || InSessionName != PendingDestroySessionName)
+	{ LogCallbackDisposition(TEXT("HandleDestroySessionComplete"), SessionLease.GetRequestId(), InSessionName != PendingDestroySessionName ? TEXT("DifferentOwner") : TEXT("Duplicate"), SessionOperationContext.Generation); return; }
+	LogCallbackDisposition(TEXT("HandleDestroySessionComplete"), SessionLease.GetRequestId(), bShuttingDown ? TEXT("ShutdownInternalOnly") : IsEOSContextCurrent(SessionOperationContext) ? TEXT("Consumed") : TEXT("StaleGeneration"), SessionOperationContext.Generation);
+	FinishSessionOperation(TEXT("DestroySession"), InSessionName, bWasSuccessful,
+		bWasSuccessful ? EEOSOperationCode::Succeeded : EEOSOperationCode::NativeFailure,
+		bWasSuccessful ? TEXT("Session destroy completed.") : TEXT("Native session destroy failed."),
+		bWasSuccessful ? TEXT("Success") : TEXT("Failure"), EEOSResultSource::NativeCallback);
 }
 
 void UEEOSSessionSubsystem::HandleStartSessionComplete(FName InSessionName, bool bWasSuccessful)
 {
-	if (InSessionName != PendingStartSessionName)
-	{
-		return;
-	}
-
-	if (IOnlineSubsystem* EOSSub = GetEOSOnlineSubsystem())
-	{
-		IOnlineSessionPtr SessionInterface = EOSSub->GetSessionInterface();
-		if (SessionInterface.IsValid())
-		{
-			SessionInterface->ClearOnStartSessionCompleteDelegate_Handle(StartSessionCompleteHandle);
-		}
-	}
-	StartSessionCompleteHandle.Reset();
-	PendingStartSessionName = NAME_None;
-
-	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSSessionSubsystem: Start session '%s' %s"), *InSessionName.ToString(), bWasSuccessful ? TEXT("succeeded") : TEXT("failed"));
-	OnSessionStarted.Broadcast(bWasSuccessful);
+	if (!StartSessionCompleteHandle.IsValid() || InSessionName != PendingStartSessionName)
+	{ LogCallbackDisposition(TEXT("HandleStartSessionComplete"), SessionLease.GetRequestId(), InSessionName != PendingStartSessionName ? TEXT("DifferentOwner") : TEXT("Duplicate"), SessionOperationContext.Generation); return; }
+	LogCallbackDisposition(TEXT("HandleStartSessionComplete"), SessionLease.GetRequestId(), bShuttingDown ? TEXT("ShutdownInternalOnly") : IsEOSContextCurrent(SessionOperationContext) ? TEXT("Consumed") : TEXT("StaleGeneration"), SessionOperationContext.Generation);
+	FinishSessionOperation(TEXT("StartSession"), InSessionName, bWasSuccessful,
+		bWasSuccessful ? EEOSOperationCode::Succeeded : EEOSOperationCode::NativeFailure,
+		bWasSuccessful ? TEXT("Session start completed.") : TEXT("Native session start failed."),
+		bWasSuccessful ? TEXT("Success") : TEXT("Failure"), EEOSResultSource::NativeCallback);
 }
 
 void UEEOSSessionSubsystem::HandleEndSessionComplete(FName InSessionName, bool bWasSuccessful)
 {
-	if (InSessionName != PendingEndSessionName)
-	{
-		return;
-	}
-
-	if (IOnlineSubsystem* EOSSub = GetEOSOnlineSubsystem())
-	{
-		IOnlineSessionPtr SessionInterface = EOSSub->GetSessionInterface();
-		if (SessionInterface.IsValid())
-		{
-			SessionInterface->ClearOnEndSessionCompleteDelegate_Handle(EndSessionCompleteHandle);
-		}
-	}
-	EndSessionCompleteHandle.Reset();
-	PendingEndSessionName = NAME_None;
-
-	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSSessionSubsystem: End session '%s' %s"), *InSessionName.ToString(), bWasSuccessful ? TEXT("succeeded") : TEXT("failed"));
-	OnSessionEnded.Broadcast(bWasSuccessful, InSessionName.ToString());
+	if (!EndSessionCompleteHandle.IsValid() || InSessionName != PendingEndSessionName)
+	{ LogCallbackDisposition(TEXT("HandleEndSessionComplete"), SessionLease.GetRequestId(), InSessionName != PendingEndSessionName ? TEXT("DifferentOwner") : TEXT("Duplicate"), SessionOperationContext.Generation); return; }
+	LogCallbackDisposition(TEXT("HandleEndSessionComplete"), SessionLease.GetRequestId(), bShuttingDown ? TEXT("ShutdownInternalOnly") : IsEOSContextCurrent(SessionOperationContext) ? TEXT("Consumed") : TEXT("StaleGeneration"), SessionOperationContext.Generation);
+	FinishSessionOperation(TEXT("EndSession"), InSessionName, bWasSuccessful,
+		bWasSuccessful ? EEOSOperationCode::Succeeded : EEOSOperationCode::NativeFailure,
+		bWasSuccessful ? TEXT("Session end completed.") : TEXT("Native session end failed."),
+		bWasSuccessful ? TEXT("Success") : TEXT("Failure"), EEOSResultSource::NativeCallback);
 }
 
 void UEEOSSessionSubsystem::HandleSessionInviteAccepted(const bool bWasSuccessful, const int32 ControllerId, FUniqueNetIdPtr UserId, const FOnlineSessionSearchResult& InviteResult)
 {
-	FString SessionId = InviteResult.GetSessionIdStr();
-	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSSessionSubsystem: Session invite accepted for session '%s' — %s"), *SessionId, bWasSuccessful ? TEXT("success") : TEXT("failed"));
-	OnSessionInviteAccepted.Broadcast(bWasSuccessful, SessionId);
+	if (bShuttingDown || ControllerId != 0) return;
+	IOnlineSubsystem* OSS = GetExistingEOSOnlineSubsystem();
+	const auto Identity = OSS ? OSS->GetIdentityInterface() : IOnlineIdentityPtr();
+	const auto Local = Identity.IsValid() ? Identity->GetUniquePlayerId(0) : FUniqueNetIdPtr();
+	if (!OSS || OSS->GetSessionInterface() != NotificationSessions) { LogCallbackDisposition(TEXT("SessionInvite"), 0, TEXT("DifferentOwner")); return; }
+	const bool bValid = GetEOSReadiness().bNativeLoggedIn && bWasSuccessful && InviteResult.IsValid() && UserId.IsValid() && UserId->IsValid()
+		&& Local.IsValid() && Local->IsValid() && *Local == *UserId;
+	AcceptedInvite = bValid ? InviteResult : FOnlineSessionSearchResult();
+	AcceptedInviteDescriptor = FEEOSSessionInvite();
+	AcceptedInviteDescriptor.RequestId = FEEOSNativeOperationLease::NextRequestId();
+	AcceptedInviteDescriptor.bValid = bValid; AcceptedInviteDescriptor.LocalUserNum = ControllerId;
+	AcceptedInviteDescriptor.RecipientId = UserId.IsValid() && UserId->IsValid() ? UserId->ToString() : FString();
+	AcceptedInviteDescriptor.ReceivedAtUtc = FDateTime::UtcNow();
+	const auto Backend = InviteResult.Session.SessionSettings.bIsLANMatch ? EEOSSessionBackend::LAN
+		: InviteResult.Session.SessionSettings.bUseLobbiesIfAvailable ? EEOSSessionBackend::Lobby : EEOSSessionBackend::Session;
+	if (bValid) AcceptedInviteDescriptor.Target = EEOSCapacity::Describe(InviteResult, Backend, 0);
+	const auto Delivered = AcceptedInviteDescriptor;
+	UE_LOG(LogExtendedEOS, Log, TEXT("EOSSessionInvite Request=%lld Valid=%d Target=%s Backend=%d LocalUser=%d"),
+		Delivered.RequestId, bValid, *FEEOSNativeOperationLease::SafeField(Delivered.Target.SessionId), int32(Backend), ControllerId);
+	OnSessionInviteAccepted.Broadcast(bValid, Delivered.Target.SessionId);
+	if (!bShuttingDown) OnSessionInviteDetailed.Broadcast(Delivered);
+}
+
+
+bool UEEOSSessionSubsystem::AdmitSessionOperation(FName Operation, FName SessionName)
+{
+	if (bShuttingDown || SessionLease.IsValid())
+	{
+		RejectOperation(Operation, EEOSOperationCode::Busy, TEXT("A named session operation is already pending or shutting down."), SessionName.ToString()); return false;
+	}
+	if (SessionName.IsNone() || SessionName == FName(TEXT("EOS_Lobby")))
+	{
+		FinishSessionOperation(Operation, SessionName, false, EEOSOperationCode::InvalidInput, TEXT("Session name is empty or reserved for the dedicated lobby subsystem.")); return false;
+	}
+	IOnlineSubsystem* OSS = GetEOSOnlineSubsystem();
+	const auto Sessions = OSS ? OSS->GetSessionInterface() : IOnlineSessionPtr();
+	const auto Identity = OSS ? OSS->GetIdentityInterface() : IOnlineIdentityPtr();
+	const auto Local = Identity.IsValid() ? Identity->GetUniquePlayerId(0) : FUniqueNetIdPtr();
+	if (!Sessions.IsValid() || !Local.IsValid() || !Local->IsValid() || Identity->GetLoginStatus(0) != ELoginStatus::LoggedIn)
+	{
+		FinishSessionOperation(Operation, SessionName, false, EEOSOperationCode::IdentityUnavailable, TEXT("EOS requires a valid logged-in local identity and session interface.")); return false;
+	}
+	if (!SessionLease.TryAcquire(Sessions.Get(), SessionName, this, Operation))
+	{
+		RejectOperation(Operation, EEOSOperationCode::Busy, TEXT("Another plugin operation owns the named native session."), SessionName.ToString()); return false;
+	}
+	OperationSessions = Sessions; SessionOperationContext = CaptureEOSContext();
+	BeginOperation(Operation, SessionName.ToString(), SessionLease.GetRequestId());
+	const auto* Existing = Sessions->GetNamedSession(SessionName);
+	TagOperationContext(Operation, Existing && Existing->SessionInfo.IsValid() ? Existing->GetSessionIdStr() : FString()); return true;
+}
+
+bool UEEOSSessionSubsystem::BeginCreateSession(const FOnlineSessionSettings& Settings, const FString& SessionName)
+{
+	if (bShuttingDown || SessionLease.IsValid())
+	{
+		RejectOperation(TEXT("CreateSession"), EEOSOperationCode::Busy, TEXT("A named session operation is pending."), SessionName); return false;
+	}
+	int32 AdvertisedAttributes = 0;
+	for (const auto& Attribute : Settings.Settings)
+	{
+		if (Attribute.Value.AdvertisementType == EOnlineDataAdvertisementType::DontAdvertise) continue;
+		++AdvertisedAttributes;
+		if (EEOSCapacity::IsReservedAttribute(Attribute.Key) || Attribute.Key.IsNone()
+			|| FTCHARToUTF8(*Attribute.Key.ToString()).Length() > (Settings.bUseLobbiesIfAvailable ? EOS_LOBBYMODIFICATION_MAX_ATTRIBUTE_LENGTH : EOS_SESSIONMODIFICATION_MAX_SESSION_ATTRIBUTE_LENGTH))
+		{
+			FinishSessionOperation(TEXT("CreateSession"), FName(*SessionName), false, EEOSOperationCode::InvalidInput,
+				TEXT("A custom attribute name is empty, reserved, or exceeds the SDK limit.")); return false;
+		}
+	}
+	const int32 NativeReservedAttributes = 6; // Six built-in fields in both EOS native adapters.
+	const int32 AttributeLimit = Settings.bUseLobbiesIfAvailable ? EOS_LOBBYMODIFICATION_MAX_ATTRIBUTES : EOS_SESSIONMODIFICATION_MAX_SESSION_ATTRIBUTES;
+	if (!Settings.bIsLANMatch && AdvertisedAttributes + NativeReservedAttributes > AttributeLimit)
+	{ FinishSessionOperation(TEXT("CreateSession"), FName(*SessionName), false, EEOSOperationCode::InvalidInput, TEXT("Advertised attributes exceed the backend limit including native fields.")); return false; }
+	const int64 Total = int64(Settings.NumPublicConnections) + Settings.NumPrivateConnections;
+	if (Settings.NumPublicConnections < 0 || Settings.NumPrivateConnections < 0 || Total <= 0 || Total > MAX_int32
+		|| (Settings.bUseLobbiesIfAvailable && Total > EOS_LOBBY_MAX_LOBBY_MEMBERS))
+	{
+		FinishSessionOperation(TEXT("CreateSession"), FName(*SessionName), false, EEOSOperationCode::InvalidInput, FString::Printf(TEXT("Requested public=%d private=%d total=%lld; allowed total=1..%lld for this backend."), Settings.NumPublicConnections, Settings.NumPrivateConnections, Total, Settings.bUseLobbiesIfAvailable ? int64(EOS_LOBBY_MAX_LOBBY_MEMBERS) : int64(MAX_int32))); return false;
+	}
+	if (!AdmitSessionOperation(TEXT("CreateSession"), FName(*SessionName))) return false;
+	PendingCreateSessionName = FName(*SessionName); PendingCreateSettings = Settings;
+	const auto Sessions = OperationSessions; const int64 Token = SessionLease.GetRequestId();
+	if (const auto* Existing = Sessions->GetNamedSession(PendingCreateSessionName))
+	{
+		if (Existing->SessionState == EOnlineSessionState::Creating || Existing->SessionState == EOnlineSessionState::Destroying)
+		{
+			FinishSessionOperation(TEXT("CreateSession"), PendingCreateSessionName, false, EEOSOperationCode::Busy, TEXT("Existing native session is creating or destroying.")); return false;
+		}
+		SetOperationPhase(TEXT("CreateSession"), TEXT("ClosingExisting"));
+		DestroyForCreateHandle = Sessions->AddOnDestroySessionCompleteDelegate_Handle(
+			FOnDestroySessionCompleteDelegate::CreateUObject(this, &UEEOSSessionSubsystem::HandleDestroyThenCreateComplete));
+		const bool bStarted = Sessions->DestroySession(PendingCreateSessionName);
+		if (!bStarted && DestroyForCreateHandle.IsValid() && SessionLease.GetRequestId() == Token)
+			FinishSessionOperation(TEXT("CreateSession"), PendingCreateSessionName, false, EEOSOperationCode::NativeStartRejected, TEXT("Existing session close refused submission."));
+		return bStarted;
+	}
+	return SubmitSessionCreation();
+}
+
+bool UEEOSSessionSubsystem::SubmitSessionCreation()
+{
+	const auto Sessions = OperationSessions; const FName Name = PendingCreateSessionName;
+	const int64 Token = SessionLease.GetRequestId();
+	if (bShuttingDown || !IsEOSContextCurrent(SessionOperationContext) || !Sessions.IsValid() || Sessions->GetNamedSession(Name))
+	{
+		FinishSessionOperation(TEXT("CreateSession"), Name, false, EEOSOperationCode::InvalidTarget, TEXT("Named session is not available for creation.")); return false;
+	}
+	SetOperationPhase(TEXT("CreateSession"), TEXT("Creating"));
+	CreateSessionCompleteHandle = Sessions->AddOnCreateSessionCompleteDelegate_Handle(
+		FOnCreateSessionCompleteDelegate::CreateUObject(this, &UEEOSSessionSubsystem::HandleCreateSessionComplete));
+	const FOnlineSessionSettings Settings = PendingCreateSettings;
+	UE_LOG(LogExtendedEOS, Log, TEXT("EOSSessionCreate Request=%lld Name=%s Public=%d Private=%d LobbyBackend=%d LAN=%d Voice=%d Advertise=%d"),
+		Token, *FEEOSNativeOperationLease::SafeField(Name.ToString()), Settings.NumPublicConnections, Settings.NumPrivateConnections, Settings.bUseLobbiesIfAvailable,
+		Settings.bIsLANMatch, Settings.bUseLobbiesVoiceChatIfAvailable, Settings.bShouldAdvertise);
+	const bool bStarted = Sessions->CreateSession(0, Name, Settings);
+	if (!bStarted && CreateSessionCompleteHandle.IsValid() && SessionLease.GetRequestId() == Token)
+		FinishSessionOperation(TEXT("CreateSession"), Name, false, EEOSOperationCode::NativeStartRejected, TEXT("Native create refused submission."));
+	return bStarted;
+}
+
+bool UEEOSSessionSubsystem::BeginJoinSession(const FOnlineSessionSearchResult& Result, const FString& SessionName)
+{
+	if (bShuttingDown || SessionLease.IsValid())
+	{
+		RejectOperation(TEXT("JoinSession"), EEOSOperationCode::Busy, TEXT("A named session operation is pending."), SessionName); return false;
+	}
+	if (!Result.IsValid() || !Result.Session.SessionInfo.IsValid())
+	{
+		FinishSessionOperation(TEXT("JoinSession"), FName(*SessionName), false, EEOSOperationCode::InvalidTarget, TEXT("Native search or invite result is invalid.")); return false;
+	}
+	if (!AdmitSessionOperation(TEXT("JoinSession"), FName(*SessionName))) return false;
+	TagOperationContext(TEXT("JoinSession"), FString(), 0, SessionSearch.IsValid() && SessionSearch->SearchResults.ContainsByPredicate([&](const FOnlineSessionSearchResult& Entry) { return Entry.IsValid() && Entry.GetSessionIdStr() == Result.GetSessionIdStr(); }) ? SearchGeneration : 0);
+	const auto Sessions = OperationSessions; const FName Name(*SessionName); const int64 Token = SessionLease.GetRequestId();
+	if (Sessions->GetNamedSession(Name))
+	{
+		FinishSessionOperation(TEXT("JoinSession"), Name, false, EEOSOperationCode::InvalidTarget, TEXT("Named session already exists; close it before joining.")); return false;
+	}
+	PendingJoinSessionName = Name;
+	JoinSessionCompleteHandle = Sessions->AddOnJoinSessionCompleteDelegate_Handle(
+		FOnJoinSessionCompleteDelegate::CreateUObject(this, &UEEOSSessionSubsystem::HandleJoinSessionComplete));
+	const FOnlineSessionSearchResult Target = Result;
+	UE_LOG(LogExtendedEOS, Log, TEXT("EOSSessionJoin Request=%lld Name=%s Target=%s LobbyBackend=%d"), Token, *FEEOSNativeOperationLease::SafeField(Name.ToString()), *FEEOSNativeOperationLease::SafeField(Target.GetSessionIdStr()), Target.Session.SessionSettings.bUseLobbiesIfAvailable);
+	const bool bStarted = Sessions->JoinSession(0, Name, Target);
+	if (!bStarted && JoinSessionCompleteHandle.IsValid() && SessionLease.GetRequestId() == Token)
+		FinishSessionOperation(TEXT("JoinSession"), Name, false, EEOSOperationCode::NativeStartRejected, TEXT("Native join refused submission."));
+	return bStarted;
+}
+
+void UEEOSSessionSubsystem::FinishSessionOperation(FName Operation, FName Name, bool bSuccess, EEOSOperationCode Code,
+	const FString& Message, const FString& NativeResult, EEOSResultSource Source)
+{
+	const auto Sessions = OperationSessions;
+	const auto* Native = Sessions.IsValid() ? Sessions->GetNamedSession(Name) : nullptr;
+	const bool bContextRetired = SessionLease.IsValid() && !IsEOSContextCurrent(SessionOperationContext);
+	if (bContextRetired) { bSuccess = false; Code = EEOSOperationCode::Canceled; }
+	const bool bUsable = Native && Native->SessionInfo.IsValid() && Native->SessionInfo->IsValid()
+		&& Native->SessionState != EOnlineSessionState::Creating && Native->SessionState != EOnlineSessionState::Destroying;
+	const FString CurrentId = bUsable ? Native->GetSessionIdStr() : FString();
+	if (bUsable && (Operation == TEXT("CreateSession") || Operation == TEXT("JoinSession")))
+	{
+		const auto Capacity = EEOSCapacity::Read(*Native, Native->SessionSettings.bIsLANMatch ? EEOSSessionBackend::LAN : Native->SessionSettings.bUseLobbiesIfAvailable ? EEOSSessionBackend::Lobby : EEOSSessionBackend::Session);
+		bool bMigration = GetEOSSettings()->bAllowLobbyHostMigration; Native->SessionSettings.Get(SETTING_HOST_MIGRATION, bMigration);
+		UE_LOG(LogExtendedEOS, Log, TEXT("EOSSessionMembership Request=%lld Name=%s NewId=%s Known=%d Max=%d Members=%d Slots=%d PrivateRequested=%d PrivatePolicy=NativePermissionMapping Voice=%d Presence=%d Migration=%d"),
+			SessionLease.GetRequestId(), *FEEOSNativeOperationLease::SafeField(Name.ToString()), *FEEOSNativeOperationLease::SafeField(CurrentId), Capacity.bKnown, Capacity.Maximum, Capacity.Members, Capacity.AvailableSlots,
+			Native->SessionSettings.NumPrivateConnections, Native->SessionSettings.bUseLobbiesVoiceChatIfAvailable, Native->SessionSettings.bUsesPresence, bMigration);
+	}
+	if (bUsable && !bContextRetired) MembershipNames.Add(Name); else MembershipNames.Remove(Name);
+	if (Operation == TEXT("CreateSession") || Operation == TEXT("JoinSession")) bSuccess = bSuccess && bUsable;
+	if (Operation == TEXT("DestroySession")) bSuccess = bSuccess && !Native;
+	if (!bSuccess && Code == EEOSOperationCode::Succeeded) Code = EEOSOperationCode::NativeFailure;
+	if (Sessions.IsValid())
+	{
+		Sessions->ClearOnCreateSessionCompleteDelegate_Handle(CreateSessionCompleteHandle);
+		Sessions->ClearOnDestroySessionCompleteDelegate_Handle(DestroyForCreateHandle);
+		Sessions->ClearOnJoinSessionCompleteDelegate_Handle(JoinSessionCompleteHandle);
+		Sessions->ClearOnDestroySessionCompleteDelegate_Handle(DestroySessionCompleteHandle);
+		Sessions->ClearOnStartSessionCompleteDelegate_Handle(StartSessionCompleteHandle);
+		Sessions->ClearOnEndSessionCompleteDelegate_Handle(EndSessionCompleteHandle);
+	}
+	CreateSessionCompleteHandle.Reset(); DestroyForCreateHandle.Reset(); JoinSessionCompleteHandle.Reset();
+	DestroySessionCompleteHandle.Reset(); StartSessionCompleteHandle.Reset(); EndSessionCompleteHandle.Reset();
+	PendingCreateSessionName = PendingJoinSessionName = PendingDestroySessionName = PendingStartSessionName = PendingEndSessionName = NAME_None;
+	SessionLease.Reset(); OperationSessions.Reset(); bInSession = IsInSession();
+	const auto Outcome = CompleteOperation(Operation, bSuccess, Code, bContextRetired ? TEXT("Original identity/platform context retired.") : Message, CurrentId, NativeResult, Source);
+	FEEOSOutcomeDispatchScope Dispatch(this, Outcome);
+	if (bShuttingDown) return;
+	if (Operation == TEXT("CreateSession")) OnSessionCreated.Broadcast(bSuccess, Name.ToString());
+	else if (Operation == TEXT("JoinSession")) OnSessionJoined.Broadcast(bSuccess, Name.ToString());
+	else if (Operation == TEXT("DestroySession")) OnSessionDestroyed.Broadcast(bSuccess, Name.ToString());
+	else if (Operation == TEXT("StartSession")) OnSessionStarted.Broadcast(bSuccess);
+	else if (Operation == TEXT("EndSession")) OnSessionEnded.Broadcast(bSuccess, Name.ToString());
+	OnOperationCompleted.Broadcast(Outcome);
+}
+
+bool UEEOSSessionSubsystem::TickMembership(float)
+{
+	if (bShuttingDown) return false;
+	TryRegisterLifetimeNotifications();
+	const auto Context = CaptureEOSContext();
+	if (MembershipIdentityGeneration != Context.Generation)
+	{
+		MembershipIdentityGeneration = Context.Generation;
+		AcceptedInvite = FOnlineSessionSearchResult(); AcceptedInviteDescriptor = FEEOSSessionInvite();
+	}
+	const auto Names = MembershipNames.Array();
+	for (FName Name : Names) if (!IsInNamedSession(Name.ToString())) MembershipNames.Remove(Name);
+	bInSession = IsInSession(); return true;
 }

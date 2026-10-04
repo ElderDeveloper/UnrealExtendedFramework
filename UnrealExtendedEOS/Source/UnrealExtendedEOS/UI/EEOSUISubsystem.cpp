@@ -1,43 +1,41 @@
 // Copyright Kemal Erdem YILMAZ. All Rights Reserved.
 
 #include "EEOSUISubsystem.h"
+#include "Shared/EEOSNativeOperation.h"
 #include "OnlineSubsystemUtils.h"
 #include "Interfaces/OnlineExternalUIInterface.h"
 #include "Interfaces/OnlineIdentityInterface.h"
 #include "UnrealExtendedEOS.h"
 
+
 void UEEOSUISubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
-	Super::Initialize(Collection);
-
-	if (IsEOSAvailable())
-	{
-		IOnlineSubsystem* EOSSub = GetEOSOnlineSubsystem();
-		IOnlineExternalUIPtr ExternalUI = EOSSub->GetExternalUIInterface();
-		if (ExternalUI.IsValid())
+	Super::Initialize(Collection); TickExternalUI(0);
+	ExternalUITicker = FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateUObject(this, &UEEOSUISubsystem::TickExternalUI), 0.5f);
+}
+bool UEEOSUISubsystem::TickExternalUI(float)
+{
+	IOnlineSubsystem* OSS = GetExistingEOSOnlineSubsystem();
+	const auto Current = OSS ? OSS->GetExternalUIInterface() : IOnlineExternalUIPtr();
+	if (Current == BoundExternalUI && (!Current.IsValid() || IsEOSContextCurrent(ExternalUIContext, false))) return true;
+	if (BoundExternalUI.IsValid()) BoundExternalUI->OnExternalUIChangeDelegates.Remove(ExternalUIChangeHandle);
+	ExternalUIChangeHandle.Reset(); BoundExternalUI = Current; ExternalUIContext = CaptureEOSContext(); bOverlayVisible = false;
+	if (Current.IsValid()) ExternalUIChangeHandle = Current->OnExternalUIChangeDelegates.AddWeakLambda(this,
+		[this, Ownership = ExternalUIContext](bool bIsOpening)
 		{
-			ExternalUIChangeHandle = ExternalUI->OnExternalUIChangeDelegates.AddWeakLambda(this,
-				[this](bool bIsOpening)
-				{
-					bOverlayVisible = bIsOpening;
-					OnOverlayStateChanged.Broadcast(bIsOpening);
-					UE_LOG(LogExtendedEOS, Log, TEXT("EEOSUISubsystem: Overlay %s"), bIsOpening ? TEXT("opened") : TEXT("closed"));
-				});
-		}
-	}
+			if (!IsEOSContextCurrent(Ownership, false)) return;
+			bOverlayVisible = bIsOpening; OnOverlayStateChanged.Broadcast(bIsOpening);
+		});
+	return true;
 }
 
 void UEEOSUISubsystem::Deinitialize()
 {
-	if (IsEOSAvailable() && ExternalUIChangeHandle.IsValid())
-	{
-		IOnlineSubsystem* EOSSub = GetEOSOnlineSubsystem();
-		IOnlineExternalUIPtr ExternalUI = EOSSub->GetExternalUIInterface();
-		if (ExternalUI.IsValid())
-		{
-			ExternalUI->OnExternalUIChangeDelegates.Remove(ExternalUIChangeHandle);
-		}
-	}
+	BeginEOSShutdown();
+	if (ExternalUITicker.IsValid()) FTSTicker::GetCoreTicker().RemoveTicker(ExternalUITicker);
+	ExternalUITicker.Reset();
+	if (BoundExternalUI.IsValid()) BoundExternalUI->OnExternalUIChangeDelegates.Remove(ExternalUIChangeHandle);
+	ExternalUIChangeHandle.Reset(); BoundExternalUI.Reset(); bOverlayVisible = false;
 	Super::Deinitialize();
 }
 
@@ -55,7 +53,7 @@ bool UEEOSUISubsystem::ShowFriendsUI()
 	IOnlineExternalUIPtr ExternalUI = EOSSub->GetExternalUIInterface();
 	if (!ExternalUI.IsValid())
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSUISubsystem::ShowFriendsUI — ExternalUI interface not available"));
+		FEEOSNativeOperationLease::ReportRepeated(GetOwningEOSInstanceName(), TEXT("ShowFriendsUI"), TEXT("CapabilityUnavailable"));
 		return false;
 	}
 
@@ -109,7 +107,7 @@ bool UEEOSUISubsystem::ShowProfileUI(const FString& TargetUserId)
 	if (!LocalUserId.IsValid() || !TargetId.IsValid() || !TargetId->IsValid()) return false;
 
 	return ExternalUI->ShowProfileUI(*LocalUserId, *TargetId,
-		FOnProfileUIClosedDelegate::CreateWeakLambda(this, [this]()
+		FOnProfileUIClosedDelegate::CreateWeakLambda(this, [this, Ownership = CaptureEOSContext()]()
 		{
 			OnProfileClosed.Broadcast(true);
 		}));

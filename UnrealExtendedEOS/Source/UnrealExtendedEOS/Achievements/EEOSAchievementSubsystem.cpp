@@ -1,6 +1,7 @@
 // Copyright Kemal Erdem YILMAZ. All Rights Reserved.
 
 #include "EEOSAchievementSubsystem.h"
+#include "Shared/EEOSNativeOperation.h"
 #include "OnlineSubsystemUtils.h"
 #include "Interfaces/OnlineAchievementsInterface.h"
 #include "Shared/EEOSSettings.h"
@@ -32,6 +33,7 @@ bool UEEOSAchievementSubsystem::IsAchievementsEnabled(const TCHAR* CallSite) con
 
 void UEEOSAchievementSubsystem::Deinitialize()
 {
+	BeginEOSShutdown();
 	CachedAchievements.Empty();
 	LocalPartialProgress.Empty();
 	Super::Deinitialize();
@@ -56,7 +58,7 @@ bool UEEOSAchievementSubsystem::QueryAchievements()
 	IOnlineAchievementsPtr AchievementsInterface = EOSSub->GetAchievementsInterface();
 	if (!AchievementsInterface.IsValid())
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSAchievementSubsystem::QueryAchievements — Achievements interface not available"));
+		FEEOSNativeOperationLease::ReportRepeated(GetOwningEOSInstanceName(), TEXT("QueryAchievements"), TEXT("CapabilityUnavailable"));
 		OnAchievementsQueried.Broadcast(false, TArray<FEEOSAchievement>());
 		return false;
 	}
@@ -70,7 +72,11 @@ bool UEEOSAchievementSubsystem::QueryAchievements()
 	}
 
 	AchievementsInterface->QueryAchievements(*UserId,
-		FOnQueryAchievementsCompleteDelegate::CreateUObject(this, &UEEOSAchievementSubsystem::HandleQueryAchievementsComplete));
+		FOnQueryAchievementsCompleteDelegate::CreateWeakLambda(this, [this, AchievementsInterface, Ownership = CaptureEOSContext()](const FUniqueNetId& PlayerId, bool bWasSuccessful)
+		{
+			if (!IsEOSContextCurrent(Ownership)) { OnAchievementsQueried.Broadcast(false, TArray<FEEOSAchievement>()); return; }
+			HandleQueryAchievementsComplete(PlayerId, bWasSuccessful, AchievementsInterface);
+		}));
 
 	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSAchievementSubsystem::QueryAchievements — Querying achievements..."));
 	return true;
@@ -110,15 +116,16 @@ bool UEEOSAchievementSubsystem::UnlockAchievement(const FString& AchievementId)
 	WriteObject->SetFloatStat(AchievementId, 100.0f);
 
 	AchievementsInterface->WriteAchievements(*UserId, WriteObject,
-		FOnAchievementsWrittenDelegate::CreateWeakLambda(this, [this, AchievementId](const FUniqueNetId& InUserId, bool bWasSuccessful)
+		FOnAchievementsWrittenDelegate::CreateWeakLambda(this, [this, AchievementId, Ownership = CaptureEOSContext()](const FUniqueNetId& InUserId, bool bWasSuccessful)
 		{
+			bWasSuccessful = bWasSuccessful && IsEOSContextCurrent(Ownership);
 			if (bWasSuccessful)
 			{
 				// Reflect the confirmed unlock in the cache immediately —
 				// IsAchievementUnlocked() must not report false until a re-query
 				MarkAchievementUnlockedInCache(AchievementId);
 			}
-			UE_LOG(LogExtendedEOS, Log, TEXT("EEOSAchievementSubsystem: Unlock '%s' %s"), *AchievementId, bWasSuccessful ? TEXT("succeeded") : TEXT("failed"));
+			UE_LOG(LogExtendedEOS, Log, TEXT("EEOSAchievementSubsystem: Unlock '%s' %s"), *FEEOSNativeOperationLease::SafeField(AchievementId), bWasSuccessful ? TEXT("succeeded") : TEXT("failed"));
 			OnAchievementUnlocked.Broadcast(bWasSuccessful, AchievementId);
 		}));
 	return true;
@@ -247,7 +254,7 @@ bool UEEOSAchievementSubsystem::SetAchievementProgress(const FString& Achievemen
 		LocalPartialProgress.Add(AchievementId, Progress);
 
 		UE_LOG(LogExtendedEOS, Log, TEXT("EEOSAchievementSubsystem::SetAchievementProgress — '%s' at %.1f%% (local only; backend progress comes from Dev Portal stat thresholds)"),
-			*AchievementId, Progress * 100.f);
+			*FEEOSNativeOperationLease::SafeField(AchievementId), Progress * 100.f);
 		OnAchievementProgressUpdated.Broadcast(AchievementId, Progress, false);
 		return true;
 	}
@@ -269,8 +276,9 @@ bool UEEOSAchievementSubsystem::SetAchievementProgress(const FString& Achievemen
 	WriteObject->SetFloatStat(AchievementId, 100.0f);
 
 	AchievementsInterface->WriteAchievements(*UserId, WriteObject,
-		FOnAchievementsWrittenDelegate::CreateWeakLambda(this, [this, AchievementId](const FUniqueNetId& InUserId, bool bWasSuccessful)
+		FOnAchievementsWrittenDelegate::CreateWeakLambda(this, [this, AchievementId, Ownership = CaptureEOSContext()](const FUniqueNetId& InUserId, bool bWasSuccessful)
 		{
+			bWasSuccessful = bWasSuccessful && IsEOSContextCurrent(Ownership);
 			if (bWasSuccessful)
 			{
 				// Reflect the confirmed unlock in the cache immediately —
@@ -278,7 +286,7 @@ bool UEEOSAchievementSubsystem::SetAchievementProgress(const FString& Achievemen
 				MarkAchievementUnlockedInCache(AchievementId);
 			}
 			UE_LOG(LogExtendedEOS, Log, TEXT("EEOSAchievementSubsystem: SetProgress '%s' to 100%% (unlock) — %s"),
-				*AchievementId, bWasSuccessful ? TEXT("succeeded") : TEXT("failed"));
+				*FEEOSNativeOperationLease::SafeField(AchievementId), bWasSuccessful ? TEXT("succeeded") : TEXT("failed"));
 			OnAchievementProgressUpdated.Broadcast(AchievementId, 1.f, bWasSuccessful);
 		}));
 	return true;
@@ -335,16 +343,16 @@ void UEEOSAchievementSubsystem::ResetAchievement(const FString& AchievementId)
 
 	if (bFound)
 	{
-		UE_LOG(LogExtendedEOS, Log, TEXT("EEOSAchievementSubsystem::ResetAchievement — Reset '%s' locally (EOS backend is forward-only, use DevPortal for true reset)"), *AchievementId);
+		UE_LOG(LogExtendedEOS, Log, TEXT("EEOSAchievementSubsystem::ResetAchievement — Reset '%s' locally (EOS backend is forward-only, use DevPortal for true reset)"), *FEEOSNativeOperationLease::SafeField(AchievementId));
 		OnAchievementProgressUpdated.Broadcast(AchievementId, 0.f, false);
 	}
 	else
 	{
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSAchievementSubsystem::ResetAchievement — Achievement '%s' not found in cache"), *AchievementId);
+		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSAchievementSubsystem::ResetAchievement — Achievement '%s' not found in cache"), *FEEOSNativeOperationLease::SafeField(AchievementId));
 	}
 }
 
-void UEEOSAchievementSubsystem::HandleQueryAchievementsComplete(const FUniqueNetId& PlayerId, const bool bWasSuccessful)
+void UEEOSAchievementSubsystem::HandleQueryAchievementsComplete(const FUniqueNetId& PlayerId, const bool bWasSuccessful, const IOnlineAchievementsPtr& AchievementsInterface)
 {
 	// Only rebuild the cache on success — a transient query failure must not wipe the
 	// last-known-good state (including locally tracked partial progress).
@@ -352,9 +360,8 @@ void UEEOSAchievementSubsystem::HandleQueryAchievementsComplete(const FUniqueNet
 	{
 		CachedAchievements.Empty();
 
-		if (IOnlineSubsystem* EOSSub = GetEOSOnlineSubsystem())
+		if (AchievementsInterface.IsValid())
 		{
-			IOnlineAchievementsPtr AchievementsInterface = EOSSub->GetAchievementsInterface();
 			if (AchievementsInterface.IsValid())
 			{
 				TArray<FOnlineAchievement> OnlineAchievements;

@@ -1,6 +1,8 @@
 // Copyright Kemal Erdem YILMAZ. All Rights Reserved.
 
 #include "EEOSProgressionSnapshotSubsystem.h"
+#include "Shared/EEOSNativeOperation.h"
+#include "IEOSSDKManager.h"
 #include "Shared/EEOSBlueprintLibrary.h"
 #include "UnrealExtendedEOS.h"
 #include "OnlineSubsystemUtils.h"
@@ -17,6 +19,7 @@ void UEEOSProgressionSnapshotSubsystem::Initialize(FSubsystemCollectionBase& Col
 
 void UEEOSProgressionSnapshotSubsystem::Deinitialize()
 {
+	BeginEOSShutdown();
 	// End any tracked SDK snapshots (the SDK frees a snapshot's internal resources ONLY via
 	// EOS_ProgressionSnapshot_EndSnapshot) and clear local tracking — same operation as the
 	// public escape hatch.
@@ -36,32 +39,22 @@ void UEEOSProgressionSnapshotSubsystem::ForceResetSnapshotState()
 	// knows snapshots by the EOS-issued id from BeginSnapshot (kept in SnapshotIdMapping) —
 	// NOT by our internal counter key, which diverges from it and would end the wrong (or
 	// no) snapshot.
-	EOS_HPlatform PlatformHandle = GetPlatformHandle();
-	EOS_HProgressionSnapshot PSHandle = PlatformHandle ? EOS_Platform_GetProgressionSnapshotInterface(PlatformHandle) : nullptr;
-	if (PSHandle)
+	for (const auto& Pair : SnapshotIdMapping)
 	{
-		for (const TPair<int32, int32>& Pair : SnapshotIdMapping)
-		{
-			EOS_ProgressionSnapshot_EndSnapshotOptions EndOpts = {};
-			EndOpts.ApiVersion = EOS_PROGRESSIONSNAPSHOT_ENDSNAPSHOT_API_LATEST;
-			EndOpts.SnapshotId = static_cast<uint32_t>(Pair.Value);
-			const EOS_EResult EndResult = EOS_ProgressionSnapshot_EndSnapshot(PSHandle, &EndOpts);
-			if (EndResult != EOS_EResult::EOS_Success)
-			{
-				// EOS_NotFound means the SDK no longer knows this snapshot — already gone
-				UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSProgressionSnapshotSubsystem::ForceResetSnapshotState — EndSnapshot for EOS id %d returned %s"),
-					Pair.Value, ANSI_TO_TCHAR(EOS_EResult_ToString(EndResult)));
-			}
-		}
-	}
-	else
-	{
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSProgressionSnapshotSubsystem::ForceResetSnapshotState — EOS SDK unreachable; clearing local tracking for %d snapshot(s) without ending them SDK-side"),
-			SnapshotIdMapping.Num());
+		// Submitted contexts own late EndSnapshot cleanup, even after this reset.
+		if (PendingSnapshots.Contains(Pair.Key)) continue;
+		const auto* Context = SnapshotContexts.Find(Pair.Key);
+		const EOS_HPlatform Platform = Context && Context->Platform.IsValid() ? static_cast<EOS_HPlatform>(*Context->Platform) : nullptr;
+		const EOS_HProgressionSnapshot Handle = Platform ? EOS_Platform_GetProgressionSnapshotInterface(Platform) : nullptr;
+		if (!Handle) continue;
+		EOS_ProgressionSnapshot_EndSnapshotOptions Options = {};
+		Options.ApiVersion = EOS_PROGRESSIONSNAPSHOT_ENDSNAPSHOT_API_LATEST;
+		Options.SnapshotId = static_cast<uint32_t>(Pair.Value);
+		EOS_ProgressionSnapshot_EndSnapshot(Handle, &Options);
 	}
 
 	ActiveSnapshots.Empty();
-	SnapshotIdMapping.Empty();
+	SnapshotIdMapping.Empty(); SnapshotContexts.Empty();
 	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSProgressionSnapshotSubsystem::ForceResetSnapshotState — Local snapshot state cleared"));
 }
 
@@ -78,14 +71,14 @@ int32 UEEOSProgressionSnapshotSubsystem::BeginSnapshot()
 	EOS_HPlatform PlatformHandle = GetPlatformHandle();
 	if (!PlatformHandle)
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSProgressionSnapshotSubsystem::BeginSnapshot — Platform handle not available"));
+		FEEOSNativeOperationLease::ReportRepeated(GetOwningEOSInstanceName(), TEXT("BeginSnapshot"), TEXT("CapabilityUnavailable"));
 		return -1;
 	}
 
 	EOS_HProgressionSnapshot PSHandle = EOS_Platform_GetProgressionSnapshotInterface(PlatformHandle);
 	if (!PSHandle)
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSProgressionSnapshotSubsystem::BeginSnapshot — ProgressionSnapshot interface not available"));
+		FEEOSNativeOperationLease::ReportRepeated(GetOwningEOSInstanceName(), TEXT("BeginSnapshot"), TEXT("CapabilityUnavailable"));
 		return -1;
 	}
 
@@ -94,7 +87,7 @@ int32 UEEOSProgressionSnapshotSubsystem::BeginSnapshot()
 	FUniqueNetIdPtr LocalUserId = EOSSub->GetIdentityInterface()->GetUniquePlayerId(0);
 	if (!LocalUserId.IsValid())
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSProgressionSnapshotSubsystem::BeginSnapshot — No logged-in user"));
+		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSProgressionSnapshotSubsystem::BeginSnapshot — No logged-in user"));
 		return -1;
 	}
 
@@ -104,7 +97,7 @@ int32 UEEOSProgressionSnapshotSubsystem::BeginSnapshot()
 	const FString LocalPUIDStr = UEEOSBlueprintLibrary::ExtractProductUserId(LocalUserId->ToString());
 	if (LocalPUIDStr.IsEmpty())
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSProgressionSnapshotSubsystem::BeginSnapshot — Logged-in user has no Product User ID (no Connect session)"));
+		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSProgressionSnapshotSubsystem::BeginSnapshot — Logged-in user has no Product User ID (no Connect session)"));
 		return -1;
 	}
 	EOS_ProductUserId LocalPUID = EOS_ProductUserId_FromString(TCHAR_TO_ANSI(*LocalPUIDStr));
@@ -121,13 +114,14 @@ int32 UEEOSProgressionSnapshotSubsystem::BeginSnapshot()
 		int32 InternalId = NextSnapshotId++;
 		ActiveSnapshots.Add(InternalId, TMap<FString, FString>());
 		SnapshotIdMapping.Add(InternalId, static_cast<int32>(OutSnapshotId));
+		SnapshotContexts.Add(InternalId, CaptureEOSContext());
 
 		UE_LOG(LogExtendedEOS, Log, TEXT("EEOSProgressionSnapshotSubsystem: BeginSnapshot — Internal ID=%d, EOS ID=%u"), InternalId, OutSnapshotId);
 		return InternalId;
 	}
 	else
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSProgressionSnapshotSubsystem::BeginSnapshot — Failed: %s"), ANSI_TO_TCHAR(EOS_EResult_ToString(Result)));
+		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSProgressionSnapshotSubsystem::BeginSnapshot — Failed: %s"), ANSI_TO_TCHAR(EOS_EResult_ToString(Result)));
 		return -1;
 	}
 }
@@ -148,17 +142,19 @@ bool UEEOSProgressionSnapshotSubsystem::AddProgressData(int32 SnapshotId, const 
 		return false;
 	}
 
-	EOS_HPlatform PlatformHandle = GetPlatformHandle();
+	const auto* SnapshotContext = SnapshotContexts.Find(SnapshotId);
+	if (!SnapshotContext || !IsEOSContextCurrent(*SnapshotContext) || PendingSnapshots.Contains(SnapshotId)) return false;
+	EOS_HPlatform PlatformHandle = SnapshotContext->Platform.IsValid() ? static_cast<EOS_HPlatform>(*SnapshotContext->Platform) : nullptr;
 	if (!PlatformHandle)
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSProgressionSnapshotSubsystem::AddProgressData — Platform handle not available"));
+		FEEOSNativeOperationLease::ReportRepeated(GetOwningEOSInstanceName(), TEXT("AddProgressData"), TEXT("CapabilityUnavailable"));
 		return false;
 	}
 
 	EOS_HProgressionSnapshot PSHandle = EOS_Platform_GetProgressionSnapshotInterface(PlatformHandle);
 	if (!PSHandle)
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSProgressionSnapshotSubsystem::AddProgressData — Interface not available"));
+		FEEOSNativeOperationLease::ReportRepeated(GetOwningEOSInstanceName(), TEXT("AddProgressData"), TEXT("CapabilityUnavailable"));
 		return false;
 	}
 
@@ -175,7 +171,7 @@ bool UEEOSProgressionSnapshotSubsystem::AddProgressData(int32 SnapshotId, const 
 	if (Result == EOS_EResult::EOS_Success)
 	{
 		Data->Add(Key, Value);
-		UE_LOG(LogExtendedEOS, Verbose, TEXT("EEOSProgressionSnapshotSubsystem: AddProgressData — ID=%d Key='%s' Value='%s'"), SnapshotId, *Key, *Value);
+		UE_LOG(LogExtendedEOS, Verbose, TEXT("EEOSProgressionSnapshotSubsystem: AddProgressData — ID=%d Key='%s' Value='%s'"), SnapshotId, *FEEOSNativeOperationLease::SafeField(Key), TEXT("[payload omitted]"));
 		return true;
 	}
 	else
@@ -197,7 +193,7 @@ bool UEEOSProgressionSnapshotSubsystem::EndSnapshot(int32 SnapshotId)
 	int32* EosIdPtr = SnapshotIdMapping.Find(SnapshotId);
 	if (!EosIdPtr)
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSProgressionSnapshotSubsystem::EndSnapshot — No EOS mapping for snapshot %d"), SnapshotId);
+		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSProgressionSnapshotSubsystem::EndSnapshot — No EOS mapping for snapshot %d"), SnapshotId);
 		OnSnapshotComplete.Broadcast(false, SnapshotId);
 		return false;
 	}
@@ -205,10 +201,12 @@ bool UEEOSProgressionSnapshotSubsystem::EndSnapshot(int32 SnapshotId)
 	// SDK-unreachable aborts deliberately KEEP the local snapshot: the added progression
 	// data still exists SDK-side, so the submit is retryable once the platform is back.
 	// If it never comes back, ForceResetSnapshotState() clears the stuck state.
-	EOS_HPlatform PlatformHandle = GetPlatformHandle();
+	const auto* SnapshotContext = SnapshotContexts.Find(SnapshotId);
+	if (!SnapshotContext || !IsEOSContextCurrent(*SnapshotContext) || PendingSnapshots.Contains(SnapshotId)) return false;
+	EOS_HPlatform PlatformHandle = SnapshotContext->Platform.IsValid() ? static_cast<EOS_HPlatform>(*SnapshotContext->Platform) : nullptr;
 	if (!PlatformHandle)
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSProgressionSnapshotSubsystem::EndSnapshot — Platform handle not available; snapshot %d kept for retry (call ForceResetSnapshotState() if the SDK will not return)"), SnapshotId);
+		FEEOSNativeOperationLease::ReportRepeated(GetOwningEOSInstanceName(), TEXT("EndSnapshot"), TEXT("CapabilityUnavailable"));
 		OnSnapshotComplete.Broadcast(false, SnapshotId);
 		return false;
 	}
@@ -216,7 +214,7 @@ bool UEEOSProgressionSnapshotSubsystem::EndSnapshot(int32 SnapshotId)
 	EOS_HProgressionSnapshot PSHandle = EOS_Platform_GetProgressionSnapshotInterface(PlatformHandle);
 	if (!PSHandle)
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSProgressionSnapshotSubsystem::EndSnapshot — Interface not available; snapshot %d kept for retry (call ForceResetSnapshotState() if the SDK will not return)"), SnapshotId);
+		FEEOSNativeOperationLease::ReportRepeated(GetOwningEOSInstanceName(), TEXT("EndSnapshot"), TEXT("CapabilityUnavailable"));
 		OnSnapshotComplete.Broadcast(false, SnapshotId);
 		return false;
 	}
@@ -232,42 +230,33 @@ bool UEEOSProgressionSnapshotSubsystem::EndSnapshot(int32 SnapshotId)
 	{
 		// Weak — the EOS platform outlives this subsystem, so the callback can fire after GC
 		TWeakObjectPtr<UEEOSProgressionSnapshotSubsystem> Self;
+		FEEOSRequestContext Ownership;
 		int32 InternalId;
 		uint32_t EosId;
 	};
 
 	FEndSnapshotContext* Context = new FEndSnapshotContext();
-	Context->Self = this;
+	Context->Self = this; Context->Ownership = *SnapshotContext;
 	Context->InternalId = SnapshotId;
 	Context->EosId = EosSnapshotId;
 
+	PendingSnapshots.Add(SnapshotId);
 	EOS_ProgressionSnapshot_SubmitSnapshot(PSHandle, &SubmitOpts, Context,
 		[](const EOS_ProgressionSnapshot_SubmitSnapshotCallbackInfo* Data)
 		{
+			if (!Data || !EOS_EResult_IsOperationComplete(Data->ResultCode)) return;
 			FEndSnapshotContext* Ctx = static_cast<FEndSnapshotContext*>(Data->ClientData);
 			if (!Ctx) return;
 
 			UEEOSProgressionSnapshotSubsystem* Self = Ctx->Self.Get(); // nullptr if the subsystem was GC'd mid-flight
 			int32 InternalId = Ctx->InternalId;
 			uint32_t EosId = Ctx->EosId;
+			const auto Ownership = Ctx->Ownership;
 			delete Ctx;
 
-			if (!Self) return;
-
-			bool bSuccess = (Data->ResultCode == EOS_EResult::EOS_Success);
-
-			if (bSuccess)
-			{
-				UE_LOG(LogExtendedEOS, Log, TEXT("EEOSProgressionSnapshotSubsystem: Snapshot %d submitted to EOS cloud"), InternalId);
-			}
-			else
-			{
-				UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSProgressionSnapshotSubsystem::EndSnapshot — Submit failed: %s"),
-					ANSI_TO_TCHAR(EOS_EResult_ToString(Data->ResultCode)));
-			}
 
 			// Step 2: End the snapshot to release SDK resources (regardless of submit result)
-			EOS_HPlatform PlatformHandle = Self->GetPlatformHandle();
+			EOS_HPlatform PlatformHandle = Ownership.Platform.IsValid() ? static_cast<EOS_HPlatform>(*Ownership.Platform) : nullptr;
 			if (PlatformHandle)
 			{
 				EOS_HProgressionSnapshot PSHandle = EOS_Platform_GetProgressionSnapshotInterface(PlatformHandle);
@@ -286,12 +275,31 @@ bool UEEOSProgressionSnapshotSubsystem::EndSnapshot(int32 SnapshotId)
 				}
 			}
 
+			if (Self)
+			{
+				Self->PendingSnapshots.Remove(InternalId); Self->ActiveSnapshots.Remove(InternalId);
+				Self->SnapshotIdMapping.Remove(InternalId); Self->SnapshotContexts.Remove(InternalId);
+			}
+			if (!Self || !Self->IsEOSContextCurrent(Ownership)) return;
+
+			bool bSuccess = (Data->ResultCode == EOS_EResult::EOS_Success);
+
+			if (bSuccess)
+			{
+				UE_LOG(LogExtendedEOS, Log, TEXT("EEOSProgressionSnapshotSubsystem: Snapshot %d submitted to EOS cloud"), InternalId);
+			}
+			else
+			{
+				UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSProgressionSnapshotSubsystem::EndSnapshot — Submit failed: %s"),
+					ANSI_TO_TCHAR(EOS_EResult_ToString(Data->ResultCode)));
+			}
+
 			// Step 3: Clean up local state UNCONDITIONALLY. The submit already ran, so there
 			// is nothing left to retry against locally, and the SDK's EndSnapshot only fails
 			// with EOS_NotFound (eos_progressionsnapshot.h:60-70) — i.e. the SDK snapshot is
 			// already gone. Keeping local state here would just wedge IsSnapshotInProgress().
 			Self->ActiveSnapshots.Remove(InternalId);
-			Self->SnapshotIdMapping.Remove(InternalId);
+			Self->SnapshotIdMapping.Remove(InternalId); Self->SnapshotContexts.Remove(InternalId);
 
 			Self->OnSnapshotComplete.Broadcast(bSuccess, InternalId);
 		});
@@ -303,6 +311,8 @@ bool UEEOSProgressionSnapshotSubsystem::EndSnapshot(int32 SnapshotId)
 
 bool UEEOSProgressionSnapshotSubsystem::DeleteSnapshot(int32 SnapshotId)
 {
+	if (PendingSnapshots.Contains(SnapshotId)) return false;
+	if (const auto* Existing = SnapshotContexts.Find(SnapshotId); Existing && !IsEOSContextCurrent(*Existing)) return false;
 	// The raw platform handle can outlive the online subsystem (e.g. `online destroy`) —
 	// the identity chain below would null-deref without this OSS-level availability check
 	if (!IsEOSAvailable())
@@ -315,7 +325,7 @@ bool UEEOSProgressionSnapshotSubsystem::DeleteSnapshot(int32 SnapshotId)
 	EOS_HPlatform PlatformHandle = GetPlatformHandle();
 	if (!PlatformHandle)
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSProgressionSnapshotSubsystem::DeleteSnapshot — Platform handle not available"));
+		FEEOSNativeOperationLease::ReportRepeated(GetOwningEOSInstanceName(), TEXT("DeleteSnapshot"), TEXT("CapabilityUnavailable"));
 		OnSnapshotDeleted.Broadcast(false);
 		return false;
 	}
@@ -323,7 +333,7 @@ bool UEEOSProgressionSnapshotSubsystem::DeleteSnapshot(int32 SnapshotId)
 	EOS_HProgressionSnapshot PSHandle = EOS_Platform_GetProgressionSnapshotInterface(PlatformHandle);
 	if (!PSHandle)
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSProgressionSnapshotSubsystem::DeleteSnapshot — Interface not available"));
+		FEEOSNativeOperationLease::ReportRepeated(GetOwningEOSInstanceName(), TEXT("DeleteSnapshot"), TEXT("CapabilityUnavailable"));
 		OnSnapshotDeleted.Broadcast(false);
 		return false;
 	}
@@ -333,7 +343,7 @@ bool UEEOSProgressionSnapshotSubsystem::DeleteSnapshot(int32 SnapshotId)
 	IOnlineIdentityPtr IdentityInterface = EOSSub ? EOSSub->GetIdentityInterface() : nullptr;
 	if (!IdentityInterface.IsValid())
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSProgressionSnapshotSubsystem::DeleteSnapshot — Identity interface not available"));
+		FEEOSNativeOperationLease::ReportRepeated(GetOwningEOSInstanceName(), TEXT("DeleteSnapshot"), TEXT("CapabilityUnavailable"));
 		OnSnapshotDeleted.Broadcast(false);
 		return false;
 	}
@@ -341,7 +351,7 @@ bool UEEOSProgressionSnapshotSubsystem::DeleteSnapshot(int32 SnapshotId)
 	FUniqueNetIdPtr LocalUserId = IdentityInterface->GetUniquePlayerId(0);
 	if (!LocalUserId.IsValid())
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSProgressionSnapshotSubsystem::DeleteSnapshot — No logged-in user"));
+		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSProgressionSnapshotSubsystem::DeleteSnapshot — No logged-in user"));
 		OnSnapshotDeleted.Broadcast(false);
 		return false;
 	}
@@ -352,7 +362,7 @@ bool UEEOSProgressionSnapshotSubsystem::DeleteSnapshot(int32 SnapshotId)
 	const FString LocalPUIDStr = UEEOSBlueprintLibrary::ExtractProductUserId(LocalUserId->ToString());
 	if (LocalPUIDStr.IsEmpty())
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSProgressionSnapshotSubsystem::DeleteSnapshot — Logged-in user has no Product User ID (no Connect session)"));
+		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSProgressionSnapshotSubsystem::DeleteSnapshot — Logged-in user has no Product User ID (no Connect session)"));
 		OnSnapshotDeleted.Broadcast(false);
 		return false;
 	}
@@ -368,65 +378,47 @@ bool UEEOSProgressionSnapshotSubsystem::DeleteSnapshot(int32 SnapshotId)
 
 	struct FDeleteContext
 	{
-		// Weak — the EOS platform outlives this subsystem, so the callback can fire after GC
 		TWeakObjectPtr<UEEOSProgressionSnapshotSubsystem> Self;
+		FEEOSRequestContext Ownership;
 		int32 SnapshotId;
+		TOptional<int32> NativeSnapshotId;
 	};
-
 	FDeleteContext* Ctx = new FDeleteContext();
-	Ctx->Self = this;
-	Ctx->SnapshotId = SnapshotId;
-
+	Ctx->Self = this; Ctx->Ownership = CaptureEOSContext(); Ctx->SnapshotId = SnapshotId;
+	if (const int32* NativeId = SnapshotIdMapping.Find(SnapshotId)) Ctx->NativeSnapshotId = *NativeId;
+	PendingSnapshots.Add(SnapshotId);
 	EOS_ProgressionSnapshot_DeleteSnapshot(PSHandle, &Options, Ctx,
 		[](const EOS_ProgressionSnapshot_DeleteSnapshotCallbackInfo* Data)
 		{
-			FDeleteContext* Ctx = static_cast<FDeleteContext*>(Data->ClientData);
-			if (!Ctx) return;
-
-			UEEOSProgressionSnapshotSubsystem* Self = Ctx->Self.Get(); // nullptr if the subsystem was GC'd mid-flight
-			int32 SnapId = Ctx->SnapshotId;
-			delete Ctx;
-
-			if (!Self) return;
-
-			bool bSuccess = (Data->ResultCode == EOS_EResult::EOS_Success);
-			if (bSuccess)
+			if (!Data || !EOS_EResult_IsOperationComplete(Data->ResultCode)) return;
+			TUniquePtr<FDeleteContext> Context(static_cast<FDeleteContext*>(Data->ClientData));
+			if (!Context) return;
+			auto* Self = Context->Self.Get();
+			const int32 SnapId = Context->SnapshotId;
+			const bool bCurrent = Self && Self->IsEOSContextCurrent(Context->Ownership);
+			const bool bSuccess = Data->ResultCode == EOS_EResult::EOS_Success;
+			// The submitted context owns original SDK resources across reset and teardown.
+			// An ordinary deletion failure keeps a live snapshot retryable.
+			if ((bSuccess || !bCurrent) && Context->NativeSnapshotId.IsSet() && Context->Ownership.Platform.IsValid())
 			{
-				// End the still-open SDK snapshot BEFORE dropping the mapping: EndSnapshot is
-				// the ONLY call that frees the SDK's internal snapshot resources
-				// (eos_progressionsnapshot.h:12-13, 60-70) — once the mapping is gone, not even
-				// Deinitialize can end it and it leaks in the SDK for the process lifetime.
-				if (const int32* EosIdPtr = Self->SnapshotIdMapping.Find(SnapId))
+				const auto Handle = EOS_Platform_GetProgressionSnapshotInterface(static_cast<EOS_HPlatform>(*Context->Ownership.Platform));
+				if (Handle)
 				{
-					EOS_HPlatform PlatformHandle = Self->GetPlatformHandle();
-					EOS_HProgressionSnapshot PSHandle = PlatformHandle ? EOS_Platform_GetProgressionSnapshotInterface(PlatformHandle) : nullptr;
-					if (PSHandle)
-					{
-						EOS_ProgressionSnapshot_EndSnapshotOptions EndOpts = {};
-						EndOpts.ApiVersion = EOS_PROGRESSIONSNAPSHOT_ENDSNAPSHOT_API_LATEST;
-						EndOpts.SnapshotId = static_cast<uint32_t>(*EosIdPtr);
-
-						const EOS_EResult EndResult = EOS_ProgressionSnapshot_EndSnapshot(PSHandle, &EndOpts);
-						if (EndResult != EOS_EResult::EOS_Success)
-						{
-							// EOS_NotFound = the SDK snapshot is already gone — nothing to free
-							UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSProgressionSnapshotSubsystem::DeleteSnapshot — EndSnapshot for EOS id %d returned %s"),
-								*EosIdPtr, ANSI_TO_TCHAR(EOS_EResult_ToString(EndResult)));
-						}
-					}
+					EOS_ProgressionSnapshot_EndSnapshotOptions End = {};
+					End.ApiVersion = EOS_PROGRESSIONSNAPSHOT_ENDSNAPSHOT_API_LATEST;
+					End.SnapshotId = static_cast<uint32_t>(Context->NativeSnapshotId.GetValue());
+					EOS_ProgressionSnapshot_EndSnapshot(Handle, &End);
 				}
-
-				// Only clean up local state on confirmed backend deletion
-				Self->ActiveSnapshots.Remove(SnapId);
-				Self->SnapshotIdMapping.Remove(SnapId);
-				UE_LOG(LogExtendedEOS, Log, TEXT("EEOSProgressionSnapshotSubsystem: Snapshot ID=%d deleted from EOS cloud and local state cleaned"), SnapId);
 			}
-			else
+			if (Self)
 			{
-				UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSProgressionSnapshotSubsystem::DeleteSnapshot — Failed: %s (local state preserved)"),
-					ANSI_TO_TCHAR(EOS_EResult_ToString(Data->ResultCode)));
+				Self->PendingSnapshots.Remove(SnapId);
+				if (bSuccess || !bCurrent)
+				{ Self->ActiveSnapshots.Remove(SnapId); Self->SnapshotIdMapping.Remove(SnapId); Self->SnapshotContexts.Remove(SnapId); }
 			}
-
+			if (!bCurrent) return;
+			UE_LOG(LogExtendedEOS, Log, TEXT("EOSProgressionSnapshot ID=%d Phase=DeleteComplete Success=%d NativeResult=%s"),
+				SnapId, bSuccess, ANSI_TO_TCHAR(EOS_EResult_ToString(Data->ResultCode)));
 			Self->OnSnapshotDeleted.Broadcast(bSuccess);
 		});
 

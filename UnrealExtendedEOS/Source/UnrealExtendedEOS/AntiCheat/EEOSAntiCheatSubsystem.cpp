@@ -1,11 +1,13 @@
 // Copyright Kemal Erdem YILMAZ. All Rights Reserved.
 
 #include "EEOSAntiCheatSubsystem.h"
+#include "Shared/EEOSNativeOperation.h"
 #include "Shared/EEOSBlueprintLibrary.h"
 #include "Shared/EEOSSettings.h"
 #include "UnrealExtendedEOS.h"
 #include "OnlineSubsystemUtils.h"
 #include "Async/Async.h"
+#include "IEOSSDKManager.h"
 
 #include "eos_anticheatclient.h"
 #include "eos_anticheatclient_types.h"
@@ -19,6 +21,8 @@
 struct FEEOSAntiCheatNotifyContext
 {
 	TWeakObjectPtr<UEEOSAntiCheatSubsystem> Self;
+	FEEOSRequestContext Ownership;
+	uint64 SessionGeneration = 0;
 };
 
 // ── Static EOS_CALL callbacks ────────────────────────────────────────────────
@@ -38,9 +42,9 @@ static void EOS_CALL EEOSAntiCheat_OnMessageToPeer(const EOS_AntiCheatCommon_OnM
 	}
 	const EOS_AntiCheatCommon_ClientHandle TargetHandle = Data->ClientHandle;
 
-	AsyncTask(ENamedThreads::GameThread, [WeakSelf = Ctx->Self, TargetHandle, Payload = MoveTemp(Payload)]()
+	AsyncTask(ENamedThreads::GameThread, [WeakSelf = Ctx->Self, Ownership = Ctx->Ownership, Generation = Ctx->SessionGeneration, TargetHandle, Payload = MoveTemp(Payload)]()
 	{
-		if (UEEOSAntiCheatSubsystem* Self = WeakSelf.Get())
+		if (UEEOSAntiCheatSubsystem* Self = WeakSelf.Get(); Self && Self->CanDeliverNotification(Ownership, Generation))
 		{
 			Self->HandleMessageToPeer(TargetHandle, Payload);
 		}
@@ -60,11 +64,11 @@ static void EOS_CALL EEOSAntiCheat_OnPeerActionRequired(const EOS_AntiCheatCommo
 	const EOS_AntiCheatCommon_ClientHandle PeerHandle = Data->ClientHandle;
 
 	UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSAntiCheatSubsystem: Peer action required — reason code %d: %s"),
-		static_cast<int32>(Data->ActionReasonCode), *Message);
+		static_cast<int32>(Data->ActionReasonCode), TEXT("[payload omitted]"));
 
-	AsyncTask(ENamedThreads::GameThread, [WeakSelf = Ctx->Self, PeerHandle, Action, Message = MoveTemp(Message)]()
+	AsyncTask(ENamedThreads::GameThread, [WeakSelf = Ctx->Self, Ownership = Ctx->Ownership, Generation = Ctx->SessionGeneration, PeerHandle, Action, Message = MoveTemp(Message)]()
 	{
-		if (UEEOSAntiCheatSubsystem* Self = WeakSelf.Get())
+		if (UEEOSAntiCheatSubsystem* Self = WeakSelf.Get(); Self && Self->CanDeliverNotification(Ownership, Generation))
 		{
 			Self->HandlePeerActionRequired(PeerHandle, Action, Message);
 		}
@@ -80,9 +84,9 @@ static void EOS_CALL EEOSAntiCheat_OnPeerAuthStatusChanged(const EOS_AntiCheatCo
 		(Data->ClientAuthStatus == EOS_EAntiCheatCommonClientAuthStatus::EOS_ACCCAS_RemoteAuthComplete);
 	const EOS_AntiCheatCommon_ClientHandle PeerHandle = Data->ClientHandle;
 
-	AsyncTask(ENamedThreads::GameThread, [WeakSelf = Ctx->Self, PeerHandle, bAuthenticated]()
+	AsyncTask(ENamedThreads::GameThread, [WeakSelf = Ctx->Self, Ownership = Ctx->Ownership, Generation = Ctx->SessionGeneration, PeerHandle, bAuthenticated]()
 	{
-		if (UEEOSAntiCheatSubsystem* Self = WeakSelf.Get())
+		if (UEEOSAntiCheatSubsystem* Self = WeakSelf.Get(); Self && Self->CanDeliverNotification(Ownership, Generation))
 		{
 			Self->HandlePeerAuthStatusChanged(PeerHandle, bAuthenticated);
 		}
@@ -96,11 +100,11 @@ static void EOS_CALL EEOSAntiCheat_OnClientIntegrityViolated(const EOS_AntiCheat
 
 	FString Message(UTF8_TO_TCHAR(Data->ViolationMessage ? Data->ViolationMessage : ""));
 	UE_LOG(LogExtendedEOS, Error, TEXT("EEOSAntiCheatSubsystem: CLIENT INTEGRITY VIOLATED (type %d) — %s"),
-		static_cast<int32>(Data->ViolationType), *Message);
+		static_cast<int32>(Data->ViolationType), TEXT("[payload omitted]"));
 
-	AsyncTask(ENamedThreads::GameThread, [WeakSelf = Ctx->Self, Message = MoveTemp(Message)]()
+	AsyncTask(ENamedThreads::GameThread, [WeakSelf = Ctx->Self, Ownership = Ctx->Ownership, Generation = Ctx->SessionGeneration, Message = MoveTemp(Message)]()
 	{
-		if (UEEOSAntiCheatSubsystem* Self = WeakSelf.Get())
+		if (UEEOSAntiCheatSubsystem* Self = WeakSelf.Get(); Self && Self->CanDeliverNotification(Ownership, Generation))
 		{
 			Self->OnIntegrityChanged.Broadcast(false);
 			Self->OnClientActionRequired.Broadcast(EEOSAntiCheatAction::RemovePlayer, Message);
@@ -126,6 +130,7 @@ void UEEOSAntiCheatSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 
 void UEEOSAntiCheatSubsystem::Deinitialize()
 {
+	BeginEOSShutdown();
 	if (bSessionActive)
 	{
 		EndSession();
@@ -172,7 +177,7 @@ bool UEEOSAntiCheatSubsystem::BeginSession()
 		// broadcasting false here is unambiguous and honors the header contract
 		// (false on EVERY failure path). The ACTIVE session is left untouched;
 		// a NEW session requires EndSession first.
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSAntiCheatSubsystem::BeginSession — Session already active; a new session requires EndSession first. The active session is unchanged."));
+		RejectOperation(TEXT("BeginSession"), EEOSOperationCode::Busy, TEXT("Another admitted request already owns this operation."));
 		OnAntiCheatSessionStarted.Broadcast(false);
 		return false;
 	}
@@ -187,7 +192,7 @@ bool UEEOSAntiCheatSubsystem::BeginSession()
 	EOS_HPlatform PlatformHandle = GetPlatformHandle();
 	if (!PlatformHandle)
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSAntiCheatSubsystem::BeginSession — Platform handle not available"));
+		FEEOSNativeOperationLease::ReportRepeated(GetOwningEOSInstanceName(), TEXT("BeginSession"), TEXT("CapabilityUnavailable"));
 		OnAntiCheatSessionStarted.Broadcast(false);
 		return false;
 	}
@@ -195,9 +200,7 @@ bool UEEOSAntiCheatSubsystem::BeginSession()
 	EOS_HAntiCheatClient ACHandle = EOS_Platform_GetAntiCheatClientInterface(PlatformHandle);
 	if (!ACHandle)
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSAntiCheatSubsystem::BeginSession — AntiCheatClient interface not available. "
-			"Easy Anti-Cheat must be enabled for the product in the Epic Dev Portal and the game must be launched "
-			"through the EAC bootstrapper for the client module to load."));
+		FEEOSNativeOperationLease::ReportRepeated(GetOwningEOSInstanceName(), TEXT("BeginSession"), TEXT("CapabilityUnavailable"));
 		OnAntiCheatSessionStarted.Broadcast(false);
 		return false;
 	}
@@ -211,7 +214,7 @@ bool UEEOSAntiCheatSubsystem::BeginSession()
 	FUniqueNetIdPtr LocalPlayerId = Identity.IsValid() ? Identity->GetUniquePlayerId(0) : nullptr;
 	if (!LocalPlayerId.IsValid())
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSAntiCheatSubsystem::BeginSession — No logged-in user (must login via Connect first)"));
+		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSAntiCheatSubsystem::BeginSession — No logged-in user (must login via Connect first)"));
 		OnAntiCheatSessionStarted.Broadcast(false);
 		return false;
 	}
@@ -219,7 +222,7 @@ bool UEEOSAntiCheatSubsystem::BeginSession()
 	const FString LocalPUIDStr = UEEOSBlueprintLibrary::ExtractProductUserId(LocalPlayerId->ToString());
 	if (LocalPUIDStr.IsEmpty())
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSAntiCheatSubsystem::BeginSession — Logged-in user has no Product User ID (no Connect session)"));
+		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSAntiCheatSubsystem::BeginSession — Logged-in user has no Product User ID (no Connect session)"));
 		OnAntiCheatSessionStarted.Broadcast(false);
 		return false;
 	}
@@ -231,7 +234,7 @@ bool UEEOSAntiCheatSubsystem::BeginSession()
 	//   AddNotifyPeerActionRequired   — Mode: EOS_ACCM_PeerToPeer
 	//   AddNotifyPeerAuthStatusChanged— Mode: EOS_ACCM_PeerToPeer (optional)
 	//   AddNotifyClientIntegrityViolated — Mode: Any
-	NotifyContext = new FEEOSAntiCheatNotifyContext{this};
+	NotifyContext = new FEEOSAntiCheatNotifyContext{this, CaptureEOSContext(), ++SessionGeneration};
 
 	EOS_AntiCheatClient_AddNotifyMessageToPeerOptions MsgOptions = {};
 	MsgOptions.ApiVersion = EOS_ANTICHEATCLIENT_ADDNOTIFYMESSAGETOPEER_API_LATEST;
@@ -254,7 +257,7 @@ bool UEEOSAntiCheatSubsystem::BeginSession()
 		PeerAuthStatusNotifId == EOS_INVALID_NOTIFICATIONID ||
 		IntegrityViolatedNotifId == EOS_INVALID_NOTIFICATIONID)
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSAntiCheatSubsystem::BeginSession — Failed to register anti-cheat notifications (MessageToPeer=%llu, PeerAction=%llu, PeerAuth=%llu, Integrity=%llu)"),
+		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSAntiCheatSubsystem::BeginSession — Failed to register anti-cheat notifications (MessageToPeer=%llu, PeerAction=%llu, PeerAuth=%llu, Integrity=%llu)"),
 			MessageToPeerNotifId, PeerActionRequiredNotifId, PeerAuthStatusNotifId, IntegrityViolatedNotifId);
 		RemoveNotifications();
 		OnAntiCheatSessionStarted.Broadcast(false);
@@ -270,7 +273,7 @@ bool UEEOSAntiCheatSubsystem::BeginSession()
 	const EOS_EResult Result = EOS_AntiCheatClient_BeginSession(ACHandle, &Options);
 	if (Result != EOS_EResult::EOS_Success)
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSAntiCheatSubsystem::BeginSession — EOS_AntiCheatClient_BeginSession failed: %s"),
+		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSAntiCheatSubsystem::BeginSession — EOS_AntiCheatClient_BeginSession failed: %s"),
 			ANSI_TO_TCHAR(EOS_EResult_ToString(Result)));
 		RemoveNotifications();
 		OnAntiCheatSessionStarted.Broadcast(false);
@@ -279,7 +282,7 @@ bool UEEOSAntiCheatSubsystem::BeginSession()
 
 	bSessionActive = true;
 	CachedLocalPuid = LocalPUIDStr;
-	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSAntiCheatSubsystem::BeginSession — Anti-cheat session started (PeerToPeer mode, local PUID %s)"), *CachedLocalPuid);
+	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSAntiCheatSubsystem::BeginSession — Anti-cheat session started (PeerToPeer mode, local PUID %s)"), *FEEOSNativeOperationLease::SafeField(CachedLocalPuid));
 	OnAntiCheatSessionStarted.Broadcast(true);
 	return true;
 }
@@ -297,13 +300,13 @@ bool UEEOSAntiCheatSubsystem::EndSession()
 	// re-entrant EndSession must no-op on the guard above instead of running the
 	// teardown twice. UnregisterPeer itself never reads bSessionActive, and the
 	// SDK session stays alive until EOS_AntiCheatClient_EndSession below.
-	bSessionActive = false;
+	bSessionActive = false; ++SessionGeneration;
 
 	// Unregister peers while the SDK session is still active (UnregisterPeer is a
 	// P2P in-session call), then end the SDK session, then drop notifications.
 	UnregisterAllPeers();
 
-	EOS_HPlatform PlatformHandle = GetPlatformHandle();
+	EOS_HPlatform PlatformHandle = NotifyContext && NotifyContext->Ownership.Platform.IsValid() ? static_cast<EOS_HPlatform>(*NotifyContext->Ownership.Platform) : nullptr;
 	EOS_HAntiCheatClient ACHandle = PlatformHandle ? EOS_Platform_GetAntiCheatClientInterface(PlatformHandle) : nullptr;
 	if (ACHandle)
 	{
@@ -323,7 +326,7 @@ bool UEEOSAntiCheatSubsystem::EndSession()
 	}
 	else
 	{
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSAntiCheatSubsystem::EndSession — AntiCheatClient interface unavailable during teardown; clearing local state only"));
+		FEEOSNativeOperationLease::ReportRepeated(GetOwningEOSInstanceName(), TEXT("EndSession"), TEXT("CapabilityUnavailable"));
 	}
 
 	RemoveNotifications();
@@ -341,7 +344,7 @@ bool UEEOSAntiCheatSubsystem::EndSession()
 void UEEOSAntiCheatSubsystem::RemoveNotifications()
 {
 	bool bRemoved = false;
-	if (EOS_HPlatform PlatformHandle = GetPlatformHandle())
+	if (EOS_HPlatform PlatformHandle = NotifyContext && NotifyContext->Ownership.Platform.IsValid() ? static_cast<EOS_HPlatform>(*NotifyContext->Ownership.Platform) : nullptr)
 	{
 		if (EOS_HAntiCheatClient ACHandle = EOS_Platform_GetAntiCheatClientInterface(PlatformHandle))
 		{
@@ -400,36 +403,38 @@ bool UEEOSAntiCheatSubsystem::RegisterPeer(const FString& PeerPuid)
 		// Extraction failed, so there is NO bare PUID to broadcast — delegates
 		// carry bare PUIDs or an empty string, never the raw unparseable input
 		// (the input is preserved in the log line for diagnosis).
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSAntiCheatSubsystem::RegisterPeer — '%s' contains no Product User ID"), *PeerPuid);
+		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSAntiCheatSubsystem::RegisterPeer — '%s' contains no Product User ID"), *FEEOSNativeOperationLease::SafeField(PeerPuid));
 		OnPeerAuthStatusChanged.Broadcast(FString(), false);
 		return false;
 	}
 
 	if (!bSessionActive)
 	{
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSAntiCheatSubsystem::RegisterPeer — No active session; peer '%s' NOT registered"), *BarePuid);
+		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSAntiCheatSubsystem::RegisterPeer — No active session; peer '%s' NOT registered"), *FEEOSNativeOperationLease::SafeField(BarePuid));
 		OnPeerAuthStatusChanged.Broadcast(BarePuid, false);
 		return false;
 	}
 
 	if (BarePuid == CachedLocalPuid)
 	{
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSAntiCheatSubsystem::RegisterPeer — '%s' is the LOCAL user; only remote participants are registered"), *BarePuid);
+		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSAntiCheatSubsystem::RegisterPeer — '%s' is the LOCAL user; only remote participants are registered"), *FEEOSNativeOperationLease::SafeField(BarePuid));
 		return false;
 	}
 
 	if (PuidToHandle.Contains(BarePuid))
 	{
 		// The desired state already holds — report success without a second SDK registration.
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSAntiCheatSubsystem::RegisterPeer — Peer '%s' already registered"), *BarePuid);
+		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSAntiCheatSubsystem::RegisterPeer — Peer '%s' already registered"), *FEEOSNativeOperationLease::SafeField(BarePuid));
 		return true;
 	}
 
-	EOS_HPlatform PlatformHandle = GetPlatformHandle();
+	EOS_HPlatform PlatformHandle = NotifyContext && NotifyContext->Ownership.Platform.IsValid()
+		&& (!bSessionActive || IsEOSContextCurrent(NotifyContext->Ownership))
+		? static_cast<EOS_HPlatform>(*NotifyContext->Ownership.Platform) : nullptr;
 	EOS_HAntiCheatClient ACHandle = PlatformHandle ? EOS_Platform_GetAntiCheatClientInterface(PlatformHandle) : nullptr;
 	if (!ACHandle)
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSAntiCheatSubsystem::RegisterPeer — AntiCheatClient interface not available"));
+		FEEOSNativeOperationLease::ReportRepeated(GetOwningEOSInstanceName(), TEXT("RegisterPeer"), TEXT("CapabilityUnavailable"));
 		OnPeerAuthStatusChanged.Broadcast(BarePuid, false);
 		return false;
 	}
@@ -459,12 +464,12 @@ bool UEEOSAntiCheatSubsystem::RegisterPeer(const FString& PeerPuid)
 		PuidToHandle.Add(BarePuid, PeerHandle);
 		HandleToPuid.Add(PeerHandle, BarePuid);
 		UE_LOG(LogExtendedEOS, Log, TEXT("EEOSAntiCheatSubsystem::RegisterPeer — Registered '%s' (%d peers). OnPeerAuthStatusChanged fires when authentication completes."),
-			*BarePuid, PuidToHandle.Num());
+			*FEEOSNativeOperationLease::SafeField(BarePuid), PuidToHandle.Num());
 		return true;
 	}
 
-	UE_LOG(LogExtendedEOS, Error, TEXT("EEOSAntiCheatSubsystem::RegisterPeer — Failed for '%s': %s"),
-		*BarePuid, ANSI_TO_TCHAR(EOS_EResult_ToString(Result)));
+	UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSAntiCheatSubsystem::RegisterPeer — Failed for '%s': %s"),
+		*FEEOSNativeOperationLease::SafeField(BarePuid), ANSI_TO_TCHAR(EOS_EResult_ToString(Result)));
 	OnPeerAuthStatusChanged.Broadcast(BarePuid, false);
 	return false;
 }
@@ -480,12 +485,14 @@ bool UEEOSAntiCheatSubsystem::UnregisterPeer(const FString& PeerPuid)
 	const EOS_AntiCheatCommon_ClientHandle* HandlePtr = PuidToHandle.Find(BarePuid);
 	if (!HandlePtr)
 	{
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSAntiCheatSubsystem::UnregisterPeer — Peer '%s' is not registered"), *BarePuid);
+		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSAntiCheatSubsystem::UnregisterPeer — Peer '%s' is not registered"), *FEEOSNativeOperationLease::SafeField(BarePuid));
 		return false;
 	}
 	const EOS_AntiCheatCommon_ClientHandle PeerHandle = *HandlePtr;
 
-	EOS_HPlatform PlatformHandle = GetPlatformHandle();
+	EOS_HPlatform PlatformHandle = NotifyContext && NotifyContext->Ownership.Platform.IsValid()
+		&& (!bSessionActive || IsEOSContextCurrent(NotifyContext->Ownership))
+		? static_cast<EOS_HPlatform>(*NotifyContext->Ownership.Platform) : nullptr;
 	EOS_HAntiCheatClient ACHandle = PlatformHandle ? EOS_Platform_GetAntiCheatClientInterface(PlatformHandle) : nullptr;
 
 	bool bDropMapping = true;
@@ -498,25 +505,25 @@ bool UEEOSAntiCheatSubsystem::UnregisterPeer(const FString& PeerPuid)
 		const EOS_EResult Result = EOS_AntiCheatClient_UnregisterPeer(ACHandle, &Options);
 		if (Result == EOS_EResult::EOS_Success)
 		{
-			UE_LOG(LogExtendedEOS, Log, TEXT("EEOSAntiCheatSubsystem::UnregisterPeer — Unregistered '%s'"), *BarePuid);
+			UE_LOG(LogExtendedEOS, Log, TEXT("EEOSAntiCheatSubsystem::UnregisterPeer — Unregistered '%s'"), *FEEOSNativeOperationLease::SafeField(BarePuid));
 		}
 		else if (Result == EOS_EResult::EOS_InvalidParameters)
 		{
 			// The SDK does not know this handle — our entry is stale either way; drop it.
-			UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSAntiCheatSubsystem::UnregisterPeer — SDK does not know peer '%s' (stale mapping dropped)"), *BarePuid);
+			UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSAntiCheatSubsystem::UnregisterPeer — SDK does not know peer '%s' (stale mapping dropped)"), *FEEOSNativeOperationLease::SafeField(BarePuid));
 		}
 		else
 		{
 			// Keep the mapping so outbound messages for this handle still resolve;
 			// the maps must mirror the SDK's registration state.
-			UE_LOG(LogExtendedEOS, Error, TEXT("EEOSAntiCheatSubsystem::UnregisterPeer — Failed for '%s': %s (peer remains registered)"),
-				*BarePuid, ANSI_TO_TCHAR(EOS_EResult_ToString(Result)));
+			UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSAntiCheatSubsystem::UnregisterPeer — Failed for '%s': %s (peer remains registered)"),
+				*FEEOSNativeOperationLease::SafeField(BarePuid), ANSI_TO_TCHAR(EOS_EResult_ToString(Result)));
 			bDropMapping = false;
 		}
 	}
 	else
 	{
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSAntiCheatSubsystem::UnregisterPeer — AntiCheatClient interface unavailable; dropping local mapping for '%s'"), *BarePuid);
+		FEEOSNativeOperationLease::ReportRepeated(GetOwningEOSInstanceName(), TEXT("UnregisterPeer"), TEXT("CapabilityUnavailable"));
 	}
 
 	if (bDropMapping)
@@ -555,7 +562,7 @@ bool UEEOSAntiCheatSubsystem::ReceiveMessageFromPeer(const FString& SenderPeerPu
 
 	if (Payload.Num() <= 0)
 	{
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSAntiCheatSubsystem::ReceiveMessageFromPeer — Empty payload from '%s' dropped"), *SenderPeerPuid);
+		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSAntiCheatSubsystem::ReceiveMessageFromPeer — Empty payload from '%s' dropped"), *FEEOSNativeOperationLease::SafeField(SenderPeerPuid));
 		return false;
 	}
 
@@ -566,7 +573,7 @@ bool UEEOSAntiCheatSubsystem::ReceiveMessageFromPeer(const FString& SenderPeerPu
 	if (Payload.Num() > EOS_ANTICHEATCLIENT_ONMESSAGETOPEERCALLBACK_MAX_MESSAGE_SIZE)
 	{
 		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSAntiCheatSubsystem::ReceiveMessageFromPeer — Oversized payload (%d bytes, max %d) from '%s' dropped"),
-			Payload.Num(), EOS_ANTICHEATCLIENT_ONMESSAGETOPEERCALLBACK_MAX_MESSAGE_SIZE, *SenderPeerPuid);
+			Payload.Num(), EOS_ANTICHEATCLIENT_ONMESSAGETOPEERCALLBACK_MAX_MESSAGE_SIZE, *FEEOSNativeOperationLease::SafeField(SenderPeerPuid));
 		return false;
 	}
 
@@ -574,15 +581,17 @@ bool UEEOSAntiCheatSubsystem::ReceiveMessageFromPeer(const FString& SenderPeerPu
 	const EOS_AntiCheatCommon_ClientHandle* HandlePtr = PuidToHandle.Find(BarePuid);
 	if (!HandlePtr)
 	{
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSAntiCheatSubsystem::ReceiveMessageFromPeer — Sender '%s' is not a registered peer; payload dropped (RegisterPeer must run before the relay)"), *BarePuid);
+		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSAntiCheatSubsystem::ReceiveMessageFromPeer — Sender '%s' is not a registered peer; payload dropped (RegisterPeer must run before the relay)"), *FEEOSNativeOperationLease::SafeField(BarePuid));
 		return false;
 	}
 
-	EOS_HPlatform PlatformHandle = GetPlatformHandle();
+	EOS_HPlatform PlatformHandle = NotifyContext && NotifyContext->Ownership.Platform.IsValid()
+		&& (!bSessionActive || IsEOSContextCurrent(NotifyContext->Ownership))
+		? static_cast<EOS_HPlatform>(*NotifyContext->Ownership.Platform) : nullptr;
 	EOS_HAntiCheatClient ACHandle = PlatformHandle ? EOS_Platform_GetAntiCheatClientInterface(PlatformHandle) : nullptr;
 	if (!ACHandle)
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSAntiCheatSubsystem::ReceiveMessageFromPeer — AntiCheatClient interface not available; payload dropped"));
+		FEEOSNativeOperationLease::ReportRepeated(GetOwningEOSInstanceName(), TEXT("ReceiveMessageFromPeer"), TEXT("CapabilityUnavailable"));
 		return false;
 	}
 
@@ -598,7 +607,7 @@ bool UEEOSAntiCheatSubsystem::ReceiveMessageFromPeer(const FString& SenderPeerPu
 		// A corrupt/invalid message stream ultimately surfaces as a peer auth
 		// failure → OnPeerActionRequired; here we only log.
 		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSAntiCheatSubsystem::ReceiveMessageFromPeer — Failed for '%s': %s"),
-			*BarePuid, ANSI_TO_TCHAR(EOS_EResult_ToString(Result)));
+			*FEEOSNativeOperationLease::SafeField(BarePuid), ANSI_TO_TCHAR(EOS_EResult_ToString(Result)));
 		return false;
 	}
 	return true;
@@ -617,6 +626,11 @@ FString UEEOSAntiCheatSubsystem::ResolveHandleToPuid(EOS_AntiCheatCommon_ClientH
 		return *Puid;
 	}
 	return FString();
+}
+
+bool UEEOSAntiCheatSubsystem::CanDeliverNotification(const FEEOSRequestContext& Context, uint64 Generation) const
+{
+	return bSessionActive && Generation == SessionGeneration && IsEOSContextCurrent(Context);
 }
 
 void UEEOSAntiCheatSubsystem::HandleMessageToPeer(EOS_AntiCheatCommon_ClientHandle TargetHandle, const TArray<uint8>& Payload)
@@ -638,12 +652,12 @@ void UEEOSAntiCheatSubsystem::HandlePeerActionRequired(EOS_AntiCheatCommon_Clien
 	const FString PeerPuid = ResolveHandleToPuid(PeerHandle);
 	if (PeerPuid.IsEmpty())
 	{
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSAntiCheatSubsystem: PeerActionRequired for unknown peer handle — dropped. Message: %s"), *Message);
+		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSAntiCheatSubsystem: PeerActionRequired for unknown peer handle — dropped. Message: %s"), TEXT("[payload omitted]"));
 		return;
 	}
 
 	UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSAntiCheatSubsystem: Action %s required for peer '%s' — %s"),
-		*UEnum::GetValueAsString(Action), *PeerPuid, *Message);
+		*UEnum::GetValueAsString(Action), *FEEOSNativeOperationLease::SafeField(PeerPuid), TEXT("[payload omitted]"));
 	OnPeerActionRequired.Broadcast(PeerPuid, Action, Message);
 	OnClientActionRequired.Broadcast(Action, Message);
 }
@@ -658,7 +672,7 @@ void UEEOSAntiCheatSubsystem::HandlePeerAuthStatusChanged(EOS_AntiCheatCommon_Cl
 	}
 
 	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSAntiCheatSubsystem: Peer '%s' auth status — %s"),
-		*PeerPuid, bAuthenticated ? TEXT("RemoteAuthComplete") : TEXT("Not authenticated"));
+		*FEEOSNativeOperationLease::SafeField(PeerPuid), bAuthenticated ? TEXT("RemoteAuthComplete") : TEXT("Not authenticated"));
 	OnPeerAuthStatusChanged.Broadcast(PeerPuid, bAuthenticated);
 }
 
@@ -680,7 +694,7 @@ void UEEOSAntiCheatSubsystem::ReportPlayerAction(const FString& PlayerId, const 
 	// NOTE: EOS Anti-Cheat has no per-action "report" API on the client. This is
 	// a local broadcast so game code (e.g. the host) can aggregate and validate.
 	UE_LOG(LogExtendedEOS, Verbose, TEXT("EEOSAntiCheatSubsystem::ReportPlayerAction — Player='%s' Action='%s' Data='%s'"),
-		*PlayerId, *ActionType, *ActionData);
+		*FEEOSNativeOperationLease::SafeField(PlayerId), *FEEOSNativeOperationLease::SafeField(ActionType), TEXT("[payload omitted]"));
 	OnPlayerActionReported.Broadcast(PlayerId, ActionType, ActionData);
 }
 
@@ -700,7 +714,7 @@ void UEEOSAntiCheatSubsystem::ReportViolation(const FString& PlayerId, EEOSAntiC
 	// EAC detects module/memory violations automatically; this surface is for
 	// game-specific rule violations (speed checks, damage limits, ...).
 	UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSAntiCheatSubsystem::ReportViolation — Player='%s' Type=%d Details='%s'"),
-		*PlayerId, static_cast<int32>(ViolationType), *Details);
+		*FEEOSNativeOperationLease::SafeField(PlayerId), static_cast<int32>(ViolationType), TEXT("[payload omitted]"));
 	OnViolationDetected.Broadcast(PlayerId, ViolationType, Details);
 }
 
@@ -727,14 +741,16 @@ bool UEEOSAntiCheatSubsystem::RequestIntegrityCheck(const FString& PlayerId)
 	// (OnPeerAuthStatusChanged / OnPeerActionRequired), never by polling.
 	if (!PlayerId.IsEmpty())
 	{
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSAntiCheatSubsystem::RequestIntegrityCheck — Checks LOCAL client integrity only; PlayerId '%s' is logged for context"), *PlayerId);
+		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSAntiCheatSubsystem::RequestIntegrityCheck — Checks LOCAL client integrity only; PlayerId '%s' is logged for context"), *FEEOSNativeOperationLease::SafeField(PlayerId));
 	}
 
-	EOS_HPlatform PlatformHandle = GetPlatformHandle();
+	EOS_HPlatform PlatformHandle = NotifyContext && NotifyContext->Ownership.Platform.IsValid()
+		&& (!bSessionActive || IsEOSContextCurrent(NotifyContext->Ownership))
+		? static_cast<EOS_HPlatform>(*NotifyContext->Ownership.Platform) : nullptr;
 	EOS_HAntiCheatClient ACHandle = PlatformHandle ? EOS_Platform_GetAntiCheatClientInterface(PlatformHandle) : nullptr;
 	if (!ACHandle)
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSAntiCheatSubsystem::RequestIntegrityCheck — AntiCheatClient interface not available"));
+		FEEOSNativeOperationLease::ReportRepeated(GetOwningEOSInstanceName(), TEXT("RequestIntegrityCheck"), TEXT("CapabilityUnavailable"));
 		OnIntegrityChanged.Broadcast(false);
 		return false;
 	}
@@ -759,7 +775,7 @@ bool UEEOSAntiCheatSubsystem::RequestIntegrityCheck(const FString& PlayerId)
 	{
 		const FString ViolationMsg = UTF8_TO_TCHAR(OutMessage);
 		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSAntiCheatSubsystem::RequestIntegrityCheck — LOCAL VIOLATION (type %d): %s"),
-			static_cast<int32>(OutViolationType), *ViolationMsg);
+			static_cast<int32>(OutViolationType), *FEEOSNativeOperationLease::SafeField(ViolationMsg));
 		OnIntegrityChanged.Broadcast(false);
 		OnViolationDetected.Broadcast(PlayerId, EEOSAntiCheatViolationType::CustomViolation, ViolationMsg);
 		return true; // the check RAN — the (failed) verdict went out via the delegates

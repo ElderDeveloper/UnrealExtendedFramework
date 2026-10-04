@@ -1,6 +1,8 @@
 // Copyright Kemal Erdem YILMAZ. All Rights Reserved.
 
 #include "EEOSAuthSubsystem.h"
+#include "Shared/EEOSNativeOperation.h"
+#include "Shared/EEOSIdentityUtils.h"
 #include "Auth/EEOSConnectSubsystem.h"
 #include "Shared/EEOSSettings.h"
 #include "Shared/EEOSBlueprintLibrary.h"
@@ -24,6 +26,8 @@
 void UEEOSAuthSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
 	Super::Initialize(Collection);
+	TickNativeIdentity(0);
+	IdentityTicker = FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateUObject(this, &UEEOSAuthSubsystem::TickNativeIdentity), 0.5f);
 
 	const UEEOSSettings* Settings = GetEOSSettings();
 	if (Settings && (Settings->bAutoLoginOnStart || Settings->bAutoConnectLoginOnStart))
@@ -32,7 +36,7 @@ void UEEOSAuthSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 		// delegates before any auto-login result broadcasts. The GameInstance timer manager
 		// is safe to use here: it is created in the UGameInstance constructor, while
 		// subsystems initialize later inside UGameInstance::Init.
-		GetGameInstance()->GetTimerManager().SetTimerForNextTick(
+		AutoLoginTimer = GetGameInstance()->GetTimerManager().SetTimerForNextTick(
 			FTimerDelegate::CreateWeakLambda(this, [this]()
 			{
 				KickOffAutoLogin();
@@ -42,6 +46,7 @@ void UEEOSAuthSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 
 void UEEOSAuthSubsystem::KickOffAutoLogin()
 {
+	if (bShuttingDown) return;
 	const UEEOSSettings* Settings = GetEOSSettings();
 	if (!Settings)
 	{
@@ -63,6 +68,19 @@ void UEEOSAuthSubsystem::KickOffAutoLogin()
 
 void UEEOSAuthSubsystem::Deinitialize()
 {
+	BeginEOSShutdown(); bShuttingDown = true;
+	if (GetGameInstance()) GetGameInstance()->GetTimerManager().ClearTimer(AutoLoginTimer);
+	if (IdentityTicker.IsValid()) FTSTicker::GetCoreTicker().RemoveTicker(IdentityTicker);
+	IdentityTicker.Reset();
+	if (bNativeIdentitySubmitted && (LoginDelegateHandle.IsValid() || LogoutDelegateHandle.IsValid()))
+		EEOSIdentity::FRetired::Hold(OperationIdentity, IdentityLease, GetOwningEOSInstanceName(), LogoutDelegateHandle.IsValid());
+	if (OperationIdentity.IsValid())
+	{
+		OperationIdentity->ClearOnLoginCompleteDelegate_Handle(0, LoginDelegateHandle);
+		OperationIdentity->ClearOnLogoutCompleteDelegate_Handle(0, LogoutDelegateHandle);
+	}
+	LoginDelegateHandle.Reset(); LogoutDelegateHandle.Reset(); IdentityLease.Reset(); OperationIdentity.Reset(); bNativeIdentitySubmitted = false; ConnectLease.Reset(); ConnectOperationIdentity.Reset(); ActiveSDKConnectRequest = 0; ActivePersistentAuthRequest = 0;
+	CachedProductUserId.Empty(); bConnectedToGameServices = false;
 	Super::Deinitialize();
 }
 
@@ -90,7 +108,7 @@ bool UEEOSAuthSubsystem::Login(EEOSLoginType LoginType, const FString& Id, const
 		// EOS_LCT_DeviceCode is "Not supported. Superseded by EOS_LCT_ExternalAuth."
 		// (eos_auth_types.h) and "devicecode" does not exist in the engine's credential
 		// parser (FUserManagerEOS ToEOS_ELoginCredentialType) — fail fast and clearly.
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSAuthSubsystem::Login — DeviceCode login is not supported by this EOS SDK (superseded by ExternalAuth). Use LoginWithExternalAuth instead."));
+		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSAuthSubsystem::Login — DeviceCode login is not supported by this EOS SDK (superseded by ExternalAuth). Use LoginWithExternalAuth instead."));
 		BroadcastLoginPreflightFailure(TEXT("DeviceCode login is not supported by this EOS SDK"));
 		return false;
 	case EEOSLoginType::Developer:
@@ -108,7 +126,7 @@ bool UEEOSAuthSubsystem::Login(EEOSLoginType LoginType, const FString& Id, const
 		// A bare "externalauth" (no ":<TokenType>" suffix) is rejected by the engine
 		// (FUserManagerEOS::CallEOSAuthLogin: "External Auth Token Type not specified").
 		// The token type cannot be derived from this signature — use the dedicated API.
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSAuthSubsystem::Login — ExternalAuth requires the external token type. Call LoginWithExternalAuth(CredentialType, Token) instead."));
+		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSAuthSubsystem::Login — ExternalAuth requires the external token type. Call LoginWithExternalAuth(CredentialType, Token) instead."));
 		BroadcastLoginPreflightFailure(TEXT("ExternalAuth requires a credential type — use LoginWithExternalAuth"));
 		return false;
 	}
@@ -121,14 +139,14 @@ bool UEEOSAuthSubsystem::LoginWithExternalAuth(EEOSExternalCredentialType Creden
 	const FString TokenType = ExternalCredentialTypeToTokenTypeString(CredentialType);
 	if (TokenType.IsEmpty())
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSAuthSubsystem::LoginWithExternalAuth — Invalid external credential type (%d)"), static_cast<int32>(CredentialType));
+		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSAuthSubsystem::LoginWithExternalAuth — Invalid external credential type (%d)"), static_cast<int32>(CredentialType));
 		BroadcastLoginPreflightFailure(TEXT("Invalid external credential type"));
 		return false;
 	}
 
 	if (Token.IsEmpty())
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSAuthSubsystem::LoginWithExternalAuth — Token is empty (type=%s)"), *TokenType);
+		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSAuthSubsystem::LoginWithExternalAuth — Token is empty (type=%s)"), *FEEOSNativeOperationLease::SafeField(TokenType));
 		BroadcastLoginPreflightFailure(TEXT("External auth token is empty"));
 		return false;
 	}
@@ -147,9 +165,9 @@ void UEEOSAuthSubsystem::BroadcastLoginPreflightFailure(const FString& Error)
 {
 	// R1: never echo a failure on the shared OnLoginComplete while a legitimate login is
 	// in flight — waiters could not tell the echo from the real completion.
-	if (LoginDelegateHandle.IsValid())
+	if (bShuttingDown || IdentityLease.IsValid() || LoginDelegateHandle.IsValid() || LogoutDelegateHandle.IsValid() || bConnectLoginInFlight)
 	{
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSAuthSubsystem: Pre-flight login failure ('%s') while another login is in flight — not broadcasting OnLoginComplete for this call"), *Error);
+		RejectOperation(TEXT("Login"), EEOSOperationCode::Busy, TEXT("Preflight failed while an admitted identity mutation owns the shared completion route."));
 		return;
 	}
 	OnLoginComplete.Broadcast(false, Error);
@@ -161,9 +179,9 @@ bool UEEOSAuthSubsystem::PerformAuthLogin(const FOnlineAccountCredentials& Crede
 	// another delegate registration, and it must NOT broadcast — a failure echo on the
 	// shared OnLoginComplete would poison the in-flight login's waiters. Log + reject;
 	// no delegate fires for this call.
-	if (LoginDelegateHandle.IsValid())
+	if (bShuttingDown || IdentityLease.IsValid() || LoginDelegateHandle.IsValid() || LogoutDelegateHandle.IsValid() || bConnectLoginInFlight)
 	{
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSAuthSubsystem::Login — A login is already in progress, rejecting this call (no delegate will fire for it)"));
+		RejectOperation(TEXT("Login"), EEOSOperationCode::Busy, TEXT("An identity operation is already pending."));
 		return false;
 	}
 
@@ -171,7 +189,7 @@ bool UEEOSAuthSubsystem::PerformAuthLogin(const FOnlineAccountCredentials& Crede
 	// rejection can't flip CurrentLoginStatus from LoggedIn to Failed. Log-only (R1).
 	if (IsLoggedIn())
 	{
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSAuthSubsystem::Login — Already logged in, rejecting this call (no delegate will fire for it)"));
+		RejectOperation(TEXT("Login"), EEOSOperationCode::AlreadyLoggedIn, TEXT("Native identity is already logged in; healthy state preserved and no native login submitted."));
 		return false;
 	}
 
@@ -188,19 +206,34 @@ bool UEEOSAuthSubsystem::PerformAuthLogin(const FOnlineAccountCredentials& Crede
 	IOnlineIdentityPtr IdentityInterface = EOSSub->GetIdentityInterface();
 	if (!IdentityInterface.IsValid())
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSAuthSubsystem::Login — Identity interface is not available"));
+		FEEOSNativeOperationLease::ReportRepeated(GetOwningEOSInstanceName(), TEXT("Login"), TEXT("CapabilityUnavailable"));
 		OnLoginComplete.Broadcast(false, TEXT("Identity interface not available"));
 		return false;
 	}
 
+	if (!IdentityLease.TryAcquire(IdentityInterface.Get(), TEXT("Identity0"), this, TEXT("Login")))
+	{
+		RejectOperation(TEXT("Login"), EEOSOperationCode::Busy, TEXT("Another plugin identity operation is pending.")); return false;
+	}
+	OperationIdentity = IdentityInterface; NativeIdentityContext = CaptureEOSContext();
+	const int64 Request = BeginOperation(TEXT("Login"), FString(), IdentityLease.GetRequestId());
+	bIdentitySubmissionRejected = false; bNativeIdentitySubmitted = false;
 	CurrentLoginStatus = EEOSLoginStatus::LoggingIn;
 	UsedLoginType = LoginType;
-	OnLoginStatusChanged.Broadcast(CurrentLoginStatus);
 
 	LoginDelegateHandle = IdentityInterface->AddOnLoginCompleteDelegate_Handle(0, FOnLoginCompleteDelegate::CreateUObject(this, &UEEOSAuthSubsystem::HandleLoginComplete));
-	IdentityInterface->Login(0, Credentials);
+	OnLoginStatusChanged.Broadcast(CurrentLoginStatus);
+	if (bShuttingDown || IdentityLease.GetRequestId() != Request) return false;
+	bNativeIdentitySubmitted = true;
+	const bool bStarted = IdentityInterface->Login(0, Credentials);
+	if (!bStarted && LoginDelegateHandle.IsValid() && IdentityLease.GetRequestId() == Request)
+	{
+		bIdentitySubmissionRejected = true;
+		HandleLoginComplete(0, false, *FUniqueNetIdString::Create(FString(), NAME_None), TEXT("Native Login refused submission."));
+	}
+	if (!bStarted) return false;
 
-	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSAuthSubsystem::Login — Attempting login with type: %s"), *Credentials.Type);
+	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSAuthSubsystem::Login — Attempting login with type: %s"), *FEEOSNativeOperationLease::SafeField(Credentials.Type));
 	return true;
 }
 
@@ -209,12 +242,12 @@ bool UEEOSAuthSubsystem::PerformEngineAutoLogin()
 	// Same guard order/contract as PerformAuthLogin (R1).
 	if (LoginDelegateHandle.IsValid())
 	{
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSAuthSubsystem::LoginWithDefaults — A login is already in progress, rejecting this call (no delegate will fire for it)"));
+		RejectOperation(TEXT("Login"), EEOSOperationCode::Busy, TEXT("Another admitted request already owns this operation."));
 		return false;
 	}
 	if (IsLoggedIn())
 	{
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSAuthSubsystem::LoginWithDefaults — Already logged in, rejecting this call (no delegate will fire for it)"));
+		RejectOperation(TEXT("Login"), EEOSOperationCode::AlreadyLoggedIn, TEXT("Native identity is already logged in; healthy state preserved."));
 		return false;
 	}
 	if (!IsEOSAvailable())
@@ -228,7 +261,7 @@ bool UEEOSAuthSubsystem::PerformEngineAutoLogin()
 	IOnlineIdentityPtr IdentityInterface = EOSSub->GetIdentityInterface();
 	if (!IdentityInterface.IsValid())
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSAuthSubsystem::LoginWithDefaults — Identity interface is not available"));
+		FEEOSNativeOperationLease::ReportRepeated(GetOwningEOSInstanceName(), TEXT("LoginWithDefaults"), TEXT("CapabilityUnavailable"));
 		OnLoginComplete.Broadcast(false, TEXT("Identity interface not available"));
 		return false;
 	}
@@ -244,32 +277,31 @@ bool UEEOSAuthSubsystem::PerformEngineAutoLogin()
 			TEXT("silent re-login is disabled and AutoLogin may refuse outright. Set bPreferPersistentAuth=true in DefaultEngine.ini."));
 	}
 
+	if (!IdentityLease.TryAcquire(IdentityInterface.Get(), TEXT("Identity0"), this, TEXT("Login")))
+	{
+		RejectOperation(TEXT("Login"), EEOSOperationCode::Busy, TEXT("Another plugin identity operation is pending.")); return false;
+	}
+	OperationIdentity = IdentityInterface; NativeIdentityContext = CaptureEOSContext();
+	const int64 Request = BeginOperation(TEXT("Login"), FString(), IdentityLease.GetRequestId());
+	bIdentitySubmissionRejected = false; bNativeIdentitySubmitted = false;
 	CurrentLoginStatus = EEOSLoginStatus::LoggingIn;
 	// First attempt of the engine chain; it may fall back to Account Portal internally.
 	UsedLoginType = EEOSLoginType::PersistentAuth;
-	OnLoginStatusChanged.Broadcast(CurrentLoginStatus);
 
 	LoginDelegateHandle = IdentityInterface->AddOnLoginCompleteDelegate_Handle(0, FOnLoginCompleteDelegate::CreateUObject(this, &UEEOSAuthSubsystem::HandleLoginComplete));
+	OnLoginStatusChanged.Broadcast(CurrentLoginStatus);
+	if (bShuttingDown || IdentityLease.GetRequestId() != Request) return false;
 
 	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSAuthSubsystem::LoginWithDefaults — Auto-login (persistent auth first, Account Portal fallback)"));
 
-	if (!IdentityInterface->AutoLogin(0))
+	bNativeIdentitySubmitted = true;
+	const bool bStarted = IdentityInterface->AutoLogin(0);
+	if (!bStarted && LoginDelegateHandle.IsValid() && IdentityLease.GetRequestId() == Request)
 	{
-		// AutoLogin has a path that returns false WITHOUT firing the completion delegate
-		// ("No valid configuration for AutoLogin"). Its other early-outs DO fire it, possibly
-		// synchronously — so only clean up when our handle is still armed, or we would clear a
-		// completion that already ran and double-broadcast.
-		if (LoginDelegateHandle.IsValid())
-		{
-			IdentityInterface->ClearOnLoginCompleteDelegate_Handle(0, LoginDelegateHandle);
-			LoginDelegateHandle.Reset();
-			CurrentLoginStatus = EEOSLoginStatus::Failed;
-			OnLoginStatusChanged.Broadcast(CurrentLoginStatus);
-			OnLoginComplete.Broadcast(false, TEXT("AutoLogin refused — check bUseEAS / bUseEOSConnect / bPreferPersistentAuth in [/Script/OnlineSubsystemEOS.EOSSettings]"));
-		}
-		return false;
+		bIdentitySubmissionRejected = true;
+		HandleLoginComplete(0, false, *FUniqueNetIdString::Create(FString(), NAME_None), TEXT("AutoLogin refused; inspect native EOS configuration."));
 	}
-	return true;
+	return bStarted;
 }
 
 FString UEEOSAuthSubsystem::ExternalCredentialTypeToTokenTypeString(EEOSExternalCredentialType CredentialType)
@@ -310,7 +342,7 @@ bool UEEOSAuthSubsystem::LoginWithDefaults()
 		return Login(Settings->DefaultLoginType);
 	}
 
-	UE_LOG(LogExtendedEOS, Error, TEXT("EEOSAuthSubsystem::LoginWithDefaults — Settings not available"));
+	FEEOSNativeOperationLease::ReportRepeated(GetOwningEOSInstanceName(), TEXT("LoginWithDefaults"), TEXT("CapabilityUnavailable"));
 	BroadcastLoginPreflightFailure(TEXT("EOS Settings not available"));
 	return false;
 }
@@ -321,9 +353,9 @@ bool UEEOSAuthSubsystem::Logout()
 	// broadcast for the rejected duplicate. The pending logout's completion is the single
 	// OnLogoutComplete broadcast for both calls (the delegate has no failure payload to
 	// report a per-call rejection with).
-	if (LogoutDelegateHandle.IsValid())
+	if (bShuttingDown || IdentityLease.IsValid() || LoginDelegateHandle.IsValid() || LogoutDelegateHandle.IsValid() || bConnectLoginInFlight)
 	{
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSAuthSubsystem::Logout — A logout is already in progress, ignoring duplicate call (the pending logout will broadcast OnLogoutComplete)"));
+		RejectOperation(TEXT("Logout"), EEOSOperationCode::Busy, TEXT("Another admitted request already owns this operation."));
 		return false;
 	}
 
@@ -339,13 +371,27 @@ bool UEEOSAuthSubsystem::Logout()
 	IOnlineIdentityPtr IdentityInterface = EOSSub->GetIdentityInterface();
 	if (!IdentityInterface.IsValid())
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSAuthSubsystem::Logout — Identity interface is not available"));
+		FEEOSNativeOperationLease::ReportRepeated(GetOwningEOSInstanceName(), TEXT("Logout"), TEXT("CapabilityUnavailable"));
 		OnLogoutComplete.Broadcast();
 		return false;
 	}
 
+	if (!IdentityLease.TryAcquire(IdentityInterface.Get(), TEXT("Identity0"), this, TEXT("Logout")))
+	{
+		RejectOperation(TEXT("Logout"), EEOSOperationCode::Busy, TEXT("Another plugin identity operation is pending.")); return false;
+	}
+	OperationIdentity = IdentityInterface; NativeIdentityContext = CaptureEOSContext();
+	const int64 Request = BeginOperation(TEXT("Logout"), FString(), IdentityLease.GetRequestId());
+	bIdentitySubmissionRejected = false;
 	LogoutDelegateHandle = IdentityInterface->AddOnLogoutCompleteDelegate_Handle(0, FOnLogoutCompleteDelegate::CreateUObject(this, &UEEOSAuthSubsystem::HandleLogoutComplete));
-	IdentityInterface->Logout(0);
+	bNativeIdentitySubmitted = true;
+	const bool bStarted = IdentityInterface->Logout(0);
+	if (!bStarted && LogoutDelegateHandle.IsValid() && IdentityLease.GetRequestId() == Request)
+	{
+		bIdentitySubmissionRejected = true;
+		HandleLogoutComplete(0, false);
+	}
+	if (!bStarted) return false;
 
 	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSAuthSubsystem::Logout — Logging out..."));
 	return true;
@@ -385,9 +431,9 @@ bool UEEOSAuthSubsystem::DeletePersistentAuth()
 	// In-progress guard FIRST (R1): the logged-in path routes through Logout, so a
 	// pending logout means this call cannot start. Log + reject; no delegate fires for
 	// this call.
-	if (LogoutDelegateHandle.IsValid())
+	if (bShuttingDown || IdentityLease.IsValid() || LoginDelegateHandle.IsValid() || LogoutDelegateHandle.IsValid() || bConnectLoginInFlight)
 	{
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSAuthSubsystem::DeletePersistentAuth — A logout is already in progress, rejecting this call (no delegate will fire for it)"));
+		RejectOperation(TEXT("DeletePersistentAuth"), EEOSOperationCode::Busy, TEXT("Another admitted request already owns this operation."));
 		return false;
 	}
 
@@ -409,11 +455,9 @@ bool UEEOSAuthSubsystem::DeletePersistentAuth()
 	if (IdentityInterface.IsValid() && IdentityInterface->GetUniquePlayerId(0).IsValid())
 	{
 		bPendingPersistentAuthDeleteViaLogout = true;
-		LogoutDelegateHandle = IdentityInterface->AddOnLogoutCompleteDelegate_Handle(0, FOnLogoutCompleteDelegate::CreateUObject(this, &UEEOSAuthSubsystem::HandleLogoutComplete));
-		IdentityInterface->Logout(0);
-
-		UE_LOG(LogExtendedEOS, Log, TEXT("EEOSAuthSubsystem::DeletePersistentAuth — Logging out to clear persistent auth credentials"));
-		return true;
+		const bool bStarted = Logout();
+		if (!bStarted && bPendingPersistentAuthDeleteViaLogout) bPendingPersistentAuthDeleteViaLogout = false;
+		return bStarted;
 	}
 
 	// Sessionless path (the primary use case — clearing 'remember me' from a login
@@ -424,7 +468,7 @@ bool UEEOSAuthSubsystem::DeletePersistentAuth()
 	EOS_HPlatform PlatformHandle = GetPlatformHandle();
 	if (!PlatformHandle)
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSAuthSubsystem::DeletePersistentAuth — Platform handle not available"));
+		FEEOSNativeOperationLease::ReportRepeated(GetOwningEOSInstanceName(), TEXT("DeletePersistentAuth"), TEXT("CapabilityUnavailable"));
 		OnPersistentAuthDeleted.Broadcast(false);
 		return false;
 	}
@@ -432,7 +476,7 @@ bool UEEOSAuthSubsystem::DeletePersistentAuth()
 	EOS_HAuth AuthHandle = EOS_Platform_GetAuthInterface(PlatformHandle);
 	if (!AuthHandle)
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSAuthSubsystem::DeletePersistentAuth — Auth interface not available"));
+		FEEOSNativeOperationLease::ReportRepeated(GetOwningEOSInstanceName(), TEXT("DeletePersistentAuth"), TEXT("CapabilityUnavailable"));
 		OnPersistentAuthDeleted.Broadcast(false);
 		return false;
 	}
@@ -443,45 +487,53 @@ bool UEEOSAuthSubsystem::DeletePersistentAuth()
 	// and Mobile it must be NULL (eos_auth_types.h, EOS_Auth_DeletePersistentAuthOptions).
 	Options.RefreshToken = nullptr;
 
+	const auto PlatformOwner = GetOwningEOSPlatform();
+	if (!PlatformOwner.IsValid() || !IdentityInterface.IsValid())
+	{
+		RejectOperation(TEXT("DeletePersistentAuth"), EEOSOperationCode::UnsupportedCapability, TEXT("An owning platform and identity interface are required."));
+		OnPersistentAuthDeleted.Broadcast(false); return false;
+	}
+	if (!IdentityLease.TryAcquire(IdentityInterface.Get(), TEXT("Identity0"), this, TEXT("DeletePersistentAuth")))
+	{
+		RejectOperation(TEXT("DeletePersistentAuth"), EEOSOperationCode::Busy, TEXT("Another plugin identity operation is pending.")); return false;
+	}
+	OperationIdentity = IdentityInterface; NativeIdentityContext = CaptureEOSContext();
+	ActivePersistentAuthRequest = BeginOperation(TEXT("DeletePersistentAuth"), FString(), IdentityLease.GetRequestId());
 	struct FDeletePersistentAuthContext
 	{
 		TWeakObjectPtr<UEEOSAuthSubsystem> Self;
+		TSharedPtr<IEOSPlatformHandle, ESPMode::ThreadSafe> Platform;
+		FEEOSNativeOperationLease Lease;
+		IOnlineIdentityPtr Identity;
+		int64 RequestId;
+		FEEOSRequestContext Context;
 	};
-
-	struct FDeletePersistentAuthCallbackWrapper
-	{
-		static void EOS_CALL Callback(const EOS_Auth_DeletePersistentAuthCallbackInfo* Data)
+	EOS_Auth_DeletePersistentAuth(AuthHandle, &Options,
+		new FDeletePersistentAuthContext{this, PlatformOwner, IdentityLease, IdentityInterface, ActivePersistentAuthRequest, CaptureEOSContext()},
+		[](const EOS_Auth_DeletePersistentAuthCallbackInfo* Data)
 		{
-			if (!Data || !Data->ClientData) return;
+			if (!Data || !Data->ClientData || !EOS_EResult_IsOperationComplete(Data->ResultCode)) return;
 			TUniquePtr<FDeletePersistentAuthContext> Ctx(static_cast<FDeletePersistentAuthContext*>(Data->ClientData));
-			if (!Ctx->Self.IsValid()) return; // Subsystem destroyed while in flight — context freed by TUniquePtr
-
-			const bool bSuccess = (Data->ResultCode == EOS_EResult::EOS_Success);
-			if (bSuccess)
+			const bool bSuccess = Data->ResultCode == EOS_EResult::EOS_Success;
+			AsyncTask(ENamedThreads::GameThread, [Weak = Ctx->Self, Platform = MoveTemp(Ctx->Platform), NativeLease = MoveTemp(Ctx->Lease),
+				Identity = MoveTemp(Ctx->Identity), Request = Ctx->RequestId, Context = Ctx->Context, bSuccess, SDKResult = FString(ANSI_TO_TCHAR(EOS_EResult_ToString(Data->ResultCode)))]() mutable
 			{
-				UE_LOG(LogExtendedEOS, Log, TEXT("EEOSAuthSubsystem::DeletePersistentAuth — Persistent auth credentials deleted"));
-			}
-			else
-			{
-				UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSAuthSubsystem::DeletePersistentAuth — Failed: %hs"), EOS_EResult_ToString(Data->ResultCode));
-			}
-
-			AsyncTask(ENamedThreads::GameThread, [WeakSelf = Ctx->Self, bSuccess]()
-			{
-				if (UEEOSAuthSubsystem* Self = WeakSelf.Get())
-				{
-					Self->OnPersistentAuthDeleted.Broadcast(bSuccess);
-				}
+				UEEOSAuthSubsystem* Self = Weak.Get();
+				if (!Self || Self->bShuttingDown || Self->ActivePersistentAuthRequest != Request) return;
+				const bool bCurrent = Self->IsEOSContextCurrent(Context);
+				Self->ActivePersistentAuthRequest = 0; Self->IdentityLease.Reset(); Self->OperationIdentity.Reset();
+				NativeLease.Reset(); Identity.Reset();
+				const auto Outcome = Self->CompleteOperation(TEXT("DeletePersistentAuth"), bSuccess && bCurrent, !bCurrent ? EEOSOperationCode::Canceled : bSuccess ? EEOSOperationCode::Succeeded : EEOSOperationCode::NativeFailure,
+					!bCurrent ? TEXT("Original identity/platform retired.") : bSuccess ? TEXT("Persistent auth credentials deleted.") : TEXT("Persistent auth deletion failed."), FString(), FString(), EEOSResultSource::SDKCallback, SDKResult);
+				FEEOSOutcomeDispatchScope Dispatch(Self, Outcome);
+				Self->OnPersistentAuthDeleted.Broadcast(bSuccess && bCurrent); Self->OnOperationCompleted.Broadcast(Outcome);
 			});
-		}
-	};
-
-	EOS_Auth_DeletePersistentAuth(AuthHandle, &Options, new FDeletePersistentAuthContext{this}, &FDeletePersistentAuthCallbackWrapper::Callback);
+		});
 
 	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSAuthSubsystem::DeletePersistentAuth — No logged-in user, deleting persistent auth credentials directly via EOS_Auth_DeletePersistentAuth"));
 	return true;
 #else
-	UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSAuthSubsystem::DeletePersistentAuth — EOS SDK not available and no logged-in user"));
+	FEEOSNativeOperationLease::ReportRepeated(GetOwningEOSInstanceName(), TEXT("DeletePersistentAuth"), TEXT("CapabilityUnavailable"));
 	OnPersistentAuthDeleted.Broadcast(false);
 	return false;
 #endif
@@ -494,7 +546,7 @@ bool UEEOSAuthSubsystem::ConnectLogin(EEOSConnectLoginType LoginType, const FStr
 #if WITH_EOS_SDK
 	return PerformConnectLogin(LoginType, Token, DisplayName);
 #else
-	UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSAuthSubsystem::ConnectLogin — EOS SDK not available"));
+	FEEOSNativeOperationLease::ReportRepeated(GetOwningEOSInstanceName(), TEXT("ConnectLogin"), TEXT("CapabilityUnavailable"));
 	OnConnectLoginComplete.Broadcast(false, TEXT(""), TEXT("EOS SDK not available"));
 	return false;
 #endif
@@ -505,27 +557,18 @@ bool UEEOSAuthSubsystem::ConnectLoginWithDeviceId(const FString& DisplayName)
 #if WITH_EOS_SDK
 	// In-flight guard FIRST (R1/m8): the create→login chain counts as a Connect login in
 	// flight. Log + reject; no delegate fires for this call.
-	if (bConnectLoginInFlight)
+	if (bShuttingDown || bConnectLoginInFlight || IdentityLease.IsValid())
 	{
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSAuthSubsystem::ConnectLoginWithDeviceId — A Connect login is already in progress, rejecting this call (no delegate will fire for it)"));
+		RejectOperation(TEXT("ConnectLogin"), EEOSOperationCode::Busy, TEXT("Another admitted request already owns this operation."));
 		return false;
 	}
 
-	IEOSSDKManager* SDKManager = IEOSSDKManager::Get();
-	if (!SDKManager)
+	const IEOSPlatformHandlePtr PlatformOwner = GetOwningEOSPlatform();
+	if (!PlatformOwner.IsValid())
 	{
-		OnConnectLoginComplete.Broadcast(false, TEXT(""), TEXT("SDK Manager not available"));
-		return false;
+		OnConnectLoginComplete.Broadcast(false, TEXT(""), TEXT("Owning EOS platform is unavailable.")); return false;
 	}
-
-	TArray<IEOSPlatformHandlePtr> Platforms = SDKManager->GetActivePlatforms();
-	if (Platforms.Num() == 0)
-	{
-		OnConnectLoginComplete.Broadcast(false, TEXT(""), TEXT("No active EOS platform"));
-		return false;
-	}
-
-	EOS_HPlatform PlatformHandle = *Platforms[0];
+	const EOS_HPlatform PlatformHandle = *PlatformOwner;
 	EOS_HConnect ConnectHandle = EOS_Platform_GetConnectInterface(PlatformHandle);
 	if (!ConnectHandle)
 	{
@@ -541,12 +584,28 @@ bool UEEOSAuthSubsystem::ConnectLoginWithDeviceId(const FString& DisplayName)
 	FTCHARToUTF8 DeviceModelUtf8(*DeviceModel);
 	CreateOpts.DeviceModel = DeviceModelUtf8.Get();
 
+	if (!ConnectLease.IsValid())
+	{
+		IOnlineSubsystem* OSS = GetExistingEOSOnlineSubsystem();
+		const auto Identity = OSS ? OSS->GetIdentityInterface() : IOnlineIdentityPtr();
+		if (!Identity.IsValid() || !ConnectLease.TryAcquire(Identity.Get(), TEXT("Identity0"), this, TEXT("ConnectLogin")))
+		{
+			RejectOperation(TEXT("ConnectLogin"), EEOSOperationCode::Busy, TEXT("Another plugin identity operation is pending.")); return false;
+		}
+		ConnectOperationIdentity = Identity;
+		ActiveSDKConnectRequest = BeginOperation(TEXT("ConnectLogin"), FString(), ConnectLease.GetRequestId());
+		SDKConnectContext = CaptureEOSContext();
+	}
 	struct FDeviceIdContext
 	{
 		TWeakObjectPtr<UEEOSAuthSubsystem> Self;
 		FString DisplayName;
+		IEOSPlatformHandlePtr Platform;
+		FEEOSNativeOperationLease Lease;
+		int64 RequestId;
+		IOnlineIdentityPtr Identity;
 	};
-	FDeviceIdContext* Ctx = new FDeviceIdContext{this, DisplayName};
+	FDeviceIdContext* Ctx = new FDeviceIdContext{this, DisplayName, PlatformOwner, ConnectLease, ActiveSDKConnectRequest, ConnectOperationIdentity};
 
 	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSAuthSubsystem: Creating DeviceId..."));
 
@@ -556,18 +615,19 @@ bool UEEOSAuthSubsystem::ConnectLoginWithDeviceId(const FString& DisplayName)
 	{
 		static void EOS_CALL Callback(const EOS_Connect_CreateDeviceIdCallbackInfo* Data)
 		{
+			if (!Data || !EOS_EResult_IsOperationComplete(Data->ResultCode)) return;
 			TUniquePtr<FDeviceIdContext> C(static_cast<FDeviceIdContext*>(Data->ClientData));
 			if (!C.IsValid()) return;
-			if (!C->Self.IsValid()) return; // Subsystem destroyed while in flight — context freed by TUniquePtr
+			if (!C->Self.IsValid() || !C->Self->IsConnectRequestCurrent(C->RequestId)) return; // Subsystem destroyed while in flight — context freed by TUniquePtr
 
 			if (Data->ResultCode == EOS_EResult::EOS_Success ||
 				Data->ResultCode == EOS_EResult::EOS_DuplicateNotAllowed)
 			{
 				UE_LOG(LogExtendedEOS, Log, TEXT("EEOSAuthSubsystem: DeviceId ready, performing Connect login..."));
 
-				AsyncTask(ENamedThreads::GameThread, [WeakSelf = C->Self, DisplayName = C->DisplayName]()
+				AsyncTask(ENamedThreads::GameThread, [WeakSelf = C->Self, DisplayName = C->DisplayName, Request = C->RequestId, Lease = C->Lease, Platform = C->Platform, Identity = C->Identity]()
 				{
-					if (UEEOSAuthSubsystem* Self = WeakSelf.Get())
+					if (UEEOSAuthSubsystem* Self = WeakSelf.Get(); Self && Self->IsConnectRequestCurrent(Request))
 					{
 						// Hand the in-flight slot from the device-id phase to the login
 						// phase: clear the flag so PerformConnectLogin's own guard doesn't
@@ -580,13 +640,14 @@ bool UEEOSAuthSubsystem::ConnectLoginWithDeviceId(const FString& DisplayName)
 			else
 			{
 				FString ErrorMsg = FString::Printf(TEXT("CreateDeviceId failed: %hs"), EOS_EResult_ToString(Data->ResultCode));
-				UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSAuthSubsystem: %s"), *ErrorMsg);
+				UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSAuthSubsystem: %s"), *FEEOSNativeOperationLease::SafeField(ErrorMsg));
 
-				AsyncTask(ENamedThreads::GameThread, [WeakSelf = C->Self, ErrorMsg]()
+				AsyncTask(ENamedThreads::GameThread, [WeakSelf = C->Self, ErrorMsg, Request = C->RequestId, Lease = C->Lease, Platform = C->Platform, Identity = C->Identity]() mutable
 				{
-					if (UEEOSAuthSubsystem* Self = WeakSelf.Get())
+					if (UEEOSAuthSubsystem* Self = WeakSelf.Get(); Self && Self->IsConnectRequestCurrent(Request))
 					{
-						Self->SetConnectLoginResult(false, TEXT(""), ErrorMsg);
+						Lease.Reset();
+						Self->SetConnectLoginResult(false, TEXT(""), ErrorMsg, Request);
 					}
 				});
 			}
@@ -614,7 +675,7 @@ bool UEEOSAuthSubsystem::ConnectLoginWithDefaults()
 		// R1: only broadcast the pre-flight failure when no Connect login is in flight.
 		if (bConnectLoginInFlight)
 		{
-			UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSAuthSubsystem::ConnectLoginWithDefaults — Settings not available and a Connect login is in flight — not broadcasting for this call"));
+			FEEOSNativeOperationLease::ReportRepeated(GetOwningEOSInstanceName(), TEXT("ConnectLogin"), TEXT("CapabilityUnavailable"));
 			return false;
 		}
 		OnConnectLoginComplete.Broadcast(false, TEXT(""), TEXT("Settings not available"));
@@ -642,7 +703,7 @@ bool UEEOSAuthSubsystem::ConnectLoginWithDefaults()
 	const FString ErrorMsg = FString::Printf(
 		TEXT("ConnectLoginWithDefaults — DefaultConnectLoginType (%d) requires a platform token that cannot be fetched automatically. Call ConnectLogin(Type, Token) with a token from the platform SDK, or set DefaultConnectLoginType to DeviceId."),
 		static_cast<int32>(Settings->DefaultConnectLoginType));
-	UE_LOG(LogExtendedEOS, Error, TEXT("EEOSAuthSubsystem: %s"), *ErrorMsg);
+	UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSAuthSubsystem: %s"), *FEEOSNativeOperationLease::SafeField(ErrorMsg));
 	// R1: only broadcast the pre-flight failure when no Connect login is in flight.
 	if (!bConnectLoginInFlight)
 	{
@@ -659,14 +720,21 @@ struct FConnectLoginContext
 {
 	TWeakObjectPtr<UEEOSAuthSubsystem> Self;
 	bool bAutoCreateUser;
+	IEOSPlatformHandlePtr Platform;
+	FEEOSNativeOperationLease Lease;
+	int64 RequestId;
+	IOnlineIdentityPtr Identity;
+	FString SDKResult;
 };
 
 static void EOS_CALL OnConnectCreateUserComplete(const EOS_Connect_CreateUserCallbackInfo* Data)
 {
 	if (!Data || !Data->ClientData) return;
+	if (!Data || !EOS_EResult_IsOperationComplete(Data->ResultCode)) return;
 	TUniquePtr<FConnectLoginContext> Ctx(static_cast<FConnectLoginContext*>(Data->ClientData));
-	if (!Ctx->Self.IsValid()) return; // Subsystem destroyed while in flight — context freed by TUniquePtr
+	if (!Ctx->Self.IsValid() || !Ctx->Self->IsConnectRequestCurrent(Ctx->RequestId)) return; // Subsystem destroyed while in flight — context freed by TUniquePtr
 
+	Ctx->SDKResult = ANSI_TO_TCHAR(EOS_EResult_ToString(Data->ResultCode));
 	if (Data->ResultCode == EOS_EResult::EOS_Success)
 	{
 		char PuidBuf[EOS_PRODUCTUSERID_MAX_LENGTH + 1] = {};
@@ -674,26 +742,26 @@ static void EOS_CALL OnConnectCreateUserComplete(const EOS_Connect_CreateUserCal
 		EOS_ProductUserId_ToString(Data->LocalUserId, PuidBuf, &PuidLen);
 		FString ProductUserId(UTF8_TO_TCHAR(PuidBuf));
 
-		UE_LOG(LogExtendedEOS, Log, TEXT("EEOSAuthSubsystem: CreateUser succeeded — ProductUserId: %s"), *ProductUserId);
+		UE_LOG(LogExtendedEOS, Log, TEXT("EEOSAuthSubsystem: CreateUser succeeded — ProductUserId: %s"), *FEEOSNativeOperationLease::SafeField(ProductUserId));
 
-		AsyncTask(ENamedThreads::GameThread, [WeakSelf = Ctx->Self, ProductUserId]()
+		AsyncTask(ENamedThreads::GameThread, [WeakSelf = Ctx->Self, ProductUserId, Request = Ctx->RequestId, SDKResult = Ctx->SDKResult]()
 		{
-			if (UEEOSAuthSubsystem* Self = WeakSelf.Get())
+			if (UEEOSAuthSubsystem* Self = WeakSelf.Get(); Self && Self->IsConnectRequestCurrent(Request))
 			{
-				Self->SetConnectLoginResult(true, ProductUserId, TEXT(""));
+				Self->SetConnectLoginResult(true, ProductUserId, TEXT(""), Request, SDKResult);
 			}
 		});
 	}
 	else
 	{
 		FString ErrorMsg = FString::Printf(TEXT("CreateUser failed: %hs"), EOS_EResult_ToString(Data->ResultCode));
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSAuthSubsystem: %s"), *ErrorMsg);
+		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSAuthSubsystem: %s"), *FEEOSNativeOperationLease::SafeField(ErrorMsg));
 
-		AsyncTask(ENamedThreads::GameThread, [WeakSelf = Ctx->Self, ErrorMsg]()
+		AsyncTask(ENamedThreads::GameThread, [WeakSelf = Ctx->Self, ErrorMsg, Request = Ctx->RequestId, SDKResult = Ctx->SDKResult]()
 		{
-			if (UEEOSAuthSubsystem* Self = WeakSelf.Get())
+			if (UEEOSAuthSubsystem* Self = WeakSelf.Get(); Self && Self->IsConnectRequestCurrent(Request))
 			{
-				Self->SetConnectLoginResult(false, TEXT(""), ErrorMsg);
+				Self->SetConnectLoginResult(false, TEXT(""), ErrorMsg, Request, SDKResult);
 			}
 		});
 	}
@@ -702,9 +770,11 @@ static void EOS_CALL OnConnectCreateUserComplete(const EOS_Connect_CreateUserCal
 static void EOS_CALL OnConnectLoginCallbackStatic(const EOS_Connect_LoginCallbackInfo* Data)
 {
 	if (!Data || !Data->ClientData) return;
+	if (!Data || !EOS_EResult_IsOperationComplete(Data->ResultCode)) return;
 	TUniquePtr<FConnectLoginContext> Ctx(static_cast<FConnectLoginContext*>(Data->ClientData));
-	if (!Ctx->Self.IsValid()) return; // Subsystem destroyed while in flight — context freed by TUniquePtr
+	if (!Ctx->Self.IsValid() || !Ctx->Self->IsConnectRequestCurrent(Ctx->RequestId)) return; // Subsystem destroyed while in flight — context freed by TUniquePtr
 
+	Ctx->SDKResult = ANSI_TO_TCHAR(EOS_EResult_ToString(Data->ResultCode));
 	if (Data->ResultCode == EOS_EResult::EOS_Success)
 	{
 		// Login succeeded — extract ProductUserId
@@ -713,13 +783,13 @@ static void EOS_CALL OnConnectLoginCallbackStatic(const EOS_Connect_LoginCallbac
 		EOS_ProductUserId_ToString(Data->LocalUserId, PuidBuf, &PuidLen);
 		FString ProductUserId(UTF8_TO_TCHAR(PuidBuf));
 
-		UE_LOG(LogExtendedEOS, Log, TEXT("EEOSAuthSubsystem: Connect login succeeded — ProductUserId: %s"), *ProductUserId);
+		UE_LOG(LogExtendedEOS, Log, TEXT("EEOSAuthSubsystem: Connect login succeeded — ProductUserId: %s"), *FEEOSNativeOperationLease::SafeField(ProductUserId));
 
-		AsyncTask(ENamedThreads::GameThread, [WeakSelf = Ctx->Self, ProductUserId]()
+		AsyncTask(ENamedThreads::GameThread, [WeakSelf = Ctx->Self, ProductUserId, Request = Ctx->RequestId, SDKResult = Ctx->SDKResult]()
 		{
-			if (UEEOSAuthSubsystem* Self = WeakSelf.Get())
+			if (UEEOSAuthSubsystem* Self = WeakSelf.Get(); Self && Self->IsConnectRequestCurrent(Request))
 			{
-				Self->SetConnectLoginResult(true, ProductUserId, TEXT(""));
+				Self->SetConnectLoginResult(true, ProductUserId, TEXT(""), Request, SDKResult);
 			}
 		});
 	}
@@ -728,33 +798,20 @@ static void EOS_CALL OnConnectLoginCallbackStatic(const EOS_Connect_LoginCallbac
 		// First-time user — create a new ProductUser
 		UE_LOG(LogExtendedEOS, Log, TEXT("EEOSAuthSubsystem: Connect login returned InvalidUser, creating new ProductUser..."));
 
-		// Get the Connect handle to call CreateUser
-		IEOSSDKManager* SDKManager = IEOSSDKManager::Get();
-		if (SDKManager)
+		const EOS_HConnect Connect = Ctx->Platform.IsValid() ? EOS_Platform_GetConnectInterface(*Ctx->Platform) : nullptr;
+		if (Connect)
 		{
-			TArray<IEOSPlatformHandlePtr> Platforms = SDKManager->GetActivePlatforms();
-			if (Platforms.Num() > 0)
-			{
-				EOS_HPlatform PH = *Platforms[0];
-				EOS_HConnect CH = EOS_Platform_GetConnectInterface(PH);
-				if (CH)
-				{
-					EOS_Connect_CreateUserOptions CreateOpts = {};
-					CreateOpts.ApiVersion = EOS_CONNECT_CREATEUSER_API_LATEST;
-					CreateOpts.ContinuanceToken = Data->ContinuanceToken;
-
-					EOS_Connect_CreateUser(CH, &CreateOpts, Ctx.Release(), &OnConnectCreateUserComplete);
-					return; // Ownership handed off — CreateUser callback frees the context
-				}
-			}
+			EOS_Connect_CreateUserOptions Options = {};
+			Options.ApiVersion = EOS_CONNECT_CREATEUSER_API_LATEST; Options.ContinuanceToken = Data->ContinuanceToken;
+			EOS_Connect_CreateUser(Connect, &Options, Ctx.Release(), &OnConnectCreateUserComplete);
+			return;
 		}
-
 		// Fallback if we can't get the handle
-		AsyncTask(ENamedThreads::GameThread, [WeakSelf = Ctx->Self]()
+		AsyncTask(ENamedThreads::GameThread, [WeakSelf = Ctx->Self, Request = Ctx->RequestId, SDKResult = Ctx->SDKResult]()
 		{
-			if (UEEOSAuthSubsystem* Self = WeakSelf.Get())
+			if (UEEOSAuthSubsystem* Self = WeakSelf.Get(); Self && Self->IsConnectRequestCurrent(Request))
 			{
-				Self->SetConnectLoginResult(false, TEXT(""), TEXT("Failed to create user — Connect interface unavailable"));
+				Self->SetConnectLoginResult(false, TEXT(""), TEXT("Failed to create user — Connect interface unavailable"), Request, SDKResult);
 			}
 		});
 	}
@@ -767,9 +824,9 @@ static void EOS_CALL OnConnectLoginCallbackStatic(const EOS_Connect_LoginCallbac
 		UE_LOG(LogExtendedEOS, Log, TEXT("EEOSAuthSubsystem: Connect login returned InvalidUser and auto-create is disabled — storing ContinuanceToken for LinkAccount"));
 
 		EOS_ContinuanceToken ContinuanceToken = Data->ContinuanceToken;
-		AsyncTask(ENamedThreads::GameThread, [WeakSelf = Ctx->Self, ContinuanceToken]()
+		AsyncTask(ENamedThreads::GameThread, [WeakSelf = Ctx->Self, ContinuanceToken, Request = Ctx->RequestId, SDKResult = Ctx->SDKResult]()
 		{
-			if (UEEOSAuthSubsystem* Self = WeakSelf.Get())
+			if (UEEOSAuthSubsystem* Self = WeakSelf.Get(); Self && Self->IsConnectRequestCurrent(Request))
 			{
 				if (UGameInstance* GameInstance = Self->GetGameInstance())
 				{
@@ -779,20 +836,20 @@ static void EOS_CALL OnConnectLoginCallbackStatic(const EOS_Connect_LoginCallbac
 					}
 				}
 				Self->SetConnectLoginResult(false, TEXT(""),
-					TEXT("Connect login returned EOS_InvalidUser — no product user exists for these credentials. A ContinuanceToken was stored: call LinkAccount to link an existing user, or enable bAutoCreateProductUser."));
+					TEXT("Connect login returned EOS_InvalidUser — no product user exists for these credentials. A ContinuanceToken was stored: call LinkAccount to link an existing user, or enable bAutoCreateProductUser."), Request, SDKResult);
 			}
 		});
 	}
 	else
 	{
 		FString ErrorMsg = FString::Printf(TEXT("Connect login failed: %hs"), EOS_EResult_ToString(Data->ResultCode));
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSAuthSubsystem: %s"), *ErrorMsg);
+		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSAuthSubsystem: %s"), *FEEOSNativeOperationLease::SafeField(ErrorMsg));
 
-		AsyncTask(ENamedThreads::GameThread, [WeakSelf = Ctx->Self, ErrorMsg]()
+		AsyncTask(ENamedThreads::GameThread, [WeakSelf = Ctx->Self, ErrorMsg, Request = Ctx->RequestId, SDKResult = Ctx->SDKResult]()
 		{
-			if (UEEOSAuthSubsystem* Self = WeakSelf.Get())
+			if (UEEOSAuthSubsystem* Self = WeakSelf.Get(); Self && Self->IsConnectRequestCurrent(Request))
 			{
-				Self->SetConnectLoginResult(false, TEXT(""), ErrorMsg);
+				Self->SetConnectLoginResult(false, TEXT(""), ErrorMsg, Request, SDKResult);
 			}
 		});
 	}
@@ -803,28 +860,19 @@ bool UEEOSAuthSubsystem::PerformConnectLogin(EEOSConnectLoginType LoginType, con
 	// In-flight guard FIRST (R1/m8): a second raw Connect login while one is pending
 	// would double-connect and last-writer-win CachedProductUserId. Log + reject; no
 	// delegate fires for this call.
-	if (bConnectLoginInFlight)
+	if (bShuttingDown || bConnectLoginInFlight || IdentityLease.IsValid())
 	{
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSAuthSubsystem::PerformConnectLogin — A Connect login is already in progress, rejecting this call (no delegate will fire for it)"));
+		RejectOperation(TEXT("ConnectLogin"), EEOSOperationCode::Busy, TEXT("Another admitted request already owns this operation."));
 		return false;
 	}
 
 	// Pre-flight failures below broadcast: no Connect login is in flight (guard above).
-	IEOSSDKManager* SDKManager = IEOSSDKManager::Get();
-	if (!SDKManager)
+	const IEOSPlatformHandlePtr PlatformOwner = GetOwningEOSPlatform();
+	if (!PlatformOwner.IsValid())
 	{
-		OnConnectLoginComplete.Broadcast(false, TEXT(""), TEXT("SDK Manager not available"));
-		return false;
+		OnConnectLoginComplete.Broadcast(false, TEXT(""), TEXT("Owning EOS platform is unavailable.")); return false;
 	}
-
-	TArray<IEOSPlatformHandlePtr> Platforms = SDKManager->GetActivePlatforms();
-	if (Platforms.Num() == 0)
-	{
-		OnConnectLoginComplete.Broadcast(false, TEXT(""), TEXT("No active EOS platform"));
-		return false;
-	}
-
-	EOS_HPlatform PlatformHandle = *Platforms[0];
+	const EOS_HPlatform PlatformHandle = *PlatformOwner;
 	EOS_HConnect ConnectHandle = EOS_Platform_GetConnectInterface(PlatformHandle);
 	if (!ConnectHandle)
 	{
@@ -901,7 +949,19 @@ bool UEEOSAuthSubsystem::PerformConnectLogin(EEOSConnectLoginType LoginType, con
 	const UEEOSSettings* Settings = GetEOSSettings();
 	bool bAutoCreate = Settings ? Settings->bAutoCreateProductUser : true;
 
-	FConnectLoginContext* Ctx = new FConnectLoginContext{this, bAutoCreate};
+	if (!ConnectLease.IsValid())
+	{
+		IOnlineSubsystem* OSS = GetExistingEOSOnlineSubsystem();
+		const auto Identity = OSS ? OSS->GetIdentityInterface() : IOnlineIdentityPtr();
+		if (!Identity.IsValid() || !ConnectLease.TryAcquire(Identity.Get(), TEXT("Identity0"), this, TEXT("ConnectLogin")))
+		{
+			RejectOperation(TEXT("ConnectLogin"), EEOSOperationCode::Busy, TEXT("Another plugin identity operation is pending.")); return false;
+		}
+		ConnectOperationIdentity = Identity;
+		ActiveSDKConnectRequest = BeginOperation(TEXT("ConnectLogin"), FString(), ConnectLease.GetRequestId());
+		SDKConnectContext = CaptureEOSContext();
+	}
+	FConnectLoginContext* Ctx = new FConnectLoginContext{this, bAutoCreate, PlatformOwner, ConnectLease, ActiveSDKConnectRequest, ConnectOperationIdentity, FString()};
 
 	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSAuthSubsystem: Performing EOS Connect login (type=%d)..."), (int32)LoginType);
 
@@ -918,18 +978,18 @@ bool UEEOSAuthSubsystem::PerformConnectLogin(EEOSConnectLoginType LoginType, con
 
 // ── SetConnectLoginResult ────────────────────────────────────────────────────
 
-void UEEOSAuthSubsystem::SetConnectLoginResult(bool bSuccess, const FString& ProductUserId, const FString& Error)
+void UEEOSAuthSubsystem::SetConnectLoginResult(bool bSuccess, const FString& ProductUserId, const FString& Error, int64 RequestId, const FString& SDKResult)
 {
-	// Release the in-flight guard BEFORE broadcasting so listeners can retry/chain a new
-	// Connect login from inside the completion broadcast (R1).
-	bConnectLoginInFlight = false;
-
-	if (bSuccess)
-	{
-		CachedProductUserId = ProductUserId;
-		bConnectedToGameServices = true;
-	}
-	OnConnectLoginComplete.Broadcast(bSuccess, ProductUserId, Error);
+	if (bShuttingDown || (RequestId && RequestId != ActiveSDKConnectRequest)) return;
+	bConnectLoginInFlight = false; ActiveSDKConnectRequest = 0; ConnectLease.Reset(); ConnectOperationIdentity.Reset();
+	bConnectedToGameServices = bSuccess && !ProductUserId.IsEmpty();
+	CachedProductUserId = bConnectedToGameServices ? ProductUserId : FString();
+	auto Outcome = CompleteOperation(TEXT("ConnectLogin"), bConnectedToGameServices,
+		bConnectedToGameServices ? EEOSOperationCode::Succeeded : EEOSOperationCode::NativeFailure,
+		Error.IsEmpty() ? TEXT("Connect login completed.") : Error, FString(), FString(), SDKResult.IsEmpty() ? EEOSResultSource::Plugin : EEOSResultSource::SDKCallback, SDKResult);
+	FEEOSOutcomeDispatchScope Dispatch(this, Outcome);
+	OnConnectLoginComplete.Broadcast(bConnectedToGameServices, CachedProductUserId, Error);
+	OnOperationCompleted.Broadcast(Outcome);
 }
 
 // ── Queries ──────────────────────────────────────────────────────────────────
@@ -953,45 +1013,30 @@ FString UEEOSAuthSubsystem::GetLoggedInUserId() const
 
 FString UEEOSAuthSubsystem::GetDisplayName() const
 {
-	if (!IsEOSAvailable()) return FString();
-
-	IOnlineSubsystem* EOSSub = GetEOSOnlineSubsystem();
-	IOnlineIdentityPtr IdentityInterface = EOSSub->GetIdentityInterface();
-	if (!IdentityInterface.IsValid()) return FString();
-
-	// Only an Epic account has an EOS display name. A Connect-only login (a Steam ticket, a device id)
-	// has none: EOS returns an empty nickname and warns on every call. Use the platform's own name then.
-	bool bHasEpicAccount = true;
-#if WITH_EOS_SDK
-	const FUniqueNetIdPtr UserId = IdentityInterface->GetUniquePlayerId(0);
-	if (UserId.IsValid() && UserId->GetType() == EOSSub->GetSubsystemName())
-	{
-		bHasEpicAccount = EOS_EpicAccountId_IsValid(StaticCastSharedPtr<const IUniqueNetIdEOS>(UserId)->GetEpicAccountId()) == EOS_TRUE;
-	}
-#endif
-	if (bHasEpicAccount)
-	{
-		const FString Nickname = IdentityInterface->GetPlayerNickname(0);
-		if (!Nickname.IsEmpty()) return Nickname;
-	}
-
-	IOnlineSubsystem* PlatformSub = IOnlineSubsystem::GetByPlatform();
-	IOnlineIdentityPtr PlatformIdentity = PlatformSub && PlatformSub != EOSSub ? PlatformSub->GetIdentityInterface() : nullptr;
-	return PlatformIdentity.IsValid() ? PlatformIdentity->GetPlayerNickname(0) : FString();
+	IOnlineSubsystem* OSS = GetExistingEOSOnlineSubsystem();
+	const auto Identity = OSS ? OSS->GetIdentityInterface() : IOnlineIdentityPtr();
+	const FString EpicName = EEOSIdentity::SafeLocalNickname(Identity);
+	if (!EpicName.IsEmpty()) return EpicName;
+	IOnlineSubsystem* Platform = IOnlineSubsystem::GetByPlatform();
+	const auto PlatformIdentity = Platform && Platform != OSS ? Platform->GetIdentityInterface() : IOnlineIdentityPtr();
+	return PlatformIdentity.IsValid() && PlatformIdentity->GetLoginStatus(0) == ELoginStatus::LoggedIn ? PlatformIdentity->GetPlayerNickname(0) : FString();
 }
 
 bool UEEOSAuthSubsystem::IsLoggedIn() const
 {
-	return CurrentLoginStatus == EEOSLoginStatus::LoggedIn;
+	IOnlineSubsystem* OSS = GetExistingEOSOnlineSubsystem();
+	const auto Identity = OSS ? OSS->GetIdentityInterface() : IOnlineIdentityPtr();
+	const auto Local = Identity.IsValid() ? Identity->GetUniquePlayerId(0) : FUniqueNetIdPtr();
+	return Local.IsValid() && Local->IsValid() && Identity->GetLoginStatus(0) == ELoginStatus::LoggedIn;
 }
 
 FString UEEOSAuthSubsystem::GetAuthToken() const
 {
 	if (!IsEOSAvailable()) return FString();
 
-	IOnlineSubsystem* EOSSub = GetEOSOnlineSubsystem();
-	IOnlineIdentityPtr IdentityInterface = EOSSub->GetIdentityInterface();
-	if (!IdentityInterface.IsValid()) return FString();
+	IOnlineSubsystem* EOSSub = GetExistingEOSOnlineSubsystem();
+	IOnlineIdentityPtr IdentityInterface = EOSSub ? EOSSub->GetIdentityInterface() : IOnlineIdentityPtr();
+	if (!EEOSIdentity::HasLocalEpicAccount(IdentityInterface)) return FString();
 
 	return IdentityInterface->GetAuthToken(0);
 }
@@ -1003,7 +1048,15 @@ EEOSLoginType UEEOSAuthSubsystem::GetCurrentLoginType() const
 
 FString UEEOSAuthSubsystem::GetProductUserId() const
 {
-	return CachedProductUserId;
+	IOnlineSubsystem* OSS = GetExistingEOSOnlineSubsystem();
+	const auto Identity = OSS ? OSS->GetIdentityInterface() : IOnlineIdentityPtr();
+	const auto Local = Identity.IsValid() ? Identity->GetUniquePlayerId(0) : FUniqueNetIdPtr();
+	if (Local.IsValid() && Local->IsValid() && Identity->GetLoginStatus(0) == ELoginStatus::LoggedIn)
+	{
+		const FString NativePuid = UEEOSBlueprintLibrary::ExtractProductUserId(Local->ToString());
+		if (!NativePuid.IsEmpty()) return NativePuid;
+	}
+	return bConnectedToGameServices ? CachedProductUserId : FString();
 }
 
 bool UEEOSAuthSubsystem::IsConnectedToGameServices() const
@@ -1015,49 +1068,38 @@ bool UEEOSAuthSubsystem::IsConnectedToGameServices() const
 
 void UEEOSAuthSubsystem::HandleLoginComplete(int32 LocalUserNum, bool bWasSuccessful, const FUniqueNetId& UserId, const FString& Error)
 {
-	if (bWasSuccessful)
-	{
-		CurrentLoginStatus = EEOSLoginStatus::LoggedIn;
-		UE_LOG(LogExtendedEOS, Log, TEXT("EEOSAuthSubsystem: Login successful — UserId: %s"), *UserId.ToString());
-
-		// Note: OnAuthTokenRefreshed deliberately does NOT fire here — it fires only from
-		// RefreshAuthToken(). An ordinary login result is reported via OnLoginComplete.
-
-		// Auto-chain Connect login if configured
-		AutoConnectLoginAfterAuth();
-	}
-	else
-	{
-		CurrentLoginStatus = EEOSLoginStatus::Failed;
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSAuthSubsystem: Login failed — %s"), *Error);
-	}
-
-	// Clear the engine delegate registration AND the in-progress guard BEFORE
-	// broadcasting: a listener retrying/chaining Login() from inside the completion
-	// broadcast must not be rejected by the still-armed guard (R1). The Reset() lives
-	// OUTSIDE the OSS null-check — a null OSS at completion time must not leave the
-	// guard armed forever (m6).
-	if (IOnlineSubsystem* EOSSub = GetEOSOnlineSubsystem())
-	{
-		if (IOnlineIdentityPtr IdentityInterface = EOSSub->GetIdentityInterface())
-		{
-			IdentityInterface->ClearOnLoginCompleteDelegate_Handle(0, LoginDelegateHandle);
-		}
-	}
-	LoginDelegateHandle.Reset();
-
-	OnLoginStatusChanged.Broadcast(CurrentLoginStatus);
-	OnLoginComplete.Broadcast(bWasSuccessful, Error);
+	if (LocalUserNum != 0 || !LoginDelegateHandle.IsValid())
+	{ LogCallbackDisposition(TEXT("Login"), IdentityLease.GetRequestId(), LocalUserNum != 0 ? TEXT("DifferentOwner") : TEXT("Duplicate")); return; }
+	const bool bCurrent = bShuttingDown || IsEOSContextCurrent(NativeIdentityContext, false);
+	LogCallbackDisposition(TEXT("Login"), IdentityLease.GetRequestId(), bShuttingDown ? TEXT("ShutdownInternalOnly") : bCurrent ? TEXT("Consumed") : TEXT("StaleGeneration"), NativeIdentityContext.Generation);
+	if (OperationIdentity.IsValid()) OperationIdentity->ClearOnLoginCompleteDelegate_Handle(0, LoginDelegateHandle);
+	LoginDelegateHandle.Reset(); IdentityLease.Reset(); OperationIdentity.Reset(); bNativeIdentitySubmitted = false;
+	const bool bSubmissionRejected = bIdentitySubmissionRejected; bIdentitySubmissionRejected = false;
+	const auto Local = NativeIdentityContext.Identity.IsValid() ? NativeIdentityContext.Identity->GetUniquePlayerId(0) : FUniqueNetIdPtr();
+	const bool bReady = bCurrent && bWasSuccessful && IsLoggedIn() && UserId.IsValid() && Local.IsValid() && *Local == UserId;
+	CurrentLoginStatus = IsLoggedIn() ? EEOSLoginStatus::LoggedIn : EEOSLoginStatus::Failed;
+	const FString ResultMessage = !bCurrent ? TEXT("Original identity/platform retired.") : !Error.IsEmpty() ? Error : bReady ? TEXT("Native login completed.") : TEXT("Native login did not leave a usable identity.");
+	const auto Outcome = CompleteOperation(TEXT("Login"), bReady, !bCurrent ? EEOSOperationCode::Canceled : bReady ? EEOSOperationCode::Succeeded : bSubmissionRejected ? EEOSOperationCode::NativeStartRejected : EEOSOperationCode::NativeFailure,
+		ResultMessage, UserId.IsValid() ? UserId.ToString() : FString(), bSubmissionRejected ? FString() : bWasSuccessful ? TEXT("Success") : TEXT("Failure"),
+		bSubmissionRejected ? EEOSResultSource::Plugin : EEOSResultSource::NativeCallback);
+	FEEOSOutcomeDispatchScope Dispatch(this, Outcome);
+	if (bShuttingDown) return;
+	if (bReady) AutoConnectLoginAfterAuth();
+	OnLoginStatusChanged.Broadcast(CurrentLoginStatus); OnLoginComplete.Broadcast(bReady, bReady ? Error : ResultMessage); OnOperationCompleted.Broadcast(Outcome);
 }
 
 void UEEOSAuthSubsystem::HandleLogoutComplete(int32 LocalUserNum, bool bWasSuccessful)
 {
+	if (LocalUserNum != 0 || !LogoutDelegateHandle.IsValid())
+	{ LogCallbackDisposition(TEXT("Logout"), IdentityLease.GetRequestId(), LocalUserNum != 0 ? TEXT("DifferentOwner") : TEXT("Duplicate")); return; }
+	const bool bCurrent = bShuttingDown || IsEOSContextCurrent(NativeIdentityContext, false);
+	LogCallbackDisposition(TEXT("Logout"), IdentityLease.GetRequestId(), bShuttingDown ? TEXT("ShutdownInternalOnly") : bCurrent ? TEXT("Consumed") : TEXT("StaleGeneration"), NativeIdentityContext.Generation);
 	// Consume the DeletePersistentAuth marker up front (re-entrancy safe: a listener
 	// starting a new operation from inside a broadcast must see clean state).
 	const bool bNotifyPersistentAuthDeleted = bPendingPersistentAuthDeleteViaLogout;
 	bPendingPersistentAuthDeleteViaLogout = false;
 
-	if (bWasSuccessful)
+	if (bWasSuccessful && bCurrent)
 	{
 		CurrentLoginStatus = EEOSLoginStatus::NotLoggedIn;
 		bConnectedToGameServices = false;
@@ -1071,15 +1113,16 @@ void UEEOSAuthSubsystem::HandleLogoutComplete(int32 LocalUserNum, bool bWasSucce
 
 	// Clear the engine delegate registration AND the in-progress guard BEFORE
 	// broadcasting (see HandleLoginComplete — same R1/m6 reasoning).
-	if (IOnlineSubsystem* EOSSub = GetEOSOnlineSubsystem())
-	{
-		if (IOnlineIdentityPtr IdentityInterface = EOSSub->GetIdentityInterface())
-		{
-			IdentityInterface->ClearOnLogoutCompleteDelegate_Handle(0, LogoutDelegateHandle);
-		}
-	}
-	LogoutDelegateHandle.Reset();
-
+	if (OperationIdentity.IsValid()) OperationIdentity->ClearOnLogoutCompleteDelegate_Handle(0, LogoutDelegateHandle);
+	LogoutDelegateHandle.Reset(); IdentityLease.Reset(); OperationIdentity.Reset(); bNativeIdentitySubmitted = false;
+	CurrentLoginStatus = IsLoggedIn() ? EEOSLoginStatus::LoggedIn : EEOSLoginStatus::NotLoggedIn;
+	const bool bSubmissionRejected = bIdentitySubmissionRejected; bIdentitySubmissionRejected = false;
+	const bool bLoggedOut = bCurrent && bWasSuccessful && !IsLoggedIn();
+	const auto Outcome = CompleteOperation(TEXT("Logout"), bLoggedOut, !bCurrent ? EEOSOperationCode::Canceled : bLoggedOut ? EEOSOperationCode::Succeeded : bSubmissionRejected ? EEOSOperationCode::NativeStartRejected : EEOSOperationCode::NativeFailure,
+		bLoggedOut ? TEXT("Logged out.") : bSubmissionRejected ? TEXT("Native logout refused submission.") : TEXT("Native logout did not clear the identity."), FString(),
+		bSubmissionRejected ? FString() : bWasSuccessful ? TEXT("Success") : TEXT("Failure"), bSubmissionRejected ? EEOSResultSource::Plugin : EEOSResultSource::NativeCallback);
+	FEEOSOutcomeDispatchScope Dispatch(this, Outcome);
+	if (bShuttingDown) return;
 	OnLoginStatusChanged.Broadcast(CurrentLoginStatus);
 	OnLogoutComplete.Broadcast();
 
@@ -1088,8 +1131,9 @@ void UEEOSAuthSubsystem::HandleLogoutComplete(int32 LocalUserNum, bool bWasSucce
 	// successful DeletePersistentAuth-initiated logout means the deletion happened.
 	if (bNotifyPersistentAuthDeleted)
 	{
-		OnPersistentAuthDeleted.Broadcast(bWasSuccessful);
+		OnPersistentAuthDeleted.Broadcast(bWasSuccessful && bCurrent);
 	}
+	OnOperationCompleted.Broadcast(Outcome);
 }
 
 void UEEOSAuthSubsystem::AutoConnectLoginAfterAuth()
@@ -1124,7 +1168,7 @@ void UEEOSAuthSubsystem::AutoConnectLoginAfterAuth()
 				const FString EnginePuid = UEEOSBlueprintLibrary::ExtractProductUserId(LocalId->ToString());
 				if (!EnginePuid.IsEmpty())
 				{
-					UE_LOG(LogExtendedEOS, Log, TEXT("EEOSAuthSubsystem: Adopting the engine's Connect session (PUID: %s) — no raw Connect login needed"), *EnginePuid);
+					UE_LOG(LogExtendedEOS, Log, TEXT("EEOSAuthSubsystem: Adopting the engine's Connect session (PUID: %s) — no raw Connect login needed"), *FEEOSNativeOperationLease::SafeField(EnginePuid));
 					SetConnectLoginResult(true, EnginePuid, TEXT(""));
 					return;
 				}
@@ -1137,4 +1181,35 @@ void UEEOSAuthSubsystem::AutoConnectLoginAfterAuth()
 	// After Epic Auth login, use the Epic ID Token to do Connect login
 	// This gets us a ProductUserId from the already-authenticated Epic account
 	ConnectLogin(EEOSConnectLoginType::Epic, GetAuthToken());
+}
+
+
+bool UEEOSAuthSubsystem::TickNativeIdentity(float)
+{
+	if (bShuttingDown) return false;
+	if (ConnectLease.IsValid() && !IsEOSContextCurrent(SDKConnectContext))
+	{
+		const auto Outcome = CompleteOperation(TEXT("ConnectLogin"), false, EEOSOperationCode::Canceled, TEXT("Original identity/platform retired; SDK completion remains owned by its retained context."));
+		ActiveSDKConnectRequest = 0; bConnectLoginInFlight = false; ConnectLease.Reset(); ConnectOperationIdentity.Reset();
+		CachedProductUserId.Empty(); bConnectedToGameServices = false;
+		FEEOSOutcomeDispatchScope Dispatch(this, Outcome);
+		OnConnectLoginComplete.Broadcast(false, FString(), FString()); OnOperationCompleted.Broadcast(Outcome);
+	}
+	if (IdentityLease.IsValid() || ConnectLease.IsValid()) return true;
+	const auto Status = IsLoggedIn() ? EEOSLoginStatus::LoggedIn : EEOSLoginStatus::NotLoggedIn;
+	if (CurrentLoginStatus != Status)
+	{
+		CurrentLoginStatus = Status;
+		if (Status == EEOSLoginStatus::NotLoggedIn) { CachedProductUserId.Empty(); bConnectedToGameServices = false; }
+		OnLoginStatusChanged.Broadcast(Status);
+	}
+	if (Status == EEOSLoginStatus::LoggedIn)
+	{
+		IOnlineSubsystem* OSS = GetExistingEOSOnlineSubsystem();
+		const auto Identity = OSS ? OSS->GetIdentityInterface() : IOnlineIdentityPtr();
+		const auto Local = Identity.IsValid() ? Identity->GetUniquePlayerId(0) : FUniqueNetIdPtr();
+		const FString Puid = Local.IsValid() ? UEEOSBlueprintLibrary::ExtractProductUserId(Local->ToString()) : FString();
+		CachedProductUserId = GetEOSReadiness().bConnectLoggedIn ? Puid : FString(); bConnectedToGameServices = !CachedProductUserId.IsEmpty();
+	}
+	return true;
 }

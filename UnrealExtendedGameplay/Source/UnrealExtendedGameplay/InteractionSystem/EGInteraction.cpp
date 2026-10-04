@@ -115,7 +115,7 @@ void UEGInteraction::BeginActivation(int32 InActivationId, bool bInPredicting)
 	ActivationInputTag = GetInputTag();
 	bActive = true;
 	bPredicting = bInPredicting;
-	bServerPending = false;
+	bServerPending = bInPredicting;
 
 	if (ActorInfo.System)
 	{
@@ -154,43 +154,31 @@ void UEGInteraction::HandleServerResult(bool bAccepted)
 		return;
 	}
 
-	if (bServerPending)
-	{
-		bServerPending = false;
-		if (ActorInfo.System)
-		{
-			ActorInfo.System->NotifyActivationRejected(this);
-		}
-		return;
-	}
-
+	bServerPending = false;
 	if (bActive)
 	{
 		// The server never ran this, so there is nothing to tell it.
 		EndInteractionInternal(true, false);
-		if (ActorInfo.System)
-		{
-			ActorInfo.System->NotifyActivationRejected(this);
-		}
+	}
+	if (ActorInfo.System)
+	{
+		ActorInfo.System->NotifyActivationRejected(this);
 	}
 }
 
 void UEGInteraction::HandleServerEnded(bool bCancelled)
 {
+	bServerPending = false;
 	if (bActive)
 	{
 		EndInteractionInternal(bCancelled, false);
 		return;
 	}
 
-	if (bServerPending)
+	if (ActorInfo.System)
 	{
-		bServerPending = false;
 		OnEndedNative.Broadcast(bCancelled);
-		if (ActorInfo.System)
-		{
-			ActorInfo.System->NotifyInteractionEnded(this, bCancelled, false);
-		}
+		ActorInfo.System->NotifyInteractionEnded(this, bCancelled, false);
 	}
 }
 

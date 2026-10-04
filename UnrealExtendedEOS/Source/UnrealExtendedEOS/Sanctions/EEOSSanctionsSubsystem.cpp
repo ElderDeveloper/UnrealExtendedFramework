@@ -1,6 +1,8 @@
 // Copyright Kemal Erdem YILMAZ. All Rights Reserved.
 
 #include "EEOSSanctionsSubsystem.h"
+#include "Shared/EEOSNativeOperation.h"
+#include "IEOSSDKManager.h"
 #include "Shared/EEOSBlueprintLibrary.h"
 #include "UnrealExtendedEOS.h"
 #include "OnlineSubsystemUtils.h"
@@ -18,6 +20,7 @@ void UEEOSSanctionsSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 
 void UEEOSSanctionsSubsystem::Deinitialize()
 {
+	BeginEOSShutdown();
 	CachedSanctions.Empty();
 	Super::Deinitialize();
 }
@@ -39,7 +42,7 @@ void UEEOSSanctionsSubsystem::QueryActiveSanctions(const FString& TargetUserId)
 	EOS_HPlatform PlatformHandle = GetPlatformHandle();
 	if (!PlatformHandle)
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSSanctionsSubsystem::QueryActiveSanctions — Platform handle not available"));
+		FEEOSNativeOperationLease::ReportRepeated(GetOwningEOSInstanceName(), TEXT("QueryActiveSanctions"), TEXT("CapabilityUnavailable"));
 		OnSanctionsQueried.Broadcast(false, TargetPUIDStr, TArray<FEEOSSanction>());
 		return;
 	}
@@ -47,7 +50,7 @@ void UEEOSSanctionsSubsystem::QueryActiveSanctions(const FString& TargetUserId)
 	EOS_HSanctions SanctionsHandle = EOS_Platform_GetSanctionsInterface(PlatformHandle);
 	if (!SanctionsHandle)
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSSanctionsSubsystem::QueryActiveSanctions — Sanctions interface not available"));
+		FEEOSNativeOperationLease::ReportRepeated(GetOwningEOSInstanceName(), TEXT("QueryActiveSanctions"), TEXT("CapabilityUnavailable"));
 		OnSanctionsQueried.Broadcast(false, TargetPUIDStr, TArray<FEEOSSanction>());
 		return;
 	}
@@ -56,7 +59,7 @@ void UEEOSSanctionsSubsystem::QueryActiveSanctions(const FString& TargetUserId)
 	// validation, so guard on the extracted string.
 	if (TargetPUIDStr.IsEmpty())
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSSanctionsSubsystem::QueryActiveSanctions — Target '%s' has no Product User ID"), *TargetUserId);
+		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSSanctionsSubsystem::QueryActiveSanctions — Target '%s' has no Product User ID"), *FEEOSNativeOperationLease::SafeField(TargetUserId));
 		OnSanctionsQueried.Broadcast(false, FString(), TArray<FEEOSSanction>());
 		return;
 	}
@@ -69,7 +72,7 @@ void UEEOSSanctionsSubsystem::QueryActiveSanctions(const FString& TargetUserId)
 	IOnlineIdentityPtr Identity = EOSSub ? EOSSub->GetIdentityInterface() : nullptr;
 	if (!Identity.IsValid())
 	{
-		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSSanctionsSubsystem::QueryActiveSanctions — Identity interface not available; querying without a local user"));
+		FEEOSNativeOperationLease::ReportRepeated(GetOwningEOSInstanceName(), TEXT("QueryActiveSanctions"), TEXT("CapabilityUnavailable"));
 	}
 	FUniqueNetIdPtr LocalUserId = Identity.IsValid() ? Identity->GetUniquePlayerId(0) : nullptr;
 	EOS_ProductUserId LocalPUID = nullptr;
@@ -90,31 +93,33 @@ void UEEOSSanctionsSubsystem::QueryActiveSanctions(const FString& TargetUserId)
 	struct FQueryContext
 	{
 		TWeakObjectPtr<UEEOSSanctionsSubsystem> Self;
+		FEEOSRequestContext Ownership;
 		FString TargetPuid; // bare PUID — broadcast for correlation
 	};
 
 	FQueryContext* Context = new FQueryContext();
-	Context->Self = this;
+	Context->Self = this; Context->Ownership = CaptureEOSContext();
 	Context->TargetPuid = TargetPUIDStr;
 
 	EOS_Sanctions_QueryActivePlayerSanctions(SanctionsHandle, &Options, Context,
 		[](const EOS_Sanctions_QueryActivePlayerSanctionsCallbackInfo* Data)
 		{
+			if (!Data || !EOS_EResult_IsOperationComplete(Data->ResultCode)) return;
 			TUniquePtr<FQueryContext> Ctx(static_cast<FQueryContext*>(Data->ClientData));
 			if (!Ctx) return;
 
 			UEEOSSanctionsSubsystem* Self = Ctx->Self.Get();
 			FString TargetId = Ctx->TargetPuid;
 
-			if (!Self) return;
+			if (!Self || !Self->IsEOSContextCurrent(Ctx->Ownership)) return;
 
 			if (Data->ResultCode == EOS_EResult::EOS_Success)
 			{
-				EOS_HPlatform PlatformHandle = Self->GetPlatformHandle();
+				EOS_HPlatform PlatformHandle = Ctx->Ownership.Platform.IsValid() ? static_cast<EOS_HPlatform>(*Ctx->Ownership.Platform) : nullptr;
 				EOS_HSanctions SanctionsHandle = PlatformHandle ? EOS_Platform_GetSanctionsInterface(PlatformHandle) : nullptr;
 				if (!SanctionsHandle)
 				{
-					UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSSanctionsSubsystem::QueryActiveSanctions — Sanctions interface no longer available for '%s'"), *TargetId);
+					UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSSanctionsSubsystem::QueryActiveSanctions — Sanctions interface no longer available for '%s'"), *FEEOSNativeOperationLease::SafeField(TargetId));
 					Self->OnSanctionsQueried.Broadcast(false, TargetId, Self->CachedSanctions);
 					return;
 				}
@@ -159,19 +164,19 @@ void UEEOSSanctionsSubsystem::QueryActiveSanctions(const FString& TargetUserId)
 				}
 
 				UE_LOG(LogExtendedEOS, Log, TEXT("EEOSSanctionsSubsystem: Queried %d active sanctions for '%s'"),
-					Self->CachedSanctions.Num(), *TargetId);
+					Self->CachedSanctions.Num(), *FEEOSNativeOperationLease::SafeField(TargetId));
 				Self->OnSanctionsQueried.Broadcast(true, TargetId, Self->CachedSanctions);
 			}
 			else
 			{
 				UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSSanctionsSubsystem::QueryActiveSanctions — Failed for '%s': %s (cached sanctions retained — fail closed)"),
-					*TargetId, ANSI_TO_TCHAR(EOS_EResult_ToString(Data->ResultCode)));
+					*FEEOSNativeOperationLease::SafeField(TargetId), ANSI_TO_TCHAR(EOS_EResult_ToString(Data->ResultCode)));
 				// The RETAINED last-known-good list rides along with bSuccess=false.
 				Self->OnSanctionsQueried.Broadcast(false, TargetId, Self->CachedSanctions);
 			}
 		});
 
-	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSSanctionsSubsystem::QueryActiveSanctions — Querying sanctions for '%s'..."), *TargetUserId);
+	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSSanctionsSubsystem::QueryActiveSanctions — Querying sanctions for '%s'..."), *FEEOSNativeOperationLease::SafeField(TargetUserId));
 }
 
 void UEEOSSanctionsSubsystem::SendPlayerReport(const FString& TargetUserId, const FString& Reason, const FString& Message)
@@ -195,7 +200,7 @@ void UEEOSSanctionsSubsystem::SendPlayerReportWithCategory(const FString& Target
 	EOS_HPlatform PlatformHandle = GetPlatformHandle();
 	if (!PlatformHandle)
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSSanctionsSubsystem::SendPlayerReport — Platform handle not available"));
+		FEEOSNativeOperationLease::ReportRepeated(GetOwningEOSInstanceName(), TEXT("SendPlayerReport"), TEXT("CapabilityUnavailable"));
 		OnPlayerReportSent.Broadcast(false, ReportedPUIDStr);
 		return;
 	}
@@ -203,7 +208,7 @@ void UEEOSSanctionsSubsystem::SendPlayerReportWithCategory(const FString& Target
 	EOS_HReports ReportsHandle = EOS_Platform_GetReportsInterface(PlatformHandle);
 	if (!ReportsHandle)
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSSanctionsSubsystem::SendPlayerReport — Reports interface not available"));
+		FEEOSNativeOperationLease::ReportRepeated(GetOwningEOSInstanceName(), TEXT("SendPlayerReport"), TEXT("CapabilityUnavailable"));
 		OnPlayerReportSent.Broadcast(false, ReportedPUIDStr);
 		return;
 	}
@@ -214,7 +219,7 @@ void UEEOSSanctionsSubsystem::SendPlayerReportWithCategory(const FString& Target
 	FUniqueNetIdPtr LocalUserId = Identity.IsValid() ? Identity->GetUniquePlayerId(0) : nullptr;
 	if (!LocalUserId.IsValid())
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSSanctionsSubsystem::SendPlayerReport — No logged-in user (or Identity interface unavailable)"));
+		FEEOSNativeOperationLease::ReportRepeated(GetOwningEOSInstanceName(), TEXT("SendPlayerReport"), TEXT("CapabilityUnavailable"));
 		OnPlayerReportSent.Broadcast(false, ReportedPUIDStr);
 		return;
 	}
@@ -224,14 +229,14 @@ void UEEOSSanctionsSubsystem::SendPlayerReportWithCategory(const FString& Target
 	const FString ReporterPUIDStr = UEEOSBlueprintLibrary::ExtractProductUserId(LocalUserId->ToString());
 	if (ReporterPUIDStr.IsEmpty())
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSSanctionsSubsystem::SendPlayerReport — Logged-in user has no Product User ID (no Connect session)"));
+		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSSanctionsSubsystem::SendPlayerReport — Logged-in user has no Product User ID (no Connect session)"));
 		OnPlayerReportSent.Broadcast(false, ReportedPUIDStr);
 		return;
 	}
 
 	if (ReportedPUIDStr.IsEmpty())
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSSanctionsSubsystem::SendPlayerReport — Target '%s' has no Product User ID"), *TargetUserId);
+		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSSanctionsSubsystem::SendPlayerReport — Target '%s' has no Product User ID"), *FEEOSNativeOperationLease::SafeField(TargetUserId));
 		OnPlayerReportSent.Broadcast(false, FString());
 		return;
 	}
@@ -281,36 +286,38 @@ void UEEOSSanctionsSubsystem::SendPlayerReportWithCategory(const FString& Target
 	struct FReportContext
 	{
 		TWeakObjectPtr<UEEOSSanctionsSubsystem> Self;
+		FEEOSRequestContext Ownership;
 		FString ReportedPuid; // bare PUID — broadcast for correlation
 	};
 
 	FReportContext* Context = new FReportContext();
-	Context->Self = this;
+	Context->Self = this; Context->Ownership = CaptureEOSContext();
 	Context->ReportedPuid = ReportedPUIDStr;
 
 	EOS_Reports_SendPlayerBehaviorReport(ReportsHandle, &Options, Context,
 		[](const EOS_Reports_SendPlayerBehaviorReportCompleteCallbackInfo* Data)
 		{
+			if (!Data || !EOS_EResult_IsOperationComplete(Data->ResultCode)) return;
 			TUniquePtr<FReportContext> Ctx(static_cast<FReportContext*>(Data->ClientData));
 			if (!Ctx) return;
 
 			UEEOSSanctionsSubsystem* Self = Ctx->Self.Get();
-			if (!Self) return;
+			if (!Self || !Self->IsEOSContextCurrent(Ctx->Ownership)) return;
 
 			bool bSuccess = (Data->ResultCode == EOS_EResult::EOS_Success);
 			if (bSuccess)
 			{
-				UE_LOG(LogExtendedEOS, Log, TEXT("EEOSSanctionsSubsystem: Player report sent successfully for '%s'"), *Ctx->ReportedPuid);
+				UE_LOG(LogExtendedEOS, Log, TEXT("EEOSSanctionsSubsystem: Player report sent successfully for '%s'"), *FEEOSNativeOperationLease::SafeField(Ctx->ReportedPuid));
 			}
 			else
 			{
 				UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSSanctionsSubsystem::SendPlayerReport — Failed for '%s': %s"),
-					*Ctx->ReportedPuid, ANSI_TO_TCHAR(EOS_EResult_ToString(Data->ResultCode)));
+					*FEEOSNativeOperationLease::SafeField(Ctx->ReportedPuid), ANSI_TO_TCHAR(EOS_EResult_ToString(Data->ResultCode)));
 			}
 			Self->OnPlayerReportSent.Broadcast(bSuccess, Ctx->ReportedPuid);
 		});
 
-	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSSanctionsSubsystem::SendPlayerReport — Reporting '%s' [%s]: %s"), *TargetUserId, *Category, *Reason);
+	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSSanctionsSubsystem::SendPlayerReport — Reporting '%s' [%s]: %s"), *FEEOSNativeOperationLease::SafeField(TargetUserId), *FEEOSNativeOperationLease::SafeField(Category), TEXT("[payload omitted]"));
 }
 
 void UEEOSSanctionsSubsystem::AppealSanction(const FString& SanctionId, EEOSSanctionAppealType AppealType, const FString& AppealMessage)
@@ -325,7 +332,7 @@ void UEEOSSanctionsSubsystem::AppealSanction(const FString& SanctionId, EEOSSanc
 	EOS_HPlatform PlatformHandle = GetPlatformHandle();
 	if (!PlatformHandle)
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSSanctionsSubsystem::AppealSanction — Platform handle not available"));
+		FEEOSNativeOperationLease::ReportRepeated(GetOwningEOSInstanceName(), TEXT("AppealSanction"), TEXT("CapabilityUnavailable"));
 		OnSanctionAppealSent.Broadcast(false, SanctionId);
 		return;
 	}
@@ -333,7 +340,7 @@ void UEEOSSanctionsSubsystem::AppealSanction(const FString& SanctionId, EEOSSanc
 	EOS_HSanctions SanctionsHandle = EOS_Platform_GetSanctionsInterface(PlatformHandle);
 	if (!SanctionsHandle)
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSSanctionsSubsystem::AppealSanction — Sanctions interface not available"));
+		FEEOSNativeOperationLease::ReportRepeated(GetOwningEOSInstanceName(), TEXT("AppealSanction"), TEXT("CapabilityUnavailable"));
 		OnSanctionAppealSent.Broadcast(false, SanctionId);
 		return;
 	}
@@ -344,7 +351,7 @@ void UEEOSSanctionsSubsystem::AppealSanction(const FString& SanctionId, EEOSSanc
 	FUniqueNetIdPtr LocalUserId = Identity.IsValid() ? Identity->GetUniquePlayerId(0) : nullptr;
 	if (!LocalUserId.IsValid())
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSSanctionsSubsystem::AppealSanction — No logged-in user (or Identity interface unavailable)"));
+		FEEOSNativeOperationLease::ReportRepeated(GetOwningEOSInstanceName(), TEXT("AppealSanction"), TEXT("CapabilityUnavailable"));
 		OnSanctionAppealSent.Broadcast(false, SanctionId);
 		return;
 	}
@@ -354,7 +361,7 @@ void UEEOSSanctionsSubsystem::AppealSanction(const FString& SanctionId, EEOSSanc
 	const FString LocalPUIDStr = UEEOSBlueprintLibrary::ExtractProductUserId(LocalUserId->ToString());
 	if (LocalPUIDStr.IsEmpty())
 	{
-		UE_LOG(LogExtendedEOS, Error, TEXT("EEOSSanctionsSubsystem::AppealSanction — Logged-in user has no Product User ID (no Connect session)"));
+		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSSanctionsSubsystem::AppealSanction — Logged-in user has no Product User ID (no Connect session)"));
 		OnSanctionAppealSent.Broadcast(false, SanctionId);
 		return;
 	}
@@ -381,21 +388,23 @@ void UEEOSSanctionsSubsystem::AppealSanction(const FString& SanctionId, EEOSSanc
 	struct FAppealContext
 	{
 		TWeakObjectPtr<UEEOSSanctionsSubsystem> Self;
+		FEEOSRequestContext Ownership;
 		FString SanctionId; // appealed sanction ReferenceId — broadcast for correlation
 	};
 
 	FAppealContext* Context = new FAppealContext();
-	Context->Self = this;
+	Context->Self = this; Context->Ownership = CaptureEOSContext();
 	Context->SanctionId = SanctionId;
 
 	EOS_Sanctions_CreatePlayerSanctionAppeal(SanctionsHandle, &Options, Context,
 		[](const EOS_Sanctions_CreatePlayerSanctionAppealCallbackInfo* Data)
 		{
+			if (!Data || !EOS_EResult_IsOperationComplete(Data->ResultCode)) return;
 			TUniquePtr<FAppealContext> Ctx(static_cast<FAppealContext*>(Data->ClientData));
 			if (!Ctx) return;
 
 			UEEOSSanctionsSubsystem* Self = Ctx->Self.Get();
-			if (!Self) return;
+			if (!Self || !Self->IsEOSContextCurrent(Ctx->Ownership)) return;
 
 			bool bSuccess = (Data->ResultCode == EOS_EResult::EOS_Success);
 			if (bSuccess)
@@ -406,7 +415,7 @@ void UEEOSSanctionsSubsystem::AppealSanction(const FString& SanctionId, EEOSSanc
 			else
 			{
 				UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSSanctionsSubsystem::AppealSanction — Failed for '%s': %s"),
-					*Ctx->SanctionId, ANSI_TO_TCHAR(EOS_EResult_ToString(Data->ResultCode)));
+					*FEEOSNativeOperationLease::SafeField(Ctx->SanctionId), ANSI_TO_TCHAR(EOS_EResult_ToString(Data->ResultCode)));
 			}
 			Self->OnSanctionAppealSent.Broadcast(bSuccess, Ctx->SanctionId);
 		});
@@ -415,7 +424,7 @@ void UEEOSSanctionsSubsystem::AppealSanction(const FString& SanctionId, EEOSSanc
 	// message field (EOS_Sanctions_CreatePlayerSanctionAppealOptions carries only
 	// LocalUserId, Reason and ReferenceId). Logged locally for audit purposes.
 	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSSanctionsSubsystem::AppealSanction — Appealing sanction '%s' (type=%d). AppealMessage (local log only, not sent): %s"),
-		*SanctionId, static_cast<int32>(AppealType), *AppealMessage);
+		*FEEOSNativeOperationLease::SafeField(SanctionId), static_cast<int32>(AppealType), TEXT("[payload omitted]"));
 }
 
 TArray<FEEOSSanction> UEEOSSanctionsSubsystem::GetCachedSanctions() const
