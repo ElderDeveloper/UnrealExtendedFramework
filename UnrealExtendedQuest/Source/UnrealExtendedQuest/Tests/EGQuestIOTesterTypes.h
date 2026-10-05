@@ -51,6 +51,41 @@ public:
 	TArray<float> ReceivedMagnitudes;
 };
 
+/** Re-reads the client projection from removal delegates, like the quest tracker does. */
+UCLASS()
+class UEGQuestTestSnapshotRemovalSink : public UObject
+{
+	GENERATED_BODY()
+public:
+	UFUNCTION()
+	void HandleRemoved(FGuid RunId)
+	{
+		RemovedRunIds.Add(RunId);
+		bRemovedRunStillVisible |= SnapshotArray && SnapshotArray->Items.ContainsByPredicate(
+			[RunId](const FEGQuestViewSnapshot& Snapshot) { return Snapshot.QuestInstanceGuid == RunId; });
+	}
+
+	UFUNCTION()
+	void HandleSnapshotsChanged()
+	{
+		++SnapshotsChangedCount;
+		TrackedQuestCountAtLastChange = 0;
+		if (SnapshotArray)
+		{
+			for (const FEGQuestViewSnapshot& Snapshot : SnapshotArray->Items)
+			{
+				if (Snapshot.bTracked && !Snapshot.IsTerminal()) ++TrackedQuestCountAtLastChange;
+			}
+		}
+	}
+
+	const FEGQuestSnapshotArray* SnapshotArray = nullptr;
+	TArray<FGuid> RemovedRunIds;
+	bool bRemovedRunStillVisible = false;
+	int32 SnapshotsChangedCount = 0;
+	int32 TrackedQuestCountAtLastChange = INDEX_NONE;
+};
+
 /** Calls back into the component from OnGameplayEventAccepted to prove mutation re-entry is queued. */
 UCLASS()
 class UEGQuestTestReentrySink : public UObject

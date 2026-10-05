@@ -639,11 +639,17 @@ struct UNREALEXTENDEDQUEST_API FEGQuestSnapshotArray : public FFastArraySerializ
 	void PostReplicatedAdd(const TArrayView<int32>& AddedIndices, int32 FinalSize);
 	void PostReplicatedChange(const TArrayView<int32>& ChangedIndices, int32 FinalSize);
 	void PreReplicatedRemove(const TArrayView<int32>& RemovedIndices, int32 FinalSize);
+	void PostReplicatedReceive(const FFastArraySerializer::FPostReplicatedReceiveParameters& Parameters);
 
 	bool NetDeltaSerialize(FNetDeltaSerializeInfo& DeltaParms)
 	{
 		return FastArrayDeltaSerialize<FEGQuestViewSnapshot, FEGQuestSnapshotArray>(Items, DeltaParms, *this);
 	}
+
+private:
+	// Removal observers re-read Items. Keep their notifications until the receive has erased the
+	// snapshots; PreReplicatedRemove still exposes them, even during a removal-only delta.
+	TArray<FEGQuestViewSnapshot> PendingRemovedSnapshots;
 };
 
 template<>

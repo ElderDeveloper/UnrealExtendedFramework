@@ -69,6 +69,65 @@ namespace
 	}
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEGQuestSnapshotRemovalAutomationTest,
+	"QuestPlugin.Runtime.SnapshotRemovalNotifications",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FEGQuestSnapshotRemovalAutomationTest::RunTest(const FString& Parameters)
+{
+	UEGQuestComponent* Component = NewObject<UEGQuestComponent>();
+	FEGQuestSnapshotArray Snapshots(Component);
+	UEGQuestTestSnapshotRemovalSink* Sink = NewObject<UEGQuestTestSnapshotRemovalSink>();
+	Sink->SnapshotArray = &Snapshots;
+	Component->OnQuestRemoved.AddDynamic(Sink, &UEGQuestTestSnapshotRemovalSink::HandleRemoved);
+	Component->OnQuestSnapshotsChanged.AddDynamic(Sink, &UEGQuestTestSnapshotRemovalSink::HandleSnapshotsChanged);
+
+	auto TrackedSnapshot = []()
+	{
+		FEGQuestViewSnapshot Snapshot;
+		Snapshot.QuestInstanceGuid = FGuid::NewGuid();
+		Snapshot.LifecycleState = EEGQuestLifecycleState::Active;
+		Snapshot.bTracked = true;
+		return Snapshot;
+	};
+
+	const FEGQuestViewSnapshot LastQuest = TrackedSnapshot();
+	Snapshots.Items.Add(LastQuest);
+	int32 RemovedIndex = 0;
+	Snapshots.PreReplicatedRemove(MakeArrayView(&RemovedIndex, 1), 0);
+	TestEqual(TEXT("Removal event waits until the projection is updated"), Sink->RemovedRunIds.Num(), 0);
+	TestEqual(TEXT("Coarse refresh cannot read the pre-removal projection"), Sink->SnapshotsChangedCount, 0);
+
+	// Match the FastArray receive order, including removal-only updates at lobby return.
+	Snapshots.Items.RemoveAtSwap(0, EAllowShrinking::No);
+	FFastArraySerializer::FPostReplicatedReceiveParameters ReceiveParameters{};
+	ReceiveParameters.OldArraySize = 1;
+	Snapshots.PostReplicatedReceive(ReceiveParameters);
+	TestEqual(TEXT("The removed run is reported once"), Sink->RemovedRunIds.Num(), 1);
+	TestTrue(TEXT("Removal keeps the original run identity"), Sink->RemovedRunIds.Contains(LastQuest.QuestInstanceGuid));
+	TestFalse(TEXT("Removal observers cannot find the deleted quest"), Sink->bRemovedRunStillVisible);
+	TestEqual(TEXT("The tracker sees no quest after the last removal"), Sink->TrackedQuestCountAtLastChange, 0);
+	TestTrue(TEXT("Removal also refreshes snapshot observers"), Sink->SnapshotsChangedCount > 0);
+
+	Snapshots.PostReplicatedReceive(ReceiveParameters);
+	TestEqual(TEXT("A later receive cannot repeat the removal"), Sink->RemovedRunIds.Num(), 1);
+
+	const FEGQuestViewSnapshot RemovedQuest = TrackedSnapshot();
+	const FEGQuestViewSnapshot RemainingQuest = TrackedSnapshot();
+	Snapshots.Items.Add(RemovedQuest);
+	Snapshots.Items.Add(RemainingQuest);
+	Snapshots.PreReplicatedRemove(MakeArrayView(&RemovedIndex, 1), 1);
+	Snapshots.Items.RemoveAtSwap(0, EAllowShrinking::No);
+	ReceiveParameters.OldArraySize = 2;
+	Snapshots.PostReplicatedReceive(ReceiveParameters);
+	TestEqual(TEXT("Partial removal reports exactly one more run"), Sink->RemovedRunIds.Num(), 2);
+	TestTrue(TEXT("Swap removal reports the deleted run, not the survivor"), Sink->RemovedRunIds.Contains(RemovedQuest.QuestInstanceGuid));
+	TestFalse(TEXT("The retained run is not reported as removed"), Sink->RemovedRunIds.Contains(RemainingQuest.QuestInstanceGuid));
+	TestFalse(TEXT("Partial removal observers also see the final projection"), Sink->bRemovedRunStillVisible);
+	TestEqual(TEXT("The remaining tracked quest stays visible"), Sink->TrackedQuestCountAtLastChange, 1);
+	return true;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEGQuestEventAutomationTest,
 	"QuestPlugin.Runtime.NamedEventBroadcast",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)

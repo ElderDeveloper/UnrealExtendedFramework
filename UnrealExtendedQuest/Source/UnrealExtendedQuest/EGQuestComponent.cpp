@@ -67,10 +67,25 @@ void FEGQuestSnapshotArray::PreReplicatedRemove(const TArrayView<int32>& Removed
 	{
 		if (Items.IsValidIndex(Index))
 		{
-			OwnerComponent->NotifySnapshotReplicatedRemove(Items[Index]);
+			PendingRemovedSnapshots.Add(Items[Index]);
 		}
 	}
-	OwnerComponent->NotifySnapshotsChanged();
+}
+
+void FEGQuestSnapshotArray::PostReplicatedReceive(
+	const FFastArraySerializer::FPostReplicatedReceiveParameters& Parameters)
+{
+	// FastArray removes items after all per-item callbacks. Notify only now, so clients querying
+	// the projection from OnQuestRemoved or OnQuestSnapshotsChanged cannot redisplay a deleted run.
+	TArray<FEGQuestViewSnapshot> RemovedSnapshots = MoveTemp(PendingRemovedSnapshots);
+	if (!OwnerComponent)
+	{
+		return;
+	}
+	for (const FEGQuestViewSnapshot& Snapshot : RemovedSnapshots)
+	{
+		OwnerComponent->NotifySnapshotReplicatedRemove(Snapshot);
+	}
 }
 
 //
