@@ -3,7 +3,11 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Kismet/BlueprintFunctionLibrary.h"
 #include "EFMonitorLibrary.generated.h"
+
+struct FDisplayMetrics;
+class FSlateRect;
 
 /** Simple rectangle struct for screen coordinates (Left, Top, Right, Bottom). */
 USTRUCT(BlueprintType)
@@ -71,7 +75,7 @@ public:
 
 	/**
 	 * Returns detailed information about a monitor by index.
-	 * @param Index Zero-based monitor index (default 0 = primary)
+	 * @param Index Zero-based enumerated monitor index; use GetPrimaryMonitorIndex for the primary screen.
 	 */
 	UFUNCTION(BlueprintPure, meta = (DisplayName = "Get Monitor Info", Keywords = "Display Device Info Monitor"), Category = "Display Info")
 	static UPARAM(DisplayName = "DisplayInfo") FDisplayInfo GetMonitorInfoByIndex(const int32 Index = 0);
@@ -113,9 +117,12 @@ public:
 	UFUNCTION(BlueprintPure, meta = (DisplayName = "Get Resolution Aspect Ratio", Keywords = "Display Device Resolution Aspect Ratio"), Category = "Display Info")
 	static UPARAM(DisplayName = "AspectRatio") EMonitorAspectRatio GetResolutionAspectRatio(FIntPoint Resolution, float& Ratio, bool& IsWide);
 
-	/** Returns the index of the monitor the game window is currently on (0 if detection fails). */
+	/** Returns the monitor containing most of the game window; falls back to the primary screen before the window exists. */
 	UFUNCTION(BlueprintCallable, Category = "Extended|Monitor")
 	static int32 GetGameWindowMonitorIndex();
+
+	/** Pure selection shared by startup and live windows. Empty/off-screen bounds use the actual primary index. */
+	static int32 FindMonitorIndexForWindow(const FDisplayMetrics& DisplayMetrics, const FSlateRect& WindowBounds);
 
 	/**
 	 * Returns the native resolution of the monitor the game window is currently on.

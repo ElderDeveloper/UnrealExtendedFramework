@@ -5,6 +5,10 @@
 #include "GenericPlatform/GenericApplication.h"
 #include "HAL/ThreadingBase.h"
 #include "Kismet/KismetSystemLibrary.h"
+#include "Engine/Engine.h"
+#include "Engine/GameViewportClient.h"
+#include "Framework/Application/SlateApplication.h"
+#include "Widgets/SWindow.h"
 
 
 // ================================ SHARED HELPER ================================
@@ -185,51 +189,44 @@ EMonitorAspectRatio UEFMonitorLibrary::GetResolutionAspectRatio(FIntPoint Resolu
 
 // ================================ GAME WINDOW MONITOR ================================
 
-int32 UEFMonitorLibrary::GetGameWindowMonitorIndex()
+int32 UEFMonitorLibrary::FindMonitorIndexForWindow(const FDisplayMetrics& DisplayMetrics, const FSlateRect& WindowBounds)
 {
-	if (!FSlateApplication::IsInitialized())
-	{
-		return 0;
-	}
-
-	TSharedPtr<SWindow> GameWindow = nullptr;
-	if (GEngine && GEngine->GameViewport)
-	{
-		GameWindow = GEngine->GameViewport->GetWindow();
-	}
-
-	if (!GameWindow.IsValid())
-	{
-		return 0;
-	}
-
-	FVector2D WindowPosition = GameWindow->GetPositionInScreen();
-
-	FDisplayMetrics DisplayMetrics;
-	FDisplayMetrics::RebuildDisplayMetrics(DisplayMetrics);
-
+	int32 FallbackIndex = INDEX_NONE;
+	int32 BestIndex = INDEX_NONE;
+	double BestOverlap = 0.0;
 	for (int32 MonitorIndex = 0; MonitorIndex < DisplayMetrics.MonitorInfo.Num(); ++MonitorIndex)
 	{
 		const FMonitorInfo& Monitor = DisplayMetrics.MonitorInfo[MonitorIndex];
-		
-		if (WindowPosition.X >= Monitor.DisplayRect.Left && 
-			WindowPosition.X < Monitor.DisplayRect.Right &&
-			WindowPosition.Y >= Monitor.DisplayRect.Top && 
-			WindowPosition.Y < Monitor.DisplayRect.Bottom)
+		if (FallbackIndex == INDEX_NONE || Monitor.bIsPrimary)
 		{
-			return MonitorIndex;
+			FallbackIndex = MonitorIndex;
+		}
+		const float Width = FMath::Max(0.0f, FMath::Min(WindowBounds.Right, static_cast<float>(Monitor.DisplayRect.Right))
+			- FMath::Max(WindowBounds.Left, static_cast<float>(Monitor.DisplayRect.Left)));
+		const float Height = FMath::Max(0.0f, FMath::Min(WindowBounds.Bottom, static_cast<float>(Monitor.DisplayRect.Bottom))
+			- FMath::Max(WindowBounds.Top, static_cast<float>(Monitor.DisplayRect.Top)));
+		const double Overlap = static_cast<double>(Width) * Height;
+		if (Overlap > BestOverlap || (Overlap > 0.0 && Overlap == BestOverlap && Monitor.bIsPrimary))
+		{
+			BestOverlap = Overlap;
+			BestIndex = MonitorIndex;
 		}
 	}
+	return BestIndex != INDEX_NONE ? BestIndex : FallbackIndex;
+}
 
-	for (int32 MonitorIndex = 0; MonitorIndex < DisplayMetrics.MonitorInfo.Num(); ++MonitorIndex)
+int32 UEFMonitorLibrary::GetGameWindowMonitorIndex()
+{
+	FDisplayMetrics DisplayMetrics;
+	FDisplayMetrics::RebuildDisplayMetrics(DisplayMetrics);
+	FSlateRect WindowBounds(0.0f, 0.0f, 0.0f, 0.0f);
+	if (FSlateApplication::IsInitialized() && GEngine && GEngine->GameViewport)
 	{
-		if (DisplayMetrics.MonitorInfo[MonitorIndex].bIsPrimary)
-		{
-			return MonitorIndex;
-		}
+		const TSharedPtr<SWindow> GameWindow = GEngine->GameViewport->GetWindow();
+		if (GameWindow.IsValid()) WindowBounds = GameWindow->GetRectInScreen();
 	}
-
-	return 0;
+	const int32 MonitorIndex = FindMonitorIndexForWindow(DisplayMetrics, WindowBounds);
+	return MonitorIndex != INDEX_NONE ? MonitorIndex : 0;
 }
 
 void UEFMonitorLibrary::GetCurrentMonitorResolution(int32& OutWidth, int32& OutHeight)

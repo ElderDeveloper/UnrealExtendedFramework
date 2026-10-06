@@ -100,6 +100,7 @@ public:
 		DisplayName = NSLOCTEXT("Settings", "Resolution", "Screen Resolution");
 		ConfigCategory = TEXT("Graphics");
 		DefaultValue = TEXT("1920x1080");
+		bRefreshBeforeApply = true;
 
 		Values = { DefaultValue };
 		DisplayNames = { FText::FromString(DefaultValue) };
