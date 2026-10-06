@@ -539,7 +539,8 @@ bool UEFModularSettingsSubsystem::HasPendingChanges() const
 	for (const auto& SettingPair : Settings)
 	{
 		const UEFModularSettingsBase* Setting = SettingPair.Value;
-		if (Setting->IsDirty())
+		// A value changed and then restored to its saved selection no longer needs Apply.
+		if (Setting && Setting->IsDirty() && Setting->GetValueAsString() != Setting->GetSavedValueAsString())
 		{
 			return true;
 		}
