@@ -890,6 +890,12 @@ bool UEGInteractionSystemComponent::HasLineOfSight(const FVector& ViewLocation, 
 	return HasLineOfSightToPoint(ViewLocation, Target, TargetPoint);
 }
 
+bool UEGInteractionSystemComponent::TraceFocusLine(FHitResult& OutHit, const FVector& Start, const FVector& End, ECollisionChannel Channel, const FCollisionQueryParams& Params) const
+{
+	const UWorld* World = GetWorld();
+	return World && World->LineTraceSingleByChannel(OutHit, Start, End, Channel, Params);
+}
+
 void UEGInteractionSystemComponent::PerformTrace()
 {
 	UWorld* World = GetWorld();
@@ -911,7 +917,7 @@ void UEGInteractionSystemComponent::PerformTrace()
 
 	// The precise line goes first: a sphere sweep alone cannot pick out a button on a panel.
 	FHitResult LineHit;
-	if (World->LineTraceSingleByChannel(LineHit, ViewLocation, TraceEnd, TraceChannel, Params))
+	if (TraceFocusLine(LineHit, ViewLocation, TraceEnd, TraceChannel, Params))
 	{
 		Provider = UEGInteractionProviderComponent::FindProvider(LineHit.GetActor());
 		BestHit = LineHit;

@@ -537,6 +537,12 @@ bool UEGInteractionComponent::IsServerInteractionValid(AActor* TargetActor, cons
 // Trace
 // =====================================================================
 
+bool UEGInteractionComponent::TraceFocusLine(FHitResult& OutHit, const FVector& Start, const FVector& End, ECollisionChannel Channel, const FCollisionQueryParams& Params) const
+{
+	const UWorld* World = GetWorld();
+	return World && World->LineTraceSingleByChannel(OutHit, Start, End, Channel, Params);
+}
+
 void UEGInteractionComponent::PerformTrace()
 {
 	FVector ViewLocation;
@@ -639,7 +645,7 @@ bool UEGInteractionComponent::GatherTraceHits(const FVector& Start, const FVecto
 	FHitResult LineHit;
 	const bool bLineHit = bByObjectType
 		? GetWorld()->LineTraceSingleByObjectType(LineHit, Start, End, ObjectParams, QueryParams)
-		: GetWorld()->LineTraceSingleByChannel(LineHit, Start, End, TraceChannel, QueryParams);
+		: TraceFocusLine(LineHit, Start, End, TraceChannel, QueryParams);
 	if (bLineHit)
 	{
 		OutHits.Add(LineHit);
