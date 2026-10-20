@@ -109,6 +109,13 @@ protected:
 
 private:
 
+#if WITH_DEV_AUTOMATION_TESTS
+	friend class FEPFHttpLoadingResponseTest;
+#endif
+
+	// UObject validity alone does not cover the interval between Deinitialize and GC.
+	bool bDeinitialized = false;
+
 	static constexpr int32 MaxRetries = 3;
 	static constexpr float BaseRetryDelaySec = 1.0f;
 

@@ -6,6 +6,7 @@
 #include "UnrealExtendedPlayFab.h"
 #include "Auth/EPFAuthSubsystem.h"
 
+#include "Containers/Ticker.h"
 #include "HttpModule.h"
 #include "Interfaces/IHttpRequest.h"
 #include "Interfaces/IHttpResponse.h"
@@ -60,11 +61,13 @@ FEPFAuthContext UEPFSubsystem::SharedAuthContext;
 void UEPFSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
 	Super::Initialize(Collection);
+	bDeinitialized = false;
 	RequestsThisSecond = 0;
 }
 
 void UEPFSubsystem::Deinitialize()
 {
+	bDeinitialized = true;
 	PendingRequestQueue.Empty();
 
 	if (UGameInstance* GI = GetGameInstance())
@@ -249,6 +252,7 @@ void UEPFSubsystem::ExecuteRequest(
 	const FString Url = Settings->GetApiBaseUrl() + ApiPath;
 
 	TSharedRef<IHttpRequest, ESPMode::ThreadSafe> HttpRequest = FHttpModule::Get().CreateRequest();
+	HttpRequest->SetDelegateThreadPolicy(EHttpRequestDelegateThreadPolicy::CompleteOnGameThread);
 	HttpRequest->SetURL(Url);
 	HttpRequest->SetVerb(TEXT("POST"));
 	HttpRequest->SetHeader(TEXT("Content-Type"), TEXT("application/json"));
@@ -316,6 +320,38 @@ void UEPFSubsystem::HandleHttpResponse(
 	const FOnPlayFabResponseDetailed& OnComplete,
 	int32 RetryAttempt)
 {
+	check(IsInGameThread());
+	if (bDeinitialized)
+	{
+		return;
+	}
+
+	// MoviePlayer::BlockingTick pumps HTTP from inside package loading on the game thread.
+	// UE 5.8 can have an unset loading-thread PIE ID (-2) there, so even SoftObjectPtr::Get
+	// in an inventory/UI listener asserts. Wait for a normal game-thread tick before parsing
+	// or broadcasting anything; AsyncTask(GameThread) can also run inside loading and is unsafe.
+	if (IsInAsyncLoadingThread())
+	{
+		TWeakObjectPtr<UEPFSubsystem> WeakThis(this);
+		FTSTicker::GetCoreTicker().AddTicker(TEXT("PlayFab.DeferredHttpResponse"), 0.0f,
+			[WeakThis, Request, Response, bConnectedSuccessfully, ApiPath, RequestBodyString, AuthMode, OnComplete, RetryAttempt](float)
+			{
+				UEPFSubsystem* Subsystem = WeakThis.Get();
+				if (!Subsystem || Subsystem->bDeinitialized)
+				{
+					return false;
+				}
+				if (IsInAsyncLoadingThread())
+				{
+					return true;
+				}
+				Subsystem->HandleHttpResponse(Request, Response, bConnectedSuccessfully,
+					ApiPath, RequestBodyString, AuthMode, OnComplete, RetryAttempt);
+				return false;
+			});
+		return;
+	}
+
 	const UEPFSettings* Settings = GetSettings();
 	FEPFError Error = FEPFError::None();
 
