@@ -286,20 +286,6 @@ void UEGASAbilitySystemComponent::GrantDefaultAbilitiesAndAttributes(AActor* InO
 		AddedAbilityHandles.Empty(DefaultAbilities.Num());
 	}
 
-	// --- Grant abilities ---
-	for (const TSubclassOf<UGameplayAbility>& AbilityClass : DefaultAbilities)
-	{
-		if (!AbilityClass)
-		{
-			continue;
-		}
-
-		if (IsOwnerActorAuthoritative() && ShouldGrantAbility(AbilityClass))
-		{
-			GrantAbility(AbilityClass, 1, INDEX_NONE, InOwnerActor);
-		}
-	}
-
 	// --- Grant attributes ---
 	for (const FEGASAttributeSetDefinition& AttributeSetDefinition : GrantedAttributes)
 	{
@@ -318,6 +304,21 @@ void UEGASAbilitySystemComponent::GrantDefaultAbilitiesAndAttributes(AActor* InO
 			}
 			AddedAttributes.Add(AttributeSet);
 			AddAttributeSetSubobject(AttributeSet);
+		}
+	}
+
+	// OnAvatarSet can activate an ability synchronously in GiveAbility. Register and initialize
+	// its attributes first, or live effect captures remain invalid even after the sets arrive.
+	for (const TSubclassOf<UGameplayAbility>& AbilityClass : DefaultAbilities)
+	{
+		if (!AbilityClass)
+		{
+			continue;
+		}
+
+		if (IsOwnerActorAuthoritative() && ShouldGrantAbility(AbilityClass))
+		{
+			GrantAbility(AbilityClass, 1, INDEX_NONE, InOwnerActor);
 		}
 	}
 }
