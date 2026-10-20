@@ -154,7 +154,9 @@ uint32 FOnlineAuthExtendedSteam::GetAuthTicketForWebApi(const FString& ServiceId
 	if (IsSteamAvailableForAuth() && SteamUser()->BLoggedOn())
 	{
 		// A null identity requests a generic web ticket; a service string binds it to that identity.
-		const char* IdentityArg = ServiceIdentity.IsEmpty() ? nullptr : TCHAR_TO_UTF8(*ServiceIdentity);
+		// TCHAR_TO_UTF8's temporary dies at the semicolon. Keep the conversion alive through the SDK call.
+		const FTCHARToUTF8 IdentityUtf8(*ServiceIdentity);
+		const char* IdentityArg = ServiceIdentity.IsEmpty() ? nullptr : IdentityUtf8.Get();
 		const HAuthTicket TicketHandle = SteamUser()->GetAuthTicketForWebApi(IdentityArg);
 		if (TicketHandle != k_HAuthTicketInvalid)
 		{
