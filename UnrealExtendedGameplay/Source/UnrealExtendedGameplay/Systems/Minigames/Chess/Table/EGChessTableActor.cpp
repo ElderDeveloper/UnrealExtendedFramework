@@ -257,6 +257,11 @@ void AEGChessTableActor::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	FGameModeEvents::OnGameModeLogoutEvent().Remove(LogoutHandle);
 	FGameModeEvents::OnGameModePostLoginEvent().Remove(PostLoginHandle);
 	GetWorldTimerManager().ClearAllTimersForObject(this);
+	if (HasAuthority())
+	{
+		FreeSeat(EEGChessSeat::A, false, true);
+		FreeSeat(EEGChessSeat::B, false, true);
+	}
 
 	if (VisualContentHandle.IsValid())
 	{
@@ -1110,13 +1115,11 @@ void AEGChessTableActor::HandleSeatActionStarted(EEGChessSeat Seat, EEGChessSeat
 
 void AEGChessTableActor::HandleSeatExitFinished(EEGChessSeat Seat)
 {
-	if (!HasAuthority())
+	if (!HasAuthority() || GetSeat(Seat)->GetAnimState().Action != EEGChessSeatAction::Exiting)
 	{
 		return;
 	}
-	UnbindOccupantDelegates(Seat);
-	GetSeat(Seat)->ClearOccupant();
-	UpdatePhaseAfterSeatChange();
+	FreeSeat(Seat, false, true);
 }
 
 void AEGChessTableActor::HandleCharacterNotify(EEGChessSeat Seat, FName NotifyName)
@@ -1315,27 +1318,34 @@ void AEGChessTableActor::FreeSeat(EEGChessSeat Seat, bool bAnimatedExit, bool bI
 {
 	UEGChessSeatComponent* SeatComponent = GetSeat(Seat);
 	const FEGChessSeatOccupant Occupant = SeatComponent->GetOccupantRef();
-
-	if (UEGChessPlayerComponent* Component = GetPlayerComponent(Seat))
-	{
-		Component->SetActiveTable(nullptr, Seat);
-	}
+	const bool bAlreadyExiting = SeatComponent->GetAnimState().Action == EEGChessSeatAction::Exiting;
 
 	const EEGChessSeat Other = EGChess::OtherSeat(Seat);
-	if (Occupant.IsPlayer() && GetSeat(Other)->GetOccupantRef().IsPlayer())
+	if (!bAlreadyExiting && Occupant.IsPlayer() && GetSeat(Other)->GetOccupantRef().IsPlayer())
 	{
 		NotifyPlayer(Other, EEGChessNotice::OpponentLeft);
 	}
 
 	if (bAnimatedExit && Occupant.Pawn && !Occupant.bAI)
 	{
-		// The seat stays taken until the exit ends; HandleSeatExitFinished frees it.
-		SeatComponent->BeginExit(SeatComponent->ChooseExitSide(Occupant.Pawn), bImmediate);
+		// Keep board input locked until the server has restored the pawn's movement. A repeated
+		// leave request must not restart the exit; an immediate forced exit can still finish it.
+		if (!bAlreadyExiting || bImmediate)
+		{
+			const EEGChessEntrySide Side = bAlreadyExiting ? SeatComponent->GetAnimState().Side : SeatComponent->ChooseExitSide(Occupant.Pawn);
+			SeatComponent->BeginExit(Side, bImmediate);
+		}
 		return;
 	}
 
+	UEGChessPlayerComponent* Component = GetPlayerComponent(Seat);
 	UnbindOccupantDelegates(Seat);
 	SeatComponent->ClearOccupant();
+	if (Component && Component->GetTable() == this)
+	{
+		Component->SetActiveTable(nullptr, Seat);
+	}
+	ForceNetUpdate();
 	UpdatePhaseAfterSeatChange();
 }
 

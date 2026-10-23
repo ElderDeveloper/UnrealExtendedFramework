@@ -18,6 +18,8 @@
 #include "UnrealExtendedGameplay/Systems/Minigames/Chess/Player/EGChessCharacterInterface.h"
 #include "UnrealExtendedGameplay/Systems/Minigames/Chess/Presentation/EGChessEngineAssets.h"
 
+DEFINE_LOG_CATEGORY_STATIC(LogEGChessSeat, Log, All);
+
 namespace EGChessSeatPrivate
 {
 	FQuat YawOnly(const FQuat& Rotation)
@@ -48,7 +50,7 @@ void UEGChessSeatComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>
 
 void UEGChessSeatComponent::OnUnregister()
 {
-	UnbindPawnAnimation();
+	CancelSequenceAndReleasePawn();
 	Super::OnUnregister();
 }
 
@@ -283,12 +285,7 @@ void UEGChessSeatComponent::SetOccupant(const FEGChessSeatOccupant& NewOccupant)
 
 void UEGChessSeatComponent::ClearOccupant()
 {
-	APawn* Pawn = Occupant.Pawn;
-	if (IsValid(Pawn))
-	{
-		ReleaseSeatedPawn(Pawn);
-	}
-	PreparedPawn.Reset();
+	CancelSequenceAndReleasePawn();
 	Occupant = FEGChessSeatOccupant();
 	AnimState.Action = EEGChessSeatAction::None;
 	++AnimState.Sequence;
@@ -306,6 +303,12 @@ void UEGChessSeatComponent::MarkDisconnected(double ForfeitServerTime)
 
 void UEGChessSeatComponent::OnRep_Occupant()
 {
+	// Occupant and AnimState can arrive separately. Do not wait for the None animation state
+	// to release the old body, or keep driving it after its occupant reference has gone away.
+	if (!Occupant.Pawn || (PreparedPawn.IsValid() && PreparedPawn.Get() != Occupant.Pawn))
+	{
+		CancelSequenceAndReleasePawn();
+	}
 	if (AEGChessTableActor* Table = GetTable())
 	{
 		Table->HandleSeatOccupantChanged(SeatId);
@@ -351,6 +354,9 @@ void UEGChessSeatComponent::BeginExit(EEGChessEntrySide Side, bool bImmediate)
 	AnimState.StartTransform = GetSeatedActorTransform(Pawn);
 	AnimState.bSnap = bImmediate;
 	++AnimState.Sequence;
+	UE_LOG(LogEGChessSeat, Log, TEXT("Exit started: table=%s seat=%d pawn=%s role=%d sequence=%u immediate=%d"),
+		*GetNameSafe(GetOwner()), static_cast<int32>(SeatId), *GetNameSafe(Pawn),
+		static_cast<int32>(GetOwnerRole()), static_cast<uint32>(AnimState.Sequence), bImmediate);
 	OnRep_AnimState();
 }
 
@@ -437,12 +443,7 @@ void UEGChessSeatComponent::ApplyAnimState()
 	}
 	default:
 	{
-		Sequence.bActive = false;
-		SetComponentTickEnabled(false);
-		if (PreparedPawn.IsValid())
-		{
-			ReleaseSeatedPawn(PreparedPawn.Get());
-		}
+		CancelSequenceAndReleasePawn();
 		break;
 	}
 	}
@@ -567,15 +568,17 @@ void UEGChessSeatComponent::FinishSequence()
 		return;
 	}
 
-	if (Pawn)
-	{
-		ReleaseSeatedPawn(Pawn);
-	}
+	// Clients wait for the authoritative occupant clear. Finishing a local animation must not
+	// resume predicted walking while the server still has movement replication disabled.
 	if (GetOwnerRole() == ROLE_Authority)
 	{
 		if (AEGChessTableActor* Table = GetTable())
 		{
 			Table->HandleSeatExitFinished(SeatId);
+		}
+		else
+		{
+			ClearOccupant();
 		}
 	}
 }
@@ -678,11 +681,15 @@ void UEGChessSeatComponent::PrepareSeatedPawn(APawn* Pawn)
 
 void UEGChessSeatComponent::ReleaseSeatedPawn(APawn* Pawn)
 {
-	if (!Pawn)
+	if (!Pawn || PreparedPawn.Get() != Pawn)
 	{
 		return;
 	}
 
+	if (UAnimMontage* Montage = Sequence.Montage.Get())
+	{
+		StopMontage(Montage);
+	}
 	if (const UEGChessAnimationSet* Set = GetAnimationSet(Pawn))
 	{
 		if (UAnimMontage* Idle = Set->SeatedIdle.Get())
@@ -693,6 +700,7 @@ void UEGChessSeatComponent::ReleaseSeatedPawn(APawn* Pawn)
 	if (CurrentMoveMontage.IsValid())
 	{
 		StopMontage(CurrentMoveMontage.Get());
+		CurrentMoveMontage.Reset();
 	}
 
 	if (ACharacter* Character = Cast<ACharacter>(Pawn))
@@ -710,6 +718,7 @@ void UEGChessSeatComponent::ReleaseSeatedPawn(APawn* Pawn)
 	if (Pawn->HasAuthority())
 	{
 		Pawn->SetReplicateMovement(true);
+		Pawn->ForceNetUpdate();
 	}
 
 	UnbindPawnAnimation();
@@ -722,6 +731,21 @@ void UEGChessSeatComponent::ReleaseSeatedPawn(APawn* Pawn)
 	{
 		PreparedPawn.Reset();
 	}
+	UE_LOG(LogEGChessSeat, Log, TEXT("Pawn released: table=%s seat=%d pawn=%s role=%d replicateMovement=%d location=%s"),
+		*GetNameSafe(GetOwner()), static_cast<int32>(SeatId), *GetNameSafe(Pawn),
+		static_cast<int32>(GetOwnerRole()), Pawn->IsReplicatingMovement(), *Pawn->GetActorLocation().ToCompactString());
+}
+
+void UEGChessSeatComponent::CancelSequenceAndReleasePawn()
+{
+	Sequence.bActive = false;
+	SetComponentTickEnabled(false);
+	if (APawn* Pawn = PreparedPawn.Get())
+	{
+		ReleaseSeatedPawn(Pawn);
+	}
+	UnbindPawnAnimation();
+	Sequence = FSequenceState();
 }
 
 void UEGChessSeatComponent::BindPawnAnimation(APawn* Pawn)

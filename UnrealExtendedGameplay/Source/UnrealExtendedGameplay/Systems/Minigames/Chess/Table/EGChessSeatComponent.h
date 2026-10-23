@@ -153,6 +153,10 @@ protected:
 	void HandleOneShotBlendingOut(UAnimMontage* Montage, bool bInterrupted);
 
 private:
+#if WITH_DEV_AUTOMATION_TESTS
+	friend struct FEGChessSeatTestAccess;
+#endif
+
 	struct FSequenceState
 	{
 		bool bActive = false;
@@ -188,6 +192,8 @@ private:
 
 	void PrepareSeatedPawn(APawn* Pawn);
 	void ReleaseSeatedPawn(APawn* Pawn);
+	/** Stop driving the cached pawn before an occupant change or component teardown. */
+	void CancelSequenceAndReleasePawn();
 	void BindPawnAnimation(APawn* Pawn);
 	void UnbindPawnAnimation();
 	void SetPawnTransform(APawn* Pawn, const FTransform& Transform);
