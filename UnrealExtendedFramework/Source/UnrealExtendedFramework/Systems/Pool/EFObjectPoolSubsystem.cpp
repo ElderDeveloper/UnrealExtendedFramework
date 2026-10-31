@@ -2,6 +2,7 @@
 
 #include "Systems/Pool/EFObjectPoolSubsystem.h"
 
+#include "Assets/EFAssetLoading.h"
 #include "Components/ActorComponent.h"
 #include "Components/PrimitiveComponent.h"
 #include "Engine/World.h"
@@ -76,21 +77,58 @@ bool UEFObjectPoolSubsystem::DoesSupportWorldType(const EWorldType::Type WorldTy
 void UEFObjectPoolSubsystem::OnWorldBeginPlay(UWorld& InWorld)
 {
 	Super::OnWorldBeginPlay(InWorld);
+
+	// Classes already in memory prewarm now. The others load in the background instead of stalling
+	// begin play, and prewarm when they arrive; acquiring one before then simply spawns it.
+	TArray<TPair<TSoftClassPtr<AActor>, int32>> Waiting;
+	TArray<FSoftObjectPath> Paths;
 	for (const FEFPoolClassSettings& Entry : UEFObjectPoolSettings::Get()->Classes)
 	{
-		if (Entry.PrewarmCount > 0)
+		if (Entry.PrewarmCount <= 0 || Entry.ActorClass.IsNull())
 		{
-			if (UClass* Class = Entry.ActorClass.LoadSynchronous())
-			{
-				Prewarm(Class, Entry.PrewarmCount);
-			}
+			continue;
 		}
+		if (UClass* Class = Entry.ActorClass.Get())
+		{
+			Prewarm(Class, Entry.PrewarmCount);
+		}
+		else
+		{
+			Waiting.Emplace(Entry.ActorClass, Entry.PrewarmCount);
+			Paths.Add(Entry.ActorClass.ToSoftObjectPath());
+		}
+	}
+
+	if (Paths.Num() > 0)
+	{
+		TWeakObjectPtr<UEFObjectPoolSubsystem> WeakThis(this);
+		PrewarmLoadHandle = EFAssets::Preload(MoveTemp(Paths), [WeakThis, Waiting = MoveTemp(Waiting)]()
+		{
+			UEFObjectPoolSubsystem* This = WeakThis.Get();
+			const UWorld* PoolWorld = This ? This->GetWorld() : nullptr;
+			if (!PoolWorld || PoolWorld->bIsTearingDown)
+			{
+				return;
+			}
+			for (const TPair<TSoftClassPtr<AActor>, int32>& Item : Waiting)
+			{
+				if (UClass* Class = Item.Key.Get())
+				{
+					This->Prewarm(Class, Item.Value);
+				}
+				else
+				{
+					UE_LOG(LogExtendedFramework, Warning, TEXT("Object pool: could not load %s to prewarm it."), *Item.Key.ToString());
+				}
+			}
+		});
 	}
 }
 
 void UEFObjectPoolSubsystem::Deinitialize()
 {
 	// The world is going away and takes its actors with it; only forget them.
+	PrewarmLoadHandle.Reset();
 	Pools.Reset();
 	Tracked.Reset();
 	Super::Deinitialize();

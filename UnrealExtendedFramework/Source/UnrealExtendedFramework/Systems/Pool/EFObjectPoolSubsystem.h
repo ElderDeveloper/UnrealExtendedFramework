@@ -11,6 +11,7 @@
 class AActor;
 class APawn;
 class UActorComponent;
+struct FStreamableHandle;
 
 /** Counters for one pooled class, for debug UI and Extended.Pool.Stats. */
 USTRUCT(BlueprintType)
@@ -155,4 +156,7 @@ private:
 
 	TMap<TWeakObjectPtr<UClass>, FPool> Pools;
 	TMap<TWeakObjectPtr<AActor>, FActorState> Tracked;
+
+	/** Loads prewarm classes that were not loaded at begin play; they are prewarmed when it finishes. */
+	TSharedPtr<FStreamableHandle> PrewarmLoadHandle;
 };

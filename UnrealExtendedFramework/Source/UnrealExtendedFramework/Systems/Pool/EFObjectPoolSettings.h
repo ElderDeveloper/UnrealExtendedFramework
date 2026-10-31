@@ -16,7 +16,7 @@ struct UNREALEXTENDEDFRAMEWORK_API FEFPoolClassSettings
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Pool")
 	TSoftClassPtr<AActor> ActorClass;
 
-	/** Spawned hidden when a game world begins play, so the first uses do not spawn mid-game. */
+	/** Spawned hidden when a game world begins play (after a background load if the class is not in memory yet), so the first uses do not spawn mid-game. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Pool", meta = (ClampMin = "0"))
 	int32 PrewarmCount = 0;
 

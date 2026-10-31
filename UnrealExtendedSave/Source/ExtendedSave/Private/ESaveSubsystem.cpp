@@ -2,6 +2,7 @@
 
 #include "ESaveSubsystem.h"
 
+#include "Assets/EFAssetLoading.h"
 #include "Components/ActorComponent.h"
 #include "ESaveableComponent.h"
 #include "ESaveableInterface.h"
@@ -136,6 +137,16 @@ void UESaveSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 	PostLoadMapHandle = FCoreUObjectDelegates::PostLoadMapWithWorld.AddUObject(this, &UESaveSubsystem::HandlePostLoadMap);
 
 	const UESaveSettings* Settings = UESaveSettings::Get();
+	TArray<FSoftObjectPath> MigrationPaths;
+	for (const TSoftClassPtr<UESaveMigration>& MigrationClass : Settings->Migrations)
+	{
+		if (!MigrationClass.IsNull() && !MigrationClass.Get())
+		{
+			MigrationPaths.Add(MigrationClass.ToSoftObjectPath());
+		}
+	}
+	MigrationPreloadHandle = EFAssets::Preload(MoveTemp(MigrationPaths));
+
 	if (Settings->AutosaveIntervalSeconds > 0.f)
 	{
 		AutosaveTickerHandle = FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateUObject(this, &UESaveSubsystem::TickAutosave),
@@ -199,6 +210,7 @@ void UESaveSubsystem::Deinitialize()
 
 	LiveComponents.Reset();
 	LiveSaveables.Reset();
+	MigrationPreloadHandle.Reset();
 	Super::Deinitialize();
 }
 
@@ -672,7 +684,7 @@ bool UESaveSubsystem::RunMigrations(UESaveGameData* Data, FEFResult& OutFailure)
 	TArray<UESaveMigration*> Steps;
 	for (const TSoftClassPtr<UESaveMigration>& MigrationClass : Settings->Migrations)
 	{
-		if (UClass* Class = MigrationClass.LoadSynchronous())
+		if (UClass* Class = EFAssets::Resolve(MigrationClass, TEXT("UESaveSubsystem::RunMigrations")))
 		{
 			if (UESaveMigration* Step = Class->GetDefaultObject<UESaveMigration>())
 			{
