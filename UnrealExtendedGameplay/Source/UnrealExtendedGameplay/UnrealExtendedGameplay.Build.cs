@@ -56,7 +56,7 @@ public class UnrealExtendedGameplay : ModuleRules
 				"SlateCore",
 				"UnrealExtendedFramework",
 				// Async nodes and asset loading helpers.
-				"ExtendedFoundation"	
+				"ExtendedFoundation"
 			}
 			);
 		
