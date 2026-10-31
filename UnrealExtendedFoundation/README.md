@@ -49,6 +49,7 @@ FEFCredentialStore::Save(TEXT("MyPlugin"), Account, Token);
 | `Settings/EFDeveloperSettings.h` | Base for Project Settings pages; `EFSecret` warnings |
 | `Credentials/EFCredentialStore.h` | Per-user secrets (DPAPI / Keychain) |
 | `Subsystems/EFSubsystems.h` | Subsystem lookup from any world context |
+| `Assets/EFAssetLoading.h` | Preloading soft references; resolving them without hitches |
 | `Status/EFServiceStatus.h` | Reporting to the `Extended.Status` console command |
 | `Testing/EFTestHelpers.h` | Test game instance, wait-until latent command, fixtures |
 | `EFFoundationVersion.h` | `EF_REQUIRE_FOUNDATION_VERSION` compile-time check |

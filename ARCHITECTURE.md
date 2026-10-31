@@ -43,6 +43,7 @@ GAS · Quest · Steam · PerfSentinel · Atlassian   depend on the foundation on
 | Answering each caller with its own result | `TEFPendingCalls`, `EFCallContext` | `Async/EFPendingCalls.h`, `Async/EFCallContext.h` |
 | A Project Settings page | `UEFDeveloperSettings` | `Settings/EFDeveloperSettings.h` |
 | Storing a developer's token or password | `FEFCredentialStore` | `Credentials/EFCredentialStore.h` |
+| Loading soft references without hitches | `EFAssets::Preload`, `EFAssets::Resolve` | `Assets/EFAssetLoading.h` |
 | Finding a subsystem from any object | `EF::GetGameInstanceSubsystem<T>(Context)` | `Subsystems/EFSubsystems.h` |
 | Reporting state to `Extended.Status` | `FEFServiceStatusRegistry::Register` | `Status/EFServiceStatus.h` |
 | Test game instance, waiting, fixtures | `EFTest::FScopedGameInstance`, `FEFWaitUntilCommand` | `Testing/EFTestHelpers.h` |

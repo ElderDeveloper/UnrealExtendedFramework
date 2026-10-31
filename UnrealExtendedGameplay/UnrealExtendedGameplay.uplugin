@@ -28,6 +28,10 @@
 	],
 	"Plugins": [
 		{
+			"Name": "UnrealExtendedFoundation",
+			"Enabled": true
+		},
+		{
 			"Name": "UnrealExtendedFramework",
 			"Enabled": true
 		},
@@ -37,18 +41,6 @@
 		},
 		{
 			"Name": "MotionWarping",
-			"Enabled": true
-		},
-		{
-			"Name": "OnlineSubsystem",
-			"Enabled": true
-		},
-		{
-			"Name": "OnlineSubsystemUtils",
-			"Enabled": true
-		},
-		{
-			"Name": "OnlineSubsystemNull",
 			"Enabled": true
 		}
 	]

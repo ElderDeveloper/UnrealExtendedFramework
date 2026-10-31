@@ -53,7 +53,7 @@ Each plugin has its own descriptor and module boundary. Install the full reposit
 
 | Plugin | Role | Highlights | Version |
 |:--|:--|:--|:--:|
-| [**UnrealExtendedFoundation**](UnrealExtendedFoundation/) | Shared base for every plugin | Logging, HTTP client and mock, JSON, shared results, async node base, settings base, credential store, `Extended.Status`, test helpers | `1.0.0` |
+| [**UnrealExtendedFoundation**](UnrealExtendedFoundation/) | Shared base for every plugin | Logging, HTTP client and mock, JSON, shared results, async node base, settings base, credential store, `Extended.Status`, asset preloading, test helpers | `1.1.0` |
 | [**UnrealExtendedFramework**](UnrealExtendedFramework/) | Core runtime and editor systems | Modular settings, Blueprint libraries, async nodes, AI/EQS helpers, subtitles, UI Lab, localization tooling, log viewer | `1.0` |
 | [**UnrealExtendedGameplay**](UnrealExtendedGameplay/) | Reusable gameplay systems | AI state machine, interaction system, combat, targeting, cover, traversal, perception, footsteps, input buffering, outlines, spawners, chess and skill-check minigames, animation systems | `1.0` |
 | [**UnrealExtendedGAS**](UnrealExtendedGAS/) | Gameplay Ability System extensions | Ability sets, ASC/attribute bases, effect components, async listeners, ability tasks, debug UI | `1.0` |
@@ -82,7 +82,7 @@ flowchart TB
     Vendor["Optional vendor upscalers<br/>DLSS · FSR · XeSS"]
 
     UE --> Foundation
-    UE --> GAS
+    Foundation --> GAS
     Foundation --> Core
     Foundation --> Quest
     Foundation --> Steam
@@ -107,7 +107,7 @@ flowchart TB
 ```
 
 > [!NOTE]
-> `UnrealExtendedFoundation` depends on no other plugin, so every plugin can use it. Only Gameplay, PlayFab, and EOS also require the core framework; GAS depends on neither. See [ARCHITECTURE.md](ARCHITECTURE.md) for the layering rules.
+> `UnrealExtendedFoundation` depends on no other plugin, so every plugin can use it. Only Gameplay, PlayFab, and EOS also require the core framework. See [ARCHITECTURE.md](ARCHITECTURE.md) for the layering rules.
 
 ## 🚀 Feature Highlights
 
@@ -350,8 +350,8 @@ All required non-vendor dependencies below ship with the local UE 5.8 installati
 |:--|:--|:--|
 | UnrealExtendedFoundation | — | — *(engine modules only)* |
 | UnrealExtendedFramework | Foundation | EnhancedInput, DLSS *(optional)* |
-| UnrealExtendedGameplay | Framework | Niagara, MotionWarping, OnlineSubsystem, OnlineSubsystemUtils, OnlineSubsystemNull |
-| UnrealExtendedGAS | — | GameplayAbilities, EnhancedInput |
+| UnrealExtendedGameplay | Foundation, Framework | Niagara, MotionWarping |
+| UnrealExtendedGAS | Foundation | GameplayAbilities, EnhancedInput |
 | UnrealExtendedQuest | Foundation | GameplayTagsEditor *(editor only)* |
 | UnrealExtendedPlayFab | Foundation, Framework | — |
 | UnrealExtendedEOS | Foundation, Framework | OnlineSubsystem, OnlineSubsystemUtils, OnlineSubsystemEOS, EOSShared, EOSVoiceChat, AudioCapture |
