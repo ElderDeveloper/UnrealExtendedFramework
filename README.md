@@ -15,7 +15,7 @@
 <p align="center">
   <img alt="Unreal Engine 5.8" src="https://img.shields.io/badge/Unreal%20Engine-5.8-0E1128?style=for-the-badge&logo=unrealengine&logoColor=white">
   <img alt="C++ and Blueprint" src="https://img.shields.io/badge/API-C%2B%2B%20%2B%20Blueprint-00599C?style=for-the-badge&logo=cplusplus&logoColor=white">
-  <img alt="Nine plugins" src="https://img.shields.io/badge/Suite-9%20Plugins-00A6A6?style=for-the-badge">
+  <img alt="Ten plugins" src="https://img.shields.io/badge/Suite-10%20Plugins-00A6A6?style=for-the-badge">
   <img alt="Mixed licensing" src="https://img.shields.io/badge/License-MIT%20%2B%20Additional%20Terms-F2C94C?style=for-the-badge">
 </p>
 
@@ -40,7 +40,7 @@ Each plugin has its own descriptor and module boundary. Install the full reposit
 
 ## ✨ Why Extended Framework?
 
-- **Modular by design** — nine separately enableable plugins instead of one monolith.
+- **Modular by design** — ten separately enableable plugins instead of one monolith, on a shared foundation that depends on no other plugin.
 - **Blueprint-friendly** — subsystems, async actions, actor components, settings, and data types are exposed where appropriate.
 - **C++ ready** — explicit module boundaries and reusable public APIs for native projects.
 - **Runtime + editor workflows** — gameplay systems are paired with validation, authoring, reporting, and debugging tools.
@@ -53,7 +53,8 @@ Each plugin has its own descriptor and module boundary. Install the full reposit
 
 | Plugin | Role | Highlights | Version |
 |:--|:--|:--|:--:|
-| [**UnrealExtendedFramework**](UnrealExtendedFramework/) | Core runtime and editor foundation | Modular settings, Blueprint libraries, async nodes, AI/EQS helpers, subtitles, HTTP/JSON, UI Lab, localization tooling, log viewer | `1.0` |
+| [**UnrealExtendedFoundation**](UnrealExtendedFoundation/) | Shared base for every plugin | Logging, HTTP client and mock, JSON, shared results, async node base, settings base, credential store, `Extended.Status`, test helpers | `1.0.0` |
+| [**UnrealExtendedFramework**](UnrealExtendedFramework/) | Core runtime and editor systems | Modular settings, Blueprint libraries, async nodes, AI/EQS helpers, subtitles, HTTP/JSON, UI Lab, localization tooling, log viewer | `1.0` |
 | [**UnrealExtendedGameplay**](UnrealExtendedGameplay/) | Reusable gameplay systems | AI state machine, interaction system, combat, targeting, cover, traversal, perception, footsteps, input buffering, outlines, spawners, chess and skill-check minigames, animation notifies | `1.0` |
 | [**UnrealExtendedGAS**](UnrealExtendedGAS/) | Gameplay Ability System extensions | Ability sets, ASC/attribute bases, effect components, async listeners, ability tasks, debug UI | `1.0` |
 | [**UnrealExtendedQuest**](UnrealExtendedQuest/) | Runtime and editor quest framework | Custom graph editor, stages/objectives, facts, replication, JSON I/O, simulator, search, debugger, commandlets | `1.0` |
@@ -68,6 +69,7 @@ Each plugin has its own descriptor and module boundary. Install the full reposit
 ```mermaid
 flowchart TB
     UE["Unreal Engine 5.8"]
+    Foundation["UnrealExtendedFoundation<br/>log · HTTP · JSON · results · async · settings · credentials"]
     Core["UnrealExtendedFramework<br/>core systems + editor tools"]
     Gameplay["UnrealExtendedGameplay"]
     GAS["UnrealExtendedGAS"]
@@ -79,12 +81,15 @@ flowchart TB
     Atlassian["UnrealExtendedAtlassian<br/>editor-only"]
     Vendor["Optional vendor upscalers<br/>DLSS · FSR · XeSS"]
 
-    UE --> Core
+    UE --> Foundation
     UE --> GAS
-    UE --> Quest
-    UE --> Steam
-    UE --> Perf
-    UE --> Atlassian
+    Foundation --> Core
+    Foundation --> Quest
+    Foundation --> Steam
+    Foundation --> Perf
+    Foundation --> Atlassian
+    Foundation --> PlayFab
+    Foundation --> EOS
     Core -->|required| Gameplay
     Core -->|required| PlayFab
     Core -->|required| EOS
@@ -95,20 +100,35 @@ flowchart TB
     classDef gameplay fill:#123524,stroke:#5AC878,color:#fff;
     classDef online fill:#3D234A,stroke:#C084FC,color:#fff;
     classDef tooling fill:#4A3215,stroke:#F5B942,color:#fff;
-    class Core foundation;
+    class Foundation,Core foundation;
     class Gameplay,GAS,Quest gameplay;
     class PlayFab,EOS,Steam online;
     class Perf,Vendor,Atlassian tooling;
 ```
 
 > [!NOTE]
-> `UnrealExtendedGAS`, `UnrealExtendedQuest`, `UnrealExtendedSteam`, `UnrealExtendedPerfSentinel`, and `UnrealExtendedAtlassian` do not require the core plugin in their descriptors. Gameplay, PlayFab, and EOS do.
+> `UnrealExtendedFoundation` depends on no other plugin, so every plugin can use it. Only Gameplay, PlayFab, and EOS also require the core framework; GAS depends on neither. See [ARCHITECTURE.md](ARCHITECTURE.md) for the layering rules.
 
 ## 🚀 Feature Highlights
 
+### 🧩 Extended Foundation
+
+The small shared base every plugin builds on. It uses only engine modules that every install has.
+
+- **HTTP**: `FEFHttpOperation` (all common verbs, headers, query parameters, text or binary bodies, timeouts, retries with capped backoff that honors `Retry-After`, no automatic retry of POST/PATCH, cancellation, URLs logged without query strings or credentials), `UEFHttpSubsystem` with a base URL and default headers, and the **Http Request** async node.
+- **HTTP mock**: `FEFScopedHttpMock` answers requests from canned rules and records them, so any client built on `FEFHttpOperation` can be tested offline.
+- **JSON**: read, build, path lookup (`data.items[2].name`), deep copy, file I/O, and converting any native or Blueprint struct to and from JSON.
+- **Results**: `FEFResult`, one success/failure shape (source, code, message, HTTP status, retryable) that PlayFab, EOS, Steam and HTTP results convert to.
+- **Async nodes**: `UEFAsyncActionBase` for Blueprint async nodes: finishes exactly once, optional timeout, cancellation through the Async Task pin. `TEFPendingCalls` and `EFCallContext` make sure two identical calls in flight each get their own result.
+- **Settings**: `UEFDeveloperSettings` puts every plugin under **Project Settings → Extended Framework** and warns when a property marked `EFSecret` would ship in a `Default*.ini`.
+- **Credentials**: `FEFCredentialStore` keeps developer tokens and passwords per user, encrypted with DPAPI on Windows and in the Keychain on macOS.
+- **Status**: the `Extended.Status` console command reports every registered service (EOS, PlayFab, Steam, Http, ...).
+- **Logging**: the `UnrealExtendedFrameworkLog` module (`EF_LOG` category log files and the Extended Log settings).
+- **Testing**: a test game instance with initialized subsystems, a wait-until latent command, and plugin fixture loading.
+
 ### 🧱 Core Framework
 
-The core plugin supplies the shared runtime and editor foundation used across the suite.
+The core plugin supplies runtime and editor systems shared by the gameplay-facing plugins.
 
 **Runtime systems**
 
@@ -117,8 +137,6 @@ The core plugin supplies the shared runtime and editor foundation used across th
 - Graphics, audio, display, input, accessibility, and upscaler-oriented setting types.
 - Optional compile-time integration for NVIDIA DLSS, AMD FSR variants, and Intel XeSS.
 - Async Blueprint actions for delays, loops, timelines, input, gameplay tags, and character movement.
-- HTTP client with every common verb, headers, query parameters, timeouts, retries with exponential backoff (honoring `Retry-After`), cancellation, a game-instance subsystem with base URL and default headers, and an **Http Request** async Blueprint node. URLs are logged without query strings or credentials.
-- JSON library for reading, building, path lookup (`data.items[2].name`), deep copy, file I/O, and converting any native or Blueprint struct to and from JSON.
 - Actor, AI, array, condition, conversion, data-table, file, input, math, monitor, perception, trace, variable, and widget libraries.
 - Subtitle data, style profiles, project settings, playback, and presentation support.
 - Behavior Tree composites, decorators, services, and tasks.
@@ -131,10 +149,6 @@ The core plugin supplies the shared runtime and editor foundation used across th
 - Localization workbench with glossary, context, validation, review, pseudo-localization, providers, and pipeline tooling.
 - Log viewer for browsing and filtering Unreal log files inside the editor.
 - Editor utilities and cheat-manager helpers.
-
-**Logging**
-
-- `UnrealExtendedFrameworkLog` runtime module with logging helpers, "Extended Log" project settings, and a Blueprint logging library.
 
 ### 🎮 Extended Gameplay
 
@@ -284,6 +298,7 @@ YourProject/
 ├── YourProject.uproject
 └── Plugins/
     └── ExtendedFramework/
+        ├── UnrealExtendedFoundation/
         ├── UnrealExtendedFramework/
         ├── UnrealExtendedGameplay/
         ├── UnrealExtendedGAS/
@@ -314,6 +329,7 @@ You can also enable plugins directly in your `.uproject`:
 ```json
 {
   "Plugins": [
+    { "Name": "UnrealExtendedFoundation", "Enabled": true },
     { "Name": "UnrealExtendedFramework", "Enabled": true },
     { "Name": "UnrealExtendedGameplay", "Enabled": true },
     { "Name": "UnrealExtendedGAS", "Enabled": true },
@@ -323,7 +339,7 @@ You can also enable plugins directly in your `.uproject`:
 ```
 
 > [!TIP]
-> Start with `UnrealExtendedFramework`, then add one specialized plugin at a time. This keeps configuration and service credentials easy to reason about.
+> Enabling any Extended plugin enables `UnrealExtendedFoundation` automatically. Start with the plugin you need, then add one more at a time. This keeps configuration and service credentials easy to reason about.
 
 ## 🔗 Dependencies
 
@@ -331,15 +347,16 @@ All required non-vendor dependencies below ship with the local UE 5.8 installati
 
 | Plugin | Extended dependency | Unreal Engine plugin dependencies |
 |:--|:--|:--|
-| UnrealExtendedFramework | — | EnhancedInput, DLSS *(optional)* |
-| UnrealExtendedGameplay | UnrealExtendedFramework | Niagara, OnlineSubsystem, OnlineSubsystemUtils, OnlineSubsystemNull |
+| UnrealExtendedFoundation | — | — *(engine modules only)* |
+| UnrealExtendedFramework | Foundation | EnhancedInput, DLSS *(optional)* |
+| UnrealExtendedGameplay | Framework | Niagara, OnlineSubsystem, OnlineSubsystemUtils, OnlineSubsystemNull |
 | UnrealExtendedGAS | — | GameplayAbilities, EnhancedInput |
-| UnrealExtendedQuest | — | GameplayTagsEditor *(editor only)* |
-| UnrealExtendedPlayFab | UnrealExtendedFramework | — |
-| UnrealExtendedEOS | UnrealExtendedFramework | OnlineSubsystem, OnlineSubsystemUtils, OnlineSubsystemEOS, EOSShared, EOSVoiceChat, AudioCapture |
-| UnrealExtendedSteam | — | OnlineSubsystem, OnlineSubsystemUtils |
-| UnrealExtendedPerfSentinel | — | ToolsetRegistry *(editor only)* |
-| UnrealExtendedAtlassian | — | — *(engine modules only: HTTP, Json, Slate, UnrealEd)* |
+| UnrealExtendedQuest | Foundation | GameplayTagsEditor *(editor only)* |
+| UnrealExtendedPlayFab | Foundation, Framework | — |
+| UnrealExtendedEOS | Foundation, Framework | OnlineSubsystem, OnlineSubsystemUtils, OnlineSubsystemEOS, EOSShared, EOSVoiceChat, AudioCapture |
+| UnrealExtendedSteam | Foundation | OnlineSubsystem, OnlineSubsystemUtils |
+| UnrealExtendedPerfSentinel | Foundation | ToolsetRegistry *(editor only)* |
+| UnrealExtendedAtlassian | Foundation | — *(engine modules only: HTTP, Json, Slate, UnrealEd)* |
 
 `DLSS` is an optional descriptor dependency. The core build rules also detect `FSR`, `FSR3`, `FSR4`, and `XeSS` when one of those vendor plugins is installed and enabled. The framework builds without them.
 
@@ -379,7 +396,7 @@ void AMyPlayerController::LoadPlayerSettings()
 
 ### Call a web API
 
-From Blueprint, use **Http Request** (an async node with On Success / On Failure), or build the request with **Make Json Http Request** and read the result with **Get Response Json**. From C++:
+From Blueprint, use **Http Request** (an async node with On Success / On Failure), or build the request with **Make Json Http Request** and read the result with **Get Response Json**. From C++, add `ExtendedFoundation` to your module's dependencies and:
 
 ```cpp
 #include "Http/EFHttpLibrary.h"
@@ -433,7 +450,7 @@ void UMyLeaderboardClient::FetchTop(UObject* WorldContext)
 
 ### Configure an online provider
 
-Provider settings are exposed through `UDeveloperSettings`:
+Every plugin's settings derive from `UEFDeveloperSettings` and sit under **Project Settings → Extended Framework**:
 
 | Provider | Project Settings section | Primary settings class |
 |:--|:--|:--|
@@ -446,6 +463,7 @@ Provider settings are exposed through `UDeveloperSettings`:
 | Quest editor | Extended Framework → Extended Quest | `UEGQuestPluginSettings` |
 | Subtitles | Extended Framework → Extended Subtitle Settings | `UEFSubtitleProjectSettings` |
 | Atlassian | Extended Framework → Extended Atlassian | `UExtendedAtlassianSettings` |
+| Extended Log | Extended Framework → Extended Log | `UEFLogSettings` |
 
 Configure only one provider at a time, verify its authentication flow in a development environment, and add the rest after the base path is stable.
 
@@ -455,8 +473,9 @@ Use the module that owns the API you include:
 
 | Capability | Module name |
 |:--|:--|
+| Foundation: HTTP, JSON, results, async, settings, credentials, status, test helpers | `ExtendedFoundation` |
+| Foundation: `EF_LOG` logging | `UnrealExtendedFrameworkLog` |
 | Core runtime | `UnrealExtendedFramework` |
-| Core logging | `UnrealExtendedFrameworkLog` |
 | Core editor tools | `UnrealExtendedFrameworkEditor` |
 | Gameplay systems | `UnrealExtendedGameplay` |
 | GAS extensions | `UnrealExtendedGAS` |
@@ -481,22 +500,24 @@ Editor modules must never be added to a shipping runtime target.
 
 ## 🧪 Testing and Validation
 
-The suite includes Unreal Automation tests across the core, Gameplay, EOS, PlayFab, Quest, Steam, Perf Sentinel, and Atlassian plugins. Steam contains the broadest offline contract suite, covering subsystem registration and major client, OSS, sockets, storage, UGC, and Web API surfaces.
+The suite includes Unreal Automation tests across the foundation, core, Gameplay, EOS, PlayFab, Quest, Steam, Perf Sentinel, and Atlassian plugins. They run offline: HTTP-based clients are tested against `FEFScopedHttpMock`. Steam contains the broadest offline contract suite, covering subsystem registration and major client, OSS, sockets, storage, UGC, and Web API surfaces.
 
 ### From the editor
 
 1. Open **Tools → Test Automation**.
 2. Disable smoke-only filtering if you want the full set.
-3. Filter for `UnrealExtended`, `ExtendedSteam`, `ExtendedEOS`, `PlayFab`, `Quest`, `PerfSentinel`, or `ExtendedAtlassian`.
+3. Filter for `ExtendedFoundation`, `UnrealExtended`, `ExtendedSteam`, `ExtendedEOS`, `PlayFab`, `Quest`, `PerfSentinel`, or `ExtendedAtlassian`.
 4. Run the relevant group before integrating a plugin update.
 
 ### From the command line
 
 ```powershell
 UnrealEditor-Cmd.exe YourProject.uproject `
-  -ExecCmds="Automation RunTests UnrealExtended;Quit" `
+  -ExecCmds="Automation RunTests ExtendedFoundation+UnrealExtended;Quit" `
   -unattended -nop4 -NullRHI -TestExit="Automation Test Queue Empty"
 ```
+
+Without Unreal, `python3 Scripts/lint_repository.py` checks plugin descriptors, cross-plugin and cross-module dependencies, copyright headers and redirect syntax; CI runs it on every push.
 
 Quest content can additionally be checked with the included validation and statistics commandlets. Perf Sentinel can be driven by console commands or its analyze commandlet for repeatable performance gates. Atlassian ships network-free parity and visual golden-capture suites (`ExtendedAtlassian.Parity`, `ExtendedAtlassian.Visual.GoldenCapture`).
 
@@ -508,14 +529,16 @@ Online integrations can expose privileged operations if configured carelessly.
 - Treat client-visible identifiers and authentication tokens according to the provider's current security guidance.
 - Prefer server-authoritative calls for inventory grants, currency mutation, moderation, progression, and other trusted operations.
 - Keep development, staging, and production service configurations separate.
-- Store publishing credentials in your operating-system credential store or CI secret manager. Encryption with a key embedded in a client or editor module is obfuscation, not a security boundary.
+- Store publishing credentials in your operating-system credential store or CI secret manager. `FEFCredentialStore` does this for editor tools (DPAPI on Windows, Keychain on macOS). Encryption with a key embedded in a client or editor module is obfuscation, not a security boundary.
+- Mark settings properties that could hold a secret with `meta = (EFSecret)`; the editor warns when one would be saved to a `Default*.ini`, which ships with the game.
 - Review packaged configuration and staged files before every release.
 
 ## 🗂️ Repository Layout
 
 ```text
 ExtendedFramework/
-├── UnrealExtendedFramework/       # Core runtime + editor foundation
+├── UnrealExtendedFoundation/      # Shared base: log, HTTP, JSON, results, async, settings, credentials
+├── UnrealExtendedFramework/       # Core runtime + editor systems
 ├── UnrealExtendedGameplay/        # Reusable gameplay systems
 ├── UnrealExtendedGAS/             # Gameplay Ability System extensions
 ├── UnrealExtendedQuest/           # Quest runtime + custom editor
@@ -524,6 +547,10 @@ ExtendedFramework/
 ├── UnrealExtendedSteam/           # Steamworks, OSS, sockets, Web API, editor
 ├── UnrealExtendedPerfSentinel/    # Capture, analysis, reports, regression gates
 ├── UnrealExtendedAtlassian/       # Jira/Confluence Backlot workspace + capture (editor)
+├── Templates/ExtendedPlugin/      # Template for new plugins (see Scripts/new_extended_plugin.py)
+├── Scripts/                       # Plugin generator and repository lint
+├── .github/workflows/             # CI: repository lint and template check
+├── ARCHITECTURE.md                # Layering, conventions, async and settings rules
 ├── LICENSE
 └── README.md
 ```
@@ -596,11 +623,13 @@ When reporting a problem, include:
 
 For code changes:
 
-1. Keep changes within the smallest reasonable module boundary.
-2. Preserve Blueprint compatibility and serialized names unless a migration path is included.
-3. Add or update automation coverage when behavior changes.
-4. Do not commit generated build products, credentials, provider SDKs without redistribution rights, or unrelated formatting churn.
-5. Document new settings, console commands, modules, and external dependencies.
+1. Follow [ARCHITECTURE.md](ARCHITECTURE.md). Start new plugins with `python3 Scripts/new_extended_plugin.py <Name> --prefix <Prefix>`.
+2. Run `python3 Scripts/lint_repository.py` before pushing.
+3. Keep changes within the smallest reasonable module boundary.
+4. Preserve Blueprint compatibility and serialized names unless a migration path is included (CoreRedirects).
+5. Add or update automation coverage when behavior changes.
+6. Do not commit generated build products, credentials, provider SDKs without redistribution rights, or unrelated formatting churn.
+7. Document new settings, console commands, modules, and external dependencies.
 
 ## 📄 License
 
