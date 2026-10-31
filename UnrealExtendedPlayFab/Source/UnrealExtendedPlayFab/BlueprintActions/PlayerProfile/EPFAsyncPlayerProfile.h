@@ -13,7 +13,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnEPFAsyncAvatarSuccess);
 
 // ── Get Profile ──────────────────────────────────────────────────────────────
 UCLASS(meta = (DisplayName = "PlayFab: Get Player Profile"))
-class UNREALEXTENDEDPLAYFAB_API UEPFAsyncGetProfile : public UBlueprintAsyncActionBase
+class UNREALEXTENDEDPLAYFAB_API UEPFAsyncGetProfile : public UEPFAsyncActionBase
 {
 	GENERATED_BODY()
 public:
@@ -28,16 +28,17 @@ public:
 	UFUNCTION(BlueprintCallable, meta = (BlueprintInternalUseOnly = "true", WorldContext = "WorldContext", DisplayName = "PlayFab: Get Player Profile"), Category = "PlayFab|Async|Profile")
 	static UEPFAsyncGetProfile* GetPlayerProfile(UObject* WorldContext, const FString& PlayFabId = TEXT(""));
 	UPROPERTY(BlueprintAssignable) FOnEPFAsyncProfileSuccess OnSuccess;
-	UPROPERTY(BlueprintAssignable) FOnEPFAsyncFailed OnFailure;
-	virtual void Activate() override;
+protected:
+	virtual void ExecuteAction() override;
+	virtual void CancelWork() override;
 private:
-	FString TargetId; TWeakObjectPtr<UObject> WorldContext;
+	FString TargetId;
 	UFUNCTION() void HandleComplete(const FEPFResult& Result, const FEPFPlayerProfile& Profile);
 };
 
 // ── Get Account Info ─────────────────────────────────────────────────────────
 UCLASS(meta = (DisplayName = "PlayFab: Get Account Info"))
-class UNREALEXTENDEDPLAYFAB_API UEPFAsyncGetAccountInfo : public UBlueprintAsyncActionBase
+class UNREALEXTENDEDPLAYFAB_API UEPFAsyncGetAccountInfo : public UEPFAsyncActionBase
 {
 	GENERATED_BODY()
 public:
@@ -53,41 +54,44 @@ public:
 	UFUNCTION(BlueprintCallable, meta = (BlueprintInternalUseOnly = "true", WorldContext = "WorldContext", DisplayName = "PlayFab: Get Account Info"), Category = "PlayFab|Async|Profile")
 	static UEPFAsyncGetAccountInfo* GetAccountInfo(UObject* WorldContext, const FString& PlayFabId = TEXT(""));
 	UPROPERTY(BlueprintAssignable) FOnEPFAsyncAccountInfoSuccess OnSuccess;
-	UPROPERTY(BlueprintAssignable) FOnEPFAsyncFailed OnFailure;
-	virtual void Activate() override;
+protected:
+	virtual void ExecuteAction() override;
+	virtual void CancelWork() override;
 private:
-	FString TargetId; TWeakObjectPtr<UObject> WorldContext;
+	FString TargetId;
 	UFUNCTION() void HandleComplete(const FEPFResult& Result, const FEPFAccountInfo& AccountInfo);
 };
 
 // ── Get Combined Info ────────────────────────────────────────────────────────
 UCLASS(meta = (DisplayName = "PlayFab: Get Combined Info"))
-class UNREALEXTENDEDPLAYFAB_API UEPFAsyncGetCombinedInfo : public UBlueprintAsyncActionBase
+class UNREALEXTENDEDPLAYFAB_API UEPFAsyncGetCombinedInfo : public UEPFAsyncActionBase
 {
 	GENERATED_BODY()
 public:
 	UFUNCTION(BlueprintCallable, meta = (BlueprintInternalUseOnly = "true", WorldContext = "WorldContext", DisplayName = "PlayFab: Get Combined Info"), Category = "PlayFab|Async|Profile")
 	static UEPFAsyncGetCombinedInfo* GetCombinedInfo(UObject* WorldContext, bool bGetStats = true, bool bGetPlayerData = true, bool bGetCurrency = true);
 	UPROPERTY(BlueprintAssignable) FOnEPFAsyncProfileSuccess OnSuccess;
-	UPROPERTY(BlueprintAssignable) FOnEPFAsyncFailed OnFailure;
-	virtual void Activate() override;
+protected:
+	virtual void ExecuteAction() override;
+	virtual void CancelWork() override;
 private:
-	bool bStats; bool bData; bool bCurrency; TWeakObjectPtr<UObject> WorldContext;
+	bool bStats = true; bool bData = true; bool bCurrency = true;
 	UFUNCTION() void HandleComplete(const FEPFResult& Result, const FEPFPlayerProfile& Profile);
 };
 
 // ── Update Avatar ────────────────────────────────────────────────────────────
 UCLASS(meta = (DisplayName = "PlayFab: Update Avatar URL"))
-class UNREALEXTENDEDPLAYFAB_API UEPFAsyncUpdateAvatar : public UBlueprintAsyncActionBase
+class UNREALEXTENDEDPLAYFAB_API UEPFAsyncUpdateAvatar : public UEPFAsyncActionBase
 {
 	GENERATED_BODY()
 public:
 	UFUNCTION(BlueprintCallable, meta = (BlueprintInternalUseOnly = "true", WorldContext = "WorldContext", DisplayName = "PlayFab: Update Avatar URL"), Category = "PlayFab|Async|Profile")
 	static UEPFAsyncUpdateAvatar* UpdateAvatarUrl(UObject* WorldContext, const FString& AvatarUrl);
 	UPROPERTY(BlueprintAssignable) FOnEPFAsyncAvatarSuccess OnSuccess;
-	UPROPERTY(BlueprintAssignable) FOnEPFAsyncFailed OnFailure;
-	virtual void Activate() override;
+protected:
+	virtual void ExecuteAction() override;
+	virtual void CancelWork() override;
 private:
-	FString Url; TWeakObjectPtr<UObject> WorldContext;
+	FString Url;
 	UFUNCTION() void HandleComplete(const FEPFResult& Result);
 };

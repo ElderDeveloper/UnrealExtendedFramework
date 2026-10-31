@@ -2,30 +2,34 @@
 
 #include "EPFAsyncReporting.h"
 #include "Reporting/EPFReportingSubsystem.h"
-#include "Engine/GameInstance.h"
 
 UEPFAsyncReportPlayer* UEPFAsyncReportPlayer::ReportPlayer(UObject* WorldContext, const FString& ReporteePlayFabId, const FString& Comment)
 {
 	auto* Action = NewObject<UEPFAsyncReportPlayer>();
 	Action->ReporteeId = ReporteePlayFabId;
-	Action->Comment = Comment;
-	Action->WorldContext = WorldContext;
-	Action->RegisterWithGameInstance(WorldContext);
+	Action->ReportComment = Comment;
+	Action->InitAsyncAction(WorldContext);
 	return Action;
 }
 
-void UEPFAsyncReportPlayer::Activate()
+void UEPFAsyncReportPlayer::ExecuteAction()
 {
-	auto* Sub = GetEPFSubsystemFromContext<UEPFReportingSubsystem>(WorldContext.Get());
-	if (!Sub) { BroadcastEPFFailure(OnFailure, MakeEPFAsyncError(TEXT("Reporting subsystem not available"))); SetReadyToDestroy(); return; }
+	auto* Sub = RequireGameInstanceSubsystem<UEPFReportingSubsystem>();
+	if (!Sub) return;
 	Sub->OnPlayerReported.AddDynamic(this, &UEPFAsyncReportPlayer::HandleComplete);
-	Sub->ReportPlayer(ReporteeId, Comment);
+	CallWithContext([&] { Sub->ReportPlayer(ReporteeId, ReportComment); });
+}
+
+void UEPFAsyncReportPlayer::CancelWork()
+{
+	if (auto* Sub = GetGameInstanceSubsystem<UEPFReportingSubsystem>())
+		Sub->OnPlayerReported.RemoveDynamic(this, &UEPFAsyncReportPlayer::HandleComplete);
 }
 
 void UEPFAsyncReportPlayer::HandleComplete(const FEPFResult& Result)
 {
-	if (auto* Sub = GetEPFSubsystemFromContext<UEPFReportingSubsystem>(WorldContext.Get()))
-		Sub->OnPlayerReported.RemoveDynamic(this, &UEPFAsyncReportPlayer::HandleComplete);
+	if (!IsResultForThisCall()) return;
+	CancelWork();
+	if (!FinishAction()) return;
 	Result.bSuccess ? OnSuccess.Broadcast() : BroadcastEPFFailure(OnFailure, MakeEPFAsyncError(Result, TEXT("Failed to report player")));
-	SetReadyToDestroy();
 }

@@ -2,33 +2,41 @@
 
 #include "EPFAsyncStats.h"
 #include "Stats/EPFStatsSubsystem.h"
-#include "Engine/GameInstance.h"
 
 // ── Get ──────────────────────────────────────────────────────────────────────
 
 UEPFAsyncGetStats* UEPFAsyncGetStats::GetStats(UObject* WorldContext, const TArray<FString>& StatNames)
 {
 	auto* Action = NewObject<UEPFAsyncGetStats>();
-	Action->StatNames = StatNames;
-	Action->WorldContext = WorldContext;
-	Action->RegisterWithGameInstance(WorldContext);
+	Action->RequestedStatNames = StatNames;
+	Action->InitAsyncAction(WorldContext);
 	return Action;
 }
 
-void UEPFAsyncGetStats::Activate()
+void UEPFAsyncGetStats::ExecuteAction()
 {
-	auto* Sub = GetEPFSubsystemFromContext<UEPFStatsSubsystem>(WorldContext.Get());
-	if (!Sub) { BroadcastEPFFailure(OnFailure, MakeEPFAsyncError(TEXT("Stats subsystem not available"))); SetReadyToDestroy(); return; }
+	auto* Sub = RequireGameInstanceSubsystem<UEPFStatsSubsystem>();
+	if (!Sub) return;
 	Sub->OnStatsReceived.AddDynamic(this, &UEPFAsyncGetStats::HandleComplete);
-	StatNames.Num() > 0 ? Sub->GetStats(StatNames) : Sub->GetAllStats();
+	CallWithContext([&]
+	{
+		if (RequestedStatNames.Num() > 0) { Sub->GetStats(RequestedStatNames); }
+		else { Sub->GetAllStats(); }
+	});
+}
+
+void UEPFAsyncGetStats::CancelWork()
+{
+	if (auto* Sub = GetGameInstanceSubsystem<UEPFStatsSubsystem>())
+		Sub->OnStatsReceived.RemoveDynamic(this, &UEPFAsyncGetStats::HandleComplete);
 }
 
 void UEPFAsyncGetStats::HandleComplete(const FEPFResult& Result, const TArray<FEPFStatistic>& Stats)
 {
-	if (auto* Sub = GetEPFSubsystemFromContext<UEPFStatsSubsystem>(WorldContext.Get()))
-		Sub->OnStatsReceived.RemoveDynamic(this, &UEPFAsyncGetStats::HandleComplete);
+	if (!IsResultForThisCall()) return;
+	CancelWork();
+	if (!FinishAction()) return;
 	Result.bSuccess ? OnSuccess.Broadcast(Stats) : BroadcastEPFFailure(OnFailure, MakeEPFAsyncError(Result, TEXT("Failed to get stats")));
-	SetReadyToDestroy();
 }
 
 // ── Update ───────────────────────────────────────────────────────────────────
@@ -36,25 +44,30 @@ void UEPFAsyncGetStats::HandleComplete(const FEPFResult& Result, const TArray<FE
 UEPFAsyncUpdateStats* UEPFAsyncUpdateStats::UpdateStats(UObject* WorldContext, const TMap<FString, int32>& Stats)
 {
 	auto* Action = NewObject<UEPFAsyncUpdateStats>();
-	Action->Stats = Stats;
-	Action->WorldContext = WorldContext;
-	Action->RegisterWithGameInstance(WorldContext);
+	Action->StatsToUpdate = Stats;
+	Action->InitAsyncAction(WorldContext);
 	return Action;
 }
 
-void UEPFAsyncUpdateStats::Activate()
+void UEPFAsyncUpdateStats::ExecuteAction()
 {
-	if (Stats.Num() == 0) { BroadcastEPFFailure(OnFailure, MakeEPFAsyncError(TEXT("Stats map cannot be empty"))); SetReadyToDestroy(); return; }
-	auto* Sub = GetEPFSubsystemFromContext<UEPFStatsSubsystem>(WorldContext.Get());
-	if (!Sub) { BroadcastEPFFailure(OnFailure, MakeEPFAsyncError(TEXT("Stats subsystem not available"))); SetReadyToDestroy(); return; }
+	if (StatsToUpdate.Num() == 0) { FailInvalidArgument(TEXT("Stats map cannot be empty")); return; }
+	auto* Sub = RequireGameInstanceSubsystem<UEPFStatsSubsystem>();
+	if (!Sub) return;
 	Sub->OnStatsUpdated.AddDynamic(this, &UEPFAsyncUpdateStats::HandleComplete);
-	Sub->UpdateStats(Stats);
+	CallWithContext([&] { Sub->UpdateStats(StatsToUpdate); });
+}
+
+void UEPFAsyncUpdateStats::CancelWork()
+{
+	if (auto* Sub = GetGameInstanceSubsystem<UEPFStatsSubsystem>())
+		Sub->OnStatsUpdated.RemoveDynamic(this, &UEPFAsyncUpdateStats::HandleComplete);
 }
 
 void UEPFAsyncUpdateStats::HandleComplete(const FEPFResult& Result)
 {
-	if (auto* Sub = GetEPFSubsystemFromContext<UEPFStatsSubsystem>(WorldContext.Get()))
-		Sub->OnStatsUpdated.RemoveDynamic(this, &UEPFAsyncUpdateStats::HandleComplete);
+	if (!IsResultForThisCall()) return;
+	CancelWork();
+	if (!FinishAction()) return;
 	Result.bSuccess ? OnSuccess.Broadcast() : BroadcastEPFFailure(OnFailure, MakeEPFAsyncError(Result, TEXT("Failed to update stats")));
-	SetReadyToDestroy();
 }

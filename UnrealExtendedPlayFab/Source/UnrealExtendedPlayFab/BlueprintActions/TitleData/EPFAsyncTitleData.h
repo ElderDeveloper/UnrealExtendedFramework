@@ -10,7 +10,7 @@
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnEPFAsyncTitleDataSuccess);
 
 UCLASS(meta = (DisplayName = "PlayFab: Get Title Data"))
-class UNREALEXTENDEDPLAYFAB_API UEPFAsyncGetTitleData : public UBlueprintAsyncActionBase
+class UNREALEXTENDEDPLAYFAB_API UEPFAsyncGetTitleData : public UEPFAsyncActionBase
 {
 	GENERATED_BODY()
 
@@ -20,11 +20,12 @@ public:
 
 	/** Fires on success — call GetCachedValue() / GetAllCachedData() on the TitleData subsystem to read data */
 	UPROPERTY(BlueprintAssignable) FOnEPFAsyncTitleDataSuccess OnSuccess;
-	UPROPERTY(BlueprintAssignable) FOnEPFAsyncFailed OnFailure;
-	virtual void Activate() override;
+
+protected:
+	virtual void ExecuteAction() override;
+	virtual void CancelWork() override;
 
 private:
-	TArray<FString> Keys;
-	TWeakObjectPtr<UObject> WorldContext;
+	TArray<FString> RequestedKeys;
 	UFUNCTION() void HandleComplete(const FEPFResult& Result);
 };

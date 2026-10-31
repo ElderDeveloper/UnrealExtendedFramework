@@ -1,29 +1,33 @@
 // Copyright Kemal Erdem YILMAZ. All Rights Reserved.
 
 #include "EPFAsyncTitleNews.h"
-#include "Engine/GameInstance.h"
 
 UEPFAsyncGetTitleNews* UEPFAsyncGetTitleNews::GetTitleNews(UObject* WorldContext, int32 Count)
 {
 	auto* Action = NewObject<UEPFAsyncGetTitleNews>();
-	Action->Count = FMath::Clamp(Count, 1, 100);
-	Action->WorldContext = WorldContext;
-	Action->RegisterWithGameInstance(WorldContext);
+	Action->NewsCount = FMath::Clamp(Count, 1, 100);
+	Action->InitAsyncAction(WorldContext);
 	return Action;
 }
 
-void UEPFAsyncGetTitleNews::Activate()
+void UEPFAsyncGetTitleNews::ExecuteAction()
 {
-	auto* Sub = GetEPFSubsystemFromContext<UEPFTitleNewsSubsystem>(WorldContext.Get());
-	if (!Sub) { BroadcastEPFFailure(OnFailure, MakeEPFAsyncError(TEXT("TitleNews subsystem not available"))); SetReadyToDestroy(); return; }
+	auto* Sub = RequireGameInstanceSubsystem<UEPFTitleNewsSubsystem>();
+	if (!Sub) return;
 	Sub->OnTitleNewsReceived.AddDynamic(this, &UEPFAsyncGetTitleNews::HandleComplete);
-	Sub->GetTitleNews(Count);
+	CallWithContext([&] { Sub->GetTitleNews(NewsCount); });
+}
+
+void UEPFAsyncGetTitleNews::CancelWork()
+{
+	if (auto* Sub = GetGameInstanceSubsystem<UEPFTitleNewsSubsystem>())
+		Sub->OnTitleNewsReceived.RemoveDynamic(this, &UEPFAsyncGetTitleNews::HandleComplete);
 }
 
 void UEPFAsyncGetTitleNews::HandleComplete(const FEPFResult& Result, const TArray<FEPFTitleNewsItem>& NewsItems)
 {
-	if (auto* Sub = GetEPFSubsystemFromContext<UEPFTitleNewsSubsystem>(WorldContext.Get()))
-		Sub->OnTitleNewsReceived.RemoveDynamic(this, &UEPFAsyncGetTitleNews::HandleComplete);
+	if (!IsResultForThisCall()) return;
+	CancelWork();
+	if (!FinishAction()) return;
 	Result.bSuccess ? OnSuccess.Broadcast(NewsItems) : BroadcastEPFFailure(OnFailure, MakeEPFAsyncError(Result, TEXT("Failed to get title news")));
-	SetReadyToDestroy();
 }
