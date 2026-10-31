@@ -43,6 +43,12 @@ public:
 	static FString GetStorageDescription();
 
 	/**
+	 * The folder that holds the credential files on platforms that use them (Windows, Linux), for
+	 * "show in folder" buttons. Empty on macOS, where secrets live in the Keychain.
+	 */
+	static FString GetStorageDirectory();
+
+	/**
 	 * Tests only: keep secrets as files under Root, on every platform, instead of the real store.
 	 * Pass an empty string to go back to the real store.
 	 */

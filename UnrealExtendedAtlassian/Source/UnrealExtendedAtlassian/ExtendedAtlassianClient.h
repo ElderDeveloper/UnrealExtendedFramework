@@ -40,6 +40,9 @@ DECLARE_DELEGATE_OneParam(FExtendedAtlassianResponseDelegate, const FExtendedAtl
  * request, retries rate-limited and transient failures with backoff, and normalises Jira's and
  * Confluence's differing error shapes into FExtendedAtlassianError.
  *
+ * Each attempt is sent through FEFHttpOperation (UnrealExtendedFoundation), so FEFScopedHttpMock
+ * can answer requests in tests. Retries, Retry-After and the configured retry count stay here.
+ *
  * Completion delegates always fire on the game thread, so Slate callers need no marshalling.
  */
 class UNREALEXTENDEDATLASSIAN_API FExtendedAtlassianClient : public TSharedFromThis<FExtendedAtlassianClient>

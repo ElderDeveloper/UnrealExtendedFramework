@@ -426,6 +426,11 @@ FString FEFCredentialStore::GetStorageDescription()
 #endif
 }
 
+FString FEFCredentialStore::GetStorageDirectory()
+{
+	return EFCredentialStorePrivate::UseFileStore() ? EFCredentialStorePrivate::GetFileStoreRoot() : FString();
+}
+
 void FEFCredentialStore::SetFileStoreRootForTests(const FString& Root)
 {
 	EFCredentialStorePrivate::TestRoot() = Root;
