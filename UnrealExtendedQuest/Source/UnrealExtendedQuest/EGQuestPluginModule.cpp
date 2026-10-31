@@ -30,6 +30,9 @@
 #include "GameplayDebugger/SEGQuestDataDisplay.h"
 #include "Logging/EGQuestLogger.h"
 #include "EGQuestHelper.h"
+#include "EFFoundationVersion.h"
+
+EF_REQUIRE_FOUNDATION_VERSION(1, 0, "UnrealExtendedQuest");
 
 #define LOCTEXT_NAMESPACE "FEGQuestPluginModule"
 

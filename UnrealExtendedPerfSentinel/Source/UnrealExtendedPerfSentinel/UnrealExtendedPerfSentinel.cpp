@@ -7,6 +7,9 @@
 #include "PerfSentinelSettings.h"
 #include "PerfSentinelTraceController.h"
 #include "PerfSentinelTelemetry.h"
+#include "EFFoundationVersion.h"
+
+EF_REQUIRE_FOUNDATION_VERSION(1, 0, "UnrealExtendedPerfSentinel");
 
 #define LOCTEXT_NAMESPACE "FUnrealExtendedPerfSentinelModule"
 

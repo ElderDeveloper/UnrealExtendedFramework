@@ -1,3 +1,5 @@
+// Copyright Kemal Erdem YILMAZ. All Rights Reserved.
+
 #include "AI/EGASBTDecorator_Base.h"
 
 #include "AI/EGASBTAbilityTargeting.h"

@@ -1,3 +1,5 @@
+// Copyright Kemal Erdem YILMAZ. All Rights Reserved.
+
 using UnrealBuildTool;
 
 public class UnrealExtendedGAS : ModuleRules

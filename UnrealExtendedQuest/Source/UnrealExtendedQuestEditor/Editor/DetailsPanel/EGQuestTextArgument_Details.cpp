@@ -1,3 +1,5 @@
+// Copyright Csaba Molnar, Daniel Butum. All Rights Reserved.
+
 #include "EGQuestTextArgument_Details.h"
 
 #include "DetailWidgetRow.h"

@@ -1,3 +1,5 @@
+// Copyright Moon Punch Games. All Rights Reserved.
+
 // EFSubtitleLocalSubsystem.h - Per-player subtitle subsystem (orchestrator)
 #pragma once
 

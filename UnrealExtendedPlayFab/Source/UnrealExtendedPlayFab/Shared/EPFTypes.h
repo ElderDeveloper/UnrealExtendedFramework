@@ -3,6 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Result/EFResult.h"
 #include "EPFTypes.generated.h"
 
 
@@ -121,6 +122,17 @@ struct UNREALEXTENDEDPLAYFAB_API FEPFResult
 		Result.HttpStatusCode = InError.HttpStatusCode;
 		Result.ErrorDetails = InError.ErrorDetails;
 		return Result;
+	}
+
+	/** The same outcome as an FEFResult with Source "PlayFab", for code shared across Extended plugins. */
+	FEFResult ToEFResult() const
+	{
+		if (bSuccess)
+		{
+			return FEFResult::Success(TEXT("PlayFab"));
+		}
+		const bool bRetryable = HttpStatusCode == 429 || HttpStatusCode >= 500 || ErrorCode == TEXT("ConnectionFailure");
+		return FEFResult::Failure(TEXT("PlayFab"), ErrorCode, ErrorMessage, bRetryable, HttpStatusCode);
 	}
 };
 

@@ -1,4 +1,6 @@
-﻿// EFSubtitleSubsystem.h — Authority subtitle subsystem (GameInstanceSubsystem)
+﻿// Copyright Moon Punch Games. All Rights Reserved.
+
+// EFSubtitleSubsystem.h — Authority subtitle subsystem (GameInstanceSubsystem)
 #pragma once
 
 #include "CoreMinimal.h"

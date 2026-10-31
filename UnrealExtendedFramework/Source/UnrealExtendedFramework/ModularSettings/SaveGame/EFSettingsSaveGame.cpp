@@ -1,3 +1,3 @@
-// Fill out your copyright notice in the Description page of Project Settings.
+// Copyright Moon Punch Games. All Rights Reserved.
 
 #include "EFSettingsSaveGame.h"

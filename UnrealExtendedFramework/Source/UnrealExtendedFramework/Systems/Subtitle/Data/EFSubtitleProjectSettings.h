@@ -1,8 +1,10 @@
-﻿// EFSubtitleProjectSettings.h — Project-wide subtitle configuration (DeveloperSettings)
+﻿// Copyright Moon Punch Games. All Rights Reserved.
+
+// EFSubtitleProjectSettings.h — Project-wide subtitle configuration (DeveloperSettings)
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Engine/DeveloperSettings.h"
+#include "Settings/EFDeveloperSettings.h"
 #include "EFSubtitleData.h"
 #include "EFSubtitleProjectSettings.generated.h"
 
@@ -16,7 +18,7 @@ class UEFSubtitleStyleProfile;
  * Project-wide subtitle settings, editable in Project Settings > Extended Framework > Subtitle.
  */
 UCLASS(Config=Game, defaultconfig, meta=(DisplayName="Extended Subtitle Settings"))
-class UNREALEXTENDEDFRAMEWORK_API UEFSubtitleProjectSettings : public UDeveloperSettings
+class UNREALEXTENDEDFRAMEWORK_API UEFSubtitleProjectSettings : public UEFDeveloperSettings
 {
 	GENERATED_BODY()
 
@@ -96,5 +98,4 @@ public:
 	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Appearance")
 	TArray<TSoftObjectPtr<UEFSubtitleStyleProfile>> AvailableStyleProfiles;
 
-	virtual FName GetCategoryName() const override { return TEXT("Extended Framework"); }
 };

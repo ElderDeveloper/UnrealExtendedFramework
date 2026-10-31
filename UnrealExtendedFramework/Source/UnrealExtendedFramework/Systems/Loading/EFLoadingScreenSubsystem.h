@@ -1,3 +1,5 @@
+// Copyright Moon Punch Games. All Rights Reserved.
+
 // EFLoadingScreenSubsystem.h — Async loading screen owner (GameInstanceSubsystem)
 #pragma once
 

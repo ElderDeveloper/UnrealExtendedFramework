@@ -1,4 +1,4 @@
-// Copyright Epic Games, Inc. All Rights Reserved.
+// Copyright Moon Punch Games. All Rights Reserved.
 
 #include "UnrealExtendedFrameworkEditor.h"
 

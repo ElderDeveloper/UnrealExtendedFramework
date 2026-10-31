@@ -1,0 +1,40 @@
+// {{Copyright}}
+
+#pragma once
+
+#include "CoreMinimal.h"
+#include "Async/EFPendingCalls.h"
+#include "Result/EFResult.h"
+#include "Subsystems/GameInstanceSubsystem.h"
+#include "{{Prefix}}Subsystem.generated.h"
+
+/**
+ * Example service. Replace Echo with the plugin's real calls; keep the shape:
+ *
+ * - Every asynchronous call takes its own completion callback and answers it exactly once, with an
+ *   FEFResult. Callers (including async Blueprint nodes) then never confuse their result with
+ *   someone else's. If the plugin also offers multicast delegates for listeners, broadcast them in
+ *   addition to, not instead of, the per-call callback.
+ * - Pending calls are tracked in TEFPendingCalls and answered with Cancelled on shutdown.
+ * - The subsystem reports its state to Extended.Status.
+ */
+UCLASS()
+class {{API}} U{{Prefix}}Subsystem : public UGameInstanceSubsystem
+{
+	GENERATED_BODY()
+
+public:
+	using FOnEchoed = TFunction<void(const FEFResult& Result, const FString& Text)>;
+
+	virtual void Initialize(FSubsystemCollectionBase& Collection) override;
+	virtual void Deinitialize() override;
+
+	/** Answers with Text after the configured delay. Fails with InvalidArgument on empty text. */
+	void Echo(const FString& Text, FOnEchoed OnDone);
+
+	int32 GetPendingCallCount() const { return PendingEchoes.Num(); }
+
+private:
+	TEFPendingCalls<const FEFResult&, const FString&> PendingEchoes;
+	int32 StatusHandle = 0;
+};

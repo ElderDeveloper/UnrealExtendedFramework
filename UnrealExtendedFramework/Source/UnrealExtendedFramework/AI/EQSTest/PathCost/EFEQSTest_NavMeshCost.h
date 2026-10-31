@@ -1,4 +1,6 @@
-﻿// ... existing code ...
+﻿// Copyright Moon Punch Games. All Rights Reserved.
+
+// ... existing code ...
 #pragma once
 
 #include "CoreMinimal.h"

@@ -1,4 +1,6 @@
-﻿// EFEQSTest_PathCost.cpp
+﻿// Copyright Moon Punch Games. All Rights Reserved.
+
+// EFEQSTest_PathCost.cpp
 #include "EFEQSTest_NavMeshCost.h"
 
 #include "EngineUtils.h"

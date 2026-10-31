@@ -23,6 +23,10 @@
 	],
 	"Plugins": [
 		{
+			"Name": "UnrealExtendedFoundation",
+			"Enabled": true
+		},
+		{
 			"Name": "UnrealExtendedFramework",
 			"Enabled": true
 		}

@@ -1,4 +1,6 @@
-﻿// EFSubtitleAudioPlayer.cpp
+﻿// Copyright Moon Punch Games. All Rights Reserved.
+
+// EFSubtitleAudioPlayer.cpp
 #include "EFSubtitleAudioPlayer.h"
 
 #include "Internationalization/Culture.h"

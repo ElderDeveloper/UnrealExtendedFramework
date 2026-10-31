@@ -3,21 +3,20 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Engine/DeveloperSettings.h"
+#include "Settings/EFDeveloperSettings.h"
 #include "PerfSentinelTypes.h"
 #include "UObject/NoExportTypes.h"
 #include "PerfSentinelSettings.generated.h"
 
 /** Project settings shared by PerfSentinel runtime, console commands, and editor UI. */
 UCLASS(Config = Game, DefaultConfig, meta = (DisplayName = "Extended Perf Sentinel"))
-class UNREALEXTENDEDPERFSENTINEL_API UPerfSentinelSettings : public UDeveloperSettings
+class UNREALEXTENDEDPERFSENTINEL_API UPerfSentinelSettings : public UEFDeveloperSettings
 {
 	GENERATED_BODY()
 
 public:
 	UPerfSentinelSettings();
 
-	virtual FName GetCategoryName() const override;
 	virtual FName GetSectionName() const override;
 
 #if WITH_EDITOR

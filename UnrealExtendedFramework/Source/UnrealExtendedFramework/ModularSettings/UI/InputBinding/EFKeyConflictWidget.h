@@ -1,3 +1,5 @@
+// Copyright Moon Punch Games. All Rights Reserved.
+
 // EFKeyConflictWidget.h
 // A widget that handles key binding conflicts
 

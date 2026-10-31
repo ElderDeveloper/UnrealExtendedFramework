@@ -21,11 +21,6 @@
 			"LoadingPhase": "Default"
 		},
 		{
-			"Name": "UnrealExtendedFrameworkLog",
-			"Type": "Runtime",
-			"LoadingPhase": "PreDefault"
-		},
-		{
 			"Name": "UnrealExtendedFrameworkEditor",
 			"Type": "UncookedOnly",
 			"LoadingPhase": "Default"
@@ -33,23 +28,7 @@
 	],
 	"Plugins": [
 		{
-			"Name": "GameplayAbilities",
-			"Enabled": true
-		},
-		{
-			"Name": "Niagara",
-			"Enabled": true
-		},
-		{
-			"Name": "OnlineSubsystem",
-			"Enabled": true
-		},
-		{
-			"Name": "OnlineSubsystemUtils",
-			"Enabled": true
-		},
-		{
-			"Name": "OnlineSubsystemNull",
+			"Name": "UnrealExtendedFoundation",
 			"Enabled": true
 		},
 		{

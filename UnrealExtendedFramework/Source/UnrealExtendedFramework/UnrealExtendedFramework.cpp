@@ -1,10 +1,14 @@
-// Copyright Epic Games, Inc. All Rights Reserved.
+// Copyright Moon Punch Games. All Rights Reserved.
 
 #include "UnrealExtendedFramework.h"
+#include "Interfaces/IPluginManager.h"
 #include "Misc/FileHelper.h"
 #include "HAL/PlatformFilemanager.h"
 #include "Misc/Paths.h"
 #include "Engine/Engine.h"
+#include "EFFoundationVersion.h"
+
+EF_REQUIRE_FOUNDATION_VERSION(1, 0, "UnrealExtendedFramework");
 
 DEFINE_LOG_CATEGORY(LogExtendedFramework);
 
@@ -12,20 +16,24 @@ DEFINE_LOG_CATEGORY(LogExtendedFramework);
 
 void FUnrealExtendedFrameworkModule::StartupModule()
 {
-	// This code will execute after your module is loaded into memory; the exact timing is specified in the .uplugin file per-module
+#if WITH_EDITOR
 	InitializeGameplayTags();
+#endif
 }
 
 void FUnrealExtendedFrameworkModule::ShutdownModule()
 {
-	// This function may be called during shutdown to clean up your module.  For modules that support dynamic reloading,
-	// we call this function before unloading the module.
 }
 
+#if WITH_EDITOR
 void FUnrealExtendedFrameworkModule::InitializeGameplayTags()
 {
-	// Get the path to the CSV file
-	FString PluginDir = IPluginManager::Get().FindPlugin(TEXT("UnrealExtendedFramework"))->GetBaseDir();
+	const TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(TEXT("UnrealExtendedFramework"));
+	if (!Plugin.IsValid())
+	{
+		return;
+	}
+	const FString PluginDir = Plugin->GetBaseDir();
 	FString CSVPath = FPaths::Combine(PluginDir, TEXT("Source/UnrealExtendedFramework/ModularSettings/Tags/ExtendedSettingTags.csv"));
 
 	// Read the CSV file
@@ -123,6 +131,7 @@ void FUnrealExtendedFrameworkModule::InitializeGameplayTags()
 		UE_LOG(LogExtendedFramework, Log, TEXT("All Extended Settings tags are already present in ExtendedSettingsTags.ini"));
 	}
 }
+#endif // WITH_EDITOR
 
 #undef LOCTEXT_NAMESPACE
 	

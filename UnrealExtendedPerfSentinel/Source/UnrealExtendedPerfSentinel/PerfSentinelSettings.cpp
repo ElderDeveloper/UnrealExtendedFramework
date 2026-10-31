@@ -28,10 +28,6 @@ UPerfSentinelSettings::UPerfSentinelSettings()
 	ApplyCaptureProfile();
 }
 
-FName UPerfSentinelSettings::GetCategoryName() const
-{
-	return FName(TEXT("Extended Framework"));
-}
 
 FName UPerfSentinelSettings::GetSectionName() const
 {

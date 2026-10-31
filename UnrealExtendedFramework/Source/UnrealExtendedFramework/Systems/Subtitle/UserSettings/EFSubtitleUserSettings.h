@@ -1,4 +1,6 @@
-﻿// EFSubtitleUserSettings.h — Per-player subtitle preferences via ModularSettings
+﻿// Copyright Moon Punch Games. All Rights Reserved.
+
+// EFSubtitleUserSettings.h — Per-player subtitle preferences via ModularSettings
 #pragma once
 
 #include "CoreMinimal.h"

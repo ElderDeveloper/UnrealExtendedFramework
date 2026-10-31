@@ -16,6 +16,10 @@
 	"Installed": false,
 	"Plugins": [
 		{
+			"Name": "UnrealExtendedFoundation",
+			"Enabled": true
+		},
+		{
 			"Name": "ToolsetRegistry",
 			"Enabled": true,
 			"TargetAllowList": ["Editor"]

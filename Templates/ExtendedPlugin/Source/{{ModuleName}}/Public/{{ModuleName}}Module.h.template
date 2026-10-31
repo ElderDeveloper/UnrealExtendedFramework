@@ -1,0 +1,15 @@
+// {{Copyright}}
+
+#pragma once
+
+#include "CoreMinimal.h"
+#include "Modules/ModuleInterface.h"
+
+{{API}} DECLARE_LOG_CATEGORY_EXTERN({{LogCategory}}, Log, All);
+
+class F{{ModuleName}}Module : public IModuleInterface
+{
+public:
+	virtual void StartupModule() override;
+	virtual void ShutdownModule() override;
+};

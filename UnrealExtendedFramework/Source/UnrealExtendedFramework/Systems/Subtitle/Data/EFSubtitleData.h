@@ -1,4 +1,6 @@
-﻿// EFSubtitleData.h - Core data types for the EF Modular Subtitle System
+﻿// Copyright Moon Punch Games. All Rights Reserved.
+
+// EFSubtitleData.h - Core data types for the EF Modular Subtitle System
 #pragma once
 
 #include "CoreMinimal.h"

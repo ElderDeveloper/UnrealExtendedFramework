@@ -1,6 +1,9 @@
 // Copyright Kemal Erdem YILMAZ. All Rights Reserved.
 
 #include "UnrealExtendedPlayFab.h"
+#include "EFFoundationVersion.h"
+
+EF_REQUIRE_FOUNDATION_VERSION(1, 0, "UnrealExtendedPlayFab");
 
 #define LOCTEXT_NAMESPACE "FUnrealExtendedPlayFabModule"
 

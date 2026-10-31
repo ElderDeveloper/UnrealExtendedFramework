@@ -1,0 +1,37 @@
+// {{Copyright}}
+
+#pragma once
+
+#include "CoreMinimal.h"
+#include "Async/EFAsyncActionBase.h"
+#include "{{Prefix}}AsyncEcho.generated.h"
+
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(F{{Prefix}}OnEchoedPin, const FString&, Text);
+
+/**
+ * Example async Blueprint node built on UEFAsyncActionBase: finishes exactly once, supports a
+ * timeout, and can be cancelled through its Async Task pin.
+ */
+UCLASS()
+class {{API}} U{{Prefix}}AsyncEcho : public UEFAsyncActionBase
+{
+	GENERATED_BODY()
+
+public:
+	UPROPERTY(BlueprintAssignable)
+	F{{Prefix}}OnEchoedPin OnSuccess;
+
+	UPROPERTY(BlueprintAssignable)
+	FEFAsyncFailurePin OnFailure;
+
+	UFUNCTION(BlueprintCallable, Category = "{{FriendlyName}}", meta = (BlueprintInternalUseOnly = "true", WorldContext = "WorldContextObject", DisplayName = "{{ShortName}}: Echo"))
+	static U{{Prefix}}AsyncEcho* Echo(UObject* WorldContextObject, const FString& Text, float TimeoutSeconds = 10.f);
+
+protected:
+	virtual void ExecuteAction() override;
+	virtual void BroadcastFailure(const FEFResult& Result) override { OnFailure.Broadcast(Result); }
+	virtual FName GetResultSource() const override { return TEXT("{{ShortName}}"); }
+
+private:
+	FString EchoText;
+};

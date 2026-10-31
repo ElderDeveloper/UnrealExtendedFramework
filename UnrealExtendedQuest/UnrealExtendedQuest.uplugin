@@ -28,6 +28,10 @@
 	],
 	"Plugins": [
 		{
+			"Name": "UnrealExtendedFoundation",
+			"Enabled": true
+		},
+		{
 			"Name": "GameplayTagsEditor",
 			"Enabled": true,
 			"TargetAllowList": [ "Editor" ]

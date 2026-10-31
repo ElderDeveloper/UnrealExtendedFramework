@@ -1,0 +1,4 @@
+[CoreRedirects]
+; When a UCLASS, USTRUCT, UENUM or UFUNCTION is renamed or moved, add a redirect here so existing
+; Blueprints and assets keep loading, e.g.:
+; +ClassRedirects=(OldName="/Script/{{ModuleName}}.{{Prefix}}OldName",NewName="/Script/{{ModuleName}}.{{Prefix}}NewName")

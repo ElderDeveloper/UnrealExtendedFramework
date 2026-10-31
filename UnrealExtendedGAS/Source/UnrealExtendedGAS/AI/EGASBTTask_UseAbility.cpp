@@ -1,3 +1,5 @@
+// Copyright Kemal Erdem YILMAZ. All Rights Reserved.
+
 #include "AI/EGASBTTask_UseAbility.h"
 
 #include "BehaviorTree/BehaviorTreeComponent.h"
