@@ -450,6 +450,20 @@ bool FEGSoftCollisionPredictionTest::RunTest(const FString& Parameters)
 		TestEqual(TEXT("The young one stays"), Queue.Num(), 1);
 	}
 
+	// Move-data requests: tracked, sent by RPC only once as a late fallback.
+	{
+		FEGSoftPushClientQueue Queue;
+		TArray<FEGSoftPushRequest> Batch;
+		Queue.Add(MakeRequest(20), 0.0, false, 0.3);
+		Queue.CollectBatch(0.0, 0.15f, 0.05f, 4, Batch);
+		TestEqual(TEXT("A move-data request is not sent by RPC at once"), Batch.Num(), 0);
+		Queue.CollectBatch(0.31, 0.15f, 0.05f, 4, Batch);
+		TestEqual(TEXT("...but goes out once as a fallback"), Batch.Num(), 1);
+		Queue.CollectBatch(0.5, 0.15f, 0.05f, 4, Batch);
+		TestEqual(TEXT("...and only once"), Batch.Num(), 0);
+		TestEqual(TEXT("Acknowledging reports how many were answered"), Queue.Acknowledge(20), 1);
+	}
+
 	// Server duplicate detection.
 	{
 		FEGSoftPushServerState State;

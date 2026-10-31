@@ -131,7 +131,7 @@ A pawn switches between its player and AI driver when it is possessed (`ReceiveC
 
 * **Modifiers.** `PushModifier` returns a handle, like the movement modifier component. Scales multiply, switches add up. Push them on every machine that simulates the pawn; montage notifies already run on the server and the owning client.
 * **Soft Collision Modifier notify.** Put it over an attack's commit frames to make the attacker immovable, or set `WeightScale` for a heavy stance.
-* **Root motion.** With `bSuppressDuringRootMotion` a Character moved by a root-motion montage or a gameplay root motion source (Root Motion Move, knockbacks) is not pushed, so a crowd cannot bend a lunge off its warp target. Soft pushes themselves never count: `EGSoftCollision::HasGameplayRootMotion` / `HasGameplayRootMotionSources` skip them, and turn in place uses these, so being jostled never pauses turning.
+* **Root motion.** With `bSuppressDuringRootMotion` a Character moved by a networked root-motion montage or a gameplay root motion source (Root Motion Move, knockbacks) gets no new pushes, and an active push contributes nothing on those moves: the source checks inside its own simulation step, so the owning client and the server agree on every move. A crowd therefore cannot bend a lunge off its warp target. Root-motion locomotion (Root Motion From Everything) does not count, so such characters are still pushed (`EGSoftCollision::IsDrivenByGameplayRootMotion`). Soft pushes themselves never count as gameplay root motion: turn in place uses `EGSoftCollision::HasGameplayRootMotion` / `HasGameplayRootMotionSources`, which skip them, so being jostled never pauses turning.
 * **Falling.** Not pushed unless `bPushWhileFalling`, so jumps and launches stay exact.
 * **Time dilation.** Durations, decay and cooldowns run on the pawn's own clock, which follows `CustomTimeDilation` (`UEGTimeDilationSubsystem::PushActorTimeDilation`), the same time its movement simulates in.
 * **Anim state tags.** While a push is active the component reports `ExtendedGameplay.Anim.State.SoftCollision.Pushed`, and `.Bumped` for bumps, to `UEGAnimInstance` (`HasStateTag`). Other clients see `.Bumped` for the bump's duration from the cosmetic replay. `UEGAnimInstance::bShouldMove` needs acceleration, so a push never starts locomotion on its own.
@@ -154,14 +154,14 @@ A pawn switches between its player and AI driver when it is possessed (`ReceiveC
 
 1. The owning client applies the push at once with its start time set to the movement component's current client timestamp, and queues a request (`FEGSoftPushRequest`, about 11 bytes: sequence, timestamp, quantized push, band).
 2. Once per frame it sends `ServerSoftPush` with new requests and repeats of unacknowledged ones from the redundancy window. Unreliable, before the move it belongs to.
-3. The server validates (band, strength cap, rate, timestamp age and epoch, bump cooldown, a pushing neighbour within reach) and applies the same source with the client's start time, in the RPC handler, before the move. The push it replaces is removed after the server processes the client move ending where the new one starts.
+3. The server validates (band, strength cap, rate, timestamp age and epoch, the bump cooldown on the client's move clock, a neighbour within reach that the filters let push it) and applies the same source with the client's start time, in the RPC handler, before the move. Validation ignores the server's view of falling, root motion and modifiers, which lags a predicting client by a frame or two. The push it replaces is removed after the server processes the client move ending where the new one starts.
 4. Ack: an owner-only, push-model `LastAcceptedSequence`. Reject: `ClientRejectSoftPush`; the client removes the push. Neither within the round-trip time plus a margin: the client removes it.
 
 ### 8.2 Opt-in: move data
 
 A project that already has its own movement component (turn in place asks for one) can carry pushes inside the moves instead: `Prediction/EGSoftCollisionMoveData.h` has a saved-move template, prediction data, network move data and a container, plus `EGSoftCollision::HandleMoveAutonomous` for the server. The header shows the four lines of integration, stacked with turn in place's saved move.
 
-The push then arrives with the move it starts on, the server applies it just before simulating that move, and the movement component's own resends of important moves deliver it. That removes the timing risk of 8.1 (a lost or late request). Everything else (validation, rejects, the safety lease) is shared. The component switches by itself the first time the saved move reports in.
+The push then arrives with the move it starts on and the server applies it just before simulating that move, from that move's own start time, which also holds across a client timestamp reset. A move carrying a push is important, so the movement component resends it once; if that copy is lost too, the request goes out once by RPC after a round trip and the server takes whichever copy comes first. That removes the timing risk of 8.1. Everything else (validation, rejects, the safety lease) is shared. The component switches by itself the first time the saved move reports in, as long as packed move RPCs are on (`p.NetUsePackedMovementRPCs`, the engine default).
 
 ### 8.3 Safety net
 
@@ -189,7 +189,7 @@ The flags are leased and restored. If the game had either flag on already, that 
 ## 10. Validation and debugging
 
 * **Setup problems are logged once each, with the fix:** no primitive to push with, the component not replicating, push model off, another primitive on the pawn that still blocks the soft channel, the CMC network flags already owned by the game.
-* **`Extended.Status`** (and `Extended.Status.Overlay 1`) shows one line per world: pawns, scanners, sleeping pawns, and Degraded when rejected, late or unanswered pushes pass a tenth of the accepted ones.
+* **`Extended.Status`** (and `Extended.Status.Overlay 1`) shows one line per world: pawns, scanners, sleeping pawns, and Degraded when rejected, late or unanswered pushes pass a tenth of the accepted ones. Clients count the acknowledgements and rejects they receive; the server counts what it accepts, rejects and accepts late.
 * `stat EGSoftCollision`, Insights scopes `EGSoftCollision_*`, Visual Logger entries.
 * Console variables: `eg.SoftCollision.Enable`, `.Debug` (1 pushes, 2 shapes, 3 network log), `.ShowGrid`, `.ForceServerOnly`, `.Parallel`, `.ParallelThreshold`, `.SafetyLevelOverride`, `.Debug.RejectEvery`.
 * Automation: `Contacts`, `Strength`, `Quantize`, `Grid`, `Prediction`, `Modifiers`, and `World`, which runs the component, subsystem and force driver together on spawned Characters.

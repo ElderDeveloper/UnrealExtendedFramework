@@ -5,6 +5,7 @@
 #include "GameFramework/Character.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "UnrealExtendedGameplay/SoftCollision/EGSoftCollisionComponent.h"
+#include "UnrealExtendedGameplay/SoftCollision/EGRootMotionSource_SoftPush.h"
 #include "UnrealExtendedGameplay/SoftCollision/EGSoftCollisionMath.h"
 
 bool UEGSoftCollisionDriver_CharacterForce::SupportsPawn(const APawn& Pawn) const
@@ -24,6 +25,11 @@ void UEGSoftCollisionDriver_CharacterForce::TickPush(UEGSoftCollisionComponent& 
 {
 	UCharacterMovementComponent* Movement = Component.GetCharacterMovement();
 	if (!Movement || Command.Duration <= 0.0f)
+	{
+		return;
+	}
+	const ACharacter* Character = Movement->GetCharacterOwner();
+	if (Command.bYieldToGameplayRootMotion && Character && EGSoftCollision::IsDrivenByGameplayRootMotion(*Character))
 	{
 		return;
 	}

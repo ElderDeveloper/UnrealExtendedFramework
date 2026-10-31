@@ -28,8 +28,12 @@ struct FEGSoftPushPendingRequest
 	double FirstSendTime = 0.0;
 	double LastSendTime = 0.0;
 	int32 SendCount = 0;
-	/** False when the request rides in a saved move instead: it is tracked but never sent by RPC. */
+	/**
+	 * False when the request rides in a saved move instead. It is then sent by RPC only as a fallback,
+	 * once, from RpcFallbackTime on, in case the move carrying it and its resend were both lost.
+	 */
 	bool bSendByRpc = true;
+	double RpcFallbackTime = 0.0;
 };
 
 struct UNREALEXTENDEDGAMEPLAY_API FEGSoftPushClientQueue
@@ -37,10 +41,10 @@ struct UNREALEXTENDEDGAMEPLAY_API FEGSoftPushClientQueue
 	/** Requests beyond this are dropped oldest first; they are long timed out by then. */
 	static constexpr int32 MaxPending = 16;
 
-	void Add(const FEGSoftPushRequest& Request, double Now, bool bSendByRpc = true);
+	void Add(const FEGSoftPushRequest& Request, double Now, bool bSendByRpc = true, double RpcFallbackTime = 0.0);
 
-	/** Everything up to and including LastAccepted is answered. */
-	void Acknowledge(uint16 LastAccepted);
+	/** Everything up to and including LastAccepted is answered. Returns how many requests that removed. */
+	int32 Acknowledge(uint16 LastAccepted);
 
 	/** Returns false when Sequence was not pending. */
 	bool Remove(uint16 Sequence);
@@ -79,6 +83,10 @@ struct UNREALEXTENDEDGAMEPLAY_API FEGSoftPushServerState
 	bool bHasProcessed = false;
 	EGSoftCollision::FTokenBucket Bucket;
 	double LastBumpTime = -1.0e9;
+
+	/** Client move time of the last accepted bump. The cooldown is checked on the client's clock, not the server's. */
+	float LastBumpClientTime = 0.0f;
+	bool bHasLastBumpClientTime = false;
 
 	/** Last client move time seen, to detect timestamp resets. */
 	float LastClientTime = 0.0f;

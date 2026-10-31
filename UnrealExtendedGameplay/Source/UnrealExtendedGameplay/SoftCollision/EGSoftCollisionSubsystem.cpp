@@ -317,6 +317,15 @@ void UEGSoftCollisionSubsystem::RunSnapshot(float DeltaSeconds)
 	ProcessPendingRegistrations();
 	SET_DWORD_STAT(STAT_EGSoftCollision_Registered, Entries.Num());
 
+	// Push clocks run even while the system is disabled, so active pushes still run out.
+	for (const FEntry& Entry : Entries)
+	{
+		if (UEGSoftCollisionComponent* Component = Entry.Component.Get())
+		{
+			Component->AdvancePushClock(DeltaSeconds);
+		}
+	}
+
 	UWorld* World = GetWorld();
 	if (!World || Entries.IsEmpty() || !IsSystemEnabled())
 	{
@@ -674,7 +683,8 @@ bool UEGSoftCollisionSubsystem::HasPushingNeighbourWithin(int32 RegistryIndex, f
 			return;
 		}
 		const FEGSoftBody& Other = Bodies[OtherIndex];
-		if (!EGSoftCollision::CanPush(Other, Self))
+		// Filters only: this snapshot's falling, root motion and modifier state lag the client's.
+		if (!EGSoftCollision::CanPushByFilter(Other, Self))
 		{
 			return;
 		}

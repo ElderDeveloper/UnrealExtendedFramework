@@ -8,7 +8,7 @@
 // Client queue
 // =====================================================================
 
-void FEGSoftPushClientQueue::Add(const FEGSoftPushRequest& Request, double Now, bool bSendByRpc)
+void FEGSoftPushClientQueue::Add(const FEGSoftPushRequest& Request, double Now, bool bSendByRpc, double RpcFallbackTime)
 {
 	if (Pending.Num() >= MaxPending)
 	{
@@ -21,11 +21,12 @@ void FEGSoftPushClientQueue::Add(const FEGSoftPushRequest& Request, double Now, 
 	Entry.LastSendTime = Now;
 	Entry.SendCount = 0;
 	Entry.bSendByRpc = bSendByRpc;
+	Entry.RpcFallbackTime = RpcFallbackTime;
 }
 
-void FEGSoftPushClientQueue::Acknowledge(uint16 LastAccepted)
+int32 FEGSoftPushClientQueue::Acknowledge(uint16 LastAccepted)
 {
-	Pending.RemoveAll([LastAccepted](const FEGSoftPushPendingRequest& Entry)
+	return Pending.RemoveAll([LastAccepted](const FEGSoftPushPendingRequest& Entry)
 	{
 		return !EGSoftCollision::IsSequenceNewer(Entry.Request.Sequence, LastAccepted);
 	});
@@ -48,7 +49,7 @@ void FEGSoftPushClientQueue::CollectBatch(double Now, float RedundancyWindow, fl
 	for (int32 Index = Pending.Num() - 1; Index >= 0 && OutBatch.Num() < Limit; --Index)
 	{
 		FEGSoftPushPendingRequest& Entry = Pending[Index];
-		if (Entry.bSendByRpc && Entry.SendCount == 0)
+		if (Entry.SendCount == 0 && (Entry.bSendByRpc || Now >= Entry.RpcFallbackTime))
 		{
 			OutBatch.Add(Entry.Request);
 			Entry.LastSendTime = Now;

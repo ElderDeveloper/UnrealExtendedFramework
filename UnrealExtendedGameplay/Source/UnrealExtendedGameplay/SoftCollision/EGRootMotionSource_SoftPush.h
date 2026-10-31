@@ -41,6 +41,14 @@ struct UNREALEXTENDEDGAMEPLAY_API FEGRootMotionSource_SoftPush : public FRootMot
 	UPROPERTY()
 	EEGSoftPushDecay Decay = EEGSoftPushDecay::Constant;
 
+	/**
+	 * Contributes nothing while the Character is moved by gameplay root motion (a root-motion montage
+	 * or another root motion source). Decided inside the move's simulation, so the owning client and
+	 * the server agree on exactly which moves it yields on.
+	 */
+	UPROPERTY()
+	bool bYieldToGameplayRootMotion = false;
+
 	/** Horizontal push velocity, cm/s, from the quantized values. */
 	FVector GetPushVelocity() const;
 
@@ -69,6 +77,13 @@ namespace EGSoftCollision
 
 	/** Root motion from a montage or a gameplay source; soft pushes excluded. Use it instead of ACharacter::HasAnyRootMotion(). */
 	UNREALEXTENDEDGAMEPLAY_API bool HasGameplayRootMotion(const ACharacter& Character);
+
+	/**
+	 * A networked root-motion montage or a gameplay root motion source; soft pushes excluded. Unlike
+	 * HasGameplayRootMotion, root-motion locomotion (Root Motion From Everything) does not count, so
+	 * characters that walk with root motion can still be pushed.
+	 */
+	UNREALEXTENDEDGAMEPLAY_API bool IsDrivenByGameplayRootMotion(const ACharacter& Character);
 }
 
 template <>

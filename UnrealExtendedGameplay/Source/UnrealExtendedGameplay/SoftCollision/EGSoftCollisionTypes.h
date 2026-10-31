@@ -468,6 +468,10 @@ struct UNREALEXTENDEDGAMEPLAY_API FEGSoftPushCommand
 	/** Time already missed by a late server copy. */
 	UPROPERTY()
 	float ElapsedTrim = 0.0f;
+
+	/** The push contributes nothing while the Character is moved by gameplay root motion. From the profile. */
+	UPROPERTY()
+	bool bYieldToGameplayRootMotion = false;
 };
 
 /** Blueprint view of a push. */
@@ -519,8 +523,12 @@ struct FEGSoftBody
 	EEGSoftCollisionShapeType Shape = EEGSoftCollisionShapeType::Cylinder;
 	uint8 Layer = 0;
 	bool bEnabled = true;
+	/** This frame: filter, modifiers and movement state (falling, gameplay root motion) together. */
 	bool bCanPush = true;
 	bool bCanBePushed = true;
+	/** The filter alone. Server validation uses these: the transient state lags a predicting client. */
+	bool bFilterCanPush = true;
+	bool bFilterCanBePushed = true;
 
 	/** Largest horizontal distance from the centre to the shape's edge. */
 	float GetMaxExtent() const

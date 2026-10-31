@@ -29,6 +29,7 @@ bool UEGSoftCollisionDriver_CharacterRootMotion::ApplyPush(UEGSoftCollisionCompo
 	Source->Sequence = Command.Sequence;
 	Source->Push = Command.Quantized;
 	Source->Decay = Command.Decay;
+	Source->bYieldToGameplayRootMotion = Command.bYieldToGameplayRootMotion;
 	if (Command.bHasStartTime)
 	{
 		Source->StartTime = Command.StartTime;

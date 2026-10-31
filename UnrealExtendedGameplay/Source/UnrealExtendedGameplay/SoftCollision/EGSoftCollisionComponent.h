@@ -194,16 +194,22 @@ public:
 	// Move-data transport (opt-in, see Prediction/EGSoftCollisionMoveData.h)
 	// -----------------------------------------------------------------
 
-	/** Called by the saved-move mixin for every move: requests now ride in the moves instead of RPCs. */
-	void NotifyMoveDataTransport() { bMoveDataTransport = true; }
+	/**
+	 * Called by the saved-move mixin for every move: requests ride in the moves from now on, as long
+	 * as the movement component sends packed move data (p.NetUsePackedMovementRPCs, on by default).
+	 */
+	void NotifyMoveDataTransport();
 
 	bool UsesMoveDataTransport() const { return bMoveDataTransport; }
 
 	/** Saved-move mixin, owning client: hands over the push that starts with the move being saved. */
 	bool ConsumePendingMovePush(FEGSoftPushRequest& OutRequest);
 
-	/** Server, from the movement component's MoveAutonomous: a push carried by the move about to run. */
-	void ReceiveMovePush(const FEGSoftPushRequest& Request);
+	/** Server, from the movement component's MoveAutonomous: a push carried by the move about to run, which starts at MoveStartTime. */
+	void ReceiveMovePush(const FEGSoftPushRequest& Request, float MoveStartTime);
+
+	/** Advances the pawn's push clock. The subsystem calls it every frame, also while the system is disabled. */
+	void AdvancePushClock(float DeltaSeconds);
 
 	// -----------------------------------------------------------------
 	// For drivers and the subsystem
@@ -301,8 +307,8 @@ private:
 	void SendCosmeticBump(const FEGSoftPushQuantized& Quantized);
 	void UpdateFrameUpdateRegistration();
 
-	ERejectReason ValidateRequest(const FEGSoftPushRequest& Request, bool& bOutEpochMismatch);
-	void ProcessServerRequest(const FEGSoftPushRequest& Request, bool bFromMove);
+	ERejectReason ValidateRequest(const FEGSoftPushRequest& Request, bool bFromMove, float RequestClientTime, bool& bOutEpochMismatch);
+	void ProcessServerRequest(const FEGSoftPushRequest& Request, bool bFromMove, float MoveStartTime = 0.0f);
 	void RejectRequest(uint16 Sequence, ERejectReason Reason);
 	void UpdateMovementBinding();
 	void ResetPredictionState();

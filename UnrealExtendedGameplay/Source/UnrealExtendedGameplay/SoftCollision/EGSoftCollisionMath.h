@@ -80,6 +80,16 @@ namespace EGSoftCollision
 			&& (Self.PushedByMask & (1u << (Other.Layer & 31u))) != 0;
 	}
 
+	/**
+	 * CanPush with the filters only, ignoring this frame's movement state and modifiers. The server
+	 * validates requests with it: its snapshot of a predicting player lags the player's own.
+	 */
+	inline bool CanPushByFilter(const FEGSoftBody& Other, const FEGSoftBody& Self)
+	{
+		return Other.bEnabled && Self.bEnabled && Other.bFilterCanPush && Self.bFilterCanBePushed
+			&& (Self.PushedByMask & (1u << (Other.Layer & 31u))) != 0;
+	}
+
 	/** Strength step of the quantized push, cm/s. */
 	inline constexpr float QuantizedStrengthStep = 0.1f;
 

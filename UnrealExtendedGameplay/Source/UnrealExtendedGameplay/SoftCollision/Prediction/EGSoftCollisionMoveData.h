@@ -49,14 +49,18 @@
  *
  *       virtual void MoveAutonomous(float ClientTimeStamp, float DeltaTime, uint8 CompressedFlags, const FVector& NewAccel) override
  *       {
- *           EGSoftCollision::HandleMoveAutonomous<FMyMoveData>(*this, GetCurrentNetworkMoveData()); // 3
+ *           EGSoftCollision::HandleMoveAutonomous<FMyMoveData>(*this, GetCurrentNetworkMoveData(), ClientTimeStamp, DeltaTime); // 3
  *           Super::MoveAutonomous(ClientTimeStamp, DeltaTime, CompressedFlags, NewAccel);
  *       }
  *   };
  *
  * A turn-in-place project already has piece 2 with TEGTurnInPlacePredictionData; give it the
  * stacked move type instead. Piece 4 is nothing: the component notices the saved move on the first
- * move and switches its own transport.
+ * move and switches its own transport (only while packed move RPCs are on, the engine default).
+ *
+ * Delivery: a move carrying a push is important, so the movement component resends it once as the
+ * old move. If that is lost too, the request also goes out once by RPC after a round trip, and the
+ * server, which de-duplicates by sequence, applies whichever copy arrives first.
  *
  * Cost: one bit per move, plus about eleven bytes in the move that starts a push.
  */
@@ -73,22 +77,23 @@ namespace EGSoftCollision
 	/** One bit when the move carries no push; the request otherwise. */
 	UNREALEXTENDEDGAMEPLAY_API void SerializeMovePush(FArchive& Ar, FEGSoftCollisionMoveFields& Fields);
 
-	/** Server: applies the push the move about to be simulated carries. */
-	UNREALEXTENDEDGAMEPLAY_API void ReceiveMovePush(UCharacterMovementComponent& Movement, const FEGSoftPushRequest& Request);
+	/** Server: applies the push the move about to be simulated carries. MoveStartTime is the move's start on the client's clock. */
+	UNREALEXTENDEDGAMEPLAY_API void ReceiveMovePush(UCharacterMovementComponent& Movement, const FEGSoftPushRequest& Request, float MoveStartTime);
 
 	/**
-	 * Server, first thing in the project's MoveAutonomous. TMoveData is the network move data type the
-	 * project's container holds. Returns true when the move carried a push.
+	 * Server, first thing in the project's MoveAutonomous, with MoveAutonomous's own ClientTimeStamp
+	 * and DeltaTime. TMoveData is the network move data type the project's container holds. Returns
+	 * true when the move carried a push.
 	 */
 	template <typename TMoveData>
-	bool HandleMoveAutonomous(UCharacterMovementComponent& Movement, const FCharacterNetworkMoveData* MoveData)
+	bool HandleMoveAutonomous(UCharacterMovementComponent& Movement, const FCharacterNetworkMoveData* MoveData, float ClientTimeStamp, float DeltaTime)
 	{
 		const TMoveData* const Data = static_cast<const TMoveData*>(MoveData);
 		if (!Data || !Data->bHasSoftPush)
 		{
 			return false;
 		}
-		ReceiveMovePush(Movement, Data->SoftPush);
+		ReceiveMovePush(Movement, Data->SoftPush, ClientTimeStamp - DeltaTime);
 		return true;
 	}
 }

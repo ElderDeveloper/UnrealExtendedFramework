@@ -39,6 +39,16 @@ namespace EGSoftCollision
 		const UCharacterMovementComponent* Movement = Character.GetCharacterMovement();
 		return Movement && HasGameplayRootMotionSources(*Movement);
 	}
+
+	bool IsDrivenByGameplayRootMotion(const ACharacter& Character)
+	{
+		if (Character.IsPlayingNetworkedRootMotionMontage())
+		{
+			return true;
+		}
+		const UCharacterMovementComponent* Movement = Character.GetCharacterMovement();
+		return Movement && HasGameplayRootMotionSources(*Movement);
+	}
 }
 
 FEGRootMotionSource_SoftPush::FEGRootMotionSource_SoftPush()
@@ -68,7 +78,8 @@ bool FEGRootMotionSource_SoftPush::Matches(const FRootMotionSource* Other) const
 	}
 
 	const FEGRootMotionSource_SoftPush* OtherPush = static_cast<const FEGRootMotionSource_SoftPush*>(Other);
-	return Sequence == OtherPush->Sequence && Push == OtherPush->Push && Decay == OtherPush->Decay;
+	return Sequence == OtherPush->Sequence && Push == OtherPush->Push && Decay == OtherPush->Decay
+		&& bYieldToGameplayRootMotion == OtherPush->bYieldToGameplayRootMotion;
 }
 
 bool FEGRootMotionSource_SoftPush::MatchesAndHasSameState(const FRootMotionSource* Other) const
@@ -94,6 +105,11 @@ void FEGRootMotionSource_SoftPush::PrepareRootMotion(float SimulationTime, float
 		const float AlphaEnd = (TimeBefore + SimulationTime) / Duration;
 		Velocity *= EGSoftCollision::EvaluateDecayAverage(Decay, AlphaStart, AlphaEnd);
 	}
+	if (bYieldToGameplayRootMotion && EGSoftCollision::IsDrivenByGameplayRootMotion(Character))
+	{
+		// Time still runs, so the push ends on schedule.
+		Velocity = FVector::ZeroVector;
+	}
 
 	// Velocity-based source: the translation is a velocity. When more simulation time than movement
 	// time has to be covered (catch-up), scale it the same way the engine's constant force does.
@@ -115,10 +131,13 @@ bool FEGRootMotionSource_SoftPush::NetSerialize(FArchive& Ar, UPackageMap* Map, 
 	}
 
 	uint8 DecayValue = static_cast<uint8>(Decay);
+	uint8 bYield = bYieldToGameplayRootMotion ? 1 : 0;
 	Ar << Sequence;
 	Ar << Push.Yaw;
 	Ar << Push.Strength;
 	Ar << DecayValue;
+	Ar.SerializeBits(&bYield, 1);
+	bYieldToGameplayRootMotion = bYield != 0;
 	if (Ar.IsLoading())
 	{
 		Decay = static_cast<EEGSoftPushDecay>(FMath::Min<uint8>(DecayValue, static_cast<uint8>(EEGSoftPushDecay::EaseOut)));

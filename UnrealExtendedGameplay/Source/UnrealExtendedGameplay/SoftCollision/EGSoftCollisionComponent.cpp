@@ -385,12 +385,16 @@ bool UEGSoftCollisionComponent::IsPredictingClient() const
 // Snapshot and results
 // =====================================================================
 
-void UEGSoftCollisionComponent::WriteSnapshot(FEGSoftBody& OutBody, FEGSoftCollisionSnapshotInfo& OutInfo, float DeltaSeconds)
+void UEGSoftCollisionComponent::AdvancePushClock(float DeltaSeconds)
 {
 	if (const AActor* Owner = GetOwner())
 	{
 		LocalClock += static_cast<double>(DeltaSeconds) * FMath::Max(Owner->CustomTimeDilation, 0.0f);
 	}
+}
+
+void UEGSoftCollisionComponent::WriteSnapshot(FEGSoftBody& OutBody, FEGSoftCollisionSnapshotInfo& OutInfo, float DeltaSeconds)
+{
 
 	// Controllers and player states replicate separately; checking each frame catches either.
 	UpdateControlState(false);
@@ -457,6 +461,8 @@ void UEGSoftCollisionComponent::WriteSnapshot(FEGSoftBody& OutBody, FEGSoftColli
 	OutBody.PushPower = EffectiveProfile->PushPower * Modifier.PushPowerScale;
 	OutBody.Layer = static_cast<uint8>(FMath::Clamp(EffectiveFilter.Layer, 0, 31));
 	OutBody.PushedByMask = static_cast<uint32>(EffectiveFilter.PushedByLayers);
+	OutBody.bFilterCanPush = EffectiveFilter.bCanPush;
+	OutBody.bFilterCanBePushed = EffectiveFilter.bCanBePushed;
 	OutBody.bCanPush = EffectiveFilter.bCanPush && !Modifier.bPushesNobody;
 	OutBody.bCanBePushed = EffectiveFilter.bCanBePushed && !Modifier.bImmovable && !IsSuppressedByMovement();
 	OutBody.bEnabled = bSoftCollisionEnabled;
@@ -539,6 +545,8 @@ FEGSoftPushCommand UEGSoftCollisionComponent::MakeCommand(const FEGSoftPushQuant
 	const bool bBump = Band == EEGSoftPushBand::Bump;
 	Command.Duration = bBump ? Tuning.BumpDuration : Tuning.SeparationDuration;
 	Command.Decay = bBump ? Tuning.BumpDecay : Tuning.SeparationDecay;
+	const UEGSoftCollisionProfile* EffectiveProfile = GetEffectiveProfile();
+	Command.bYieldToGameplayRootMotion = EffectiveProfile && EffectiveProfile->bSuppressDuringRootMotion;
 	return Command;
 }
 
@@ -610,7 +618,10 @@ void UEGSoftCollisionComponent::IssuePush(const FVector2D& RawVelocity, EEGSoftP
 			// Rides in the next saved move. Still tracked, so a reject or a lost move removes it.
 			PendingMovePush = Request;
 			bHasPendingMovePush = true;
-			ClientQueue.Add(Request, GetRealTime(), false);
+			// Sent by RPC once, late, only if neither the move nor its resend was acknowledged by then.
+			const double RealNow = GetRealTime();
+			const double Fallback = RealNow + GetRoundTripTime() + 2.0 * GetEffectiveProfile()->Network.ResendInterval;
+			ClientQueue.Add(Request, RealNow, false, Fallback);
 		}
 		else
 		{
@@ -668,6 +679,12 @@ void UEGSoftCollisionComponent::CancelActivePush()
 	if (Active.bActive && Active.Driver)
 	{
 		Active.Driver->CancelPush(*this, Active.Command, Active.Handle);
+	}
+	if (bHasPendingMovePush && Active.bActive && PendingMovePush.Sequence == Active.Command.Sequence)
+	{
+		// Never sent: a push the client dropped must not ride on a later move, nor go out as a fallback.
+		bHasPendingMovePush = false;
+		ClientQueue.Remove(PendingMovePush.Sequence);
 	}
 	Active.bActive = false;
 }
@@ -806,15 +823,30 @@ void UEGSoftCollisionComponent::UpdateFrameUpdateRegistration()
 
 void UEGSoftCollisionComponent::OnRep_LastAcceptedSequence()
 {
-	ClientQueue.Acknowledge(LastAcceptedSequence);
+	const int32 Accepted = ClientQueue.Acknowledge(LastAcceptedSequence);
+	if (UEGSoftCollisionSubsystem* Subsystem = GetSubsystem())
+	{
+		for (int32 Index = 0; Index < Accepted; ++Index)
+		{
+			Subsystem->NoteRequestAccepted();
+		}
+	}
 }
 
 void UEGSoftCollisionComponent::ClientRejectSoftPush_Implementation(uint16 Sequence)
 {
 	ClientQueue.Remove(Sequence);
+	if (bHasPendingMovePush && PendingMovePush.Sequence == Sequence)
+	{
+		bHasPendingMovePush = false;
+	}
 	if (Active.bActive && Active.Command.Sequence == Sequence)
 	{
 		CancelActivePush();
+	}
+	if (UEGSoftCollisionSubsystem* Subsystem = GetSubsystem())
+	{
+		Subsystem->NoteRequestRejected();
 	}
 
 	if (UEGSoftCollisionSubsystem::GetDebugLevel() >= 3)
@@ -856,7 +888,7 @@ void UEGSoftCollisionComponent::ServerSoftPush_Implementation(const TArray<FEGSo
 	UpdateMovementBinding();
 }
 
-UEGSoftCollisionComponent::ERejectReason UEGSoftCollisionComponent::ValidateRequest(const FEGSoftPushRequest& Request, bool& bOutEpochMismatch)
+UEGSoftCollisionComponent::ERejectReason UEGSoftCollisionComponent::ValidateRequest(const FEGSoftPushRequest& Request, bool bFromMove, float RequestClientTime, bool& bOutEpochMismatch)
 {
 	bOutEpochMismatch = false;
 
@@ -893,7 +925,9 @@ UEGSoftCollisionComponent::ERejectReason UEGSoftCollisionComponent::ValidateRequ
 	}
 
 	const UCharacterMovementComponent* Movement = GetCharacterMovement();
-	if (const FNetworkPredictionData_Server_Character* ServerData = Movement ? Movement->GetPredictionData_Server_Character() : nullptr)
+	const FNetworkPredictionData_Server_Character* ServerData = Movement ? Movement->GetPredictionData_Server_Character() : nullptr;
+	// A push carried by a move is processed with that move: it is never stale and needs no epoch check.
+	if (ServerData && !bFromMove)
 	{
 		// A client timestamp reset moves the client's clock back by MinTimeBetweenTimeStampResets. A
 		// request that far from the server's clock in either direction comes from the other side of a
@@ -907,9 +941,23 @@ UEGSoftCollisionComponent::ERejectReason UEGSoftCollisionComponent::ValidateRequ
 		}
 	}
 
-	if (Request.Band == EEGSoftPushBand::Bump && GetPushClock() - ServerState.LastBumpTime < Tuning.BumpCooldown * 0.5f)
+	if (Request.Band == EEGSoftPushBand::Bump)
 	{
-		return ERejectReason::BumpCooldown;
+		// On the client's move clock, which is the clock the client's cooldown ran on: a hit pause
+		// applied only on the server must not reject the client's next bump.
+		const bool bClientClock = ServerData && !bOutEpochMismatch;
+		if (bClientClock && ServerState.bHasLastBumpClientTime)
+		{
+			const float Elapsed = RequestClientTime - ServerState.LastBumpClientTime;
+			if (Elapsed >= 0.0f && Elapsed < Tuning.BumpCooldown * 0.5f)
+			{
+				return ERejectReason::BumpCooldown;
+			}
+		}
+		else if (!bClientClock && GetPushClock() - ServerState.LastBumpTime < Tuning.BumpCooldown * 0.5f)
+		{
+			return ERejectReason::BumpCooldown;
+		}
 	}
 
 	const UEGSoftCollisionSubsystem* Subsystem = GetSubsystem();
@@ -921,10 +969,11 @@ UEGSoftCollisionComponent::ERejectReason UEGSoftCollisionComponent::ValidateRequ
 	return ERejectReason::None;
 }
 
-void UEGSoftCollisionComponent::ProcessServerRequest(const FEGSoftPushRequest& Request, bool bFromMove)
+void UEGSoftCollisionComponent::ProcessServerRequest(const FEGSoftPushRequest& Request, bool bFromMove, float MoveStartTime)
 {
+	const float RequestClientTime = bFromMove ? MoveStartTime : Request.ClientTimeStamp;
 	bool bEpochMismatch = false;
-	const ERejectReason Reason = ValidateRequest(Request, bEpochMismatch);
+	const ERejectReason Reason = ValidateRequest(Request, bFromMove, RequestClientTime, bEpochMismatch);
 	if (Reason != ERejectReason::None)
 	{
 		RejectRequest(Request.Sequence, Reason);
@@ -948,11 +997,9 @@ void UEGSoftCollisionComponent::ProcessServerRequest(const FEGSoftPushRequest& R
 	{
 		// Carried by the move about to be simulated: it starts exactly where that move starts, and
 		// the push it replaces ends there, so nothing is late and nothing waits for a later move.
-		if (ServerData && !bEpochMismatch)
-		{
-			Command.bHasStartTime = true;
-			Command.StartTime = Request.ClientTimeStamp;
-		}
+		// The move's own start time is used, which also holds across a client timestamp reset.
+		Command.bHasStartTime = true;
+		Command.StartTime = MoveStartTime;
 	}
 	else if (ServerData && !bEpochMismatch)
 	{
@@ -964,10 +1011,6 @@ void UEGSoftCollisionComponent::ProcessServerRequest(const FEGSoftPushRequest& R
 		{
 			// The move this push starts on was already processed: its first copy was lost.
 			bLate = true;
-			if (UEGSoftCollisionSubsystem* Subsystem = GetSubsystem())
-			{
-				Subsystem->NoteLateRequest();
-			}
 			if (Network.LatePolicy == EEGSoftCollisionLatePolicy::Reject || Missed >= Command.Duration)
 			{
 				RejectRequest(Request.Sequence, ERejectReason::Late);
@@ -1008,6 +1051,13 @@ void UEGSoftCollisionComponent::ProcessServerRequest(const FEGSoftPushRequest& R
 
 	LastAcceptedSequence = Request.Sequence;
 	MARK_PROPERTY_DIRTY_FROM_NAME(UEGSoftCollisionComponent, LastAcceptedSequence, this);
+	if (bLate)
+	{
+		if (UEGSoftCollisionSubsystem* Subsystem = GetSubsystem())
+		{
+			Subsystem->NoteLateRequest();
+		}
+	}
 
 	if (Movement)
 	{
@@ -1022,6 +1072,8 @@ void UEGSoftCollisionComponent::ProcessServerRequest(const FEGSoftPushRequest& R
 	{
 		ServerState.LastBumpTime = GetPushClock();
 		LastBumpTime = ServerState.LastBumpTime;
+		ServerState.bHasLastBumpClientTime = ServerData && !bEpochMismatch;
+		ServerState.LastBumpClientTime = RequestClientTime;
 		SendCosmeticBump(Request.Push);
 	}
 
@@ -1070,6 +1122,7 @@ void UEGSoftCollisionComponent::HandleCharacterMovementUpdated(float DeltaSecond
 			}
 		}
 		ServerState.Removals.Reset();
+		ServerState.bHasLastBumpClientTime = false;
 		SafetyLease.OnTimeStampReset(*Movement);
 	}
 	ServerState.LastClientTime = ClientTime;
@@ -1129,6 +1182,7 @@ void UEGSoftCollisionComponent::UpdateMovementBinding()
 void UEGSoftCollisionComponent::ResetPredictionState()
 {
 	ClientQueue.Reset();
+	bHasPendingMovePush = false;
 
 	for (const FEGSoftPushScheduledRemoval& Removal : ServerState.Removals)
 	{
@@ -1190,7 +1244,7 @@ bool UEGSoftCollisionComponent::IsSuppressedByMovement() const
 	{
 		return false;
 	}
-	if (EffectiveProfile->bSuppressDuringRootMotion && EGSoftCollision::HasGameplayRootMotion(*Character))
+	if (EffectiveProfile->bSuppressDuringRootMotion && EGSoftCollision::IsDrivenByGameplayRootMotion(*Character))
 	{
 		return true;
 	}
@@ -1212,14 +1266,25 @@ bool UEGSoftCollisionComponent::ConsumePendingMovePush(FEGSoftPushRequest& OutRe
 	return true;
 }
 
-void UEGSoftCollisionComponent::ReceiveMovePush(const FEGSoftPushRequest& Request)
+void UEGSoftCollisionComponent::NotifyMoveDataTransport()
+{
+	if (bMoveDataTransport)
+	{
+		return;
+	}
+	// Without packed move RPCs the server never sees the move data; keep sending requests then.
+	static const IConsoleVariable* PackedMoves = IConsoleManager::Get().FindConsoleVariable(TEXT("p.NetUsePackedMovementRPCs"));
+	bMoveDataTransport = !PackedMoves || PackedMoves->GetInt() != 0;
+}
+
+void UEGSoftCollisionComponent::ReceiveMovePush(const FEGSoftPushRequest& Request, float MoveStartTime)
 {
 	if (!GetPawn() || !GetOwner()->HasAuthority() || ServerState.IsDuplicate(Request.Sequence))
 	{
 		return;
 	}
 	ServerState.MarkProcessed(Request.Sequence);
-	ProcessServerRequest(Request, true);
+	ProcessServerRequest(Request, true, MoveStartTime);
 	UpdateMovementBinding();
 }
 
@@ -1281,6 +1346,10 @@ void UEGSoftCollisionComponent::RunSetupChecks()
 
 void UEGSoftCollisionComponent::ReportSetupProblem(const FString& Problem)
 {
+	if (!UEGSoftCollisionSettings::Get()->bReportSetupProblems)
+	{
+		return;
+	}
 	bool bAlreadyReported = false;
 	ReportedProblems.Add(GetTypeHash(Problem), &bAlreadyReported);
 	if (!bAlreadyReported)

@@ -34,11 +34,11 @@ namespace EGSoftCollision
 		}
 	}
 
-	void ReceiveMovePush(UCharacterMovementComponent& Movement, const FEGSoftPushRequest& Request)
+	void ReceiveMovePush(UCharacterMovementComponent& Movement, const FEGSoftPushRequest& Request, float MoveStartTime)
 	{
 		if (UEGSoftCollisionComponent* const SoftCollision = UEGSoftCollisionComponent::FindSoftCollisionComponent(Movement.GetCharacterOwner()))
 		{
-			SoftCollision->ReceiveMovePush(Request);
+			SoftCollision->ReceiveMovePush(Request, MoveStartTime);
 		}
 	}
 }
