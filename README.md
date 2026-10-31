@@ -53,7 +53,7 @@ Each plugin has its own descriptor and module boundary. Install the full reposit
 | Plugin | Role | Highlights | Version |
 |:--|:--|:--|:--:|
 | [**UnrealExtendedFramework**](UnrealExtendedFramework/) | Core runtime and editor foundation | Modular settings, Blueprint libraries, async nodes, AI/EQS helpers, subtitles, HTTP/JSON, UI Lab, localization tooling | `1.0` |
-| [**UnrealExtendedGameplay**](UnrealExtendedGameplay/) | Reusable gameplay systems | AI state machine, combat, targeting, cover, traversal, perception, footsteps, input buffering, outlines, spawners, animation notifies | `1.0` |
+| [**UnrealExtendedGameplay**](UnrealExtendedGameplay/) | Reusable gameplay systems | AI state machine, combat, targeting, cover, traversal, perception, footsteps, input buffering, outlines, spawners, animation systems | `1.0` |
 | [**UnrealExtendedGAS**](UnrealExtendedGAS/) | Gameplay Ability System extensions | Ability sets, ASC/attribute bases, effect components, async listeners, ability tasks, debug UI | `1.0` |
 | [**UnrealExtendedQuest**](UnrealExtendedQuest/) | Runtime and editor quest framework | Custom graph editor, stages/objectives, facts, replication, JSON I/O, simulator, search, debugger, commandlets | `1.0` |
 | [**UnrealExtendedPlayFab**](UnrealExtendedPlayFab/) | PlayFab client integration | Authentication, player data, inventory, currency, matchmaking, CloudScript, groups, analytics, async Blueprint actions | `1.0` |
@@ -138,7 +138,8 @@ Composable components and actors for common action-game needs:
 - Footstep handling and input buffering.
 - Basic and advanced outline components, symbols, and helper library.
 - Feet IK animation support.
-- Animation notifies for damage traces, camera shake, movement control, particles, perception noise, montage control, play rate, slow motion, and soft lock.
+- **Animation systems** — tagged anim events, swept melee hit detection with pluggable damage policies and hit pause, stacked time dilation and movement modifiers, predicted root-motion moves, Motion Warping targets from lock-on, animation sets by gameplay tag, async montage nodes, and a thread-safe anim instance base. See [`UnrealExtendedGameplay/Docs/Animation.md`](UnrealExtendedGameplay/Docs/Animation.md).
+- Animation notifies for camera shake, particles, perception noise, footsteps, montage control, play rate, slow motion, movement control, and soft lock.
 - Input-image widgets for player-facing control prompts.
 
 ### ⚡ Extended GAS
@@ -303,7 +304,7 @@ All required non-vendor dependencies below ship with the local UE 5.8 installati
 | Plugin | Extended dependency | Unreal Engine plugin dependencies |
 |:--|:--|:--|
 | UnrealExtendedFramework | — | GameplayAbilities, Niagara, OnlineSubsystem, OnlineSubsystemUtils, OnlineSubsystemNull, VoiceChat, EnhancedInput |
-| UnrealExtendedGameplay | UnrealExtendedFramework | Niagara, OnlineSubsystem, OnlineSubsystemUtils, OnlineSubsystemNull |
+| UnrealExtendedGameplay | UnrealExtendedFramework | Niagara, MotionWarping, OnlineSubsystem, OnlineSubsystemUtils, OnlineSubsystemNull |
 | UnrealExtendedGAS | — | GameplayAbilities, EnhancedInput |
 | UnrealExtendedQuest | — | GameplayTagsEditor *(editor only)* |
 | UnrealExtendedPlayFab | UnrealExtendedFramework | — |

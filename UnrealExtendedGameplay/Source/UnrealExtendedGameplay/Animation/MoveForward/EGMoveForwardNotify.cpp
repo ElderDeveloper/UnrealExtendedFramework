@@ -1,32 +1,21 @@
-﻿// Fill out your copyright notice in the Description page of Project Settings.
-
+﻿// Copyright Kemal Erdem YILMAZ. All Rights Reserved.
 
 #include "EGMoveForwardNotify.h"
 
-#if ENGINE_MAJOR_VERSION != 5 
-void UEGMoveForwardNotify::Notify(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation)
-{
-	Super::Notify(MeshComp, Animation);
-	
-	if (const auto actor = Cast<AActor>(MeshComp->GetOwner()))
-	{
-		const FVector NewLoc = actor->GetActorLocation() + actor->GetActorForwardVector() * MoveDistance;
-		actor->SetActorLocation(NewLoc, bSweep   );
-	}
-}
-#endif
+#include "Components/SkeletalMeshComponent.h"
+#include "GameFramework/Actor.h"
+#include "UnrealExtendedGameplay/Animation/EGAnimNotifyHelpers.h"
 
-
-
-#if	ENGINE_MAJOR_VERSION == 5
-void UEGMoveForwardNotify::Notify(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation,const FAnimNotifyEventReference& EventReference)
+void UEGMoveForwardNotify::Notify(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, const FAnimNotifyEventReference& EventReference)
 {
 	Super::Notify(MeshComp, Animation, EventReference);
 
-	if (const auto actor = Cast<AActor>(MeshComp->GetOwner()))
+	if (!EGAnimNotify::CanDriveOwnerTransform(MeshComp))
 	{
-		const FVector NewLoc = actor->GetActorLocation() + actor->GetActorForwardVector() * MoveDistance;
-		actor->SetActorLocation(NewLoc, bSweep   );
+		return;
 	}
+
+	AActor* const Owner = MeshComp->GetOwner();
+	const FVector Direction = Owner->GetActorQuat().RotateVector(ForwardRotationPlus.Vector());
+	Owner->SetActorLocation(Owner->GetActorLocation() + Direction * MoveDistance, bSweep);
 }
-#endif

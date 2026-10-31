@@ -1,0 +1,119 @@
+// Copyright Kemal Erdem YILMAZ. All Rights Reserved.
+
+#pragma once
+
+#include "CoreMinimal.h"
+#include "Engine/DataAsset.h"
+#include "GameplayTagContainer.h"
+
+#include "EGAnimationSet.generated.h"
+
+class UAnimMontage;
+
+UENUM(BlueprintType)
+enum class EEGAnimationVariantPick : uint8
+{
+	Random,
+	/** In order, wrapping. The counter is shared by everyone using this set. */
+	Sequential,
+	First
+};
+
+/** The montages for one tag, and how to play them. */
+USTRUCT(BlueprintType)
+struct UNREALEXTENDEDGAMEPLAY_API FEGAnimationSetEntry
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Animation")
+	TArray<TSoftObjectPtr<UAnimMontage>> Variants;
+
+	/**
+	 * How a variant is chosen when the caller does not name one. Random picks differ between
+	 * machines; pass a variant index for anything that has to match in multiplayer.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Animation")
+	EEGAnimationVariantPick Pick = EEGAnimationVariantPick::Random;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Animation")
+	FName StartSection;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Animation", meta = (ClampMin = "0.01"))
+	float PlayRate = 1.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Animation", meta = (ClampMin = "0", Units = "s"))
+	float StartTime = 0.0f;
+};
+
+/** A montage picked from a set, with the entry's playback settings. */
+USTRUCT(BlueprintType)
+struct UNREALEXTENDEDGAMEPLAY_API FEGResolvedAnimation
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadOnly, Category = "Animation")
+	TObjectPtr<UAnimMontage> Montage = nullptr;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Animation")
+	FName StartSection;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Animation")
+	float PlayRate = 1.0f;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Animation")
+	float StartTime = 0.0f;
+
+	bool IsValid() const { return Montage != nullptr; }
+};
+
+/**
+ * UEGAnimationSet
+ *
+ * A character's montages by gameplay tag, so systems ask for "ExtendedGameplay.Anim.Cover.GetIn"
+ * instead of holding montage pointers of their own. A character supplies its set through
+ * IEGMontagePlayerInterface::GetAnimationSet; a system may also carry a default set.
+ *
+ * Lookup falls back up the tag hierarchy (Cover.GetIn.Crouched, then Cover.GetIn), then to the
+ * Parent set, so a variant set only lists what differs. Montages are soft references: they load
+ * when first used, or ahead of time through GatherSoftPaths.
+ */
+UCLASS(BlueprintType)
+class UNREALEXTENDEDGAMEPLAY_API UEGAnimationSet : public UPrimaryDataAsset
+{
+	GENERATED_BODY()
+
+public:
+	/** Consulted for any tag this set has no entry for. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Animation")
+	TObjectPtr<UEGAnimationSet> Parent;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Animation", meta = (ForceInlineRow))
+	TMap<FGameplayTag, FEGAnimationSetEntry> Entries;
+
+	/** The entry for this tag, its nearest parent tag, or the Parent set's. Null when none. */
+	const FEGAnimationSetEntry* FindEntry(FGameplayTag Tag) const;
+
+	UFUNCTION(BlueprintPure, Category = "Extended|Animation Set")
+	bool HasAnimation(FGameplayTag Tag) const { return FindEntry(Tag) != nullptr; }
+
+	/**
+	 * Which variant would play, without loading it. VariantIndex >= 0 picks that one (wrapped).
+	 * False when there is no entry or it has no variants.
+	 */
+	bool PickVariant(FGameplayTag Tag, int32 VariantIndex, TSoftObjectPtr<UAnimMontage>& OutMontage, FEGAnimationSetEntry& OutEntry) const;
+
+	/** Picks a variant and loads it if needed (synchronously: preload with GatherSoftPaths to avoid a hitch). */
+	UFUNCTION(BlueprintCallable, Category = "Extended|Animation Set")
+	FEGResolvedAnimation ResolveAnimation(FGameplayTag Tag, int32 VariantIndex = -1) const;
+
+	/** Every montage this set (and its parents) can play, for preloading. */
+	void GatherSoftPaths(TArray<FSoftObjectPath>& OutPaths) const;
+
+#if WITH_EDITOR
+	virtual EDataValidationResult IsDataValid(class FDataValidationContext& Context) const override;
+#endif
+
+private:
+	/** Sequential pick positions. Runtime only. */
+	mutable TMap<FGameplayTag, int32> SequentialCursor;
+};

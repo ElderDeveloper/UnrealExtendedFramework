@@ -1,6 +1,9 @@
 ﻿#include "Components/ActorComponent.h"
 #include "UnrealExtendedFramework/Data/EFTraceData.h"
 #include "UnrealExtendedFramework/Data/EFEnums.h"
+#include "GameplayTagContainer.h"
+#include "UnrealExtendedGameplay/Animation/AnimInstance/EGAnimStateProvider.h"
+#include "UnrealExtendedGameplay/Animation/Montage/EGAnimationSet.h"
 #include "EGCoverComponent.generated.h"
 
 
@@ -26,7 +29,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnCoverStateChanged , bool , CoverS
 
 class UAnimMontage;
 UCLASS(ClassGroup=(Custom), meta=(BlueprintSpawnableComponent))
-class UNREALEXTENDEDGAMEPLAY_API UEGCoverComponent : public UActorComponent
+class UNREALEXTENDEDGAMEPLAY_API UEGCoverComponent : public UActorComponent, public IEGAnimStateProvider
 {
 	GENERATED_BODY()
 
@@ -76,6 +79,14 @@ public:
 
 	
 	//<<<<<<<<<<<<<<<<<<<<< MONTAGES >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+	/**
+	 * Cover montages by ExtendedGameplay.Anim.Cover.* tag, used when the character's own set
+	 * (IEGMontagePlayerInterface::GetAnimationSet) has none. The slots below are the last fallback.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category="Cover|Montages")
+	TObjectPtr<UEGAnimationSet> AnimationSet = nullptr;
+
 	UPROPERTY(EditDefaultsOnly,BlueprintReadWrite , Category="Cover|Montages|GetInOut")
 	UAnimMontage* GetInCoverMontage = nullptr;
 	
@@ -134,6 +145,9 @@ public:
 	
 	UFUNCTION(BlueprintPure , Category="Cover")
 	FORCEINLINE bool GetIsInMontage() const { return IsInMontage; }
+
+	/** ExtendedGameplay.Anim.State.Cover (+ .Crouched, .Moving, .Left / .Right, .Montage) for UEGAnimInstance. */
+	virtual FGameplayTagContainer GetAnimStateTags_Implementation() const override;
 	
 	
 	
@@ -243,15 +257,14 @@ private:
 	void StorePlayerValues();
 
 	//<<<<<<<<<<<<<<<<<<<<<< Animation >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-	void PlayMontageIfValid(UAnimMontage* MontageToPlay);
-	void PlayMontageBasedOnDirection(UAnimMontage* RightSideMontage , UAnimMontage* LeftSideMontage);
-	void PlayMontageBasedOnPose(UAnimMontage* IdleMontage , UAnimMontage* CrouchMontage);
-	void PlayMontageBasedOnDirectionAndPose(UAnimMontage* IdleRightSideMontage , UAnimMontage* IdleLeftSideMontage , UAnimMontage* CrouchRightSideMontage , UAnimMontage* CrouchLeftSideMontage);
+	FEGResolvedAnimation ResolveCoverAnimation(FGameplayTag Tag, UAnimMontage* Fallback) const;
+	void PlayCoverMontage(FGameplayTag StandingTag, FGameplayTag CrouchedTag, UAnimMontage* StandingMontage, UAnimMontage* CrouchedMontage);
+	void PlayResolvedAnimation(const FEGResolvedAnimation& Animation);
 
-	UFUNCTION()
-	void OnMontageBegin(UAnimMontage* MontageToPlay);
-	UFUNCTION()
-	void OnMontageEnded(UAnimMontage* Montage, bool bInterrupted);
+	void OnCoverMontageBlendingOut(UAnimMontage* Montage, bool bInterrupted, uint32 PlayId);
+
+	/** Bumped for every cover montage, so a montage interrupted by the next one does not clear IsInMontage. */
+	uint32 CoverMontagePlayId = 0;
 };
 
 #pragma once

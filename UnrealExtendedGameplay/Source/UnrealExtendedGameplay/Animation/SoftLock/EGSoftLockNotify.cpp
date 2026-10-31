@@ -1,17 +1,22 @@
-﻿// Fill out your copyright notice in the Description page of Project Settings.
-
+// Copyright Kemal Erdem YILMAZ. All Rights Reserved.
 
 #include "EGSoftLockNotify.h"
 
+#include "Components/SkeletalMeshComponent.h"
+#include "GameFramework/Pawn.h"
 #include "Kismet/KismetMathLibrary.h"
-#include "UnrealExtendedFramework/Data/EFMacro.h"
 #include "UnrealExtendedFramework/Libraries/Math/EFMathLibrary.h"
 #include "UnrealExtendedFramework/Libraries/Trace/EFTraceLibrary.h"
+#include "UnrealExtendedGameplay/Animation/EGAnimNotifyHelpers.h"
+#include "UnrealExtendedGameplay/Animation/EGAnimTargeting.h"
 
 void UEGSoftLockNotify::NotifyBegin(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, float TotalDuration, const FAnimNotifyEventReference& EventReference)
 {
 	Super::NotifyBegin(MeshComp, Animation, TotalDuration, EventReference);
-	GetSoftLockActor(MeshComp);
+	if (EGAnimNotify::CanDriveOwnerTransform(MeshComp))
+	{
+		GetSoftLockActor(MeshComp);
+	}
 }
 
 void UEGSoftLockNotify::NotifyEnd(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, const FAnimNotifyEventReference& EventReference)
@@ -37,6 +42,12 @@ void UEGSoftLockNotify::TickSoftLock(USkeletalMeshComponent* MeshComp, float Fra
 	if (!IsValid(Owner))
 	{
 		ClearSoftLockActor(MeshComp);
+		return;
+	}
+
+	// Simulated proxies receive the rotation from the server.
+	if (!EGAnimNotify::CanDriveOwnerTransform(MeshComp))
+	{
 		return;
 	}
 
@@ -107,11 +118,18 @@ AActor* UEGSoftLockNotify::FindSoftLockActor(USkeletalMeshComponent* MeshComp) c
 		return nullptr;
 	}
 
+	// Agree with the lock-on systems before running a search of our own.
+	if (AActor* const Locked = EGAnimTargeting::GetLockedTarget(Owner))
+	{
+		return Locked;
+	}
+
 	FSphereTraceStruct SoftLockTrace = SoftLockActorTrace;
 	SoftLockTrace.Start = Owner->GetActorLocation();
 	SoftLockTrace.End = Owner->GetActorLocation();
 
-	UEFTraceLibrary::ExtendedSphereTraceMulti(World, SoftLockTrace);
+	// The mesh as world context lets bIgnoreSelf skip the owner.
+	UEFTraceLibrary::ExtendedSphereTraceMulti(MeshComp, SoftLockTrace);
 
 	TArray<AActor*> HitActorArray;
 	HitActorArray.Reserve(SoftLockTrace.HitResults.Num());
