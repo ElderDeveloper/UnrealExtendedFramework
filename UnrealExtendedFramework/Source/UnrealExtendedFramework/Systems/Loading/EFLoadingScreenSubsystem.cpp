@@ -3,6 +3,7 @@
 // EFLoadingScreenSubsystem.cpp
 #include "EFLoadingScreenSubsystem.h"
 
+#include "Assets/EFAssetLoading.h"
 #include "Containers/Ticker.h"
 #include "Engine/Engine.h"
 #include "Engine/GameInstance.h"
@@ -31,6 +32,8 @@ void UEFLoadingScreenSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 	PostLoadMapHandle = FCoreUObjectDelegates::PostLoadMapWithWorld.AddUObject(
 		this,
 		&UEFLoadingScreenSubsystem::HandlePostLoadMap);
+
+	PreloadLoadingScreenAssets();
 }
 
 void UEFLoadingScreenSubsystem::Deinitialize()
@@ -51,6 +54,10 @@ void UEFLoadingScreenSubsystem::Deinitialize()
 	ReadinessQueries.Reset();
 	bAwaitingPostLoadMap = false;
 	HideLoadingScreen();
+
+	// Lets the preloaded images and font unload with the game instance.
+	LoadingScreenAssetsHandle.Reset();
+
 	Super::Deinitialize();
 }
 
@@ -180,6 +187,32 @@ void UEFLoadingScreenSubsystem::UnregisterReadinessQuery(FDelegateHandle Handle)
 	});
 }
 
+void UEFLoadingScreenSubsystem::PreloadLoadingScreenAssets()
+{
+	// A dedicated server never draws the screen, so it does not need the textures in memory.
+	if (IsRunningDedicatedServer())
+	{
+		return;
+	}
+
+	const UEFLoadingScreenSettings* Settings = GetDefault<UEFLoadingScreenSettings>();
+	if (!Settings)
+	{
+		return;
+	}
+
+	TArray<FSoftObjectPath> Paths;
+	Paths.Reserve(Settings->BackgroundImages.Num() + 2);
+	for (const TSoftObjectPtr<UTexture2D>& Image : Settings->BackgroundImages)
+	{
+		Paths.Add(Image.ToSoftObjectPath());
+	}
+	Paths.Add(Settings->BackgroundImage.ToSoftObjectPath());
+	Paths.Add(Settings->LoadingTipFont.ToSoftObjectPath());
+
+	LoadingScreenAssetsHandle = EFAssets::Preload(MoveTemp(Paths));
+}
+
 void UEFLoadingScreenSubsystem::PrepareLoadingSession()
 {
 	// One texture per loading session so every widget created during this load shows the same image.
@@ -225,7 +258,7 @@ UTexture2D* UEFLoadingScreenSubsystem::ResolveLoadingScreenTexture() const
 		const int32 ImageIndex = RemainingIndices[Pick];
 		RemainingIndices.RemoveAtSwap(Pick);
 
-		if (UTexture2D* Texture = Settings->BackgroundImages[ImageIndex].LoadSynchronous())
+		if (UTexture2D* Texture = EFAssets::Resolve(Settings->BackgroundImages[ImageIndex], TEXT("UEFLoadingScreenSubsystem")))
 		{
 			return Texture;
 		}
@@ -235,7 +268,7 @@ UTexture2D* UEFLoadingScreenSubsystem::ResolveLoadingScreenTexture() const
 			*Settings->BackgroundImages[ImageIndex].ToString());
 	}
 
-	return Settings->BackgroundImage.LoadSynchronous();
+	return EFAssets::Resolve(Settings->BackgroundImage, TEXT("UEFLoadingScreenSubsystem"));
 }
 
 FText UEFLoadingScreenSubsystem::ResolveLoadingTip() const

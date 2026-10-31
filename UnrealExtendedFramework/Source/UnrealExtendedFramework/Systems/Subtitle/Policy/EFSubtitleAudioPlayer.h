@@ -4,6 +4,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Engine/StreamableManager.h"
 #include "UObject/Object.h"
 #include "UnrealExtendedFramework/Systems/Subtitle/Data/EFSubtitleData.h"
 #include "EFSubtitleAudioPlayer.generated.h"
@@ -23,6 +24,19 @@ public:
 	PURE_VIRTUAL(UEFSubtitleAudioPlayer::PlaySubtitleAudio, );
 
 	virtual USoundBase* ResolveCultureSound(const FEFSubtitleEntry& Entry) const;
+
+	/**
+	 * Starts loading the sound Entry will play, so it is in memory when the entry starts. Called
+	 * when the entry is queued; keep the handle until it has finished. Null when there is nothing
+	 * to load.
+	 */
+	virtual TSharedPtr<FStreamableHandle> PreloadSubtitleAudio(const FEFSubtitleEntry& Entry) const;
+
+	/**
+	 * Adds the sounds ResolveCultureSound looks at first for Entry in the current culture: the
+	 * culture's own sounds, else the language's, else the default VoiceSound.
+	 */
+	static void GatherSubtitleSoundPaths(const FEFSubtitleEntry& Entry, TArray<FSoftObjectPath>& OutPaths);
 };
 
 /**

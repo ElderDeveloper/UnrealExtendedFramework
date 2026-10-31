@@ -3,6 +3,7 @@
 // EFSubtitleSettingsHelpers.cpp
 #include "EFSubtitleSettingsHelpers.h"
 
+#include "Assets/EFAssetLoading.h"
 #include "Engine/GameInstance.h"
 #include "Engine/LocalPlayer.h"
 #include "Engine/World.h"
@@ -89,7 +90,7 @@ namespace EFSubtitleSettingsHelpers
 
 		for (const TSoftObjectPtr<UEFSubtitleStyleProfile>& SoftProfile : Settings->AvailableStyleProfiles)
 		{
-			if (UEFSubtitleStyleProfile* Profile = SoftProfile.LoadSynchronous())
+			if (UEFSubtitleStyleProfile* Profile = EFAssets::Resolve(SoftProfile, TEXT("EFSubtitleSettingsHelpers::ResolveStyleProfile")))
 			{
 				if (Profile->ProfileId == ProfileId)
 				{
@@ -99,5 +100,22 @@ namespace EFSubtitleSettingsHelpers
 		}
 
 		return nullptr;
+	}
+
+	TSharedPtr<FStreamableHandle> PreloadStyleProfiles()
+	{
+		const UEFSubtitleProjectSettings* Settings = GetDefault<UEFSubtitleProjectSettings>();
+		if (!Settings)
+		{
+			return nullptr;
+		}
+
+		TArray<FSoftObjectPath> Paths;
+		Paths.Reserve(Settings->AvailableStyleProfiles.Num());
+		for (const TSoftObjectPtr<UEFSubtitleStyleProfile>& SoftProfile : Settings->AvailableStyleProfiles)
+		{
+			Paths.Add(SoftProfile.ToSoftObjectPath());
+		}
+		return EFAssets::Preload(MoveTemp(Paths));
 	}
 }
