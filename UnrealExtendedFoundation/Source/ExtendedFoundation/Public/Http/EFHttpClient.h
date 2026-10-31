@@ -58,6 +58,9 @@ public:
 
 	bool IsFinished() const { return bFinished; }
 
+	/** Operations started and not yet finished, across the process. */
+	static int32 GetActiveCount();
+
 	const FEFHttpRequest& GetRequest() const { return Request; }
 
 	/** Use Start(). Public only so MakeShared can construct the operation. */

@@ -12,4 +12,7 @@ class FExtendedFoundationModule : public IModuleInterface
 public:
 	virtual void StartupModule() override;
 	virtual void ShutdownModule() override;
+
+private:
+	int32 HttpStatusHandle = 0;
 };

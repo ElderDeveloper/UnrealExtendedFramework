@@ -11,6 +11,7 @@
 #include "Misc/Guid.h"
 #include "Misc/Paths.h"
 #include "Misc/ScopeExit.h"
+#include "Status/EFServiceStatus.h"
 #include "Testing/EFTestHelpers.h"
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEFCredentialStoreTest, "ExtendedFoundation.Credentials.FileStore",
@@ -168,6 +169,38 @@ bool FEFHttpSubsystemMockTest::RunTest(const FString& Parameters)
 		State->Mock.Reset();
 	}));
 
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEFServiceStatusTest, "ExtendedFoundation.Status.Registry",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FEFServiceStatusTest::RunTest(const FString& Parameters)
+{
+	const int32 Handle = FEFServiceStatusRegistry::Register(TEXT("ZZTestService"), []
+	{
+		FEFServiceStatus Status;
+		Status.State = EEFServiceState::Degraded;
+		Status.Summary = TEXT("retrying");
+		Status.Details.Add(TEXT("Attempts"), TEXT("3"));
+		return Status;
+	});
+
+	const TArray<FEFServiceStatus> Statuses = FEFServiceStatusRegistry::Collect();
+	const FEFServiceStatus* Found = Statuses.FindByPredicate([](const FEFServiceStatus& Status) { return Status.Service == FName(TEXT("ZZTestService")); });
+	if (TestNotNull(TEXT("the registered service is reported"), Found))
+	{
+		TestTrue(TEXT("its state is reported"), Found->State == EEFServiceState::Degraded);
+	}
+	TestTrue(TEXT("the foundation reports Http itself"), Statuses.ContainsByPredicate([](const FEFServiceStatus& Status) { return Status.Service == FName(TEXT("Http")); }));
+
+	const FString Report = FEFServiceStatusRegistry::FormatReport(true);
+	TestTrue(TEXT("the report names the service and its summary"), Report.Contains(TEXT("ZZTestService")) && Report.Contains(TEXT("retrying")));
+	TestTrue(TEXT("the full report includes details"), Report.Contains(TEXT("Attempts: 3")));
+	TestFalse(TEXT("the brief report leaves details out"), FEFServiceStatusRegistry::FormatReport(false).Contains(TEXT("Attempts: 3")));
+
+	FEFServiceStatusRegistry::Unregister(Handle);
+	TestFalse(TEXT("an unregistered service is gone"), FEFServiceStatusRegistry::FormatReport(false).Contains(TEXT("ZZTestService")));
 	return true;
 }
 

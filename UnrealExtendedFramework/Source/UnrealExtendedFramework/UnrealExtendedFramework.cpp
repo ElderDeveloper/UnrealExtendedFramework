@@ -6,6 +6,9 @@
 #include "HAL/PlatformFilemanager.h"
 #include "Misc/Paths.h"
 #include "Engine/Engine.h"
+#include "EFFoundationVersion.h"
+
+EF_REQUIRE_FOUNDATION_VERSION(1, 0, "UnrealExtendedFramework");
 
 DEFINE_LOG_CATEGORY(LogExtendedFramework);
 

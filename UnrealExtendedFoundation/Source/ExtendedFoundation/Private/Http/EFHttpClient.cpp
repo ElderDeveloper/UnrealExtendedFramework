@@ -13,6 +13,14 @@ namespace EFHttpPrivate
 {
 	constexpr float MaxBackoffSeconds = 30.f;
 	constexpr float MaxRetryAfterSeconds = 60.f;
+
+	/** Operations started and not yet finished, for Extended.Status. Game thread only. */
+	int32 ActiveOperationCount = 0;
+}
+
+int32 FEFHttpOperation::GetActiveCount()
+{
+	return EFHttpPrivate::ActiveOperationCount;
 }
 
 // ─── FEFHttpOperation ───────────────────────────────────────────────────────────
@@ -34,6 +42,7 @@ TSharedRef<FEFHttpOperation> FEFHttpOperation::Start(const FEFHttpRequest& InReq
 {
 	TSharedRef<FEFHttpOperation> Operation = MakeShared<FEFHttpOperation>(InRequest, MoveTemp(InOnComplete));
 	Operation->StartTimeSeconds = FPlatformTime::Seconds();
+	++EFHttpPrivate::ActiveOperationCount;
 	Operation->FinalUrl = EFHttp::BuildUrl(InRequest.Url, InRequest.QueryParameters);
 
 	// Anything that completes while Start() is still running is deferred to the next tick, so
@@ -78,6 +87,7 @@ void FEFHttpOperation::Cancel(bool bNotify)
 	if (!bNotify)
 	{
 		bFinished = true;
+		--EFHttpPrivate::ActiveOperationCount;
 		OnComplete = nullptr;
 		UE_LOG(LogEFHttp, Verbose, TEXT("%s %s cancelled."), EFHttp::VerbToString(Request.Verb), *EFHttp::RedactUrlForLog(FinalUrl));
 		return;
@@ -323,6 +333,7 @@ void FEFHttpOperation::Finish(FEFHttpResponse Response)
 	}
 
 	bFinished = true;
+	--EFHttpPrivate::ActiveOperationCount;
 
 	Response.Attempts = AttemptCount;
 	Response.ElapsedSeconds = static_cast<float>(FPlatformTime::Seconds() - StartTimeSeconds);
