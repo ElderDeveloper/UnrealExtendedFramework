@@ -2,6 +2,7 @@
 #include "UnrealExtendedFramework/Data/EFTraceData.h"
 #include "UnrealExtendedFramework/Data/EFEnums.h"
 #include "GameplayTagContainer.h"
+#include "UnrealExtendedGameplay/Animation/AnimInstance/EGAnimStateProvider.h"
 #include "UnrealExtendedGameplay/Animation/Montage/EGAnimationSet.h"
 #include "EGCoverComponent.generated.h"
 
@@ -28,7 +29,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnCoverStateChanged , bool , CoverS
 
 class UAnimMontage;
 UCLASS(ClassGroup=(Custom), meta=(BlueprintSpawnableComponent))
-class UNREALEXTENDEDGAMEPLAY_API UEGCoverComponent : public UActorComponent
+class UNREALEXTENDEDGAMEPLAY_API UEGCoverComponent : public UActorComponent, public IEGAnimStateProvider
 {
 	GENERATED_BODY()
 
@@ -144,6 +145,9 @@ public:
 	
 	UFUNCTION(BlueprintPure , Category="Cover")
 	FORCEINLINE bool GetIsInMontage() const { return IsInMontage; }
+
+	/** ExtendedGameplay.Anim.State.Cover (+ .Crouched, .Moving, .Left / .Right, .Montage) for UEGAnimInstance. */
+	virtual FGameplayTagContainer GetAnimStateTags_Implementation() const override;
 	
 	
 	

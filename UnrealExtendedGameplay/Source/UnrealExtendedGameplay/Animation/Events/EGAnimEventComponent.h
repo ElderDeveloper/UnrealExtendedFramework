@@ -5,6 +5,7 @@
 #include "Components/ActorComponent.h"
 #include "CoreMinimal.h"
 #include "EGAnimEventReceiver.h"
+#include "UnrealExtendedGameplay/Animation/AnimInstance/EGAnimStateProvider.h"
 
 #include "EGAnimEventComponent.generated.h"
 
@@ -16,10 +17,11 @@ DECLARE_MULTICAST_DELEGATE_OneParam(FEGOnAnimEventNative, const FEGAnimEvent&);
  *
  * Turns anim events into delegates for Blueprint and for code that should not implement the
  * receiver interface itself, and tracks which event windows are open ("can cancel", "combo
- * input", "invulnerable"), so gameplay can ask instead of keeping its own flags.
+ * input", "invulnerable"), so gameplay can ask instead of keeping its own flags. Open windows are
+ * also reported as anim state tags to UEGAnimInstance.
  */
 UCLASS(ClassGroup = (Extended), meta = (BlueprintSpawnableComponent))
-class UNREALEXTENDEDGAMEPLAY_API UEGAnimEventComponent : public UActorComponent, public IEGAnimEventReceiver
+class UNREALEXTENDEDGAMEPLAY_API UEGAnimEventComponent : public UActorComponent, public IEGAnimEventReceiver, public IEGAnimStateProvider
 {
 	GENERATED_BODY()
 
@@ -44,6 +46,9 @@ public:
 	FGameplayTagContainer GetActiveWindowTags() const;
 
 	virtual void ReceiveAnimEvent_Implementation(const FEGAnimEvent& Event) override;
+
+	/** Open window tags, so UEGAnimInstance::HasStateTag can answer "is the combo window open". */
+	virtual FGameplayTagContainer GetAnimStateTags_Implementation() const override { return GetActiveWindowTags(); }
 
 protected:
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;

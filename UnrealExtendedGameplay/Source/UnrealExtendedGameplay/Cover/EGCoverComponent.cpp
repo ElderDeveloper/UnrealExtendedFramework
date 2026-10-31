@@ -534,3 +534,28 @@ void UEGCoverComponent::OnCoverMontageBlendingOut(UAnimMontage* Montage, bool bI
 		IsInMontage = false;
 	}
 }
+
+FGameplayTagContainer UEGCoverComponent::GetAnimStateTags_Implementation() const
+{
+	FGameplayTagContainer Tags;
+	if (!bInCover)
+	{
+		return Tags;
+	}
+
+	Tags.AddTag(TAG_EGAnim_State_Cover);
+	if (bInCoverCrouched)
+	{
+		Tags.AddTag(TAG_EGAnim_State_Cover_Crouched);
+	}
+	if (IsMoving)
+	{
+		Tags.AddTag(TAG_EGAnim_State_Cover_Moving);
+	}
+	Tags.AddTag(CoverDirection == RightSide ? TAG_EGAnim_State_Cover_Right : TAG_EGAnim_State_Cover_Left);
+	if (IsInMontage)
+	{
+		Tags.AddTag(TAG_EGAnim_State_Cover_Montage);
+	}
+	return Tags;
+}
