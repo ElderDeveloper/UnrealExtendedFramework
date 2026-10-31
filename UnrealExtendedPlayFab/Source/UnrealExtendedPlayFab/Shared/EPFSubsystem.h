@@ -8,6 +8,7 @@
 #include "Subsystems/GameInstanceSubsystem.h"
 #include "Interfaces/IHttpRequest.h"
 #include "Interfaces/IHttpResponse.h"
+#include "Http/EFHttpTypes.h"
 #include "Shared/EPFTypes.h"
 #include "EPFSubsystem.generated.h"
 
@@ -121,9 +122,7 @@ private:
 	);
 
 	void HandleHttpResponse(
-		FHttpRequestPtr Request,
-		FHttpResponsePtr Response,
-		bool bConnectedSuccessfully,
+		const FEFHttpResponse& Response,
 		const FString& ApiPath,
 		const FString& RequestBodyString,
 		EEPFAuthMode AuthMode,

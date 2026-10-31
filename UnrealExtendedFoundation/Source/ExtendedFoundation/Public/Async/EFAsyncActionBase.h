@@ -65,9 +65,9 @@ public:
 
 	virtual bool IsActive() const override;
 
-	bool IsFinished() const { return bFinished; }
+	bool IsFinished() const { return bEFFinished; }
 
-	UObject* GetWorldContextObject() const { return WorldContext.Get(); }
+	UObject* GetWorldContextObject() const { return EFContextObject.Get(); }
 
 protected:
 	/**
@@ -119,7 +119,7 @@ protected:
 	template <typename TSubsystem>
 	TSubsystem* GetGameInstanceSubsystem() const
 	{
-		return EF::GetGameInstanceSubsystem<TSubsystem>(WorldContext.Get());
+		return EF::GetGameInstanceSubsystem<TSubsystem>(EFContextObject.Get());
 	}
 
 	/** The subsystem, or null after failing the node with a NotAvailable result. */
@@ -153,13 +153,13 @@ protected:
 private:
 	void HandleTimeout();
 
-	TWeakObjectPtr<UObject> WorldContext;
-	TOptional<FEFResult> PendingFailure;
-	int64 CallContext = 0;
-	FTSTicker::FDelegateHandle TimeoutHandle;
-	float TimeoutSeconds = 0.f;
-	bool bActivated = false;
-	bool bFinished = false;
+	TWeakObjectPtr<UObject> EFContextObject;
+	TOptional<FEFResult> EFPendingFailure;
+	int64 EFCallContextId = 0;
+	FTSTicker::FDelegateHandle EFTimeoutHandle;
+	float EFTimeoutSeconds = 0.f;
+	bool bEFActivated = false;
+	bool bEFFinished = false;
 };
 
 /** Failure pin shared by Extended async nodes. */

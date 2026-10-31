@@ -23,6 +23,10 @@ public:
 	// ── Status Queries ───────────────────────────────────────────────────────
 
 	/** Check if PlayFab is configured (TitleId set in Project Settings) */
+	/** The same outcome as a shared Extended result, for UI and retry logic that handles every service alike. */
+	UFUNCTION(BlueprintPure, Category = "PlayFab|Utility", meta = (DisplayName = "To EF Result (PlayFab Result)", CompactNodeTitle = "->", BlueprintAutocast))
+	static FEFResult PlayFabResultToEFResult(const FEPFResult& Result) { return Result.ToEFResult(); }
+
 	UFUNCTION(BlueprintPure, Category = "PlayFab|Utility", meta = (WorldContext = "WorldContext"))
 	static bool IsPlayFabConfigured();
 

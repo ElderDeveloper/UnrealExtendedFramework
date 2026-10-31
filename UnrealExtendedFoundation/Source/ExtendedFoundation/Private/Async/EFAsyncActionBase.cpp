@@ -4,8 +4,8 @@
 
 void UEFAsyncActionBase::InitAsyncAction(UObject* WorldContextObject, float InTimeoutSeconds)
 {
-	WorldContext = WorldContextObject;
-	TimeoutSeconds = FMath::Max(InTimeoutSeconds, 0.f);
+	EFContextObject = WorldContextObject;
+	EFTimeoutSeconds = FMath::Max(InTimeoutSeconds, 0.f);
 	if (WorldContextObject)
 	{
 		RegisterWithGameInstance(WorldContextObject);
@@ -14,38 +14,38 @@ void UEFAsyncActionBase::InitAsyncAction(UObject* WorldContextObject, float InTi
 
 void UEFAsyncActionBase::Activate()
 {
-	if (bActivated)
+	if (bEFActivated)
 	{
 		return;
 	}
-	bActivated = true;
+	bEFActivated = true;
 
 	// A failure found in the factory waited for this moment, when the output pins are bound.
-	if (PendingFailure.IsSet())
+	if (EFPendingFailure.IsSet())
 	{
-		const FEFResult Failure = PendingFailure.GetValue();
-		PendingFailure.Reset();
+		const FEFResult Failure = EFPendingFailure.GetValue();
+		EFPendingFailure.Reset();
 		BroadcastFailure(Failure);
 		return;
 	}
 
-	if (bFinished)
+	if (bEFFinished)
 	{
 		return;
 	}
 
-	if (TimeoutSeconds > 0.f)
+	if (EFTimeoutSeconds > 0.f)
 	{
 		TWeakObjectPtr<UEFAsyncActionBase> WeakThis(this);
-		TimeoutHandle = FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([WeakThis](float)
+		EFTimeoutHandle = FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([WeakThis](float)
 		{
 			if (UEFAsyncActionBase* This = WeakThis.Get())
 			{
-				This->TimeoutHandle.Reset();
+				This->EFTimeoutHandle.Reset();
 				This->HandleTimeout();
 			}
 			return false;
-		}), TimeoutSeconds);
+		}), EFTimeoutSeconds);
 	}
 
 	ExecuteAction();
@@ -53,7 +53,7 @@ void UEFAsyncActionBase::Activate()
 
 void UEFAsyncActionBase::Cancel()
 {
-	if (bFinished)
+	if (bEFFinished)
 	{
 		return;
 	}
@@ -64,21 +64,21 @@ void UEFAsyncActionBase::Cancel()
 
 bool UEFAsyncActionBase::IsActive() const
 {
-	return bActivated && !bFinished;
+	return bEFActivated && !bEFFinished;
 }
 
 bool UEFAsyncActionBase::FinishAction()
 {
-	if (bFinished)
+	if (bEFFinished)
 	{
 		return false;
 	}
-	bFinished = true;
+	bEFFinished = true;
 
-	if (TimeoutHandle.IsValid())
+	if (EFTimeoutHandle.IsValid())
 	{
-		FTSTicker::GetCoreTicker().RemoveTicker(TimeoutHandle);
-		TimeoutHandle.Reset();
+		FTSTicker::GetCoreTicker().RemoveTicker(EFTimeoutHandle);
+		EFTimeoutHandle.Reset();
 	}
 
 	SetReadyToDestroy();
@@ -92,13 +92,13 @@ void UEFAsyncActionBase::FailAction(const FEFResult& Result)
 		return;
 	}
 
-	if (bActivated)
+	if (bEFActivated)
 	{
 		BroadcastFailure(Result);
 	}
 	else
 	{
-		PendingFailure = Result;
+		EFPendingFailure = Result;
 	}
 }
 
@@ -109,23 +109,23 @@ void UEFAsyncActionBase::FailInvalidArgument(const FString& Problem)
 
 void UEFAsyncActionBase::HandleTimeout()
 {
-	if (bFinished)
+	if (bEFFinished)
 	{
 		return;
 	}
 
 	CancelWork();
-	FailAction(FEFResult::TimedOut(GetResultSource(), TimeoutSeconds));
+	FailAction(FEFResult::TimedOut(GetResultSource(), EFTimeoutSeconds));
 }
 
 void UEFAsyncActionBase::CallWithContext(TFunctionRef<void()> Call)
 {
-	if (CallContext == 0)
+	if (EFCallContextId == 0)
 	{
-		CallContext = EFCallContext::New();
+		EFCallContextId = EFCallContext::New();
 	}
 
-	EFCallContext::FScope Scope(CallContext);
+	EFCallContext::FScope Scope(EFCallContextId);
 	Call();
 }
 
@@ -133,5 +133,5 @@ bool UEFAsyncActionBase::IsResultForThisCall() const
 {
 	// A node that never used CallWithContext opted out of filtering.
 	const int64 Active = EFCallContext::GetActive();
-	return CallContext == 0 || Active == 0 || Active == CallContext;
+	return EFCallContextId == 0 || Active == 0 || Active == EFCallContextId;
 }
