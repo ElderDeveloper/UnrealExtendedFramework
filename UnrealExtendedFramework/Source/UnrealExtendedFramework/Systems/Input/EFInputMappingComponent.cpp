@@ -311,7 +311,9 @@ void UEFInputMappingComponent::RefreshInputMappings()
 
 	if (DesiredMappingContext)
 	{
-		InputSubsystem->AddMappingContext(DesiredMappingContext, DesiredPriority);
+		FModifyContextOptions Options;
+		Options.bNotifyUserSettings = true;
+		InputSubsystem->AddMappingContext(DesiredMappingContext, DesiredPriority, Options);
 		AppliedInputSubsystem = InputSubsystem;
 		AppliedMappingContext = DesiredMappingContext;
 		AppliedPriority = DesiredPriority;
