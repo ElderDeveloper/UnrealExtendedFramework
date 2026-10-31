@@ -94,4 +94,11 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "Extended Framework|Status")
 	static FString GetServiceStatusReport(bool bIncludeDetails = true) { return FEFServiceStatusRegistry::FormatReport(bIncludeDetails); }
+
+	/** Shows or hides the on-screen status overlay (the Extended.Status.Overlay console variable). Does nothing in Shipping. */
+	UFUNCTION(BlueprintCallable, Category = "Extended Framework|Status")
+	static void SetServiceStatusOverlayVisible(bool bVisible);
+
+	UFUNCTION(BlueprintPure, Category = "Extended Framework|Status")
+	static bool IsServiceStatusOverlayVisible();
 };

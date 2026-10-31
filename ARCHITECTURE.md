@@ -45,7 +45,7 @@ GAS · Quest · Steam · PerfSentinel · Atlassian   depend on the foundation on
 | Storing a developer's token or password | `FEFCredentialStore` | `Credentials/EFCredentialStore.h` |
 | Loading soft references without hitches | `EFAssets::Preload`, `EFAssets::Resolve` | `Assets/EFAssetLoading.h` |
 | Finding a subsystem from any object | `EF::GetGameInstanceSubsystem<T>(Context)` | `Subsystems/EFSubsystems.h` |
-| Reporting state to `Extended.Status` | `FEFServiceStatusRegistry::Register` | `Status/EFServiceStatus.h` |
+| Reporting state to `Extended.Status` (console and `Extended.Status.Overlay 1`) | `FEFServiceStatusRegistry::Register` | `Status/EFServiceStatus.h` |
 | Test game instance, waiting, fixtures | `EFTest::FScopedGameInstance`, `FEFWaitUntilCommand` | `Testing/EFTestHelpers.h` |
 | Compile-time foundation version check | `EF_REQUIRE_FOUNDATION_VERSION(1, 0, "Plugin")` | `EFFoundationVersion.h` |
 

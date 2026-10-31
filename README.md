@@ -122,7 +122,7 @@ The small shared base every plugin builds on. It uses only engine modules that e
 - **Async nodes**: `UEFAsyncActionBase` for Blueprint async nodes: finishes exactly once, optional timeout, cancellation through the Async Task pin. `TEFPendingCalls` and `EFCallContext` make sure two identical calls in flight each get their own result.
 - **Settings**: `UEFDeveloperSettings` puts every plugin under **Project Settings → Extended Framework** and warns when a property marked `EFSecret` would ship in a `Default*.ini`.
 - **Credentials**: `FEFCredentialStore` keeps developer tokens and passwords per user, encrypted with DPAPI on Windows and in the Keychain on macOS.
-- **Status**: the `Extended.Status` console command reports every registered service: EOS login, PlayFab session, Steam client and game server, and HTTP requests in flight (`Extended.Status brief` for one line each).
+- **Status**: the `Extended.Status` console command reports every registered service: EOS login, PlayFab session, Steam client and game server, and HTTP requests in flight (`Extended.Status brief` for one line each). `Extended.Status.Overlay 1` draws the same on screen in development builds.
 - **Logging**: the `UnrealExtendedFrameworkLog` module (`EF_LOG` category log files and the Extended Log settings).
 - **Testing**: a test game instance with initialized subsystems, a wait-until latent command, and plugin fixture loading.
 

@@ -5,6 +5,7 @@
 #include "Http/EFHttpClient.h"
 #include "Modules/ModuleManager.h"
 #include "Status/EFServiceStatus.h"
+#include "Status/EFStatusOverlay.h"
 
 DEFINE_LOG_CATEGORY(LogExtendedFoundation);
 
@@ -27,6 +28,7 @@ void FExtendedFoundationModule::StartupModule()
 
 void FExtendedFoundationModule::ShutdownModule()
 {
+	EFStatusOverlay::Shutdown();
 	FEFServiceStatusRegistry::Unregister(HttpStatusHandle);
 	HttpStatusHandle = 0;
 }
