@@ -1,9 +1,9 @@
 {
 	"FileVersion": 3,
-	"Version": 1,
-	"VersionName": "1.0.0",
+	"Version": 2,
+	"VersionName": "1.1.0",
 	"FriendlyName": "Unreal Extended Foundation",
-	"Description": "Lightweight shared base for every Extended plugin: logging, HTTP, JSON, results, async Blueprint nodes, settings, credentials and test helpers. Depends on no other plugin.",
+	"Description": "Lightweight shared base for every Extended plugin: logging, HTTP, JSON, results, async Blueprint nodes, settings, credentials, a message bus, analytics, a store-neutral platform layer and test helpers. Depends on no other plugin.",
 	"Category": "Extended",
 	"CreatedBy": "Kemal Erdem YILMAZ",
 	"CreatedByURL": "moonpunchgames.com",

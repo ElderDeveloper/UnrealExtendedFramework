@@ -23,6 +23,8 @@ public class ExtendedFoundation : ModuleRules
 				"CoreUObject",
 				"Engine",
 				"DeveloperSettings",
+				// Messages/: message bus channels are gameplay tags. An engine module, not a plugin.
+				"GameplayTags",
 				"HTTP",
 				"Json",
 				"JsonUtilities"
