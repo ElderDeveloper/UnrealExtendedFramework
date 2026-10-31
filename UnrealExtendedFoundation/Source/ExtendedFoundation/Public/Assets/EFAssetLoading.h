@@ -38,6 +38,16 @@ namespace EFAssets
 	 */
 	EXTENDEDFOUNDATION_API void ReportSynchronousLoad(const FSoftObjectPath& Path, const TCHAR* Context);
 
+	/**
+	 * The asset if it is already loaded, otherwise null. Never touches the disk: use it where a caller
+	 * can wait for a preload to finish (retry next tick) instead of hitching.
+	 */
+	template <typename T>
+	T* TryResolve(const TSoftObjectPtr<T>& Asset)
+	{
+		return Asset.IsNull() ? nullptr : Asset.Get();
+	}
+
 	/** The asset if it is loaded; otherwise loads it synchronously and reports that. Null for an unset reference. */
 	template <typename T>
 	T* Resolve(const TSoftObjectPtr<T>& Asset, const TCHAR* Context)

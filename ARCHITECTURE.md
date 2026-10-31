@@ -90,6 +90,12 @@ copyright line; third-party and vendored code keeps its original notice.
   in `ExecuteAction`, results go through `FinishAction()` (which returns false if the node already
   finished), and `CancelWork` stops the work. Cancellation, timeouts and failures found before the
   pins are bound come from the base.
+- A node that already exposes its own Blueprint `Cancel` with parameters (for example
+  `Cancel(BlendOutTime)`) cannot move onto `UEFAsyncActionBase` in place: the engine base declares a
+  parameterless `Cancel`, and existing call nodes would lose their pins. Add a new node on the base
+  and mark the old one `DeprecatedFunction` instead.
+- Assets a node or component needs are preloaded with `EFAssets::Preload` when it starts and read
+  with `EFAssets::Resolve` (blocking fallback, reported) or `EFAssets::TryResolve` (never blocks).
 - Report outcomes as `FEFResult` or convert to it (`ToEFResult()`), so UI and retry logic work the
   same for every service.
 

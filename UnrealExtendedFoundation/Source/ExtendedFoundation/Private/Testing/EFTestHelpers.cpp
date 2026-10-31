@@ -6,6 +6,7 @@
 
 #include "Engine/Engine.h"
 #include "Engine/World.h"
+#include "TimerManager.h"
 #include "HAL/PlatformTime.h"
 #include "Interfaces/IPluginManager.h"
 #include "Misc/FileHelper.h"
@@ -45,6 +46,14 @@ EFTest::FScopedGameInstance::~FScopedGameInstance()
 UWorld* EFTest::FScopedGameInstance::GetWorld() const
 {
 	return GameInstance.IsValid() ? GameInstance->GetWorld() : nullptr;
+}
+
+void EFTest::FScopedGameInstance::TickTimers(float DeltaSeconds)
+{
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().Tick(DeltaSeconds);
+	}
 }
 
 bool EFTest::LoadPluginFixture(const FString& PluginName, const FString& RelativePath, FString& OutText)
