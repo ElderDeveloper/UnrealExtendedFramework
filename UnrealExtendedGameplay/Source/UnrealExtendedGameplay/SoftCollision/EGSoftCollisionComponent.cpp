@@ -482,6 +482,13 @@ void UEGSoftCollisionComponent::ApplyScanResult(const FEGSoftPushResult& Result,
 		}
 	}
 
+	// An active bump plays out its duration and decay; separation only takes over as it ends.
+	if (Active.bActive && Active.Command.Band == EEGSoftPushBand::Bump && Band != EEGSoftPushBand::Bump
+		&& Active.EndTime - Now > Tuning.ReissueLeadTime)
+	{
+		return;
+	}
+
 	// Reissue rule: keep the active push while it still says the same thing.
 	if (Active.bActive && Band != EEGSoftPushBand::Bump && Now < Active.EndTime)
 	{
@@ -858,13 +865,16 @@ UEGSoftCollisionComponent::ERejectReason UEGSoftCollisionComponent::ValidateRequ
 	const UCharacterMovementComponent* Movement = GetCharacterMovement();
 	if (const FNetworkPredictionData_Server_Character* ServerData = Movement ? Movement->GetPredictionData_Server_Character() : nullptr)
 	{
+		// A client timestamp reset moves the client's clock back by MinTimeBetweenTimeStampResets. A
+		// request that far from the server's clock in either direction comes from the other side of a
+		// reset the server has not processed yet (or has just processed): apply it without a start time.
 		const float Delta = Request.ClientTimeStamp - ServerData->CurrentClientTimeStamp;
-		if (Delta < -Network.MaxRequestAge)
+		const float EpochGap = 0.5f * FMath::Max(Movement->MinTimeBetweenTimeStampResets, 2.0f * Network.MaxRequestAge);
+		bOutEpochMismatch = FMath::Abs(Delta) > EpochGap;
+		if (!bOutEpochMismatch && Delta < -Network.MaxRequestAge)
 		{
 			return ERejectReason::Stale;
 		}
-		// Far ahead: the client reset its timestamps and the server has not seen a move of the new epoch yet.
-		bOutEpochMismatch = Delta > Network.MaxRequestAge;
 	}
 
 	if (Request.Band == EEGSoftPushBand::Bump && GetGameTime() - ServerState.LastBumpTime < Tuning.BumpCooldown * 0.5f)
@@ -931,7 +941,10 @@ void UEGSoftCollisionComponent::ProcessServerRequest(const FEGSoftPushRequest& R
 	// server switches after processing the client move that ends at this push's start time.
 	if (Active.bActive && Active.Driver)
 	{
-		if (Command.bHasStartTime && !bLate)
+		// Usually the move ending at the start time was already processed when the request arrives
+		// (the client sent it last frame); then the boundary has passed and the old push goes now.
+		const bool bBoundaryAhead = Command.bHasStartTime && !bLate && CurrentClientTime < Command.StartTime - UE_KINDA_SMALL_NUMBER;
+		if (bBoundaryAhead)
 		{
 			FEGSoftPushScheduledRemoval& Removal = ServerState.Removals.AddDefaulted_GetRef();
 			Removal.Driver = Active.Driver;
@@ -951,6 +964,7 @@ void UEGSoftCollisionComponent::ProcessServerRequest(const FEGSoftPushRequest& R
 		RejectRequest(Request.Sequence, ERejectReason::DriverFailed);
 		return;
 	}
+	UpdateFrameUpdateRegistration();
 
 	LastAcceptedSequence = Request.Sequence;
 	MARK_PROPERTY_DIRTY_FROM_NAME(UEGSoftCollisionComponent, LastAcceptedSequence, this);

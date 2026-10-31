@@ -50,12 +50,12 @@ void FEGRootMotionSource_SoftPush::PrepareRootMotion(float SimulationTime, float
 {
 	RootMotionParams.Clear();
 
-	const float CurrentTime = GetTime();
+	const float TimeBefore = GetTime();
 	FVector Velocity = GetPushVelocity();
 	if (Duration > UE_SMALL_NUMBER)
 	{
-		const float AlphaStart = CurrentTime / Duration;
-		const float AlphaEnd = (CurrentTime + SimulationTime) / Duration;
+		const float AlphaStart = TimeBefore / Duration;
+		const float AlphaEnd = (TimeBefore + SimulationTime) / Duration;
 		Velocity *= EGSoftCollision::EvaluateDecayAverage(Decay, AlphaStart, AlphaEnd);
 	}
 
@@ -68,7 +68,7 @@ void FEGRootMotionSource_SoftPush::PrepareRootMotion(float SimulationTime, float
 	}
 	RootMotionParams.Set(NewTransform);
 
-	SetTime(CurrentTime + SimulationTime);
+	SetTime(TimeBefore + SimulationTime);
 }
 
 bool FEGRootMotionSource_SoftPush::NetSerialize(FArchive& Ar, UPackageMap* Map, bool& bOutSuccess)

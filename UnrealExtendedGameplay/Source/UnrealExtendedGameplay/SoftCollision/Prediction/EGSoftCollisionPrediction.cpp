@@ -111,10 +111,8 @@ void FEGSoftCollisionSafetyLease::Acquire(UCharacterMovementComponent& Movement,
 	}
 
 	Movement.bServerAcceptClientAuthoritativePosition = true;
-	if (Level == EEGSoftCollisionSafetyLevel::ClientAuthoritativeWindow)
-	{
-		Movement.bIgnoreClientMovementErrorChecksAndCorrection = true;
-	}
+	// Lowered to Level 1 (fallback or a changed setting): the error checks must come back.
+	Movement.bIgnoreClientMovementErrorChecksAndCorrection = Level == EEGSoftCollisionSafetyLevel::ClientAuthoritativeWindow ? true : bSavedIgnore;
 }
 
 void FEGSoftCollisionSafetyLease::Release(UCharacterMovementComponent& Movement)
