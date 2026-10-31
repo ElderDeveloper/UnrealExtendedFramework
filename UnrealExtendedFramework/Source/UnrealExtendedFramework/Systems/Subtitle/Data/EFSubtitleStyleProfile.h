@@ -1,3 +1,5 @@
+// Copyright Moon Punch Games. All Rights Reserved.
+
 // EFSubtitleStyleProfile.h - Swappable accessibility / visual style profile
 #pragma once
 

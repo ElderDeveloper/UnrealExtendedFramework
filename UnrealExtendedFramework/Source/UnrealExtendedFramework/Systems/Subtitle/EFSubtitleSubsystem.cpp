@@ -1,4 +1,6 @@
-﻿// EFSubtitleSubsystem.cpp
+﻿// Copyright Moon Punch Games. All Rights Reserved.
+
+// EFSubtitleSubsystem.cpp
 
 #include "EFSubtitleSubsystem.h"
 #include "UnrealExtendedFramework/Systems/Subtitle/Data/EFSubtitleProjectSettings.h"

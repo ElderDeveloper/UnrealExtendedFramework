@@ -1,3 +1,5 @@
+// Copyright Moon Punch Games. All Rights Reserved.
+
 // EFLoadingScreenSettings.h — Project-wide loading screen configuration (DeveloperSettings)
 #pragma once
 

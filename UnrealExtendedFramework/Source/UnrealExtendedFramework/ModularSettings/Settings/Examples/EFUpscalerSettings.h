@@ -1,3 +1,5 @@
+// Copyright Moon Punch Games. All Rights Reserved.
+
 // EFUpscalerSettings.h
 // Modular Settings for image upscalers (DLSS, FSR, XeSS), frame generation, and resolution scale.
 // Uses compile-time guards: WITH_DLSS, WITH_FSR, WITH_XESS (set by UnrealExtendedFramework.Build.cs).

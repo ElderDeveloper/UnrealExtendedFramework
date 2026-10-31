@@ -1,4 +1,6 @@
-﻿// EFSubtitleProjectSettings.h — Project-wide subtitle configuration (DeveloperSettings)
+﻿// Copyright Moon Punch Games. All Rights Reserved.
+
+// EFSubtitleProjectSettings.h — Project-wide subtitle configuration (DeveloperSettings)
 #pragma once
 
 #include "CoreMinimal.h"

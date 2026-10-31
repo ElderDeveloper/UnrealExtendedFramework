@@ -1,4 +1,6 @@
-﻿// EFSubtitleAudioPlayer.h - Swappable subtitle voice playback
+﻿// Copyright Moon Punch Games. All Rights Reserved.
+
+// EFSubtitleAudioPlayer.h - Swappable subtitle voice playback
 #pragma once
 
 #include "CoreMinimal.h"

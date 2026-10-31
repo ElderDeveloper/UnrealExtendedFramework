@@ -1,3 +1,5 @@
+// Copyright Moon Punch Games. All Rights Reserved.
+
 // EFLoadingScreenSubsystem.cpp
 #include "EFLoadingScreenSubsystem.h"
 

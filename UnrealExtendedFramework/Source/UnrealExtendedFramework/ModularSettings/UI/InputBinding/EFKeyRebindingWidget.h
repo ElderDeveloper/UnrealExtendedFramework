@@ -1,3 +1,5 @@
+// Copyright Moon Punch Games. All Rights Reserved.
+
 // EFKeyRebindingWidget.h
 // A widget that allows players to rebind keys for input actions
 

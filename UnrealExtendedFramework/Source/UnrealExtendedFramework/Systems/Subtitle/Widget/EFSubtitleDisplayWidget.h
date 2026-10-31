@@ -1,4 +1,6 @@
-﻿// EFSubtitleDisplayWidget.h — Subtitle display widget (swappable)
+﻿// Copyright Moon Punch Games. All Rights Reserved.
+
+// EFSubtitleDisplayWidget.h — Subtitle display widget (swappable)
 #pragma once
 
 #include "CoreMinimal.h"

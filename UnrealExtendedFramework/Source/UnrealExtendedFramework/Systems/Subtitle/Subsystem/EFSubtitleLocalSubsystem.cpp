@@ -1,4 +1,6 @@
-﻿// EFSubtitleLocalSubsystem.cpp
+﻿// Copyright Moon Punch Games. All Rights Reserved.
+
+// EFSubtitleLocalSubsystem.cpp
 #include "EFSubtitleLocalSubsystem.h"
 
 #include "Blueprint/UserWidget.h"

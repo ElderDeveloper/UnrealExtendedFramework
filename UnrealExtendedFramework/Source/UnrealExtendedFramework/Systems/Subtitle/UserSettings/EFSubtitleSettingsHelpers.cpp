@@ -1,4 +1,6 @@
-﻿// EFSubtitleSettingsHelpers.cpp
+﻿// Copyright Moon Punch Games. All Rights Reserved.
+
+// EFSubtitleSettingsHelpers.cpp
 #include "EFSubtitleSettingsHelpers.h"
 
 #include "Engine/GameInstance.h"

@@ -1,4 +1,6 @@
-﻿// EFSubtitleSettingsHelpers.h - Resolve LocalSubsystem from ModularSettings
+﻿// Copyright Moon Punch Games. All Rights Reserved.
+
+// EFSubtitleSettingsHelpers.h - Resolve LocalSubsystem from ModularSettings
 #pragma once
 
 #include "CoreMinimal.h"

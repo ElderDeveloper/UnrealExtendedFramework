@@ -1,3 +1,5 @@
+// Copyright Moon Punch Games. All Rights Reserved.
+
 // EFInputBindingSubsystem.h
 // A Blueprint-friendly facade for Enhanced Input user key mappings.
 

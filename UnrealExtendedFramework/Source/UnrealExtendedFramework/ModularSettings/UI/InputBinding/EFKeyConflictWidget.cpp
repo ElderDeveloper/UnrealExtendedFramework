@@ -1,3 +1,5 @@
+// Copyright Moon Punch Games. All Rights Reserved.
+
 // EFKeyConflictWidget.cpp
 // Implementation of the EFKeyConflictWidget class
 
