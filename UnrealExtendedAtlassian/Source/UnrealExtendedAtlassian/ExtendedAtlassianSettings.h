@@ -3,7 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Engine/DeveloperSettings.h"
+#include "Settings/EFDeveloperSettings.h"
 #include "ExtendedAtlassianSettings.generated.h"
 
 /** A named JQL query offered in the issue browser's preset dropdown. */
@@ -36,19 +36,19 @@ struct FExtendedAtlassianBoardColumnMapping
 
 /**
  * Project-level Atlassian configuration, shared by the whole team through Config/DefaultGame.ini.
+ * The page sits under Project Settings > Extended Framework > Extended Atlassian.
  *
  * Credentials are deliberately absent — the API token is per-user and lives outside the repository.
  * See FExtendedAtlassianCredentialStore.
  */
 UCLASS(Config = Game, DefaultConfig, meta = (DisplayName = "Extended Atlassian"))
-class UNREALEXTENDEDATLASSIAN_API UExtendedAtlassianSettings : public UDeveloperSettings
+class UNREALEXTENDEDATLASSIAN_API UExtendedAtlassianSettings : public UEFDeveloperSettings
 {
 	GENERATED_BODY()
 
 public:
 	UExtendedAtlassianSettings();
 
-	virtual FName GetCategoryName() const override;
 	virtual FName GetSectionName() const override;
 	virtual void PostInitProperties() override;
 
@@ -72,7 +72,7 @@ public:
 	UPROPERTY(EditAnywhere, Transient, Category = "Credentials")
 	FString AccountEmail;
 
-	/** Atlassian Cloud API token. Stored DPAPI-encrypted per-user outside the repository, never in committed config. */
+	/** Atlassian Cloud API token. Stored per-user in the OS credential store (DPAPI on Windows, Keychain on macOS), never in committed config. */
 	UPROPERTY(EditAnywhere, Transient, Category = "Credentials", meta = (PasswordField = true))
 	FString ApiToken;
 
@@ -110,7 +110,7 @@ public:
 	// that actually works.
 	// ---------------------------------------------------------------------------------------------
 
-	/** Write the e-mail and token to the per-user credential file. */
+	/** Store the e-mail and token in the per-user credential store. */
 	void SaveCredentials();
 
 	/** Verify the stored credentials against /rest/api/3/myself, then fill the dropdown lists. */
@@ -125,7 +125,7 @@ public:
 	/** Re-read projects, issue types, priorities and spaces from Atlassian to fill the dropdowns. */
 	void RefreshAtlassianLists();
 
-	/** Reveal the credential file in the file browser. */
+	/** Reveal the per-user folder holding the account file. The token itself is in the OS credential store. */
 	void ShowCredentialFileLocation();
 #endif
 

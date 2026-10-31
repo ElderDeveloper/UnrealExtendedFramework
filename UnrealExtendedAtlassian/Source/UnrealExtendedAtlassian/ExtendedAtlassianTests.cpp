@@ -3,6 +3,7 @@
 #if WITH_DEV_AUTOMATION_TESTS
 
 #include "ExtendedAtlassianAdf.h"
+#include "ExtendedAtlassianClient.h"
 #include "ExtendedAtlassianCredentials.h"
 #include "ExtendedAtlassianDocBlock.h"
 #include "ExtendedAtlassianDocumentStore.h"
@@ -11,18 +12,23 @@
 #include "ExtendedAtlassianMarkdown.h"
 #include "ExtendedAtlassianModelUtils.h"
 #include "ExtendedAtlassianMultipart.h"
+#include "ExtendedAtlassianSettings.h"
 #include "ExtendedAtlassianStorage.h"
 #include "ExtendedAtlassianUserCache.h"
 #include "ExtendedAtlassianWorkspaceData.h"
 
+#include "Credentials/EFCredentialStore.h"
 #include "Dom/JsonObject.h"
 #include "HAL/FileManager.h"
+#include "HAL/PlatformTime.h"
+#include "Http/EFHttpMock.h"
 #include "Misc/AutomationTest.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Guid.h"
 #include "Misc/Paths.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
+#include "Testing/EFTestHelpers.h"
 
 /**
  * Coverage for the four pieces most likely to break silently: they are pure functions with exact
@@ -45,6 +51,35 @@ namespace ExtendedAtlassianTestsPrivate
 		FJsonSerializer::Deserialize(Reader, Object);
 		return Object;
 	}
+
+	/**
+	 * Points the account file, the legacy credentials.ini and FEFCredentialStore at a throwaway
+	 * folder for its lifetime, so running the suite never touches the user's stored token.
+	 */
+	struct FScopedCredentialSandbox
+	{
+		FString Root;
+
+		FScopedCredentialSandbox()
+			: Root(FPaths::Combine(
+				FPaths::AutomationTransientDir(),
+				TEXT("ExtendedAtlassianTests"),
+				FGuid::NewGuid().ToString(EGuidFormats::Digits)))
+		{
+			FEFCredentialStore::SetFileStoreRootForTests(FPaths::Combine(Root, TEXT("Secrets")));
+			FExtendedAtlassianCredentialStore::SetStoreDirectoryForTests(Root);
+		}
+
+		~FScopedCredentialSandbox()
+		{
+			FExtendedAtlassianCredentialStore::SetStoreDirectoryForTests(FString());
+			FEFCredentialStore::SetFileStoreRootForTests(FString());
+			IFileManager::Get().DeleteDirectory(*Root, /*RequireExists*/ false, /*Tree*/ true);
+		}
+
+		FScopedCredentialSandbox(const FScopedCredentialSandbox&) = delete;
+		FScopedCredentialSandbox& operator=(const FScopedCredentialSandbox&) = delete;
+	};
 }
 
 // --- ADF ---------------------------------------------------------------------
@@ -1039,30 +1074,61 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FExtendedAtlassianCredentialStoreTest::RunTest(const FString& Parameters)
 {
 	(void)Parameters;
+	using namespace ExtendedAtlassianTestsPrivate;
 
 	// Never the real store: running the suite must not clobber the user's stored token.
-	const FString TempPath = FPaths::Combine(
-		FPaths::ProjectIntermediateDir(),
-		TEXT("ExtendedAtlassianTests"),
-		FGuid::NewGuid().ToString(EGuidFormats::Digits) + TEXT(".ini"));
+	const FScopedCredentialSandbox Sandbox;
+	const FString AccountPath = FExtendedAtlassianCredentialStore::GetStorePath();
+	TestTrue(TEXT("The sandbox redirects the account file"), AccountPath.StartsWith(Sandbox.Root));
 
 	FExtendedAtlassianCredentials Written;
 	Written.Email = TEXT("tester@example.com");
 	Written.ApiToken = TEXT("token-with-symbols-!@#$%^&*()_+-=[]{}|;:,.<>?");
 
-	TestTrue(TEXT("Credentials save"), FExtendedAtlassianCredentialStore::SaveTo(TempPath, Written));
+	TestTrue(TEXT("Credentials save"), FExtendedAtlassianCredentialStore::SaveTo(AccountPath, Written));
 
 	FExtendedAtlassianCredentials Read;
-	TestTrue(TEXT("Credentials load"), FExtendedAtlassianCredentialStore::LoadFrom(TempPath, Read));
+	TestTrue(TEXT("Credentials load"), FExtendedAtlassianCredentialStore::LoadFrom(AccountPath, Read));
 	TestEqual(TEXT("E-mail round trips"), Read.Email, Written.Email);
 	TestEqual(TEXT("Token round trips intact"), Read.ApiToken, Written.ApiToken);
+	TestTrue(TEXT("Stored credentials are reported"), FExtendedAtlassianCredentialStore::HasStoredCredentials());
+
+	{
+		// The account file names the account; the token lives only in the credential store.
+		FString AccountFile;
+		TestTrue(TEXT("Account file is written"), FFileHelper::LoadFileToString(AccountFile, *AccountPath));
+		TestTrue(TEXT("Account file records the e-mail"), AccountFile.Contains(Written.Email));
+		TestFalse(TEXT("Account file never holds the token"), AccountFile.Contains(Written.ApiToken));
+	}
 
 	if (FExtendedAtlassianCredentialStore::IsEncryptionAvailable())
 	{
 		// The point of the store is that the token is not sitting on disk in the clear.
-		FString RawFile;
-		FFileHelper::LoadFileToString(RawFile, *TempPath);
-		TestFalse(TEXT("Token is not stored in plain text"), RawFile.Contains(Written.ApiToken));
+		TArray<FString> Files;
+		IFileManager::Get().FindFilesRecursive(Files, *Sandbox.Root, TEXT("*"), /*Files*/ true, /*Directories*/ false);
+		for (const FString& File : Files)
+		{
+			FString RawFile;
+			FFileHelper::LoadFileToString(RawFile, *File);
+			TestFalse(TEXT("Token is not stored in plain text"), RawFile.Contains(Written.ApiToken));
+		}
+	}
+
+	{
+		// Saving a different account replaces the first one, token included.
+		FExtendedAtlassianCredentials Replacement;
+		Replacement.Email = TEXT("other@example.com");
+		Replacement.ApiToken = TEXT("second-token");
+		TestTrue(TEXT("Replacement credentials save"), FExtendedAtlassianCredentialStore::Save(Replacement));
+
+		FExtendedAtlassianCredentials Reloaded;
+		TestTrue(TEXT("Replacement credentials load"), FExtendedAtlassianCredentialStore::Load(Reloaded));
+		TestEqual(TEXT("The newest account wins"), Reloaded.Email, Replacement.Email);
+		TestEqual(TEXT("The newest token wins"), Reloaded.ApiToken, Replacement.ApiToken);
+
+		FString ReplacedToken;
+		TestFalse(TEXT("The replaced account's token is deleted"),
+			FEFCredentialStore::Load(TEXT("UnrealExtendedAtlassian"), Written.Email, ReplacedToken));
 	}
 
 	{
@@ -1070,10 +1136,75 @@ bool FExtendedAtlassianCredentialStoreTest::RunTest(const FString& Parameters)
 		FExtendedAtlassianCredentials Incomplete;
 		Incomplete.Email = TEXT("someone@example.com");
 		TestFalse(TEXT("Incomplete credentials are refused"),
-			FExtendedAtlassianCredentialStore::SaveTo(TempPath + TEXT(".partial"), Incomplete));
+			FExtendedAtlassianCredentialStore::SaveTo(AccountPath + TEXT(".partial"), Incomplete));
 	}
 
-	IFileManager::Get().Delete(*TempPath, false, true, true);
+	FExtendedAtlassianCredentialStore::Clear();
+	TestFalse(TEXT("Clear leaves nothing stored"), FExtendedAtlassianCredentialStore::HasStoredCredentials());
+
+	FExtendedAtlassianCredentials Cleared;
+	TestFalse(TEXT("Nothing loads after Clear"), FExtendedAtlassianCredentialStore::Load(Cleared));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FExtendedAtlassianCredentialMigrationTest,
+	"ExtendedAtlassian.Credentials.LegacyMigration",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FExtendedAtlassianCredentialMigrationTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	using namespace ExtendedAtlassianTestsPrivate;
+
+	const FScopedCredentialSandbox Sandbox;
+	const FString LegacyPath = FExtendedAtlassianCredentialStore::GetLegacyStorePath();
+	const FString AccountPath = FExtendedAtlassianCredentialStore::GetStorePath();
+	const FString LegacyEmail = TEXT("legacy@example.com");
+	const FString LegacyToken = TEXT("legacy-token-value");
+
+	// What earlier versions wrote on platforms without DPAPI: the token in the ini, unencrypted.
+	TestTrue(TEXT("Legacy credentials.ini is written"), FFileHelper::SaveStringToFile(
+		FString::Printf(TEXT("[Atlassian]\nEmail=%s\nToken=%s\nEncrypted=False\n"), *LegacyEmail, *LegacyToken),
+		*LegacyPath));
+	TestTrue(TEXT("A legacy file counts as stored credentials"), FExtendedAtlassianCredentialStore::HasStoredCredentials());
+
+	FExtendedAtlassianCredentials Migrated;
+	TestTrue(TEXT("Load reads the legacy credentials"), FExtendedAtlassianCredentialStore::Load(Migrated));
+	TestEqual(TEXT("Migrated e-mail"), Migrated.Email, LegacyEmail);
+	TestEqual(TEXT("Migrated token"), Migrated.ApiToken, LegacyToken);
+	TestFalse(TEXT("The legacy file is deleted once moved"), IFileManager::Get().FileExists(*LegacyPath));
+
+	FString StoredToken;
+	TestTrue(TEXT("The token is now in the credential store"),
+		FEFCredentialStore::Load(TEXT("UnrealExtendedAtlassian"), LegacyEmail, StoredToken));
+	TestEqual(TEXT("The stored token is the legacy one"), StoredToken, LegacyToken);
+
+	FString AccountFile;
+	TestTrue(TEXT("The account file is written"), FFileHelper::LoadFileToString(AccountFile, *AccountPath));
+	TestFalse(TEXT("The account file never holds the token"), AccountFile.Contains(LegacyToken));
+
+	FExtendedAtlassianCredentials Reloaded;
+	TestTrue(TEXT("A second load reads the store"), FExtendedAtlassianCredentialStore::Load(Reloaded));
+	TestEqual(TEXT("The same token after migration"), Reloaded.ApiToken, LegacyToken);
+	TestFalse(TEXT("Nothing is left to migrate"), FExtendedAtlassianCredentialStore::MigrateLegacyStore(LegacyPath, AccountPath));
+
+	{
+		// A legacy file that cannot be read stays for the user to replace; saving replaces it.
+		FFileHelper::SaveStringToFile(TEXT("[Atlassian]\nEmail=broken@example.com\n"), *LegacyPath);
+		TestFalse(TEXT("An unreadable legacy file is not migrated"),
+			FExtendedAtlassianCredentialStore::MigrateLegacyStore(LegacyPath, AccountPath));
+		TestTrue(TEXT("An unreadable legacy file is kept"), IFileManager::Get().FileExists(*LegacyPath));
+
+		FExtendedAtlassianCredentials Fresh;
+		Fresh.Email = TEXT("fresh@example.com");
+		Fresh.ApiToken = TEXT("fresh-token");
+		TestTrue(TEXT("New credentials save"), FExtendedAtlassianCredentialStore::Save(Fresh));
+		TestFalse(TEXT("Saving removes the unreadable legacy file"), IFileManager::Get().FileExists(*LegacyPath));
+	}
+
+	FExtendedAtlassianCredentialStore::Clear();
+	TestFalse(TEXT("Clear leaves nothing stored"), FExtendedAtlassianCredentialStore::HasStoredCredentials());
 	return true;
 }
 
@@ -1176,6 +1307,147 @@ bool FExtendedAtlassianArchivePageModelTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("Archived page leaves the page model"), Snapshot.Pages.Num(), 0);
 	TestEqual(TEXT("Archived page leaves the document tree"), Snapshot.DocumentTree.Num(), 0);
 	TestEqual(TEXT("Archived page comments leave the model"), Snapshot.CommentCollections.Num(), 0);
+	return true;
+}
+
+// --- Client transport --------------------------------------------------------
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FExtendedAtlassianClientRetryAfterTest,
+	"ExtendedAtlassian.Client.RetryAfterThenSuccess",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FExtendedAtlassianClientRetryAfterTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	using namespace ExtendedAtlassianTestsPrivate;
+
+	UExtendedAtlassianSettings* Settings = UExtendedAtlassianSettings::GetMutable();
+	if (!TestNotNull(TEXT("Settings are available"), Settings))
+	{
+		return false;
+	}
+
+	// Shared with the latent commands below, which run on later frames.
+	struct FState
+	{
+		TSharedPtr<FEFScopedHttpMock> Mock;
+		TSharedPtr<FExtendedAtlassianClient> Client;
+		FString PreviousSiteUrl;
+		int32 PreviousMaxRetries = 0;
+		double StartSeconds = 0.0;
+		int32 GetCompletions = 0;
+		double GetElapsedSeconds = 0.0;
+		FExtendedAtlassianResponse GetResponse;
+		int32 PostCompletions = 0;
+		FExtendedAtlassianResponse PostResponse;
+	};
+	const TSharedRef<FState> State = MakeShared<FState>();
+
+	// Restored by the last latent command. The test site never resolves: the mock answers everything.
+	State->PreviousSiteUrl = Settings->SiteUrl;
+	State->PreviousMaxRetries = Settings->MaxRetries;
+	Settings->SiteUrl = TEXT("https://ea-client-test.example.invalid");
+	Settings->MaxRetries = 2;
+
+	State->Mock = MakeShared<FEFScopedHttpMock>();
+
+	// A 429 whose Retry-After (2s, sent lower-case) is longer than the first backoff step (1s), then a 200.
+	TMap<FString, FString> RateLimitHeaders;
+	RateLimitHeaders.Add(TEXT("retry-after"), TEXT("2"));
+	(*State->Mock)->AddResponse(EEFHttpVerb::Get, TEXT("/rest/api/3/ea-client-get"), 429,
+		TEXT("{\"message\":\"Rate limit exceeded\"}"), RateLimitHeaders, /*bOnce*/ true);
+	(*State->Mock)->AddResponse(EEFHttpVerb::Get, TEXT("/rest/api/3/ea-client-get"), 200, TEXT("{\"ok\":true}"));
+
+	// This client retries POST as well, unlike the foundation's idempotent-only default.
+	(*State->Mock)->AddResponse(EEFHttpVerb::Post, TEXT("/rest/api/3/ea-client-post"), 503,
+		FString(), TMap<FString, FString>(), /*bOnce*/ true);
+	(*State->Mock)->AddResponse(EEFHttpVerb::Post, TEXT("/rest/api/3/ea-client-post"), 201, TEXT("{\"id\":\"10001\"}"));
+
+	{
+		// The client keeps credentials in memory, so the sandbox can go before anything is sent.
+		const FScopedCredentialSandbox Sandbox;
+		FExtendedAtlassianCredentials TestCredentials;
+		TestCredentials.Email = TEXT("tester@example.com");
+		TestCredentials.ApiToken = TEXT("test-token");
+		TestTrue(TEXT("Test credentials save into the sandbox"), FExtendedAtlassianCredentialStore::Save(TestCredentials));
+
+		State->Client = MakeShared<FExtendedAtlassianClient>();
+		State->Client->ReloadCredentials();
+	}
+	TestTrue(TEXT("The client is ready"), State->Client->IsReady());
+
+	const FString JiraBase = Settings->GetJiraApiBaseUrl();
+	State->StartSeconds = FPlatformTime::Seconds();
+
+	State->Client->Get(JiraBase + TEXT("/ea-client-get"), FExtendedAtlassianResponseDelegate::CreateLambda(
+		[State](const FExtendedAtlassianResponse& Received)
+		{
+			++State->GetCompletions;
+			State->GetResponse = Received;
+			State->GetElapsedSeconds = FPlatformTime::Seconds() - State->StartSeconds;
+		}));
+
+	State->Client->PostJson(JiraBase + TEXT("/ea-client-post"), TEXT("{\"fields\":{}}"), FExtendedAtlassianResponseDelegate::CreateLambda(
+		[State](const FExtendedAtlassianResponse& Received)
+		{
+			++State->PostCompletions;
+			State->PostResponse = Received;
+		}));
+
+	TestEqual(TEXT("Nothing completes inside the call"), State->GetCompletions + State->PostCompletions, 0);
+
+	ADD_LATENT_AUTOMATION_COMMAND(FEFWaitUntilCommand(this, TEXT("the retried Atlassian requests"), [State]()
+	{
+		return State->GetCompletions > 0 && State->PostCompletions > 0;
+	}));
+
+	ADD_LATENT_AUTOMATION_COMMAND(FEFRunLatentCommand([this, State]()
+	{
+		TestEqual(TEXT("The GET completes exactly once"), State->GetCompletions, 1);
+		TestTrue(TEXT("The GET succeeds after the 429"), State->GetResponse.IsSuccess());
+		TestEqual(TEXT("The delivered status is the retry's"), State->GetResponse.HttpStatus, 200);
+		bool bOk = false;
+		TestTrue(TEXT("The delivered body is parsed"),
+			State->GetResponse.Object.IsValid() && State->GetResponse.Object->TryGetBoolField(TEXT("ok"), bOk) && bOk);
+		TestTrue(TEXT("The retry waited for Retry-After, not the shorter backoff"), State->GetElapsedSeconds >= 1.9);
+		TestEqual(TEXT("The GET was sent twice"), (*State->Mock)->CountRequests(TEXT("/ea-client-get")), 2);
+
+		TestEqual(TEXT("The POST completes exactly once"), State->PostCompletions, 1);
+		TestTrue(TEXT("The POST succeeds after the 503"), State->PostResponse.IsSuccess());
+		TestEqual(TEXT("The POST delivers the retry's status"), State->PostResponse.HttpStatus, 201);
+		TestEqual(TEXT("The POST was sent twice"), (*State->Mock)->CountRequests(TEXT("/ea-client-post")), 2);
+
+		for (const FEFHttpMockRecordedRequest& Recorded : (*State->Mock)->GetRequests())
+		{
+			if (!Recorded.Url.Contains(TEXT("/ea-client-")))
+			{
+				// Anything else the editor sent while the mock was installed.
+				continue;
+			}
+
+			TestTrue(TEXT("Basic auth is sent"), Recorded.Headers.FindRef(TEXT("Authorization")).StartsWith(TEXT("Basic ")));
+			TestEqual(TEXT("JSON is accepted"), Recorded.Headers.FindRef(TEXT("Accept")), FString(TEXT("application/json")));
+			if (Recorded.Verb == EEFHttpVerb::Post)
+			{
+				TestEqual(TEXT("The POST declares JSON"), Recorded.Headers.FindRef(TEXT("Content-Type")), FString(TEXT("application/json")));
+				TestEqual(TEXT("The POST body is the UTF-8 JSON"), ExtendedAtlassianTestsPrivate::BytesToString(Recorded.BodyBytes), FString(TEXT("{\"fields\":{}}")));
+			}
+			else
+			{
+				TestFalse(TEXT("A GET carries no Content-Type"), Recorded.Headers.Contains(TEXT("Content-Type")));
+			}
+		}
+
+		if (UExtendedAtlassianSettings* Restored = UExtendedAtlassianSettings::GetMutable())
+		{
+			Restored->SiteUrl = State->PreviousSiteUrl;
+			Restored->MaxRetries = State->PreviousMaxRetries;
+		}
+		State->Client.Reset();
+		State->Mock.Reset();
+	}));
+
 	return true;
 }
 
