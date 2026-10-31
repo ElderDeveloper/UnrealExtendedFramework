@@ -3,9 +3,9 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Async/EFAsyncActionBase.h"
 #include "Http/EFHttpClient.h"
 #include "Http/EFHttpTypes.h"
-#include "Kismet/BlueprintAsyncActionBase.h"
 #include "EFAsyncHttpRequest.generated.h"
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FEFAsyncHttpResponsePin, const FEFHttpResponse&, Response);
@@ -14,10 +14,11 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FEFAsyncHttpResponsePin, const FEFHt
  * Blueprint node that sends one HTTP request and continues on On Success or On Failure.
  *
  * Goes through the game instance's UEFHttpSubsystem when there is one, so its base URL and default
- * headers apply. Without a game instance (editor utilities) the request is sent directly.
+ * headers apply. Without a game instance (editor utilities) the request is sent directly. Cancel it
+ * through the node's Async Task pin; On Failure then fires with a Cancelled result.
  */
 UCLASS()
-class EXTENDEDFOUNDATION_API UEFAsyncHttpRequest : public UBlueprintAsyncActionBase
+class EXTENDEDFOUNDATION_API UEFAsyncHttpRequest : public UEFAsyncActionBase
 {
 	GENERATED_BODY()
 
@@ -33,18 +34,16 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Extended Framework|Backend|Http", meta = (BlueprintInternalUseOnly = "true", WorldContext = "WorldContextObject", DisplayName = "Http Request"))
 	static UEFAsyncHttpRequest* SendHttpRequestAsync(UObject* WorldContextObject, const FEFHttpRequest& Request);
 
-	/** Cancels the request. On Failure fires with a Cancelled result. */
-	UFUNCTION(BlueprintCallable, Category = "Extended Framework|Backend|Http")
-	void Cancel();
-
-	virtual void Activate() override;
+protected:
+	virtual void ExecuteAction() override;
+	virtual void BroadcastFailure(const FEFResult& Result) override;
+	virtual void CancelWork() override;
+	virtual FName GetResultSource() const override { return TEXT("Http"); }
 
 private:
 	void HandleResponse(const FEFHttpResponse& Response);
 
 	FEFHttpRequest Request;
-	TWeakObjectPtr<UObject> WorldContext;
 	FEFHttpRequestHandle SubsystemHandle;
 	TSharedPtr<FEFHttpOperation> DirectOperation;
-	bool bCompleted = false;
 };

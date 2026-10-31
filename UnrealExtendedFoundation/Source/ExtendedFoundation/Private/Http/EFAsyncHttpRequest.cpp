@@ -8,25 +8,19 @@ UEFAsyncHttpRequest* UEFAsyncHttpRequest::SendHttpRequestAsync(UObject* WorldCon
 {
 	UEFAsyncHttpRequest* Action = NewObject<UEFAsyncHttpRequest>();
 	Action->Request = InRequest;
-	Action->WorldContext = WorldContextObject;
-	Action->RegisterWithGameInstance(WorldContextObject);
+	// The request carries its own timeout; the node does not add a second one.
+	Action->InitAsyncAction(WorldContextObject);
 	return Action;
 }
 
-void UEFAsyncHttpRequest::Activate()
+void UEFAsyncHttpRequest::ExecuteAction()
 {
-	Super::Activate();
-
-	TWeakObjectPtr<UEFAsyncHttpRequest> WeakThis(this);
-	auto OnDone = [WeakThis](const FEFHttpResponse& Response)
+	TFunction<void(const FEFHttpResponse&)> OnDone = MakeWeakCallback<const FEFHttpResponse&>([this](const FEFHttpResponse& Response)
 	{
-		if (UEFAsyncHttpRequest* This = WeakThis.Get())
-		{
-			This->HandleResponse(Response);
-		}
-	};
+		HandleResponse(Response);
+	});
 
-	if (UEFHttpSubsystem* Http = UEFHttpSubsystem::Get(WorldContext.Get()))
+	if (UEFHttpSubsystem* Http = GetGameInstanceSubsystem<UEFHttpSubsystem>())
 	{
 		SubsystemHandle = Http->Send(Request, MoveTemp(OnDone));
 	}
@@ -36,45 +30,41 @@ void UEFAsyncHttpRequest::Activate()
 	}
 }
 
-void UEFAsyncHttpRequest::Cancel()
+void UEFAsyncHttpRequest::CancelWork()
 {
-	if (bCompleted)
-	{
-		return;
-	}
-
+	// Silent: the base class reports the cancellation through BroadcastFailure.
 	if (SubsystemHandle.IsValid())
 	{
-		if (UEFHttpSubsystem* Http = UEFHttpSubsystem::Get(WorldContext.Get()))
+		if (UEFHttpSubsystem* Http = GetGameInstanceSubsystem<UEFHttpSubsystem>())
 		{
-			if (Http->CancelRequest(SubsystemHandle))
-			{
-				return;
-			}
+			Http->CancelRequest(SubsystemHandle, /*bNotify*/ false);
 		}
 	}
-	else if (DirectOperation.IsValid() && !DirectOperation->IsFinished())
+	if (DirectOperation.IsValid())
 	{
-		DirectOperation->Cancel(/*bNotify*/ true);
-		return;
+		DirectOperation->Cancel(/*bNotify*/ false);
+		DirectOperation.Reset();
 	}
+}
 
-	// Not started, or its owner is already gone: report the cancellation here.
+void UEFAsyncHttpRequest::BroadcastFailure(const FEFResult& Result)
+{
 	FEFHttpResponse Response;
-	Response.Result = EEFHttpResult::Cancelled;
 	Response.Url = Request.Url;
-	Response.ErrorMessage = TEXT("The request was cancelled.");
-	HandleResponse(Response);
+	Response.ErrorMessage = Result.Message;
+	Response.Result = Result.IsCancelled() ? EEFHttpResult::Cancelled
+		: Result.IsTimedOut() ? EEFHttpResult::TimedOut
+		: EEFHttpResult::InvalidRequest;
+	OnFailure.Broadcast(Response);
 }
 
 void UEFAsyncHttpRequest::HandleResponse(const FEFHttpResponse& Response)
 {
-	if (bCompleted)
+	DirectOperation.Reset();
+	if (!FinishAction())
 	{
 		return;
 	}
-	bCompleted = true;
-	DirectOperation.Reset();
 
 	if (Response.IsSuccess())
 	{
@@ -84,6 +74,4 @@ void UEFAsyncHttpRequest::HandleResponse(const FEFHttpResponse& Response)
 	{
 		OnFailure.Broadcast(Response);
 	}
-
-	SetReadyToDestroy();
 }

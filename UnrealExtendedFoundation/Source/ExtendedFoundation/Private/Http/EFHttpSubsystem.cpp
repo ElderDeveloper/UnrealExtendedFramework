@@ -64,7 +64,7 @@ FEFHttpRequestHandle UEFHttpSubsystem::Send(const FEFHttpRequest& Request, FEFHt
 	return Handle;
 }
 
-bool UEFHttpSubsystem::CancelRequest(FEFHttpRequestHandle Handle)
+bool UEFHttpSubsystem::CancelRequest(FEFHttpRequestHandle Handle, bool bNotify)
 {
 	TSharedRef<FEFHttpOperation>* Operation = ActiveOperations.Find(Handle.Id);
 	if (!Operation)
@@ -74,7 +74,7 @@ bool UEFHttpSubsystem::CancelRequest(FEFHttpRequestHandle Handle)
 
 	// Cancel() calls back synchronously, and the callback removes the entry; hold a reference.
 	const TSharedRef<FEFHttpOperation> KeepAlive = *Operation;
-	KeepAlive->Cancel(/*bNotify*/ true);
+	KeepAlive->Cancel(bNotify);
 	ActiveOperations.Remove(Handle.Id);
 	return true;
 }

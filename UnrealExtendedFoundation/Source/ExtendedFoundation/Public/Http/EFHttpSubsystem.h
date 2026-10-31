@@ -36,9 +36,12 @@ public:
 	/** C++ form of SendRequest. */
 	FEFHttpRequestHandle Send(const FEFHttpRequest& Request, FEFHttpOperation::FOnComplete OnComplete);
 
-	/** Cancels a running request. Its callback runs with a Cancelled result. Returns false if it already finished. */
+	/**
+	 * Cancels a running request. With bNotify its callback runs now with a Cancelled result; without
+	 * it the callback is dropped. Returns false if the request already finished.
+	 */
 	UFUNCTION(BlueprintCallable, Category = "Extended Framework|Backend|Http")
-	bool CancelRequest(FEFHttpRequestHandle Handle);
+	bool CancelRequest(FEFHttpRequestHandle Handle, bool bNotify = true);
 
 	/** Cancels every running request; each callback runs with a Cancelled result. */
 	UFUNCTION(BlueprintCallable, Category = "Extended Framework|Backend|Http")
