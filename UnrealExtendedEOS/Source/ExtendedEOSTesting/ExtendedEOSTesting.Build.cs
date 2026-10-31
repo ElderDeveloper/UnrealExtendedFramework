@@ -20,7 +20,9 @@ public class ExtendedEOSTesting : ModuleRules
 				"OnlineSubsystem",
 				"OnlineSubsystemUtils",
 				"ExtendedEOSShared",
-				"UnrealExtendedEOS"
+				"UnrealExtendedEOS",
+				// The platform provider tests use the foundation's platform types and results directly.
+				"ExtendedFoundation"
 			}
 			);
 	}

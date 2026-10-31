@@ -134,6 +134,39 @@ public:
 	int32 OfflineQueueLimit = 100;
 
 
+	// ── Extended Analytics ───────────────────────────────────────────────────
+
+	/**
+	 * If true, events recorded with the Extended analytics subsystem (UEFAnalyticsSubsystem, the
+	 * Record Event node) are also sent to PlayFab as telemetry, through the "PlayFab" analytics sink.
+	 * Separate from Auto Analytics, which tracks PlayFab's own lifecycle events. Needs a Title ID;
+	 * events wait in the analytics subsystem until the player is logged in.
+	 */
+	UPROPERTY(config, EditAnywhere, BlueprintReadOnly, Category = "Extended Analytics",
+		meta = (DisplayName = "Send Analytics Events"))
+	bool bSendAnalyticsEvents = true;
+
+
+	// ── Platform Layer ───────────────────────────────────────────────────────
+
+	/**
+	 * If true, PlayFab registers as the "PlayFab" provider of the Extended platform layer
+	 * (UEFPlatformSubsystem) for stats and leaderboards. Achievements, cloud storage and presence are
+	 * not served by PlayFab. Which provider serves a feature is chosen under Extended Platform.
+	 */
+	UPROPERTY(config, EditAnywhere, BlueprintReadOnly, Category = "Platform Layer",
+		meta = (DisplayName = "Enable Platform Provider"))
+	bool bEnablePlatformProvider = true;
+
+	/**
+	 * Seconds a platform-layer call waits for PlayFab before it answers TimedOut. Requests retry on
+	 * their own first, so keep it above the few seconds those retries take.
+	 */
+	UPROPERTY(config, EditAnywhere, BlueprintReadOnly, Category = "Platform Layer",
+		meta = (DisplayName = "Platform Call Timeout", ClampMin = "1.0", Units = "Seconds", EditCondition = "bEnablePlatformProvider"))
+	float PlatformCallTimeoutSeconds = 30.0f;
+
+
 	// ── Helpers ──────────────────────────────────────────────────────────────
 
 

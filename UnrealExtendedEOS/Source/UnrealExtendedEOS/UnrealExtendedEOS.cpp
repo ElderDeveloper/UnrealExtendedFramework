@@ -4,7 +4,8 @@
 #include "Shared/EEOSSettings.h"
 #include "EFFoundationVersion.h"
 
-EF_REQUIRE_FOUNDATION_VERSION(1, 0, "UnrealExtendedEOS");
+// 1.1: the platform layer (UEEOSPlatformProvider implements UEFPlatformProviderSubsystem).
+EF_REQUIRE_FOUNDATION_VERSION(1, 1, "UnrealExtendedEOS");
 
 #define LOCTEXT_NAMESPACE "FUnrealExtendedEOSModule"
 

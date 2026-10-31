@@ -10,90 +10,9 @@
 #include "Shared/EPFSubsystem.h"
 #include "SharedData/EPFSharedDataSubsystem.h"
 #include "Testing/EFTestHelpers.h"
+#include "Tests/EPFSharedAuthTestScope.h"
 #include "Tests/EPFTestAsyncListener.h"
 #include "UObject/StrongObjectPtr.h"
-
-/**
- * Gives a test a configured PlayFab title and a signed-in session without a real login, and puts
- * back the project's settings and the previous session when restored or destroyed.
- *
- * The session lives in UEPFSubsystem's protected statics, so this is a friend of that class. Restore
- * only after the test game instance has shut down: its auth subsystem clears the session then.
- */
-struct FEPFSharedAuthTestScope
-{
-	FEPFSharedAuthTestScope()
-	{
-		const UEPFSettings* Settings = GetDefault<UEPFSettings>();
-		SavedTitleId = Settings->TitleId;
-		SavedApiBaseUrlOverride = Settings->ApiBaseUrlOverride;
-		bSavedAutoLoginOnStart = Settings->bAutoLoginOnStart;
-		bSavedAutoAnalyticsEnabled = Settings->bAutoAnalyticsEnabled;
-
-		SavedAuthContext = UEPFSubsystem::SharedAuthContext;
-		SavedSessionTicket = UEPFSubsystem::SharedSessionTicket;
-		SavedPlayFabId = UEPFSubsystem::SharedPlayFabId;
-	}
-
-	~FEPFSharedAuthTestScope()
-	{
-		Restore();
-	}
-
-	FEPFSharedAuthTestScope(const FEPFSharedAuthTestScope&) = delete;
-	FEPFSharedAuthTestScope& operator=(const FEPFSharedAuthTestScope&) = delete;
-
-	/** Call before creating the game instance, so its subsystems start with these settings. */
-	void ConfigureTitle(const FString& InTitleId, const FString& InApiBaseUrl)
-	{
-		UEPFSettings* Settings = GetMutableDefault<UEPFSettings>();
-		Settings->TitleId = InTitleId;
-		Settings->ApiBaseUrlOverride = InApiBaseUrl;
-		// Keep the test game instance quiet: no sign-in attempt and no telemetry of its own.
-		Settings->bAutoLoginOnStart = false;
-		Settings->bAutoAnalyticsEnabled = false;
-	}
-
-	/** What a successful login would leave behind, as far as session-ticket calls are concerned. */
-	void SignIn(const FString& InSessionTicket, const FString& InPlayFabId)
-	{
-		FEPFAuthContext Context;
-		Context.SessionTicket = InSessionTicket;
-		Context.PlayFabId = InPlayFabId;
-		UEPFSubsystem::SharedAuthContext = Context;
-		UEPFSubsystem::SharedSessionTicket = InSessionTicket;
-		UEPFSubsystem::SharedPlayFabId = InPlayFabId;
-	}
-
-	void Restore()
-	{
-		if (bRestored)
-		{
-			return;
-		}
-		bRestored = true;
-
-		UEPFSettings* Settings = GetMutableDefault<UEPFSettings>();
-		Settings->TitleId = SavedTitleId;
-		Settings->ApiBaseUrlOverride = SavedApiBaseUrlOverride;
-		Settings->bAutoLoginOnStart = bSavedAutoLoginOnStart;
-		Settings->bAutoAnalyticsEnabled = bSavedAutoAnalyticsEnabled;
-
-		UEPFSubsystem::SharedAuthContext = SavedAuthContext;
-		UEPFSubsystem::SharedSessionTicket = SavedSessionTicket;
-		UEPFSubsystem::SharedPlayFabId = SavedPlayFabId;
-	}
-
-private:
-	FString SavedTitleId;
-	FString SavedApiBaseUrlOverride;
-	bool bSavedAutoLoginOnStart = false;
-	bool bSavedAutoAnalyticsEnabled = false;
-	FEPFAuthContext SavedAuthContext;
-	FString SavedSessionTicket;
-	FString SavedPlayFabId;
-	bool bRestored = false;
-};
 
 
 // ═══════════════════════════════════════════════════════════════════════════════
