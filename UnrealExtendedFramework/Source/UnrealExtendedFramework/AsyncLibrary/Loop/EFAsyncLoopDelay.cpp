@@ -3,25 +3,51 @@
 
 #include "EFAsyncLoopDelay.h"
 
+#include "UnrealExtendedFramework/UnrealExtendedFramework.h"
+
 
 void UEFAsyncLoopDelay::TickLoop()
 {
-	Loop.Broadcast();
-	if (!ShouldLoop)
+	if (IsFinished())
+	{
+		return;
+	}
+
+	// Whoever started the loop is gone: stop without firing anything.
+	if (!GetWorldContextObject())
 	{
 		StopLoop();
+		return;
 	}
+
+	if (!ShouldLoop)
+	{
+		// A single delay: done once it fires.
+		CancelWork();
+		if (FinishAction())
+		{
+			Loop.Broadcast();
+		}
+		return;
+	}
+
+	Loop.Broadcast();
 }
 
 
 
-void UEFAsyncLoopDelay::Activate()
+void UEFAsyncLoopDelay::ExecuteAction()
 {
-	Super::Activate();
-
-	if (WorldContext)
+	if (LoopTime <= 0.f && ShouldLoop)
 	{
-		WorldContext->GetWorld()->GetTimerManager().SetTimer(Handle,this,&UEFAsyncLoopDelay::TickLoop,LoopTime,ShouldLoop);
+		UE_LOG(LogExtendedFramework, Warning, TEXT("Extended Loop Delay: Delay must be greater than zero to loop (got %f); the loop does not run."), LoopTime);
+		FailInvalidArgument(TEXT("Delay must be greater than zero"));
+		return;
+	}
+
+	if (!LoopTimer.Start(GetWorldContextObject(), FTimerDelegate::CreateUObject(this, &UEFAsyncLoopDelay::TickLoop), LoopTime, ShouldLoop))
+	{
+		FailAction(FEFResult::NotAvailable(GetResultSource(), TEXT("a world for the world context")));
 	}
 }
 
@@ -30,22 +56,19 @@ void UEFAsyncLoopDelay::Activate()
 UEFAsyncLoopDelay* UEFAsyncLoopDelay::LoopDelay(const UObject* WorldContextObject, bool shouldLoop, float Delay)
 {
 	UEFAsyncLoopDelay* Node = NewObject<UEFAsyncLoopDelay>();
-	if (Node)
-	{
-		Node->WorldContext=WorldContextObject;
-		Node->LoopTime=Delay;
-		Node->ShouldLoop=shouldLoop;
-	}
+	Node->LoopTime = Delay;
+	Node->ShouldLoop = shouldLoop;
+	Node->InitAsyncAction(const_cast<UObject*>(WorldContextObject));
 	return Node;
 }
 
 void UEFAsyncLoopDelay::StopLoop()
 {
-	if (WorldContext)
-	{
-		WorldContext->GetWorld()->GetTimerManager().ClearTimer(Handle);
-	}
-	Handle.Invalidate();
-	SetReadyToDestroy();
-	ConditionalBeginDestroy();
+	CancelWork();
+	FinishAction();
+}
+
+void UEFAsyncLoopDelay::CancelWork()
+{
+	LoopTimer.Clear();
 }

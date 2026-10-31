@@ -4,6 +4,19 @@
 #include "EFAsyncFloatTimeline.h"
 
 
+namespace EFAsyncFloatTimelinePrivate
+{
+	/** Playing timelines by name, so that starting one with a name in use replaces the old one. */
+	TMap<FName, TWeakObjectPtr<UEFAsyncFloatTimeline>> PlayingTimelines;
+
+	UEFAsyncFloatTimeline* FindPlaying(const FName TimelineName)
+	{
+		const TWeakObjectPtr<UEFAsyncFloatTimeline>* Found = PlayingTimelines.Find(TimelineName);
+		UEFAsyncFloatTimeline* Timeline = Found ? Found->Get() : nullptr;
+		return Timeline && !Timeline->IsFinished() ? Timeline : nullptr;
+	}
+}
+
 
 UEFAsyncFloatTimeline* UEFAsyncFloatTimeline::ExtendedFloatTimeline(const FName TimelineName , UCurveFloat* FloatCurve ,const UObject* WorldContextObject , float PassTime , TEnumAsByte<EFTimelinePlayType> TimelinePlayType , bool bTickWhenPaused)
 {
@@ -19,89 +32,71 @@ UEFAsyncFloatTimeline* UEFAsyncFloatTimeline::ExtendedFloatTimeline(const FName 
 	}
 
 
-	// Basic Reference To Timeline
-	UEFAsyncFloatTimeline* Timeline;
-	bool Exist = false;
-
 	// Store The Current Timeline Time If We Use Play Or Reverse
 	float TimelineCurrentTime = 0.f;
+	bool Exist = false;
 
-	// Check If We Have Already A Timeline With The Same Name
-	if (const auto Action = EFFloatTimelines.Find(TimelineName) )
+	// If We Have A Timeline With The Same Name Get Its Current Time And Stop It So That Its Loops End
+	if (UEFAsyncFloatTimeline* Playing = EFAsyncFloatTimelinePrivate::FindPlaying(TimelineName))
 	{
-		// If We Have One Already Get Its Current Time And Destroy It So That Early Loops Stops
-		Timeline =  Action->Get();
-		
-		if (Timeline)
-		{
-			TimelineCurrentTime = Timeline->TimePassed;
-			Timeline->InternalCompleted();
-		}
-		
-		Timeline = NewObject<UEFAsyncFloatTimeline>();
+		TimelineCurrentTime = Playing->TimePassed;
 		Exist = true;
-
-		// If We Did Not Create A New Timeline Finish This Function With Error
-		if (!Timeline)	return nullptr;
-		EFFloatTimelines.Emplace(TimelineName , Timeline);
-		
+		Playing->InternalCompleted();
 	}
-	else // If We Dont Have One Just Create A New Timeline Object
+
+	if (TimelinePlayType == Ext_StopTimeline)
 	{
-		Timeline = NewObject<UEFAsyncFloatTimeline>();
-		Timeline->ExtendedTimelineName = TimelineName;
-		Exist = false;
-
-		// If We Did Not Create A New Timeline Finish This Function With Error
-		if (!Timeline)	return nullptr;
-
-		// Add Newly Created Timeline To Static Array So That We Can Check If It Exist Afterwards
-		EFFloatTimelines.Add(TimelineName,Timeline);
+		return nullptr;
 	}
 
-	
+	if (PassTime <= 0.f)
+	{
+		UE_LOG(LogBlueprint,Warning,TEXT("Float Timeline Pass Time Must Be Greater Than Zero")); return nullptr;
+	}
 
-	
+
 	// Fill Simple Variables To Newly Created Timeline
-	Timeline->WorldContext = WorldContextObject;
+	UEFAsyncFloatTimeline* Timeline = NewObject<UEFAsyncFloatTimeline>();
+	Timeline->ExtendedTimelineName = TimelineName;
 	Timeline->LoopTime = PassTime;
 	Timeline->SelectedFloatCurve = FloatCurve;
 	Timeline->CurveLastTime = FloatCurve->FloatCurve.GetLastKey().Time;
 	Timeline->CurveFirstTime = FloatCurve->FloatCurve.GetFirstKey().Time;
 	Timeline->bTickWhenPaused = bTickWhenPaused;
+	Timeline->InitAsyncAction(const_cast<UObject*>(WorldContextObject));
 
-	
-	
+	// Remember It By Name So That We Can Find It Afterwards
+	EFAsyncFloatTimelinePrivate::PlayingTimelines.Emplace(TimelineName, Timeline);
+
+
 	// Select What We Will Do For Newly Created Timeline
 	switch (TimelinePlayType)
 	{
 		case Ext_Play:
 			Timeline->TimelinePlaySide = Ext_Forward;
-			Timeline->TimePassed = Exist ? TimelineCurrentTime : FloatCurve->FloatCurve.GetFirstKey().Time;
-		return Timeline;
+			Timeline->TimePassed = Exist ? TimelineCurrentTime : Timeline->CurveFirstTime;
+			break;
 
-			
 		case Ext_PlayFromStart:
 			Timeline->TimelinePlaySide = Ext_Forward;
-			Timeline->TimePassed = FloatCurve->FloatCurve.GetFirstKey().Time;
-		return Timeline;
-	
+			Timeline->TimePassed = Timeline->CurveFirstTime;
+			break;
+
 		case Ext_Reverse:
 			Timeline->TimelinePlaySide = Ext_Backward;
-			Timeline->TimePassed = Exist ? TimelineCurrentTime : FloatCurve->FloatCurve.GetLastKey().Time;
-			return Timeline;
-			
+			Timeline->TimePassed = Exist ? TimelineCurrentTime : Timeline->CurveLastTime;
+			break;
+
 		case Ext_ReverseFromEnd:
 			Timeline->TimelinePlaySide = Ext_Backward;
-			Timeline->TimePassed = FloatCurve->FloatCurve.GetLastKey().Time;
-		return Timeline;
-			
-		case Ext_StopTimeline:
-			Timeline->InternalCompleted();
-			return nullptr;
-		
-		default: return Timeline;
+			Timeline->TimePassed = Timeline->CurveLastTime;
+			break;
+
+		default:
+			break;
 	}
+
+	return Timeline;
 }
 
 
@@ -110,88 +105,108 @@ void UEFAsyncFloatTimeline::ExtendedFloatTimelineManipulate(const FName Timeline
 {
 	if (!ensure(WorldContextObject))	return;
 
-	if (const auto Action = EFFloatTimelines.Find(TimelineName) )
+	UEFAsyncFloatTimeline* Timeline = EFAsyncFloatTimelinePrivate::FindPlaying(TimelineName);
+	if (!Timeline) return;
+
+	// Select What We Will Do For Timeline
+	switch (TimelinePlayType)
 	{
-		UEFAsyncFloatTimeline* Timeline =  Action->Get();
-		if (!Timeline) return;
-		// Select What We Will Do For Timeline
-		switch (TimelinePlayType)
-		{
-			
-			case Ext_Play:
-				Timeline->TimelinePlaySide = Ext_Forward;
-				return ;
-				
-			case Ext_PlayFromStart:
-				Timeline->TimelinePlaySide = Ext_Forward;
-				Timeline->TimePassed = Timeline->CurveFirstTime;
-				return ;
-				
-			case Ext_Reverse:
-				Timeline->TimelinePlaySide = Ext_Backward;
-				return ;
-				
-			case Ext_ReverseFromEnd:
-				Timeline->TimelinePlaySide = Ext_Backward;
-				Timeline->TimePassed = Timeline->CurveLastTime;
-				return ;
-				
-			case Ext_StopTimeline:
-				Timeline->InternalCompleted();
-				return;
-		
-			default: return;
-		}
+
+		case Ext_Play:
+			Timeline->TimelinePlaySide = Ext_Forward;
+			return ;
+
+		case Ext_PlayFromStart:
+			Timeline->TimelinePlaySide = Ext_Forward;
+			Timeline->TimePassed = Timeline->CurveFirstTime;
+			return ;
+
+		case Ext_Reverse:
+			Timeline->TimelinePlaySide = Ext_Backward;
+			return ;
+
+		case Ext_ReverseFromEnd:
+			Timeline->TimelinePlaySide = Ext_Backward;
+			Timeline->TimePassed = Timeline->CurveLastTime;
+			return ;
+
+		case Ext_StopTimeline:
+			Timeline->InternalCompleted();
+			return;
+
+		default: return;
 	}
 }
 
 
 void UEFAsyncFloatTimeline::InternalTick()
 {
-	if (SelectedFloatCurve)
+	if (IsFinished())
 	{
-		Loop.Broadcast(SelectedFloatCurve->GetFloatValue(TimePassed));
+		return;
+	}
 
-		switch (TimelinePlaySide)
+	// The curve, or whoever started the timeline, is gone: stop without firing anything.
+	if (!SelectedFloatCurve || !GetWorldContextObject())
+	{
+		InternalCompleted();
+		return;
+	}
+
+	Loop.Broadcast(SelectedFloatCurve->GetFloatValue(TimePassed));
+
+	// Loop's handler may have stopped or replaced this timeline.
+	if (IsFinished())
+	{
+		return;
+	}
+
+	switch (TimelinePlaySide)
+	{
+	case Ext_Forward:
+
+		TimePassed += LoopTime;
+		if (TimePassed >= CurveLastTime)
 		{
-		case Ext_Forward:
-			
-			TimePassed += LoopTime;
-			if (TimePassed >= CurveLastTime)
-			{
-				Completed.Broadcast();
-				InternalCompleted();
-			}
-			break;
-
-		case Ext_Backward:
-
-			TimePassed -= LoopTime;
-			if (TimePassed <= CurveFirstTime)
-			{
-				Completed.Broadcast();
-				InternalCompleted();
-			}
-			break;
+			FinishTimeline();
 		}
+		break;
+
+	case Ext_Backward:
+
+		TimePassed -= LoopTime;
+		if (TimePassed <= CurveFirstTime)
+		{
+			FinishTimeline();
+		}
+		break;
 	}
 }
 
 void UEFAsyncFloatTimeline::InternalCompleted()
 {
-	if (WorldContext)
+	StopTimeline();
+	FinishAction();
+}
+
+void UEFAsyncFloatTimeline::FinishTimeline()
+{
+	StopTimeline();
+	if (FinishAction())
 	{
-		FTimerManager& TimerMgr = bTickWhenPaused
-			? WorldContext->GetWorld()->GetGameInstance()->GetTimerManager()
-			: WorldContext->GetWorld()->GetTimerManager();
-		TimerMgr.ClearTimer(TimerHandle);
-		TimerHandle.Invalidate();
-		SetReadyToDestroy();
-		ConditionalBeginDestroy();
-		if (const auto Action = EFFloatTimelines.Find(ExtendedTimelineName) )
-		{
-			EFFloatTimelines.Remove(ExtendedTimelineName);
-		}
+		Completed.Broadcast();
+	}
+}
+
+void UEFAsyncFloatTimeline::StopTimeline()
+{
+	TickTimer.Clear();
+
+	// Forget the name only while it still means this timeline, not one that replaced it.
+	const TWeakObjectPtr<UEFAsyncFloatTimeline>* Registered = EFAsyncFloatTimelinePrivate::PlayingTimelines.Find(ExtendedTimelineName);
+	if (Registered && (!Registered->IsValid() || Registered->Get() == this))
+	{
+		EFAsyncFloatTimelinePrivate::PlayingTimelines.Remove(ExtendedTimelineName);
 	}
 }
 
@@ -200,27 +215,26 @@ void UEFAsyncFloatTimeline::InternalCompleted()
 
 
 
-void UEFAsyncFloatTimeline::Activate()
+void UEFAsyncFloatTimeline::ExecuteAction()
 {
-	Super::Activate();
 	Reset();
+}
+
+void UEFAsyncFloatTimeline::CancelWork()
+{
+	StopTimeline();
 }
 
 void UEFAsyncFloatTimeline::Reset()
 {
-	if (TimerHandle.IsValid() && WorldContext)
+	if (IsFinished())
 	{
-		FTimerManager& TimerMgr = bTickWhenPaused
-			? WorldContext->GetWorld()->GetGameInstance()->GetTimerManager()
-			: WorldContext->GetWorld()->GetTimerManager();
-		TimerMgr.ClearTimer(TimerHandle);
+		return;
 	}
 
-	if (WorldContext)
+	if (!TickTimer.Start(GetWorldContextObject(), FTimerDelegate::CreateUObject(this, &UEFAsyncFloatTimeline::InternalTick), LoopTime, true, bTickWhenPaused))
 	{
-		FTimerManager& TimerMgr = bTickWhenPaused
-			? WorldContext->GetWorld()->GetGameInstance()->GetTimerManager()
-			: WorldContext->GetWorld()->GetTimerManager();
-		TimerMgr.SetTimer(TimerHandle,this,&UEFAsyncFloatTimeline::InternalTick,LoopTime,true);
+		StopTimeline();
+		FailAction(FEFResult::NotAvailable(GetResultSource(), TEXT("a world for the world context")));
 	}
 }

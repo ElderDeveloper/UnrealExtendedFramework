@@ -3,13 +3,19 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Kismet/BlueprintAsyncActionBase.h"
+#include "Async/EFAsyncActionBase.h"
+#include "UnrealExtendedFramework/AsyncLibrary/EFAsyncNodeTimer.h"
 #include "EFAsyncForEachLoopDelay.generated.h"
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FArrayOutputPin,int32,ArrayIndex);
 
+/**
+ * Fires Loop once per element of TargetArray, Delay seconds apart, then Completed with the last
+ * index (-1 for an empty array). Cancelling it through the Async Task pin stops the loop; Completed
+ * does not fire then.
+ */
 UCLASS()
-class UNREALEXTENDEDFRAMEWORK_API UEFAsyncForEachLoopDelay : public UBlueprintAsyncActionBase
+class UNREALEXTENDEDFRAMEWORK_API UEFAsyncForEachLoopDelay : public UEFAsyncActionBase
 {
 	GENERATED_BODY()
 
@@ -22,26 +28,20 @@ public:
 	void InternalTick();
 
 	/**
-	* Internal completed. Clears timers and flags and broadcasts Completed Execution pin in the editor
+	* Internal completed. Clears the timer and broadcasts the Completed Execution pin in the editor
 	*/
 	UFUNCTION()
 	void InternalCompleted();
 
-	/**
-	* Static property to prevent restarting the async node multiple times before execution has finished
-	*/
-	
 	float LoopTime = 0.1f;
 	int32 LoopIndex = 0;
 
 	UPROPERTY()
 	TArray<UObject*> Array;
-	const UObject* WorldContext;
-	FTimerHandle TimerHandle;
-	bool ExecuteFirstWithoutDelay;
+	bool ExecuteFirstWithoutDelay = false;
 
 public:
-	
+
 	UPROPERTY(BlueprintAssignable)
 	FArrayOutputPin Loop;
 
@@ -49,15 +49,19 @@ public:
 	FArrayOutputPin Completed;
 
 
-	
+
 	/**
 	* InternalUseOnly to hide sync version in BPs
 	*/
 	UFUNCTION(BlueprintCallable, meta = (DisplayName=" Extended Framework For Each Loop Delay", WorldContext = "WorldContextObject" , BlueprintInternalUseOnly = "true"), Category = "AsyncNode")
 	static UEFAsyncForEachLoopDelay* ForEachLoopDelayObject(const TArray<UObject*>& TargetArray ,const UObject* WorldContextObject , float Delay = 0.1 , bool bExecuteFirstWithoutDelay = false);
 
+protected:
 
-	
-	//Overriding BP async action base
-	virtual void Activate() override;
+	virtual void ExecuteAction() override;
+	virtual void CancelWork() override;
+	/** No failure pin: cancellation and failures end the node without firing Completed. */
+	virtual void BroadcastFailure(const FEFResult& /*Result*/) override {}
+
+	FEFAsyncNodeTimer LoopTimer;
 };
