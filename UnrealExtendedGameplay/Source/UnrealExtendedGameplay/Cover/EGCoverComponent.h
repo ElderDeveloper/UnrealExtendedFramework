@@ -1,4 +1,6 @@
-﻿#include "Components/ActorComponent.h"
+﻿// Copyright Kemal Erdem YILMAZ. All Rights Reserved.
+
+#include "Components/ActorComponent.h"
 #include "UnrealExtendedFramework/Data/EFTraceData.h"
 #include "UnrealExtendedFramework/Data/EFEnums.h"
 #include "EGCoverComponent.generated.h"

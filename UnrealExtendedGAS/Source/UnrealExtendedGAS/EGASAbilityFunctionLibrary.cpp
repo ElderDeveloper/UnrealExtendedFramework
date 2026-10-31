@@ -1,3 +1,5 @@
+// Copyright Kemal Erdem YILMAZ. All Rights Reserved.
+
 #include "EGASAbilityFunctionLibrary.h"
 
 #include "AbilitySystemBlueprintLibrary.h"

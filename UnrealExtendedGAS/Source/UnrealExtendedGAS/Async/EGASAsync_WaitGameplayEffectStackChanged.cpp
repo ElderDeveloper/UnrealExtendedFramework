@@ -1,3 +1,5 @@
+// Copyright Kemal Erdem YILMAZ. All Rights Reserved.
+
 #include "Async/EGASAsync_WaitGameplayEffectStackChanged.h"
 
 #include "AbilitySystemComponent.h"

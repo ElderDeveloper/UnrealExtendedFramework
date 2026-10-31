@@ -1,0 +1,50 @@
+// {{Copyright}}
+
+#include "Misc/AutomationTest.h"
+
+#if WITH_DEV_AUTOMATION_TESTS
+
+#include "{{Prefix}}Subsystem.h"
+#include "Testing/EFTestHelpers.h"
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(F{{Prefix}}EchoTest, "{{PluginName}}.Echo",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool F{{Prefix}}EchoTest::RunTest(const FString& Parameters)
+{
+	struct FState
+	{
+		TSharedPtr<EFTest::FScopedGameInstance> Game;
+		TOptional<FEFResult> First;
+		TOptional<FEFResult> Second;
+		FString FirstText;
+		FString SecondText;
+	};
+	const TSharedRef<FState> State = MakeShared<FState>();
+	State->Game = MakeShared<EFTest::FScopedGameInstance>();
+
+	U{{Prefix}}Subsystem* Subsystem = State->Game->GetSubsystem<U{{Prefix}}Subsystem>();
+	if (!TestNotNull(TEXT("the subsystem exists in a test game instance"), Subsystem))
+	{
+		return false;
+	}
+
+	// Two calls in flight at once each get their own answer.
+	Subsystem->Echo(TEXT("one"), [State](const FEFResult& Result, const FString& Text) { State->First = Result; State->FirstText = Text; });
+	Subsystem->Echo(TEXT("two"), [State](const FEFResult& Result, const FString& Text) { State->Second = Result; State->SecondText = Text; });
+
+	FEFResult Rejected;
+	Subsystem->Echo(TEXT(""), [&Rejected](const FEFResult& Result, const FString&) { Rejected = Result; });
+	TestTrue(TEXT("empty text is rejected at once"), Rejected.HasCode(EFResultCodes::InvalidArgument));
+
+	ADD_LATENT_AUTOMATION_COMMAND(FEFWaitUntilCommand(this, TEXT("both echoes"), [State]() { return State->First.IsSet() && State->Second.IsSet(); }));
+	ADD_LATENT_AUTOMATION_COMMAND(FEFRunLatentCommand([this, State]()
+	{
+		TestEqual(TEXT("first echo"), State->FirstText, FString(TEXT("one")));
+		TestEqual(TEXT("second echo"), State->SecondText, FString(TEXT("two")));
+		State->Game.Reset();
+	}));
+	return true;
+}
+
+#endif // WITH_DEV_AUTOMATION_TESTS

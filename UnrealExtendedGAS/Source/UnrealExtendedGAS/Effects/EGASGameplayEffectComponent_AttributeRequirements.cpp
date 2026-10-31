@@ -1,3 +1,5 @@
+// Copyright Kemal Erdem YILMAZ. All Rights Reserved.
+
 #include "Effects/EGASGameplayEffectComponent_AttributeRequirements.h"
 
 #include "AbilitySystemComponent.h"

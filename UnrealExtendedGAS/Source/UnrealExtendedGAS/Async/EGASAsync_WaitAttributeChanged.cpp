@@ -1,3 +1,5 @@
+// Copyright Kemal Erdem YILMAZ. All Rights Reserved.
+
 #include "Async/EGASAsync_WaitAttributeChanged.h"
 
 #include "AbilitySystemComponent.h"
