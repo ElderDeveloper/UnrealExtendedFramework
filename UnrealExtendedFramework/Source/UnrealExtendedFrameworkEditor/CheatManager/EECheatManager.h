@@ -86,7 +86,7 @@ public:
 	* Contains all the commands present and that are supposed to be registered.
 	*
 	* @note If you want to delete a command use DeleteCommand in the console, to fully unregister it!
-	* !!! Won't update the console itself, meaning that the command will still show up until a engine restart has occured. !!!
+	* !!! Won't update the console itself, meaning that the command will still show up until an engine restart has occurred. !!!
 	*/
 	UPROPERTY(BlueprintReadWrite,EditAnywhere, Category=EECheatManager)
 	TMap<FString, FExtendedCommandData> Commands;

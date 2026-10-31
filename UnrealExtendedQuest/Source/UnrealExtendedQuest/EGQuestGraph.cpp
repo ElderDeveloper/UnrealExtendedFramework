@@ -162,7 +162,7 @@ void UEGQuestGraph::PostLoad()
 	{
 		RegenerateGUID();
 		FEGQuestLogger::Get().Debugf(
-			TEXT("Creating new GUID = `%s` for Quest = `%s` because of of invalid GUID."),
+			TEXT("Creating new GUID = `%s` for Quest = `%s` because of an invalid GUID."),
 			*GUID.ToString(), *GetPathName()
 		);
 	}
