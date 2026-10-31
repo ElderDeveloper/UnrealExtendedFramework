@@ -4,6 +4,7 @@
 
 #if WITH_DEV_AUTOMATION_TESTS
 
+#include "Async/EFCallContext.h"
 #include "Async/EFPendingCalls.h"
 #include "Http/EFHttpTypes.h"
 #include "Result/EFResult.h"
@@ -137,6 +138,67 @@ bool FEFAsyncActionBaseTest::RunTest(const FString& Parameters)
 		TestEqual(TEXT("the work never starts"), Action->ExecuteCount, 0);
 	}
 
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEFCallContextTest, "ExtendedFoundation.Async.CallContext",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FEFCallContextTest::RunTest(const FString& Parameters)
+{
+	TestEqual(TEXT("nothing active by default"), EFCallContext::GetActive(), int64(0));
+	{
+		const int64 Outer = EFCallContext::New();
+		EFCallContext::FScope OuterScope(Outer);
+		{
+			EFCallContext::FScope InnerScope(EFCallContext::New());
+			TestNotEqual(TEXT("an inner scope replaces the outer one"), EFCallContext::GetActive(), Outer);
+		}
+		TestEqual(TEXT("leaving the inner scope restores the outer one"), EFCallContext::GetActive(), Outer);
+	}
+	TestEqual(TEXT("leaving every scope restores none"), EFCallContext::GetActive(), int64(0));
+
+	// A "subsystem" that captures the context when work starts and reports on a shared delegate later.
+	TArray<TFunction<void()>> PendingCompletions;
+	TArray<UEFTestAsyncAction*> Listeners;
+	TMap<UEFTestAsyncAction*, int32> Accepted;
+	auto StartWork = [&PendingCompletions, &Listeners, &Accepted](int32 Payload)
+	{
+		PendingCompletions.Add(EFCallContext::Bind<>([&Listeners, &Accepted, Payload]()
+		{
+			for (UEFTestAsyncAction* Listener : Listeners)
+			{
+				if (Listener->AcceptsCurrentResult())
+				{
+					Accepted.Add(Listener, Payload);
+				}
+			}
+		}));
+	};
+
+	UEFTestAsyncAction* First = NewObject<UEFTestAsyncAction>();
+	UEFTestAsyncAction* Second = NewObject<UEFTestAsyncAction>();
+	Listeners = { First, Second };
+	First->RunInContext([&StartWork]() { StartWork(1); });
+	Second->RunInContext([&StartWork]() { StartWork(2); });
+
+	// Results arrive in the opposite order to the calls.
+	PendingCompletions[1]();
+	PendingCompletions[0]();
+
+	TestEqual(TEXT("the first node took only its own result"), Accepted.FindRef(First), 1);
+	TestEqual(TEXT("the second node took only its own result"), Accepted.FindRef(Second), 2);
+
+	// A broadcast with no context (from code that does not propagate one) reaches everyone, as before.
+	Accepted.Reset();
+	for (UEFTestAsyncAction* Listener : Listeners)
+	{
+		if (Listener->AcceptsCurrentResult())
+		{
+			Accepted.Add(Listener, 0);
+		}
+	}
+	TestEqual(TEXT("untagged broadcasts are accepted by every node"), Accepted.Num(), 2);
 	return true;
 }
 

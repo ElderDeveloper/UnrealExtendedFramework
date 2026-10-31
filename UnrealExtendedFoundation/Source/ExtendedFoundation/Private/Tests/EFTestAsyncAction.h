@@ -16,6 +16,8 @@ public:
 	void Init(float InTimeoutSeconds = 0.f) { InitAsyncAction(nullptr, InTimeoutSeconds); }
 	void FailEarly(const FString& Problem) { FailInvalidArgument(Problem); }
 	bool Finish() { return FinishAction(); }
+	void RunInContext(TFunctionRef<void()> Call) { CallWithContext(Call); }
+	bool AcceptsCurrentResult() const { return IsResultForThisCall(); }
 
 	TFunction<void()> MakeTestCallback()
 	{

@@ -59,6 +59,7 @@ void FEFHttpMockTransport::Send(const FEFHttpRequest& Request, const FString& Fi
 	Recorded.Url = FinalUrl;
 	Recorded.Headers = Request.Headers;
 	Recorded.Body = Request.Body;
+	Recorded.BodyBytes = Request.BodyBytes;
 
 	FEFHttpResponse Response;
 	Response.Result = EEFHttpResult::HttpError;

@@ -13,6 +13,7 @@ struct FEFHttpMockRecordedRequest
 	FString Url;
 	TMap<FString, FString> Headers;
 	FString Body;
+	TArray<uint8> BodyBytes;
 };
 
 /**

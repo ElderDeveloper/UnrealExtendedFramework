@@ -62,7 +62,11 @@ struct EXTENDEDFOUNDATION_API FEFHttpRequest
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Http", meta = (MultiLine = true))
 	FString Body;
 
-	/** Content-Type sent with a non-empty Body, unless Headers already sets one. */
+	/** Raw request body, e.g. multipart form data or a file upload. When not empty it is sent instead of Body. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Http")
+	TArray<uint8> BodyBytes;
+
+	/** Content-Type sent with a non-empty Body or BodyBytes, unless Headers already sets one. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Http")
 	FString ContentType = TEXT("application/json");
 

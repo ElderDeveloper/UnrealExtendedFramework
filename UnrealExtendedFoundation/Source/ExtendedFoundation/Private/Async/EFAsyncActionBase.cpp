@@ -117,3 +117,21 @@ void UEFAsyncActionBase::HandleTimeout()
 	CancelWork();
 	FailAction(FEFResult::TimedOut(GetResultSource(), TimeoutSeconds));
 }
+
+void UEFAsyncActionBase::CallWithContext(TFunctionRef<void()> Call)
+{
+	if (CallContext == 0)
+	{
+		CallContext = EFCallContext::New();
+	}
+
+	EFCallContext::FScope Scope(CallContext);
+	Call();
+}
+
+bool UEFAsyncActionBase::IsResultForThisCall() const
+{
+	// A node that never used CallWithContext opted out of filtering.
+	const int64 Active = EFCallContext::GetActive();
+	return CallContext == 0 || Active == 0 || Active == CallContext;
+}

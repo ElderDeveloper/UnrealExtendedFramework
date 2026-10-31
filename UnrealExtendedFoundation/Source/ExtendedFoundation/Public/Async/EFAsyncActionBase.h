@@ -3,6 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Async/EFCallContext.h"
 #include "Containers/Ticker.h"
 #include "Engine/CancellableAsyncAction.h"
 #include "Result/EFResult.h"
@@ -46,9 +47,10 @@
  *         virtual void BroadcastFailure(const FEFResult& Result) override { OnFailure.Broadcast(Result); }
  *     };
  *
- * Results must come back to the call that asked for them (a per-call callback, as above), not
- * through a delegate on the whole subsystem: with a shared delegate, two nodes running at once both
- * finish on whichever result arrives first.
+ * Results should come back to the call that asked for them (a per-call callback, as above). When a
+ * subsystem only reports through a delegate every caller shares, start the call inside
+ * CallWithContext() and return early from the handler unless IsResultForThisCall(); with a subsystem
+ * that propagates EFCallContext, two nodes running at once then each finish on their own result.
  */
 UCLASS(Abstract)
 class EXTENDEDFOUNDATION_API UEFAsyncActionBase : public UCancellableAsyncAction
@@ -101,6 +103,19 @@ protected:
 	/** Convenience for FailAction(FEFResult::InvalidArgument(...)). */
 	void FailInvalidArgument(const FString& Problem);
 
+	/**
+	 * Runs Call with this node's own call context active. A subsystem that propagates
+	 * EFCallContext then tags the result of that call as this node's. Use it around the call that
+	 * starts the work, and check IsResultForThisCall() in the delegate handler.
+	 */
+	void CallWithContext(TFunctionRef<void()> Call);
+
+	/**
+	 * False when the broadcast being handled belongs to another node's call. Broadcasts that carry no
+	 * context (from code that does not propagate one) are accepted.
+	 */
+	bool IsResultForThisCall() const;
+
 	template <typename TSubsystem>
 	TSubsystem* GetGameInstanceSubsystem() const
 	{
@@ -140,6 +155,7 @@ private:
 
 	TWeakObjectPtr<UObject> WorldContext;
 	TOptional<FEFResult> PendingFailure;
+	int64 CallContext = 0;
 	FTSTicker::FDelegateHandle TimeoutHandle;
 	float TimeoutSeconds = 0.f;
 	bool bActivated = false;

@@ -122,12 +122,17 @@ void FEFHttpOperation::BeginAttempt()
 		NewRequest->SetHeader(Header.Key, Header.Value);
 	}
 
-	if (!Request.Body.IsEmpty())
+	const bool bHasBody = Request.BodyBytes.Num() > 0 || !Request.Body.IsEmpty();
+	if (bHasBody && !Request.ContentType.IsEmpty() && !Request.Headers.Contains(TEXT("Content-Type")))
 	{
-		if (!Request.ContentType.IsEmpty() && !Request.Headers.Contains(TEXT("Content-Type")))
-		{
-			NewRequest->SetHeader(TEXT("Content-Type"), Request.ContentType);
-		}
+		NewRequest->SetHeader(TEXT("Content-Type"), Request.ContentType);
+	}
+	if (Request.BodyBytes.Num() > 0)
+	{
+		NewRequest->SetContent(Request.BodyBytes);
+	}
+	else if (!Request.Body.IsEmpty())
+	{
 		NewRequest->SetContentAsString(Request.Body);
 	}
 
