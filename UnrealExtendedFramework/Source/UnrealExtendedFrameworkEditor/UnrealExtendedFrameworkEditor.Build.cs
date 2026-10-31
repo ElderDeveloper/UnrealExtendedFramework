@@ -1,4 +1,4 @@
-// Copyright Epic Games, Inc. All Rights Reserved.
+// Copyright Moon Punch Games. All Rights Reserved.
 
 using System.IO;
 using UnrealBuildTool;
@@ -73,14 +73,5 @@ public class UnrealExtendedFrameworkEditor : ModuleRules
 				"MainFrame"
 			});
 		}
-
-		PrivateIncludePathModuleNames.AddRange(
-			new string[]
-			{
-#if WITH_EDITOR
-				"SkeletonEditor",
-#endif
-			}
-		);
 	}
 }

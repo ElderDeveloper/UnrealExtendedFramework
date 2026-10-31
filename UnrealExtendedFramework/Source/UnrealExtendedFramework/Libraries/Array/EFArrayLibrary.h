@@ -1,18 +1,18 @@
-﻿// Fill out your copyright notice in the Description page of Project Settings.
+﻿// Copyright Moon Punch Games. All Rights Reserved.
 
 #pragma once
 
 #include "CoreMinimal.h"
 #include "UnrealExtendedFramework/Data/EFEnums.h"
 #include "UObject/Object.h"
-#include "UEFArrayLibrary.generated.h"
+#include "EFArrayLibrary.generated.h"
 
 /**
  * Blueprint function library providing extended array utilities including
  * random selection, sorting, shuffling, filtering, and validation helpers.
  */
 UCLASS()
-class UNREALEXTENDEDFRAMEWORK_API UUEFArrayLibrary : public UBlueprintFunctionLibrary
+class UNREALEXTENDEDFRAMEWORK_API UEFArrayLibrary : public UBlueprintFunctionLibrary
 {
 	GENERATED_BODY()
 

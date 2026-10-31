@@ -8,7 +8,7 @@ using UnrealBuildTool;
  * Deliberately independent of UE_LOG / GLog, and deliberately light: it depends on nothing beyond
  * Core, CoreUObject, Engine (PIE instance labels, the Blueprint node) and DeveloperSettings, so any
  * module (Steam, EOS, PlayFab, game code) can use EF_LOG without inheriting the
- * UnrealExtendedFramework module's GAS / Niagara / OSS dependencies.
+ * UnrealExtendedFramework module's AI, UMG, input and audio dependencies.
  * Plan: Documents/ExtendedFrameworkLogSystemPlan.md (DOP repository).
  */
 public class UnrealExtendedFrameworkLog : ModuleRules

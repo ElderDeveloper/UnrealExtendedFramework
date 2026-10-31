@@ -117,7 +117,8 @@ The core plugin supplies the shared runtime and editor foundation used across th
 - Graphics, audio, display, input, accessibility, and upscaler-oriented setting types.
 - Optional compile-time integration for NVIDIA DLSS, AMD FSR variants, and Intel XeSS.
 - Async Blueprint actions for delays, loops, timelines, input, gameplay tags, and character movement.
-- HTTP and JSON helpers for backend-facing gameplay code.
+- HTTP client with every common verb, headers, query parameters, timeouts, retries with exponential backoff (honoring `Retry-After`), cancellation, a game-instance subsystem with base URL and default headers, and an **Http Request** async Blueprint node. URLs are logged without query strings or credentials.
+- JSON library for reading, building, path lookup (`data.items[2].name`), deep copy, file I/O, and converting any native or Blueprint struct to and from JSON.
 - Actor, AI, array, condition, conversion, data-table, file, input, math, monitor, perception, trace, variable, and widget libraries.
 - Subtitle data, style profiles, project settings, playback, and presentation support.
 - Behavior Tree composites, decorators, services, and tasks.
@@ -330,7 +331,7 @@ All required non-vendor dependencies below ship with the local UE 5.8 installati
 
 | Plugin | Extended dependency | Unreal Engine plugin dependencies |
 |:--|:--|:--|
-| UnrealExtendedFramework | — | GameplayAbilities, Niagara, OnlineSubsystem, OnlineSubsystemUtils, OnlineSubsystemNull, EnhancedInput, DLSS *(optional)* |
+| UnrealExtendedFramework | — | EnhancedInput, DLSS *(optional)* |
 | UnrealExtendedGameplay | UnrealExtendedFramework | Niagara, OnlineSubsystem, OnlineSubsystemUtils, OnlineSubsystemNull |
 | UnrealExtendedGAS | — | GameplayAbilities, EnhancedInput |
 | UnrealExtendedQuest | — | GameplayTagsEditor *(editor only)* |
@@ -375,6 +376,43 @@ void AMyPlayerController::LoadPlayerSettings()
     }
 }
 ```
+
+### Call a web API
+
+From Blueprint, use **Http Request** (an async node with On Success / On Failure), or build the request with **Make Json Http Request** and read the result with **Get Response Json**. From C++:
+
+```cpp
+#include "Backend/Http/EFHttpLibrary.h"
+#include "Backend/Http/EFHttpSubsystem.h"
+#include "Backend/Json/EFJsonLibrary.h"
+
+void UMyLeaderboardClient::FetchTop(UObject* WorldContext)
+{
+    UEFHttpSubsystem* Http = UEFHttpSubsystem::Get(WorldContext);
+    if (!Http)
+    {
+        return;
+    }
+    Http->SetBaseUrl(TEXT("https://api.example.com/v1"));
+
+    FEFHttpRequest Request;
+    Request.Url = TEXT("leaderboards/top");
+    Request.QueryParameters.Add(TEXT("limit"), TEXT("10"));
+    Request.MaxRetries = 2;
+
+    Http->Send(Request, [](const FEFHttpResponse& Response)
+    {
+        FEFJsonObject Body;
+        if (Response.IsSuccess() && UEFHttpLibrary::GetResponseJson(Response, Body))
+        {
+            FEFJsonValue FirstName;
+            UEFJsonLibrary::TryGetFieldByPath(Body, TEXT("entries[0].name"), FirstName);
+        }
+    });
+}
+```
+
+`FEFHttpOperation::Start` sends a request without a game instance, for editor tools and other modules. POST and PATCH are not retried unless the request allows it, because a retried non-idempotent request can be applied twice.
 
 ### Configure modular settings
 

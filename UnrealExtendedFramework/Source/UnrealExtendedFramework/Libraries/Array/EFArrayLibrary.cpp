@@ -1,7 +1,7 @@
-﻿// Fill out your copyright notice in the Description page of Project Settings.
+﻿// Copyright Moon Punch Games. All Rights Reserved.
 
 
-#include "UEFArrayLibrary.h"
+#include "EFArrayLibrary.h"
 
 #include "UObject/UnrealType.h"
 
@@ -10,7 +10,7 @@
 
 
 
-void UUEFArrayLibrary::GetRandomArrayMembers(const TArray<int32>& TargetArray, TArray<int32>& Items, const int32 Amount, const bool bUnique)
+void UEFArrayLibrary::GetRandomArrayMembers(const TArray<int32>& TargetArray, TArray<int32>& Items, const int32 Amount, const bool bUnique)
 {
 	Items.Empty();
 
@@ -45,13 +45,13 @@ void UUEFArrayLibrary::GetRandomArrayMembers(const TArray<int32>& TargetArray, T
 
 // ================================ SORTING ================================
 
-void UUEFArrayLibrary::SortFloatArray(const TArray<float>& FloatArray, TArray<float>& SortedArray)
+void UEFArrayLibrary::SortFloatArray(const TArray<float>& FloatArray, TArray<float>& SortedArray)
 {
 	SortedArray = FloatArray;
 	SortedArray.Sort();
 }
 
-void UUEFArrayLibrary::SortIntArray(const TArray<int32>& IntArray, TArray<int32>& SortedArray, bool bDescending)
+void UEFArrayLibrary::SortIntArray(const TArray<int32>& IntArray, TArray<int32>& SortedArray, bool bDescending)
 {
 	SortedArray = IntArray;
 	if (bDescending)
@@ -64,7 +64,7 @@ void UUEFArrayLibrary::SortIntArray(const TArray<int32>& IntArray, TArray<int32>
 	}
 }
 
-void UUEFArrayLibrary::SortStringArray(const TArray<FString>& StringArray, TArray<FString>& SortedArray, bool bDescending)
+void UEFArrayLibrary::SortStringArray(const TArray<FString>& StringArray, TArray<FString>& SortedArray, bool bDescending)
 {
 	SortedArray = StringArray;
 	if (bDescending)
@@ -80,7 +80,7 @@ void UUEFArrayLibrary::SortStringArray(const TArray<FString>& StringArray, TArra
 
 // ================================ FILTER ================================
 
-void UUEFArrayLibrary::FilterFloatArrayByRange(const TArray<float>& SourceArray, TArray<float>& FilteredArray, float Min, float Max)
+void UEFArrayLibrary::FilterFloatArrayByRange(const TArray<float>& SourceArray, TArray<float>& FilteredArray, float Min, float Max)
 {
 	FilteredArray.Empty(SourceArray.Num());
 	for (const float Value : SourceArray)
@@ -92,7 +92,7 @@ void UUEFArrayLibrary::FilterFloatArrayByRange(const TArray<float>& SourceArray,
 	}
 }
 
-void UUEFArrayLibrary::FilterIntArrayByRange(const TArray<int32>& SourceArray, TArray<int32>& FilteredArray, int32 Min, int32 Max)
+void UEFArrayLibrary::FilterIntArrayByRange(const TArray<int32>& SourceArray, TArray<int32>& FilteredArray, int32 Min, int32 Max)
 {
 	FilteredArray.Empty(SourceArray.Num());
 	for (const int32 Value : SourceArray)
@@ -106,13 +106,13 @@ void UUEFArrayLibrary::FilterIntArrayByRange(const TArray<int32>& SourceArray, T
 
 
 
-bool UUEFArrayLibrary::FindMapValueByKey(const TMap<int32, int32>& TargetMap, const int32& Key, int32& Value)
+bool UEFArrayLibrary::FindMapValueByKey(const TMap<int32, int32>& TargetMap, const int32& Key, int32& Value)
 {
 	checkNoEntry();
 	return false;
 }
 
-DEFINE_FUNCTION(UUEFArrayLibrary::execFindMapValueByKey)
+DEFINE_FUNCTION(UEFArrayLibrary::execFindMapValueByKey)
 {
 	Stack.MostRecentProperty = nullptr;
 	Stack.StepCompiledIn<FMapProperty>(nullptr);
@@ -135,7 +135,7 @@ DEFINE_FUNCTION(UUEFArrayLibrary::execFindMapValueByKey)
 	P_NATIVE_END;
 }
 
-bool UUEFArrayLibrary::GenericFindMapValueByKey(const void* TargetMap, const FMapProperty* MapProperty,
+bool UEFArrayLibrary::GenericFindMapValueByKey(const void* TargetMap, const FMapProperty* MapProperty,
 	const void* KeyPtr, const FProperty* KeyProperty, void* ValuePtr, const FProperty* ValueProperty)
 {
 	if (TargetMap == nullptr || MapProperty == nullptr || KeyPtr == nullptr || ValuePtr == nullptr || KeyProperty == nullptr || ValueProperty == nullptr)
