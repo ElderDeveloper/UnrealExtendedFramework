@@ -158,6 +158,63 @@ struct UNREALEXTENDEDGAMEPLAY_API FEGSoftCollisionFilter
 };
 
 /**
+ * A temporary change to how a pawn takes part, pushed by gameplay or an anim notify and removed by
+ * handle (UEGSoftCollisionComponent::PushModifier). Several combine: scales multiply, switches add up,
+ * so an attack's immovable window and a heavy-armour weight both hold, and removing one leaves the
+ * other. Push it on every machine that simulates the pawn; montage notifies already run on the
+ * server and the owning client.
+ */
+USTRUCT(BlueprintType)
+struct UNREALEXTENDEDGAMEPLAY_API FEGSoftCollisionModifier
+{
+	GENERATED_BODY()
+
+	/** Multiplies the profile's weight. Heavier pawns take a smaller share of every push. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Soft Collision", meta = (ClampMin = "0.01"))
+	float WeightScale = 1.0f;
+
+	/** Multiplies the profile's push power. 0 pushes nobody. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Soft Collision", meta = (ClampMin = "0.0"))
+	float PushPowerScale = 1.0f;
+
+	/** Nobody can push this pawn while the modifier is active. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Soft Collision")
+	bool bImmovable = false;
+
+	/** This pawn pushes nobody while the modifier is active. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Soft Collision")
+	bool bPushesNobody = false;
+};
+
+USTRUCT(BlueprintType)
+struct UNREALEXTENDEDGAMEPLAY_API FEGSoftCollisionModifierHandle
+{
+	GENERATED_BODY()
+
+	UPROPERTY()
+	int32 Id = 0;
+
+	bool IsValid() const { return Id != 0; }
+	void Invalidate() { Id = 0; }
+};
+
+/** Active modifiers of one pawn. Free of actors so it can be tested on its own. */
+struct UNREALEXTENDEDGAMEPLAY_API FEGSoftCollisionModifierStack
+{
+	/** Returns the new modifier's id, never 0. */
+	int32 Push(const FEGSoftCollisionModifier& Modifier);
+	bool Remove(int32 Id);
+	bool IsEmpty() const { return Modifiers.IsEmpty(); }
+	int32 Num() const { return Modifiers.Num(); }
+	FEGSoftCollisionModifier GetCombined() const;
+	void Reset() { Modifiers.Reset(); }
+
+private:
+	TArray<TPair<int32, FEGSoftCollisionModifier>> Modifiers;
+	int32 NextId = 0;
+};
+
+/**
  * Strength, bands and the reissue rule. Plain numbers, copied per scanning pawn into the frame
  * snapshot, so the math runs on worker threads and in tests without any UObject.
  */

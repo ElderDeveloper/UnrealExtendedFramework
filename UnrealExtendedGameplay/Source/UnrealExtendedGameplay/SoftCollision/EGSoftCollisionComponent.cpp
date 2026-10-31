@@ -13,8 +13,13 @@
 #include "Drivers/EGSoftCollisionDriver_PawnMovement.h"
 #include "Drivers/EGSoftCollisionDriver_PhysicsBody.h"
 #include "EGSoftCollisionInterface.h"
+#include "Assets/EFAssetLoading.h"
+#include "EGRootMotionSource_SoftPush.h"
 #include "EGSoftCollisionProfile.h"
+#include "EGSoftCollisionSettings.h"
 #include "EGSoftCollisionSubsystem.h"
+#include "HAL/IConsoleManager.h"
+#include "UnrealExtendedGameplay/Animation/EGAnimationTags.h"
 #include "Engine/World.h"
 #include "GameFramework/Character.h"
 #include "GameFramework/CharacterMovementComponent.h"
@@ -91,12 +96,12 @@ void UEGSoftCollisionComponent::BeginPlay()
 
 	CachedPawn = Pawn;
 	CachedCharacterMovement = Cast<UCharacterMovementComponent>(Pawn->GetMovementComponent());
-	BeginPlayTime = GetGameTime();
 	bSoftCollisionEnabled = bStartEnabled;
 
 	CachePushPrimitive();
 	RefreshFilter();
 	ConfigureCollision();
+	RunSetupChecks();
 
 	Pawn->ReceiveControllerChangedDelegate.AddDynamic(this, &UEGSoftCollisionComponent::HandleControllerChanged);
 	UpdateControlState(true);
@@ -117,6 +122,8 @@ void UEGSoftCollisionComponent::EndPlay(const EEndPlayReason::Type EndPlayReason
 
 	CancelActivePush();
 	ResetPredictionState();
+	Modifiers.Reset();
+	bHasPendingMovePush = false;
 
 	if (bMovementBound)
 	{
@@ -174,6 +181,11 @@ void UEGSoftCollisionComponent::RefreshFilter()
 	UEGSoftCollisionProfile* NewProfile = OverrideProfile ? OverrideProfile : Profile.Get();
 	if (!NewProfile)
 	{
+		// Preloaded by the subsystem when the world starts, so this normally does not touch the disk.
+		NewProfile = EFAssets::Resolve(UEGSoftCollisionSettings::Get()->DefaultProfile, TEXT("UEGSoftCollisionComponent"));
+	}
+	if (!NewProfile)
+	{
 		NewProfile = GetMutableDefault<UEGSoftCollisionProfile>();
 	}
 
@@ -187,7 +199,7 @@ void UEGSoftCollisionComponent::RefreshFilter()
 
 bool UEGSoftCollisionComponent::IsPushActive() const
 {
-	return Active.bActive && GetGameTime() < Active.EndTime;
+	return Active.bActive && GetPushClock() < Active.EndTime;
 }
 
 UEGSoftCollisionProfile* UEGSoftCollisionComponent::GetEffectiveProfile() const
@@ -373,8 +385,13 @@ bool UEGSoftCollisionComponent::IsPredictingClient() const
 // Snapshot and results
 // =====================================================================
 
-void UEGSoftCollisionComponent::WriteSnapshot(FEGSoftBody& OutBody, FEGSoftCollisionSnapshotInfo& OutInfo)
+void UEGSoftCollisionComponent::WriteSnapshot(FEGSoftBody& OutBody, FEGSoftCollisionSnapshotInfo& OutInfo, float DeltaSeconds)
 {
+	if (const AActor* Owner = GetOwner())
+	{
+		LocalClock += static_cast<double>(DeltaSeconds) * FMath::Max(Owner->CustomTimeDilation, 0.0f);
+	}
+
 	// Controllers and player states replicate separately; checking each frame catches either.
 	UpdateControlState(false);
 
@@ -435,12 +452,13 @@ void UEGSoftCollisionComponent::WriteSnapshot(FEGSoftBody& OutBody, FEGSoftColli
 		OutBody.Axis = FVector2D(1.0, 0.0);
 	}
 
-	OutBody.Weight = EffectiveProfile->Weight;
-	OutBody.PushPower = EffectiveProfile->PushPower;
+	const FEGSoftCollisionModifier Modifier = Modifiers.GetCombined();
+	OutBody.Weight = EffectiveProfile->Weight * Modifier.WeightScale;
+	OutBody.PushPower = EffectiveProfile->PushPower * Modifier.PushPowerScale;
 	OutBody.Layer = static_cast<uint8>(FMath::Clamp(EffectiveFilter.Layer, 0, 31));
 	OutBody.PushedByMask = static_cast<uint32>(EffectiveFilter.PushedByLayers);
-	OutBody.bCanPush = EffectiveFilter.bCanPush;
-	OutBody.bCanBePushed = EffectiveFilter.bCanBePushed;
+	OutBody.bCanPush = EffectiveFilter.bCanPush && !Modifier.bPushesNobody;
+	OutBody.bCanBePushed = EffectiveFilter.bCanBePushed && !Modifier.bImmovable && !IsSuppressedByMovement();
 	OutBody.bEnabled = bSoftCollisionEnabled;
 
 	OutInfo.bScanner = IsScanner();
@@ -469,7 +487,7 @@ void UEGSoftCollisionComponent::ApplyScanResult(const FEGSoftPushResult& Result,
 		return;
 	}
 
-	const double Now = GetGameTime();
+	const double Now = GetPushClock();
 	FVector2D Velocity = Result.Velocity;
 	EEGSoftPushBand Band = Result.Band;
 	if (Band == EEGSoftPushBand::Bump && Now - LastBumpTime < Tuning.BumpCooldown)
@@ -574,7 +592,7 @@ void UEGSoftCollisionComponent::IssuePush(const FVector2D& RawVelocity, EEGSoftP
 	}
 	Active.RawVelocity = RawVelocity;
 
-	const double Now = GetGameTime();
+	const double Now = GetPushClock();
 	if (Band == EEGSoftPushBand::Bump)
 	{
 		LastBumpTime = Now;
@@ -587,7 +605,17 @@ void UEGSoftCollisionComponent::IssuePush(const FVector2D& RawVelocity, EEGSoftP
 		Request.ClientTimeStamp = Command.StartTime;
 		Request.Push = Quantized;
 		Request.Band = Band;
-		ClientQueue.Add(Request, GetRealTime());
+		if (bMoveDataTransport)
+		{
+			// Rides in the next saved move. Still tracked, so a reject or a lost move removes it.
+			PendingMovePush = Request;
+			bHasPendingMovePush = true;
+			ClientQueue.Add(Request, GetRealTime(), false);
+		}
+		else
+		{
+			ClientQueue.Add(Request, GetRealTime());
+		}
 	}
 	else if (Band == EEGSoftPushBand::Bump && Owner && Owner->HasAuthority())
 	{
@@ -624,7 +652,7 @@ bool UEGSoftCollisionComponent::StartPush(const FEGSoftPushCommand& Command, boo
 		return false;
 	}
 
-	const double Now = GetGameTime();
+	const double Now = GetPushClock();
 	Active.Command = Command;
 	Active.Driver = Driver;
 	Active.Handle = Handle;
@@ -667,7 +695,7 @@ void UEGSoftCollisionComponent::BroadcastPush(const FEGSoftPushCommand& Command,
 void UEGSoftCollisionComponent::SendCosmeticBump(const FEGSoftPushQuantized& Quantized)
 {
 	const UEGSoftCollisionProfile* EffectiveProfile = GetEffectiveProfile();
-	const double Now = GetGameTime();
+	const double Now = GetWorldTime();
 	if (Now - LastCosmeticBumpTime < EffectiveProfile->Network.CosmeticBumpInterval)
 	{
 		return;
@@ -689,6 +717,7 @@ void UEGSoftCollisionComponent::OnRep_CosmeticBump()
 
 	FEGSoftCollisionTuning Tuning;
 	GetEffectiveTuning(Tuning);
+	CosmeticBumpUntil = GetPushClock() + Tuning.BumpDuration;
 	BroadcastPush(MakeCommand(CosmeticBump.Push, EEGSoftPushBand::Bump, Tuning), 0, false, true);
 }
 
@@ -698,7 +727,8 @@ void UEGSoftCollisionComponent::OnRep_CosmeticBump()
 
 bool UEGSoftCollisionComponent::TickFrame(float DeltaSeconds)
 {
-	const double Now = GetGameTime();
+	const double Now = GetPushClock();
+	const float ActorDeltaSeconds = DeltaSeconds * (GetOwner() ? FMath::Max(GetOwner()->CustomTimeDilation, 0.0f) : 1.0f);
 	if (Active.bActive)
 	{
 		const float Elapsed = static_cast<float>(Now - Active.StartTime);
@@ -708,7 +738,7 @@ bool UEGSoftCollisionComponent::TickFrame(float DeltaSeconds)
 		}
 		else if (Active.Driver->NeedsTick())
 		{
-			Active.Driver->TickPush(*this, Active.Command, Active.Handle, Elapsed, DeltaSeconds);
+			Active.Driver->TickPush(*this, Active.Command, Active.Handle, Elapsed, ActorDeltaSeconds);
 		}
 	}
 
@@ -820,7 +850,7 @@ void UEGSoftCollisionComponent::ServerSoftPush_Implementation(const TArray<FEGSo
 			continue;
 		}
 		ServerState.MarkProcessed(Request.Sequence);
-		ProcessServerRequest(Request);
+		ProcessServerRequest(Request, false);
 	}
 
 	UpdateMovementBinding();
@@ -877,7 +907,7 @@ UEGSoftCollisionComponent::ERejectReason UEGSoftCollisionComponent::ValidateRequ
 		}
 	}
 
-	if (Request.Band == EEGSoftPushBand::Bump && GetGameTime() - ServerState.LastBumpTime < Tuning.BumpCooldown * 0.5f)
+	if (Request.Band == EEGSoftPushBand::Bump && GetPushClock() - ServerState.LastBumpTime < Tuning.BumpCooldown * 0.5f)
 	{
 		return ERejectReason::BumpCooldown;
 	}
@@ -891,7 +921,7 @@ UEGSoftCollisionComponent::ERejectReason UEGSoftCollisionComponent::ValidateRequ
 	return ERejectReason::None;
 }
 
-void UEGSoftCollisionComponent::ProcessServerRequest(const FEGSoftPushRequest& Request)
+void UEGSoftCollisionComponent::ProcessServerRequest(const FEGSoftPushRequest& Request, bool bFromMove)
 {
 	bool bEpochMismatch = false;
 	const ERejectReason Reason = ValidateRequest(Request, bEpochMismatch);
@@ -914,7 +944,17 @@ void UEGSoftCollisionComponent::ProcessServerRequest(const FEGSoftPushRequest& R
 	const float CurrentClientTime = ServerData ? ServerData->CurrentClientTimeStamp : 0.0f;
 
 	bool bLate = false;
-	if (ServerData && !bEpochMismatch)
+	if (bFromMove)
+	{
+		// Carried by the move about to be simulated: it starts exactly where that move starts, and
+		// the push it replaces ends there, so nothing is late and nothing waits for a later move.
+		if (ServerData && !bEpochMismatch)
+		{
+			Command.bHasStartTime = true;
+			Command.StartTime = Request.ClientTimeStamp;
+		}
+	}
+	else if (ServerData && !bEpochMismatch)
 	{
 		Command.bHasStartTime = true;
 		Command.StartTime = Request.ClientTimeStamp;
@@ -943,7 +983,7 @@ void UEGSoftCollisionComponent::ProcessServerRequest(const FEGSoftPushRequest& R
 	{
 		// Usually the move ending at the start time was already processed when the request arrives
 		// (the client sent it last frame); then the boundary has passed and the old push goes now.
-		const bool bBoundaryAhead = Command.bHasStartTime && !bLate && CurrentClientTime < Command.StartTime - UE_KINDA_SMALL_NUMBER;
+		const bool bBoundaryAhead = !bFromMove && Command.bHasStartTime && !bLate && CurrentClientTime < Command.StartTime - UE_KINDA_SMALL_NUMBER;
 		if (bBoundaryAhead)
 		{
 			FEGSoftPushScheduledRemoval& Removal = ServerState.Removals.AddDefaulted_GetRef();
@@ -972,12 +1012,15 @@ void UEGSoftCollisionComponent::ProcessServerRequest(const FEGSoftPushRequest& R
 	if (Movement)
 	{
 		const float StartClientTime = Command.bHasStartTime ? Command.StartTime : CurrentClientTime;
-		SafetyLease.Acquire(*Movement, UEGSoftCollisionSubsystem::ResolveSafetyLevel(Network.SafetyLevel), StartClientTime + Command.Duration + Network.SafetyGrace);
+		if (SafetyLease.Acquire(*Movement, UEGSoftCollisionSubsystem::ResolveSafetyLevel(Network.SafetyLevel), StartClientTime + Command.Duration + Network.SafetyGrace))
+		{
+			ReportSetupProblem(TEXT("bServerAcceptClientAuthoritativePosition or bIgnoreClientMovementErrorChecksAndCorrection was already on when a push started. Soft Collision restores the previous value afterwards, but the game and Soft Collision are both changing these flags; set the profile's Safety Level to Keys Only if the game owns them."));
+		}
 	}
 
 	if (Request.Band == EEGSoftPushBand::Bump)
 	{
-		ServerState.LastBumpTime = GetGameTime();
+		ServerState.LastBumpTime = GetPushClock();
 		LastBumpTime = ServerState.LastBumpTime;
 		SendCosmeticBump(Request.Push);
 	}
@@ -1107,10 +1150,150 @@ void UEGSoftCollisionComponent::ResetPredictionState()
 }
 
 // =====================================================================
+// Modifiers, anim state, movement
+// =====================================================================
+
+FEGSoftCollisionModifierHandle UEGSoftCollisionComponent::PushModifier(const FEGSoftCollisionModifier& Modifier)
+{
+	FEGSoftCollisionModifierHandle Handle;
+	Handle.Id = Modifiers.Push(Modifier);
+	return Handle;
+}
+
+void UEGSoftCollisionComponent::RemoveModifier(FEGSoftCollisionModifierHandle& Handle)
+{
+	Modifiers.Remove(Handle.Id);
+	Handle.Invalidate();
+}
+
+FGameplayTagContainer UEGSoftCollisionComponent::GetAnimStateTags_Implementation() const
+{
+	FGameplayTagContainer Tags;
+	const bool bPushed = IsPushActive();
+	if (bPushed)
+	{
+		Tags.AddTag(TAG_EGAnim_State_SoftCollision_Pushed);
+	}
+	if ((bPushed && Active.Command.Band == EEGSoftPushBand::Bump) || GetPushClock() < CosmeticBumpUntil)
+	{
+		Tags.AddTag(TAG_EGAnim_State_SoftCollision_Bumped);
+	}
+	return Tags;
+}
+
+bool UEGSoftCollisionComponent::IsSuppressedByMovement() const
+{
+	const ACharacter* Character = Cast<ACharacter>(GetPawn());
+	const UCharacterMovementComponent* Movement = GetCharacterMovement();
+	const UEGSoftCollisionProfile* EffectiveProfile = GetEffectiveProfile();
+	if (!Character || !Movement || !EffectiveProfile)
+	{
+		return false;
+	}
+	if (EffectiveProfile->bSuppressDuringRootMotion && EGSoftCollision::HasGameplayRootMotion(*Character))
+	{
+		return true;
+	}
+	return !EffectiveProfile->bPushWhileFalling && Movement->IsFalling();
+}
+
+// =====================================================================
+// Move-data transport
+// =====================================================================
+
+bool UEGSoftCollisionComponent::ConsumePendingMovePush(FEGSoftPushRequest& OutRequest)
+{
+	if (!bHasPendingMovePush)
+	{
+		return false;
+	}
+	OutRequest = PendingMovePush;
+	bHasPendingMovePush = false;
+	return true;
+}
+
+void UEGSoftCollisionComponent::ReceiveMovePush(const FEGSoftPushRequest& Request)
+{
+	if (!GetPawn() || !GetOwner()->HasAuthority() || ServerState.IsDuplicate(Request.Sequence))
+	{
+		return;
+	}
+	ServerState.MarkProcessed(Request.Sequence);
+	ProcessServerRequest(Request, true);
+	UpdateMovementBinding();
+}
+
+// =====================================================================
+// Setup checks
+// =====================================================================
+
+void UEGSoftCollisionComponent::RunSetupChecks()
+{
+	if (!UEGSoftCollisionSettings::Get()->bReportSetupProblems)
+	{
+		return;
+	}
+
+	APawn* Pawn = GetPawn();
+	if (!Pawn)
+	{
+		return;
+	}
+
+	if (!PushPrimitive.IsValid())
+	{
+		ReportSetupProblem(TEXT("The pawn has no primitive root component and no capsule, so it never pushes or is pushed. Give it a capsule, box or sphere root."));
+	}
+
+	const bool bNetworked = GetNetMode() != NM_Standalone;
+	if (bNetworked && !GetIsReplicated())
+	{
+		ReportSetupProblem(TEXT("The component does not replicate, so predicted pushes are never confirmed and bumps never reach other clients. Leave Component Replicates on."));
+	}
+
+	if (bNetworked)
+	{
+		if (const IConsoleVariable* PushModel = IConsoleManager::Get().FindConsoleVariable(TEXT("net.IsPushModelEnabled")); PushModel && !PushModel->GetBool())
+		{
+			ReportSetupProblem(TEXT("Push-model replication is off, so every soft collision component is compared on every network update. Set net.IsPushModelEnabled=1."));
+		}
+	}
+
+	// A pair blocks only when both sides block each other's object type. Another primitive of a
+	// different object type that blocks the soft channel can therefore still stop soft pawns.
+	const FString ChannelName = StaticEnum<ECollisionChannel>()->GetNameStringByValue(static_cast<int64>(SoftChannel.GetValue()));
+	TInlineComponentArray<UPrimitiveComponent*> Primitives(Pawn);
+	for (const UPrimitiveComponent* Primitive : Primitives)
+	{
+		if (!Primitive || Primitive == PushPrimitive.Get() || !Primitive->IsRegistered())
+		{
+			continue;
+		}
+		if (CollisionEnabledHasQuery(Primitive->GetCollisionEnabled())
+			&& Primitive->GetCollisionObjectType() != SoftChannel
+			&& Primitive->GetCollisionResponseToChannel(SoftChannel) == ECR_Block)
+		{
+			ReportSetupProblem(FString::Printf(TEXT("%s blocks %s and is not of that object type, so it can still block other soft pawns. Set it to ignore or overlap %s."),
+				*Primitive->GetName(), *ChannelName, *ChannelName));
+		}
+	}
+}
+
+void UEGSoftCollisionComponent::ReportSetupProblem(const FString& Problem)
+{
+	bool bAlreadyReported = false;
+	ReportedProblems.Add(GetTypeHash(Problem), &bAlreadyReported);
+	if (!bAlreadyReported)
+	{
+		UE_LOG(LogEGSoftCollision, Warning, TEXT("%s: %s"), *GetNameSafe(GetOwner()), *Problem);
+	}
+}
+
+// =====================================================================
 // Helpers
 // =====================================================================
 
-double UEGSoftCollisionComponent::GetGameTime() const
+double UEGSoftCollisionComponent::GetWorldTime() const
 {
 	const UWorld* World = GetWorld();
 	return World ? World->GetTimeSeconds() : 0.0;

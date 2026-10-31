@@ -3,7 +3,43 @@
 #include "EGRootMotionSource_SoftPush.h"
 
 #include "EGSoftCollisionMath.h"
+#include "GameFramework/Character.h"
 #include "GameFramework/CharacterMovementComponent.h"
+
+namespace EGSoftCollision
+{
+	bool IsSoftPushSource(const FRootMotionSource& Source)
+	{
+		return Source.GetScriptStruct() == FEGRootMotionSource_SoftPush::StaticStruct();
+	}
+
+	bool HasGameplayRootMotionSources(const UCharacterMovementComponent& Movement)
+	{
+		const auto AnyGameplaySource = [](const TArray<TSharedPtr<FRootMotionSource>>& Sources)
+		{
+			for (const TSharedPtr<FRootMotionSource>& Source : Sources)
+			{
+				if (Source.IsValid() && !IsSoftPushSource(*Source))
+				{
+					return true;
+				}
+			}
+			return false;
+		};
+		return AnyGameplaySource(Movement.CurrentRootMotion.RootMotionSources)
+			|| AnyGameplaySource(Movement.CurrentRootMotion.PendingAddRootMotionSources);
+	}
+
+	bool HasGameplayRootMotion(const ACharacter& Character)
+	{
+		if (Character.IsPlayingRootMotion())
+		{
+			return true;
+		}
+		const UCharacterMovementComponent* Movement = Character.GetCharacterMovement();
+		return Movement && HasGameplayRootMotionSources(*Movement);
+	}
+}
 
 FEGRootMotionSource_SoftPush::FEGRootMotionSource_SoftPush()
 {

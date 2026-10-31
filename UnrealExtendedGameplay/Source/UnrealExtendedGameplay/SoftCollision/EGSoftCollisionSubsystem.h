@@ -6,6 +6,7 @@
 #include "Engine/EngineBaseTypes.h"
 #include "Subsystems/WorldSubsystem.h"
 #include "Tasks/Task.h"
+#include "Engine/StreamableManager.h"
 #include "EGSoftCollisionGrid.h"
 #include "EGSoftCollisionTypes.h"
 
@@ -108,10 +109,15 @@ private:
 	{
 		TWeakObjectPtr<UEGSoftCollisionComponent> Component;
 		FIntPoint Cell = FIntPoint::ZeroValue;
+		/** Where the pawn was at the previous snapshot: a pawn that moved without velocity (teleport, spawn) is awake. */
+		FVector LastLocation = FVector::ZeroVector;
 		double NextScanTime = 0.0;
 		float SleepSpeed = 0.0f;
 		bool bInGrid = false;
-		bool bHadContact = false;
+		bool bHasLastLocation = false;
+		bool bMoved = false;
+		/** New pawns start awake so they are scanned at least once. */
+		bool bHadContact = true;
 		bool bScanner = false;
 		bool bPlayer = false;
 	};
@@ -149,6 +155,29 @@ private:
 	/** Scratch, reused every frame. */
 	TSet<FIntPoint> ActiveCells;
 	TArray<FVector> PlayerLocations;
+
+	// Extended.Status
+	void RegisterStatus();
+	void UnregisterStatus();
+	void RollStatusWindow() const;
+	int32 StatusHandle = INDEX_NONE;
+	int32 LastScannerCount = 0;
+	int32 LastSleepingCount = 0;
+	bool bLastScanParallel = false;
+	uint64 TotalPushes = 0;
+	uint64 TotalRequestsSent = 0;
+	uint64 TotalAccepted = 0;
+	uint64 TotalRejected = 0;
+	uint64 TotalLate = 0;
+	uint64 TotalUnanswered = 0;
+	/** Counters of the current ten-second window, for the Degraded state. */
+	mutable double WindowStart = 0.0;
+	mutable int32 WindowAccepted = 0;
+	mutable int32 WindowProblems = 0;
+	mutable int32 LastWindowAccepted = 0;
+	mutable int32 LastWindowProblems = 0;
+
+	TSharedPtr<FStreamableHandle> DefaultProfileHandle;
 
 	FEGSoftCollisionTickFunction SnapshotTickFunction;
 	FDelegateHandle PreActorTickHandle;

@@ -6,7 +6,10 @@
 #include "DrawDebugHelpers.h"
 #include "EGSoftCollisionComponent.h"
 #include "EGSoftCollisionMath.h"
+#include "Assets/EFAssetLoading.h"
 #include "EGSoftCollisionProfile.h"
+#include "EGSoftCollisionSettings.h"
+#include "Status/EFServiceStatus.h"
 #include "Engine/Level.h"
 #include "Engine/World.h"
 #include "HAL/IConsoleManager.h"
@@ -68,8 +71,8 @@ namespace EGSoftCollisionCVars
 		ECVF_Cheat);
 
 	static TAutoConsoleVariable<int32> ParallelThreshold(
-		TEXT("eg.SoftCollision.ParallelThreshold"), 64,
-		TEXT("Scanner count below which the scan runs inline on the game thread."),
+		TEXT("eg.SoftCollision.ParallelThreshold"), 0,
+		TEXT("Scanner count below which the scan runs inline on the game thread. 0 uses the project setting."),
 		ECVF_Default);
 }
 
@@ -122,6 +125,14 @@ void UEGSoftCollisionSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
 	Super::Initialize(Collection);
 	PreActorTickHandle = FWorldDelegates::OnWorldPreActorTick.AddUObject(this, &UEGSoftCollisionSubsystem::HandlePreActorTick);
+
+	// Components without a profile resolve the project default at BeginPlay; load it now so that
+	// does not hitch.
+	const UEGSoftCollisionSettings* Settings = UEGSoftCollisionSettings::Get();
+	if (!Settings->DefaultProfile.IsNull())
+	{
+		DefaultProfileHandle = EFAssets::Preload({ Settings->DefaultProfile.ToSoftObjectPath() });
+	}
 }
 
 void UEGSoftCollisionSubsystem::OnWorldBeginPlay(UWorld& InWorld)
@@ -139,11 +150,16 @@ void UEGSoftCollisionSubsystem::OnWorldBeginPlay(UWorld& InWorld)
 	{
 		SnapshotTickFunction.RegisterTickFunction(InWorld.PersistentLevel);
 	}
+
+	// The net mode is known by now, which names the report.
+	RegisterStatus();
 }
 
 void UEGSoftCollisionSubsystem::Deinitialize()
 {
 	WaitForCompute();
+	UnregisterStatus();
+	DefaultProfileHandle.Reset();
 
 	if (SnapshotTickFunction.IsTickFunctionRegistered())
 	{
@@ -323,7 +339,7 @@ void UEGSoftCollisionSubsystem::RunSnapshot(float DeltaSeconds)
 		}
 
 		FEGSoftCollisionSnapshotInfo Info;
-		Component->WriteSnapshot(Body, Info);
+		Component->WriteSnapshot(Body, Info, DeltaSeconds);
 		Body.Id = Index;
 		Entry.bScanner = Info.bScanner;
 		Entry.bPlayer = Info.bPlayerControlled;
@@ -399,15 +415,21 @@ void UEGSoftCollisionSubsystem::BuildScanList(double Now)
 	ScanTuning.Reset();
 	ScanResults.Reset();
 
-	// Cells with a moving pawn wake the sleepers around them.
+	// Cells with a moving pawn wake the sleepers around them. Moving means velocity or a change of
+	// position since the last snapshot, so spawns and teleports count too.
+	constexpr double MovedDistanceSquared = 1.0;
 	ActiveCells.Reset();
 	for (int32 Index = 0; Index < Entries.Num(); ++Index)
 	{
+		FEntry& Entry = Entries[Index];
 		const FEGSoftBody& Body = Bodies[Index];
-		const float SleepSpeed = FMath::Max(Entries[Index].SleepSpeed, 0.0f);
-		if (Body.bEnabled && Body.Velocity.SizeSquared() > static_cast<double>(SleepSpeed * SleepSpeed))
+		const float SleepSpeed = FMath::Max(Entry.SleepSpeed, 0.0f);
+		Entry.bMoved = !Entry.bHasLastLocation || FVector::DistSquared(Body.Location, Entry.LastLocation) > MovedDistanceSquared;
+		Entry.LastLocation = Body.Location;
+		Entry.bHasLastLocation = true;
+		if (Body.bEnabled && (Entry.bMoved || Body.Velocity.SizeSquared() > static_cast<double>(SleepSpeed * SleepSpeed)))
 		{
-			ActiveCells.Add(Entries[Index].Cell);
+			ActiveCells.Add(Entry.Cell);
 		}
 	}
 
@@ -416,9 +438,11 @@ void UEGSoftCollisionSubsystem::BuildScanList(double Now)
 	{
 		FEntry& Entry = Entries[Index];
 		const FEGSoftBody& Body = Bodies[Index];
+		// Pawns that do not scan now keep their contact state, so one that starts scanning again (a
+		// possession, the end of an immovable window, a return into range) is scanned at once.
 		if (!Entry.bScanner || !Body.bEnabled || !Body.bCanBePushed)
 		{
-			Entry.bHadContact = false;
+			Entry.bHadContact = true;
 			continue;
 		}
 
@@ -440,7 +464,7 @@ void UEGSoftCollisionSubsystem::BuildScanList(double Now)
 			}
 			if (Scan.CullDistance > 0.0f && NearestSquared > FMath::Square(static_cast<double>(Scan.CullDistance)))
 			{
-				Entry.bHadContact = false;
+				Entry.bHadContact = true;
 				continue;
 			}
 			Interval = NearestSquared <= FMath::Square(static_cast<double>(Scan.NearDistance)) ? Scan.NearScanInterval : Scan.FarScanInterval;
@@ -455,7 +479,7 @@ void UEGSoftCollisionSubsystem::BuildScanList(double Now)
 			continue;
 		}
 
-		const bool bSlow = Body.Velocity.SizeSquared() <= static_cast<double>(Scan.SleepSpeed * Scan.SleepSpeed);
+		const bool bSlow = !Entry.bMoved && Body.Velocity.SizeSquared() <= static_cast<double>(Scan.SleepSpeed * Scan.SleepSpeed);
 		if (!Entry.bHadContact && bSlow && !IsCellNearActivity(Entry.Cell))
 		{
 			++Sleeping;
@@ -468,6 +492,8 @@ void UEGSoftCollisionSubsystem::BuildScanList(double Now)
 	}
 
 	ScanResults.SetNum(ScanEntries.Num());
+	LastScannerCount = ScanEntries.Num();
+	LastSleepingCount = Sleeping;
 	SET_DWORD_STAT(STAT_EGSoftCollision_Scanners, ScanEntries.Num());
 	SET_DWORD_STAT(STAT_EGSoftCollision_Sleeping, Sleeping);
 }
@@ -502,9 +528,14 @@ void UEGSoftCollisionSubsystem::LaunchCompute()
 
 	bResultsPending = true;
 	const int32 Count = ScanEntries.Num();
-	const bool bParallel = EGSoftCollisionCVars::Parallel.GetValueOnGameThread() != 0
+	const UEGSoftCollisionSettings* Settings = UEGSoftCollisionSettings::Get();
+	const int32 ThresholdOverride = EGSoftCollisionCVars::ParallelThreshold.GetValueOnGameThread();
+	const int32 Threshold = ThresholdOverride > 0 ? ThresholdOverride : Settings->ParallelThreshold;
+	const bool bParallel = Settings->bParallelScan
+		&& EGSoftCollisionCVars::Parallel.GetValueOnGameThread() != 0
 		&& FApp::ShouldUseThreadingForPerformance()
-		&& Count >= FMath::Max(EGSoftCollisionCVars::ParallelThreshold.GetValueOnGameThread(), 1);
+		&& Count >= FMath::Max(Threshold, 1);
+	bLastScanParallel = bParallel;
 
 	if (!bParallel)
 	{
@@ -687,31 +718,126 @@ EEGSoftCollisionSafetyLevel UEGSoftCollisionSubsystem::ResolveSafetyLevel(EEGSof
 void UEGSoftCollisionSubsystem::NoteRequestsSent(int32 Count)
 {
 	INC_DWORD_STAT_BY(STAT_EGSoftCollision_RequestsSent, Count);
+	TotalRequestsSent += Count;
 }
 
 void UEGSoftCollisionSubsystem::NoteRequestAccepted()
 {
 	INC_DWORD_STAT(STAT_EGSoftCollision_RequestsAccepted);
+	++TotalAccepted;
+	RollStatusWindow();
+	++WindowAccepted;
 }
 
 void UEGSoftCollisionSubsystem::NoteRequestRejected()
 {
 	INC_DWORD_STAT(STAT_EGSoftCollision_RequestsRejected);
+	++TotalRejected;
+	RollStatusWindow();
+	++WindowProblems;
 }
 
 void UEGSoftCollisionSubsystem::NoteLateRequest()
 {
 	INC_DWORD_STAT(STAT_EGSoftCollision_LateRequests);
+	++TotalLate;
+	RollStatusWindow();
+	++WindowProblems;
 }
 
 void UEGSoftCollisionSubsystem::NoteUnansweredPush()
 {
 	INC_DWORD_STAT(STAT_EGSoftCollision_Unanswered);
+	++TotalUnanswered;
+	RollStatusWindow();
+	++WindowProblems;
 }
 
 void UEGSoftCollisionSubsystem::NotePushIssued()
 {
 	INC_DWORD_STAT(STAT_EGSoftCollision_Pushes);
+	++TotalPushes;
+}
+
+// =====================================================================
+// Extended.Status
+// =====================================================================
+
+void UEGSoftCollisionSubsystem::RollStatusWindow() const
+{
+	constexpr double WindowSeconds = 10.0;
+	const UWorld* World = GetWorld();
+	const double Now = World ? World->GetRealTimeSeconds() : 0.0;
+	if (Now - WindowStart >= WindowSeconds)
+	{
+		LastWindowAccepted = WindowAccepted;
+		LastWindowProblems = WindowProblems;
+		WindowAccepted = 0;
+		WindowProblems = 0;
+		WindowStart = Now;
+	}
+}
+
+void UEGSoftCollisionSubsystem::RegisterStatus()
+{
+	if (StatusHandle != INDEX_NONE || !UEGSoftCollisionSettings::Get()->bReportStatus)
+	{
+		return;
+	}
+
+	const UWorld* World = GetWorld();
+	const TCHAR* NetModeName = TEXT("Standalone");
+	switch (World ? World->GetNetMode() : NM_Standalone)
+	{
+	case NM_DedicatedServer: NetModeName = TEXT("Dedicated Server"); break;
+	case NM_ListenServer: NetModeName = TEXT("Listen Server"); break;
+	case NM_Client: NetModeName = TEXT("Client"); break;
+	default: break;
+	}
+
+	TWeakObjectPtr<const UEGSoftCollisionSubsystem> WeakThis(this);
+	StatusHandle = FEFServiceStatusRegistry::Register(FName(*FString::Printf(TEXT("SoftCollision (%s)"), NetModeName)), [WeakThis]()
+	{
+		FEFServiceStatus Status;
+		const UEGSoftCollisionSubsystem* This = WeakThis.Get();
+		if (!This)
+		{
+			Status.State = EEFServiceState::Unavailable;
+			Status.Summary = TEXT("The world is gone.");
+			return Status;
+		}
+		if (!IsSystemEnabled())
+		{
+			Status.State = EEFServiceState::Unavailable;
+			Status.Summary = TEXT("Disabled by eg.SoftCollision.Enable 0.");
+			return Status;
+		}
+
+		This->RollStatusWindow();
+		const int32 Accepted = FMath::Max(This->LastWindowAccepted, This->WindowAccepted);
+		const int32 Problems = FMath::Max(This->LastWindowProblems, This->WindowProblems);
+		// Rejected, late and unanswered pushes above a tenth of the accepted ones mean visible corrections.
+		Status.State = Problems > FMath::Max(5, Accepted / 10) ? EEFServiceState::Degraded : EEFServiceState::Ready;
+		Status.Summary = FString::Printf(TEXT("%d pawns, %d scanning (%s), %d asleep"),
+			This->Entries.Num(), This->LastScannerCount, This->bLastScanParallel ? TEXT("workers") : TEXT("inline"), This->LastSleepingCount);
+		Status.Details.Add(TEXT("Pushes issued"), LexToString(This->TotalPushes));
+		Status.Details.Add(TEXT("Requests sent"), LexToString(This->TotalRequestsSent));
+		Status.Details.Add(TEXT("Requests accepted"), LexToString(This->TotalAccepted));
+		Status.Details.Add(TEXT("Requests rejected"), LexToString(This->TotalRejected));
+		Status.Details.Add(TEXT("Late requests"), LexToString(This->TotalLate));
+		Status.Details.Add(TEXT("Unanswered pushes"), LexToString(This->TotalUnanswered));
+		Status.Details.Add(TEXT("Grid"), FString::Printf(TEXT("%d cells of %.0f cm"), This->Grid.GetNumCells(), This->Grid.GetCellSize()));
+		return Status;
+	});
+}
+
+void UEGSoftCollisionSubsystem::UnregisterStatus()
+{
+	if (StatusHandle != INDEX_NONE)
+	{
+		FEFServiceStatusRegistry::Unregister(StatusHandle);
+		StatusHandle = INDEX_NONE;
+	}
 }
 
 // =====================================================================

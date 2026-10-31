@@ -23,6 +23,7 @@
 #include "UnrealExtendedGameplay/Animation/EGAnimationTags.h"
 #include "UnrealExtendedGameplay/Animation/Events/EGAnimEventComponent.h"
 #include "UnrealExtendedGameplay/Movement/EGMovementModifierComponent.h"
+#include "UnrealExtendedGameplay/SoftCollision/EGRootMotionSource_SoftPush.h"
 
 namespace EGTurnInPlaceCVars
 {
@@ -388,7 +389,8 @@ EEGTurnInPlaceState UEGTurnInPlaceComponent::GetEnabledState(EEGTurnStateReason&
 			: FEGTurnInPlaceSolver::EvaluateRootMotionMontage(Entry.Montages, Montage);
 	}
 
-	In.bHasRootMotionSources = GetMovement()->CurrentRootMotion.HasActiveRootMotionSources();
+	// Soft collision pushes are root motion sources too, but being jostled must not pause turning.
+	In.bHasRootMotionSources = EGSoftCollision::HasGameplayRootMotionSources(*GetMovement());
 
 	if (const UEGMovementModifierComponent* const Modifiers = Owner->FindComponentByClass<UEGMovementModifierComponent>())
 	{
@@ -561,7 +563,7 @@ void UEGTurnInPlaceComponent::UpdateLastInputDirection(const UCharacterMovementC
 	const double Now = World->GetTimeSeconds();
 	FEGTurnInPlaceSolver::FLastInputInputs In;
 	In.bOrientToMovement = Movement->bOrientRotationToMovement;
-	In.bRootMotion = Character->HasAnyRootMotion() || Movement->CurrentRootMotion.HasActiveRootMotionSources();
+	In.bRootMotion = EGSoftCollision::HasGameplayRootMotion(*Character);
 	if (In.bRootMotion)
 	{
 		LastRootMotionTime = Now;
@@ -837,7 +839,7 @@ void UEGTurnInPlaceComponent::TickComponent(float DeltaTime, ELevelTick TickType
 
 	// Anim root motion skips PhysicsRotation: record the facing it leaves (and the time, for the
 	// grace period) here, or Orient To Movement would turn back to where it faced before.
-	if (GetCharacter()->HasAnyRootMotion())
+	if (EGSoftCollision::HasGameplayRootMotion(*GetCharacter()))
 	{
 		LastRootMotionTime = GetWorld()->GetTimeSeconds();
 		if (const UCharacterMovementComponent* const Movement = GetMovement(); Movement && Movement->UpdatedComponent && Movement->bOrientRotationToMovement)
@@ -913,7 +915,7 @@ void UEGTurnInPlaceComponent::TickSelfCheck()
 	}
 
 	// Only count frames where the engine would have called the hook.
-	const bool bMovementActive = Movement->MovementMode != MOVE_None && !Character->HasAnyRootMotion();
+	const bool bMovementActive = Movement->MovementMode != MOVE_None && !EGSoftCollision::HasGameplayRootMotion(*Character);
 	switch (GetTurnMethod())
 	{
 	case EEGTurnMethod::FaceRotation:

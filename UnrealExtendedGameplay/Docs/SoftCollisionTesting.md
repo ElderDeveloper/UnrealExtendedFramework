@@ -39,6 +39,8 @@ UnrealEditor-Cmd.exe <Project>.uproject -ExecCmds="Automation RunTests UnrealExt
 | `SoftCollision.Quantize` | Round trips, stability after a round trip, sequence wrap, token bucket, angles |
 | `SoftCollision.Grid` | Cells, neighbourhoods, move, remove, reset |
 | `SoftCollision.Prediction` | Request batching and redundancy, acknowledgement across the wrap, rejection, timeouts, server duplicates |
+| `SoftCollision.Modifiers` | Modifier stack: scales multiply, switches add up, removal |
+| `SoftCollision.World` | Spawned Characters in a test world: overlapping pawns separate, a pawn that cannot be pushed stays put |
 
 ## Phase 0: engine behaviour
 
@@ -89,7 +91,21 @@ Debug level 3 on the server.
 
 Network Insights, one player pushing continuously: record the bits per second spent on the Character's `RepRootMotion` on the other client. This is the per-pushing-player cost on every other client.
 
-### 8. Timestamp resets
+### 8. Move-data transport
+
+In a project movement component set up as in `Prediction/EGSoftCollisionMoveData.h`, repeat checks 1, 2 and 5.
+
+- Expected: `Requests Sent` stays at 0 (pushes ride in moves), `Late Requests` stays at 0 even with packet loss, and pushes cause no corrections at safety level 0.
+- Combine it with turn in place's saved move and check that turning still works while being pushed.
+
+### 9. Integration with the rest of the plugin
+
+- Turn in place: stand idle in a crowd and turn the camera; turning must not pause while being pushed.
+- Root Motion Move and Set Warp Target: lunge through a crowd; the lunge must reach its target (pushes are suppressed during gameplay root motion).
+- `PushActorTimeDilation(0.2)` on an AI being pushed: the push lasts five times longer in world time.
+- `Extended.Status.Overlay 1`: one Soft Collision line per world.
+
+### 10. Timestamp resets
 
 Keep a player pushing for at least 5 minutes, past the CharacterMovementComponent's timestamp reset.
 
@@ -132,4 +148,6 @@ Budgets from the plan: under 0.5 ms game thread on the server at 1000 pawns for 
 | 5. Rejected pushes | | | | |
 | 6. Request order | | | | |
 | 7. Simulated proxy cost | | | | |
-| 8. Timestamp resets | | | | |
+| 8. Move-data transport | | | | |
+| 9. Plugin integration | | | | |
+| 10. Timestamp resets | | | | |

@@ -13,6 +13,7 @@ The animation side of **UnrealExtendedGameplay** is built on one rule: **notifie
 | Anim instance | `Animation/AnimInstance` | A thread-safe AnimBP base and gameplay state as tags |
 | Turn in place | `Animation/TurnInPlace` | Actor-based turn in place as a component; see [TurnInPlace.md](TurnInPlace.md) |
 | Footsteps | `Footstep` | A footstep notify driving `UEGFootstepComponent` |
+| Soft collision | `SoftCollision` | Pawn-vs-pawn pushes; the Soft Collision Modifier notify, `SoftCollision.Pushed` / `.Bumped` state tags; see [SoftCollision.md](SoftCollision.md) |
 
 ---
 

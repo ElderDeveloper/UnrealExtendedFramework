@@ -8,7 +8,7 @@
 // Client queue
 // =====================================================================
 
-void FEGSoftPushClientQueue::Add(const FEGSoftPushRequest& Request, double Now)
+void FEGSoftPushClientQueue::Add(const FEGSoftPushRequest& Request, double Now, bool bSendByRpc)
 {
 	if (Pending.Num() >= MaxPending)
 	{
@@ -20,6 +20,7 @@ void FEGSoftPushClientQueue::Add(const FEGSoftPushRequest& Request, double Now)
 	Entry.FirstSendTime = Now;
 	Entry.LastSendTime = Now;
 	Entry.SendCount = 0;
+	Entry.bSendByRpc = bSendByRpc;
 }
 
 void FEGSoftPushClientQueue::Acknowledge(uint16 LastAccepted)
@@ -47,7 +48,7 @@ void FEGSoftPushClientQueue::CollectBatch(double Now, float RedundancyWindow, fl
 	for (int32 Index = Pending.Num() - 1; Index >= 0 && OutBatch.Num() < Limit; --Index)
 	{
 		FEGSoftPushPendingRequest& Entry = Pending[Index];
-		if (Entry.SendCount == 0)
+		if (Entry.bSendByRpc && Entry.SendCount == 0)
 		{
 			OutBatch.Add(Entry.Request);
 			Entry.LastSendTime = Now;
@@ -59,7 +60,7 @@ void FEGSoftPushClientQueue::CollectBatch(double Now, float RedundancyWindow, fl
 	for (int32 Index = Pending.Num() - 1; Index >= 0 && OutBatch.Num() < Limit; --Index)
 	{
 		FEGSoftPushPendingRequest& Entry = Pending[Index];
-		if (Entry.SendCount > 0 && Entry.LastSendTime < Now
+		if (Entry.bSendByRpc && Entry.SendCount > 0 && Entry.LastSendTime < Now
 			&& Now - Entry.FirstSendTime <= RedundancyWindow
 			&& Now - Entry.LastSendTime >= ResendInterval)
 		{
@@ -87,15 +88,17 @@ void FEGSoftPushClientQueue::CollectTimedOut(double Now, float Timeout, TArray<u
 // Safety lease
 // =====================================================================
 
-void FEGSoftCollisionSafetyLease::Acquire(UCharacterMovementComponent& Movement, EEGSoftCollisionSafetyLevel InLevel, float InUntilClientTime)
+bool FEGSoftCollisionSafetyLease::Acquire(UCharacterMovementComponent& Movement, EEGSoftCollisionSafetyLevel InLevel, float InUntilClientTime)
 {
 	if (InLevel == EEGSoftCollisionSafetyLevel::KeysOnly)
 	{
-		return;
+		return false;
 	}
 
+	bool bConflict = false;
 	if (!bActive)
 	{
+		bConflict = !!Movement.bServerAcceptClientAuthoritativePosition || !!Movement.bIgnoreClientMovementErrorChecksAndCorrection;
 		bSavedAccept = !!Movement.bServerAcceptClientAuthoritativePosition;
 		bSavedIgnore = !!Movement.bIgnoreClientMovementErrorChecksAndCorrection;
 		bActive = true;
@@ -113,6 +116,7 @@ void FEGSoftCollisionSafetyLease::Acquire(UCharacterMovementComponent& Movement,
 	Movement.bServerAcceptClientAuthoritativePosition = true;
 	// Lowered to Level 1 (fallback or a changed setting): the error checks must come back.
 	Movement.bIgnoreClientMovementErrorChecksAndCorrection = Level == EEGSoftCollisionSafetyLevel::ClientAuthoritativeWindow ? true : bSavedIgnore;
+	return bConflict;
 }
 
 void FEGSoftCollisionSafetyLease::Release(UCharacterMovementComponent& Movement)

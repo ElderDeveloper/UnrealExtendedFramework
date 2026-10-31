@@ -41,6 +41,17 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Body", meta = (ClampMin = "0.0"))
 	float PushPower = 1.0f;
 
+	/**
+	 * A Character moved by gameplay root motion (a montage, a dash or lunge source) is not pushed, so
+	 * a crowd cannot bend a lunge off its warp target. Soft pushes themselves never count.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Body")
+	bool bSuppressDuringRootMotion = true;
+
+	/** Push falling Characters too (knockbacks, jumps). Off keeps launches and jumps exact. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Body")
+	bool bPushWhileFalling = false;
+
 	/** Push scale for Characters that use RVO avoidance, so the two systems do not fight. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Body", meta = (ClampMin = "0.0", ClampMax = "1.0"))
 	float AvoidanceScale = 0.5f;

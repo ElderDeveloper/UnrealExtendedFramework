@@ -28,6 +28,8 @@ struct FEGSoftPushPendingRequest
 	double FirstSendTime = 0.0;
 	double LastSendTime = 0.0;
 	int32 SendCount = 0;
+	/** False when the request rides in a saved move instead: it is tracked but never sent by RPC. */
+	bool bSendByRpc = true;
 };
 
 struct UNREALEXTENDEDGAMEPLAY_API FEGSoftPushClientQueue
@@ -35,7 +37,7 @@ struct UNREALEXTENDEDGAMEPLAY_API FEGSoftPushClientQueue
 	/** Requests beyond this are dropped oldest first; they are long timed out by then. */
 	static constexpr int32 MaxPending = 16;
 
-	void Add(const FEGSoftPushRequest& Request, double Now);
+	void Add(const FEGSoftPushRequest& Request, double Now, bool bSendByRpc = true);
 
 	/** Everything up to and including LastAccepted is answered. */
 	void Acknowledge(uint16 LastAccepted);
@@ -119,7 +121,8 @@ struct UNREALEXTENDEDGAMEPLAY_API FEGSoftCollisionSafetyLease
 	bool IsActive() const { return bActive; }
 	EEGSoftCollisionSafetyLevel GetLevel() const { return Level; }
 
-	void Acquire(UCharacterMovementComponent& Movement, EEGSoftCollisionSafetyLevel InLevel, float UntilClientTime);
+	/** Returns true when the flags were already on before the lease took them: the game uses them too. */
+	bool Acquire(UCharacterMovementComponent& Movement, EEGSoftCollisionSafetyLevel InLevel, float UntilClientTime);
 
 	void Release(UCharacterMovementComponent& Movement);
 

@@ -1,7 +1,14 @@
 // Copyright Kemal Erdem YILMAZ. All Rights Reserved.
 
 #include "Misc/AutomationTest.h"
+#include "Components/CapsuleComponent.h"
+#include "Engine/World.h"
+#include "GameFramework/Character.h"
+#include "GameFramework/CharacterMovementComponent.h"
+#include "GameFramework/WorldSettings.h"
 #include "Math/RandomStream.h"
+#include "UnrealExtendedGameplay/SoftCollision/EGSoftCollisionComponent.h"
+#include "UnrealExtendedGameplay/SoftCollision/EGSoftCollisionSubsystem.h"
 #include "UnrealExtendedGameplay/SoftCollision/EGSoftCollisionGrid.h"
 #include "UnrealExtendedGameplay/SoftCollision/EGSoftCollisionMath.h"
 #include "UnrealExtendedGameplay/SoftCollision/Prediction/EGSoftCollisionPrediction.h"
@@ -455,6 +462,129 @@ bool FEGSoftCollisionPredictionTest::RunTest(const FString& Parameters)
 		TestFalse(TEXT("A wrapped sequence is newer"), State.IsDuplicate(0));
 	}
 
+	return true;
+}
+
+// -----------------------------------------------------------------------------
+// Modifiers
+// -----------------------------------------------------------------------------
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEGSoftCollisionModifierTest,
+	"UnrealExtendedGameplay.SoftCollision.Modifiers",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FEGSoftCollisionModifierTest::RunTest(const FString& Parameters)
+{
+	FEGSoftCollisionModifierStack Stack;
+	TestTrue(TEXT("An empty stack is neutral"), Stack.GetCombined().WeightScale == 1.0f && !Stack.GetCombined().bImmovable);
+
+	FEGSoftCollisionModifier Heavy;
+	Heavy.WeightScale = 4.0f;
+	FEGSoftCollisionModifier Attack;
+	Attack.bImmovable = true;
+	Attack.WeightScale = 0.5f;
+
+	const int32 HeavyId = Stack.Push(Heavy);
+	const int32 AttackId = Stack.Push(Attack);
+	TestTrue(TEXT("Ids are never zero"), HeavyId != 0 && AttackId != 0 && HeavyId != AttackId);
+
+	FEGSoftCollisionModifier Combined = Stack.GetCombined();
+	TestEqual(TEXT("Scales multiply"), Combined.WeightScale, 2.0f, 1.0e-5f);
+	TestTrue(TEXT("Switches add up"), Combined.bImmovable);
+
+	TestTrue(TEXT("Remove finds the modifier"), Stack.Remove(AttackId));
+	TestFalse(TEXT("...only once"), Stack.Remove(AttackId));
+	Combined = Stack.GetCombined();
+	TestEqual(TEXT("The other modifier still holds"), Combined.WeightScale, 4.0f, 1.0e-5f);
+	TestFalse(TEXT("The removed switch is gone"), Combined.bImmovable);
+	TestFalse(TEXT("Removing id zero does nothing"), Stack.Remove(0));
+
+	return true;
+}
+
+// -----------------------------------------------------------------------------
+// World: the component, the subsystem and the force driver together
+// -----------------------------------------------------------------------------
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEGSoftCollisionWorldTest,
+	"UnrealExtendedGameplay.SoftCollision.World",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FEGSoftCollisionWorldTest::RunTest(const FString& Parameters)
+{
+	const UWorld::InitializationValues WorldOptions = UWorld::InitializationValues()
+		.AllowAudioPlayback(false).RequiresHitProxies(false).CreatePhysicsScene(true)
+		.CreateNavigation(false).CreateAISystem(false).ShouldSimulatePhysics(false)
+		.SetTransactional(false);
+	UWorld* World = UWorld::CreateWorld(EWorldType::Game, false, NAME_None, nullptr,
+		true, ERHIFeatureLevel::Num, &WorldOptions);
+	if (!TestNotNull(TEXT("Test world"), World))
+	{
+		return false;
+	}
+
+	World->InitializeActorsForPlay(FURL());
+	World->BeginPlay();
+	// No game mode starts play in a bare world; the world settings do what it would.
+	if (!World->HasBegunPlay() && World->GetWorldSettings())
+	{
+		World->GetWorldSettings()->NotifyBeginPlay();
+	}
+
+	if (!TestNotNull(TEXT("Soft collision subsystem"), UEGSoftCollisionSubsystem::Get(World)))
+	{
+		World->DestroyWorld(false);
+		return false;
+	}
+
+	// Unpossessed Characters flying without gravity: the server-side force driver moves them, and
+	// nothing else does.
+	const auto SpawnPawn = [World](const FVector& Location, bool bCanBePushed) -> ACharacter*
+	{
+		FActorSpawnParameters SpawnParameters;
+		SpawnParameters.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+		ACharacter* Character = World->SpawnActor<ACharacter>(Location, FRotator::ZeroRotator, SpawnParameters);
+		if (!Character)
+		{
+			return nullptr;
+		}
+		UCharacterMovementComponent* Movement = Character->GetCharacterMovement();
+		Movement->bRunPhysicsWithNoController = true;
+		Movement->GravityScale = 0.0f;
+		Movement->SetMovementMode(MOVE_Flying);
+
+		UEGSoftCollisionComponent* SoftCollision = NewObject<UEGSoftCollisionComponent>(Character);
+		SoftCollision->Filter.bCanBePushed = bCanBePushed;
+		Character->AddInstanceComponent(SoftCollision);
+		SoftCollision->RegisterComponent();
+		return Character;
+	};
+
+	ACharacter* A = SpawnPawn(FVector(0.0, 0.0, 500.0), true);
+	ACharacter* B = SpawnPawn(FVector(40.0, 0.0, 500.0), true);
+	ACharacter* Fixed = SpawnPawn(FVector(1000.0, 0.0, 500.0), false);
+	ACharacter* Free = SpawnPawn(FVector(1040.0, 0.0, 500.0), true);
+	if (!TestTrue(TEXT("Pawns spawned"), A && B && Fixed && Free))
+	{
+		World->DestroyWorld(false);
+		return false;
+	}
+
+	const FVector FixedStart = Fixed->GetActorLocation();
+	const FVector FreeStart = Free->GetActorLocation();
+
+	constexpr float DeltaSeconds = 1.0f / 60.0f;
+	for (int32 Frame = 0; Frame < 90; ++Frame)
+	{
+		World->Tick(LEVELTICK_All, DeltaSeconds);
+	}
+
+	TestTrue(TEXT("Overlapping pawns separate"), FVector::Dist2D(A->GetActorLocation(), B->GetActorLocation()) > 55.0);
+	TestTrue(TEXT("They separate along the line between them"), A->GetActorLocation().X < 0.0 && B->GetActorLocation().X > 40.0);
+	TestTrue(TEXT("A pawn that cannot be pushed stays put"), FVector::Dist2D(Fixed->GetActorLocation(), FixedStart) < 1.0);
+	TestTrue(TEXT("...and the other pawn moves away from it alone"), FVector::Dist2D(Free->GetActorLocation(), FreeStart) > 10.0);
+
+	World->DestroyWorld(false);
 	return true;
 }
 

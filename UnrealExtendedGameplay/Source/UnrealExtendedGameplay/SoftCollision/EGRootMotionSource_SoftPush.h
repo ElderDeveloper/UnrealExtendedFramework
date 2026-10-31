@@ -55,6 +55,22 @@ struct UNREALEXTENDEDGAMEPLAY_API FEGRootMotionSource_SoftPush : public FRootMot
 	virtual void AddReferencedObjects(FReferenceCollector& Collector) override;
 };
 
+namespace EGSoftCollision
+{
+	/** Whether a root motion source is a soft push. */
+	UNREALEXTENDEDGAMEPLAY_API bool IsSoftPushSource(const FRootMotionSource& Source);
+
+	/**
+	 * Active or pending root motion sources other than soft pushes. Use it instead of
+	 * CurrentRootMotion.HasActiveRootMotionSources() wherever root motion means "gameplay is moving
+	 * this character" (dashes, knockbacks): a pawn being jostled in a crowd is not.
+	 */
+	UNREALEXTENDEDGAMEPLAY_API bool HasGameplayRootMotionSources(const UCharacterMovementComponent& Movement);
+
+	/** Root motion from a montage or a gameplay source; soft pushes excluded. Use it instead of ACharacter::HasAnyRootMotion(). */
+	UNREALEXTENDEDGAMEPLAY_API bool HasGameplayRootMotion(const ACharacter& Character);
+}
+
 template <>
 struct TStructOpsTypeTraits<FEGRootMotionSource_SoftPush> : public TStructOpsTypeTraitsBase2<FEGRootMotionSource_SoftPush>
 {

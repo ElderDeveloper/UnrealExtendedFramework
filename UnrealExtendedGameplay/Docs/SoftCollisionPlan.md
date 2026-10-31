@@ -12,7 +12,7 @@ It is a drop-in system: one component on the pawn. It needs no Character, Charac
 4. Bind `OnSoftPush` and `OnBump` for animation, sound and voice lines. `SetSoftCollisionEnabled(false)` on every machine for dead or ragdolled pawns.
 5. Turn on push-model replication (`net.IsPushModelEnabled 1`).
 
-Docs/SoftCollisionTesting.md is the verification procedure: the engine checks of Phase 0, the network test matrix and the performance captures.
+Docs/SoftCollision.md is the user guide. Docs/SoftCollisionTesting.md is the verification procedure: the engine checks of Phase 0, the network test matrix and the performance captures.
 
 ## Targets
 
@@ -243,6 +243,7 @@ Play-in-editor matrix:
 ## File layout
 
 ```
+Docs/SoftCollision.md                      user guide
 Docs/SoftCollisionPlan.md                  this document
 Docs/SoftCollisionTesting.md               engine checks, network matrix, performance captures
 Source/UnrealExtendedGameplay/SoftCollision/
@@ -250,11 +251,14 @@ Source/UnrealExtendedGameplay/SoftCollision/
     EGSoftCollisionMath.h/.cpp             narrow phase, strength model, quantization, token bucket (plain C++)
     EGSoftCollisionGrid.h/.cpp             spatial hash grid (plain C++)
     EGSoftCollisionProfile.h/.cpp
+    EGSoftCollisionSettings.h/.cpp         Project Settings page
+    EGSoftCollisionModifierNotify.h/.cpp   montage window modifier
     EGSoftCollisionInterface.h
     EGSoftCollisionComponent.h/.cpp        control, results, requests, server application, events
     EGSoftCollisionSubsystem.h/.cpp        registry, snapshot tick, scan task, apply, console variables
     EGRootMotionSource_SoftPush.h/.cpp
     Prediction/EGSoftCollisionPrediction.h/.cpp   client queue, server state, safety lease
+    Prediction/EGSoftCollisionMoveData.h/.cpp     opt-in move-data transport templates
     Drivers/EGSoftCollisionDriver.h/.cpp          base and Blueprint base
     Drivers/EGSoftCollisionDriver_CharacterRootMotion.h/.cpp
     Drivers/EGSoftCollisionDriver_CharacterForce.h/.cpp
@@ -277,7 +281,9 @@ Source/UnrealExtendedGameplay/SoftCollision/
 | 4. Prediction | Yes. Keys, batched redundant requests, server application in the RPC handler, validation, ack, reject, timeout, scheduled removal, safety lease with the Level 2 check | No |
 | 5. Drivers and API | Yes. `_PawnMovement`, `_PhysicsBody`, Blueprint driver base, events, cosmetic bumps, Blueprint API | No |
 | 6. Optimization | Code side: inline threshold, worker-thread scan, sleeping, relevance, reissue rule, push model, Ignore response, movement delegate bound only while needed, stats and Insights scopes | No. Captures at 100, 500 and 1000 pawns not taken |
-| 7. Verification and documentation | Header documentation; test procedure and result tables | No. Network matrix not run |
+| 7. Verification and documentation | Header documentation; user guide; test procedure and result tables | No. Network matrix not run |
+| 8. Suite integration (merge branch) | Turn in place ignores soft pushes; actor-dilated push clock; suppression during gameplay root motion and falling; handle-based modifiers and the modifier notify; anim state tags; `Extended.Status`; setup checks; Project Settings; world test; sleep fix for spawned or teleported overlaps | No |
+| 9. Move-data transport (opt-in) | Saved move, prediction data, network move data and container templates; server hook in `MoveAutonomous` | No. Needs a project movement component to try |
 
 What Phase 0 still has to answer, in order of risk:
 
@@ -286,5 +292,7 @@ What Phase 0 still has to answer, in order of risk:
 3. Whether moves really are not combined while a push is active, and what that costs (check 3).
 4. Whether the request reliably arrives before its move, with and without Iris (check 6).
 5. `RepRootMotion` cost on other clients (check 7) and timestamp resets (check 8).
+
+With the move-data transport (Docs/SoftCollision.md §8.2), questions 1 and 4 only apply to projects that keep the default request path.
 
 The Mover driver stays deferred until Mover leaves Experimental.

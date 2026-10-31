@@ -8,6 +8,7 @@
 #include "EGSoftCollisionMath.h"
 #include "EGSoftCollisionTypes.h"
 #include "Prediction/EGSoftCollisionPrediction.h"
+#include "UnrealExtendedGameplay/Animation/AnimInstance/EGAnimStateProvider.h"
 
 #include "EGSoftCollisionComponent.generated.h"
 
@@ -57,6 +58,22 @@ struct FEGSoftCollisionSnapshotInfo
  * that ends at the new push's start time, so both machines switch on the same move.
  *
  * ---------------------------------------------------------------------------
+ * Time
+ * ---------------------------------------------------------------------------
+ * Push durations, cooldowns and decay run on the pawn's own clock, which follows its
+ * CustomTimeDilation (UEGTimeDilationSubsystem::PushActorTimeDilation), the same time its movement
+ * component simulates in.
+ *
+ * ---------------------------------------------------------------------------
+ * Gameplay
+ * ---------------------------------------------------------------------------
+ * PushModifier changes weight and push power or makes the pawn immovable for as long as the handle
+ * is kept; the Soft Collision Modifier notify does it for a montage window. A Character moved by
+ * gameplay root motion or falling is not pushed, unless the profile says otherwise. While a push is
+ * active the component reports ExtendedGameplay.Anim.State.SoftCollision.Pushed (and .Bumped) to
+ * UEGAnimInstance; other clients see .Bumped from the cosmetic replay.
+ *
+ * ---------------------------------------------------------------------------
  * Events
  * ---------------------------------------------------------------------------
  * OnSoftPush fires for every push issued, OnBump for bumps. On the owning client they fire at once
@@ -64,7 +81,7 @@ struct FEGSoftCollisionSnapshotInfo
  * throttled cosmetic replay (bCosmetic), which is the hook for shove animations and voice lines.
  */
 UCLASS(ClassGroup = (Custom), meta = (BlueprintSpawnableComponent))
-class UNREALEXTENDEDGAMEPLAY_API UEGSoftCollisionComponent : public UActorComponent
+class UNREALEXTENDEDGAMEPLAY_API UEGSoftCollisionComponent : public UActorComponent, public IEGAnimStateProvider
 {
 	GENERATED_BODY()
 
@@ -153,6 +170,42 @@ public:
 	UPrimitiveComponent* GetPushPrimitive() const { return PushPrimitive.Get(); }
 
 	// -----------------------------------------------------------------
+	// Modifiers
+	// -----------------------------------------------------------------
+
+	/** Applies Modifier until the handle is removed. Push it on every machine that simulates the pawn. */
+	UFUNCTION(BlueprintCallable, Category = "Extended|Soft Collision")
+	FEGSoftCollisionModifierHandle PushModifier(const FEGSoftCollisionModifier& Modifier);
+
+	/** Removes the modifier and invalidates the handle. Safe on an invalid handle. */
+	UFUNCTION(BlueprintCallable, Category = "Extended|Soft Collision")
+	void RemoveModifier(UPARAM(ref) FEGSoftCollisionModifierHandle& Handle);
+
+	UFUNCTION(BlueprintPure, Category = "Extended|Soft Collision")
+	bool HasModifiers() const { return !Modifiers.IsEmpty(); }
+
+	UFUNCTION(BlueprintPure, Category = "Extended|Soft Collision")
+	FEGSoftCollisionModifier GetCombinedModifier() const { return Modifiers.GetCombined(); }
+
+	// IEGAnimStateProvider
+	virtual FGameplayTagContainer GetAnimStateTags_Implementation() const override;
+
+	// -----------------------------------------------------------------
+	// Move-data transport (opt-in, see Prediction/EGSoftCollisionMoveData.h)
+	// -----------------------------------------------------------------
+
+	/** Called by the saved-move mixin for every move: requests now ride in the moves instead of RPCs. */
+	void NotifyMoveDataTransport() { bMoveDataTransport = true; }
+
+	bool UsesMoveDataTransport() const { return bMoveDataTransport; }
+
+	/** Saved-move mixin, owning client: hands over the push that starts with the move being saved. */
+	bool ConsumePendingMovePush(FEGSoftPushRequest& OutRequest);
+
+	/** Server, from the movement component's MoveAutonomous: a push carried by the move about to run. */
+	void ReceiveMovePush(const FEGSoftPushRequest& Request);
+
+	// -----------------------------------------------------------------
 	// For drivers and the subsystem
 	// -----------------------------------------------------------------
 
@@ -160,8 +213,8 @@ public:
 	UCharacterMovementComponent* GetCharacterMovement() const { return CachedCharacterMovement.Get(); }
 	UEGSoftCollisionDriver* GetActiveDriver() const;
 
-	/** Game thread, once per snapshot. */
-	void WriteSnapshot(FEGSoftBody& OutBody, FEGSoftCollisionSnapshotInfo& OutInfo);
+	/** Game thread, once per snapshot. DeltaSeconds is the frame's, before the actor's own dilation. */
+	void WriteSnapshot(FEGSoftBody& OutBody, FEGSoftCollisionSnapshotInfo& OutInfo, float DeltaSeconds);
 
 	/** The profile tuning with this pawn's adjustments (avoidance). */
 	void GetEffectiveTuning(FEGSoftCollisionTuning& OutTuning) const;
@@ -249,12 +302,17 @@ private:
 	void UpdateFrameUpdateRegistration();
 
 	ERejectReason ValidateRequest(const FEGSoftPushRequest& Request, bool& bOutEpochMismatch);
-	void ProcessServerRequest(const FEGSoftPushRequest& Request);
+	void ProcessServerRequest(const FEGSoftPushRequest& Request, bool bFromMove);
 	void RejectRequest(uint16 Sequence, ERejectReason Reason);
 	void UpdateMovementBinding();
 	void ResetPredictionState();
 
-	double GetGameTime() const;
+	/** The pawn's own clock: world time scaled by its CustomTimeDilation, advanced every snapshot. */
+	double GetPushClock() const { return LocalClock; }
+	double GetWorldTime() const;
+	bool IsSuppressedByMovement() const;
+	void RunSetupChecks();
+	void ReportSetupProblem(const FString& Problem);
 	double GetRealTime() const;
 	float GetRoundTripTime() const;
 	UEGSoftCollisionSubsystem* GetSubsystem() const;
@@ -288,7 +346,9 @@ private:
 	uint16 NextSequence = 0;
 	double LastBumpTime = -1.0e9;
 	double LastCosmeticBumpTime = -1.0e9;
-	double BeginPlayTime = 0.0;
+	double LocalClock = 0.0;
+	/** Push clock until which a cosmetic bump counts as active, for the anim state tag. */
+	double CosmeticBumpUntil = -1.0;
 	EGSoftCollision::FTokenBucket IssueBucket;
 
 	FEGSoftPushClientQueue ClientQueue;
@@ -296,4 +356,12 @@ private:
 
 	FEGSoftPushServerState ServerState;
 	FEGSoftCollisionSafetyLease SafetyLease;
+
+	FEGSoftCollisionModifierStack Modifiers;
+
+	bool bMoveDataTransport = false;
+	bool bHasPendingMovePush = false;
+	FEGSoftPushRequest PendingMovePush;
+
+	TSet<uint32> ReportedProblems;
 };

@@ -26,6 +26,8 @@ UE_DEFINE_GAMEPLAY_TAG(TAG_EGAnim_State_Cover_Moving, "ExtendedGameplay.Anim.Sta
 UE_DEFINE_GAMEPLAY_TAG(TAG_EGAnim_State_Cover_Left, "ExtendedGameplay.Anim.State.Cover.Left");
 UE_DEFINE_GAMEPLAY_TAG(TAG_EGAnim_State_Cover_Right, "ExtendedGameplay.Anim.State.Cover.Right");
 UE_DEFINE_GAMEPLAY_TAG(TAG_EGAnim_State_Cover_Montage, "ExtendedGameplay.Anim.State.Cover.Montage");
+UE_DEFINE_GAMEPLAY_TAG(TAG_EGAnim_State_SoftCollision_Pushed, "ExtendedGameplay.Anim.State.SoftCollision.Pushed");
+UE_DEFINE_GAMEPLAY_TAG(TAG_EGAnim_State_SoftCollision_Bumped, "ExtendedGameplay.Anim.State.SoftCollision.Bumped");
 
 UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_EGTurnInPlace_Mode_Movement, "ExtendedGameplay.TurnInPlace.Mode.Movement", "Turn angles used while orienting to movement.");
 UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_EGTurnInPlace_Mode_Strafe, "ExtendedGameplay.TurnInPlace.Mode.Strafe", "Turn angles used while strafing (facing the control rotation).");
