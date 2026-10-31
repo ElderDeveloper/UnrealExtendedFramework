@@ -544,7 +544,7 @@ void UEGASAbilitySystemComponent::PreloadAbilityInputActions()
 	TArray<FSoftObjectPath> InputActionPaths;
 	const auto AddAbilityInputPath = [this, &InputActionPaths](const TSubclassOf<UGameplayAbility>& AbilityClass)
 	{
-		if (const UGameplayAbility* AbilityCDO = AbilityClass ? AbilityClass.GetDefaultObject() : nullptr)
+		if (const UGameplayAbility* AbilityCDO = AbilityClass ? AbilityClass->GetDefaultObject<UGameplayAbility>() : nullptr)
 		{
 			InputActionPaths.AddUnique(GetAbilityInputAction(AbilityCDO).ToSoftObjectPath());
 		}
