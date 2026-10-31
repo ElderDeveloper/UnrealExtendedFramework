@@ -3,7 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Backend/Http/EFHttpTypes.h"
+#include "Http/EFHttpTypes.h"
 #include "Containers/Ticker.h"
 #include "Interfaces/IHttpRequest.h"
 
@@ -22,7 +22,7 @@
  *   needed to cancel it.
  * - A callback that touches a UObject must check that the object is still valid.
  */
-class UNREALEXTENDEDFRAMEWORK_API FEFHttpOperation : public TSharedFromThis<FEFHttpOperation>
+class EXTENDEDFOUNDATION_API FEFHttpOperation : public TSharedFromThis<FEFHttpOperation>
 {
 public:
 	using FOnComplete = TFunction<void(const FEFHttpResponse&)>;
@@ -67,41 +67,41 @@ private:
 /** Pure helpers behind FEFHttpOperation, exposed for reuse and tests. */
 namespace EFHttp
 {
-	UNREALEXTENDEDFRAMEWORK_API const TCHAR* VerbToString(EEFHttpVerb Verb);
+	EXTENDEDFOUNDATION_API const TCHAR* VerbToString(EEFHttpVerb Verb);
 
 	/** POST and PATCH are the verbs whose repetition can change the result. */
-	UNREALEXTENDEDFRAMEWORK_API bool IsIdempotent(EEFHttpVerb Verb);
+	EXTENDEDFOUNDATION_API bool IsIdempotent(EEFHttpVerb Verb);
 
-	UNREALEXTENDEDFRAMEWORK_API bool IsSuccessStatus(int32 StatusCode);
+	EXTENDEDFOUNDATION_API bool IsSuccessStatus(int32 StatusCode);
 
 	/** 408 Request Timeout, 429 Too Many Requests and every 5xx. */
-	UNREALEXTENDEDFRAMEWORK_API bool IsRetryableStatus(int32 StatusCode);
+	EXTENDEDFOUNDATION_API bool IsRetryableStatus(int32 StatusCode);
 
 	/** True for http:// and https:// URLs with something after the scheme. */
-	UNREALEXTENDEDFRAMEWORK_API bool HasHttpScheme(const FString& Url);
+	EXTENDEDFOUNDATION_API bool HasHttpScheme(const FString& Url);
 
 	/** Percent-encodes a query component. */
-	UNREALEXTENDEDFRAMEWORK_API FString UrlEncode(const FString& Value);
+	EXTENDEDFOUNDATION_API FString UrlEncode(const FString& Value);
 
 	/** Appends URL-encoded query parameters, keeping any existing query and #fragment. */
-	UNREALEXTENDEDFRAMEWORK_API FString BuildUrl(const FString& BaseUrl, const TMap<FString, FString>& QueryParameters);
+	EXTENDEDFOUNDATION_API FString BuildUrl(const FString& BaseUrl, const TMap<FString, FString>& QueryParameters);
 
 	/** Joins a base URL and a relative path with exactly one '/'. An absolute Url is returned unchanged. */
-	UNREALEXTENDEDFRAMEWORK_API FString ResolveUrl(const FString& BaseUrl, const FString& Url);
+	EXTENDEDFOUNDATION_API FString ResolveUrl(const FString& BaseUrl, const FString& Url);
 
 	/** scheme://host/path with user info, query and fragment removed, so tokens in a URL never reach the log. */
-	UNREALEXTENDEDFRAMEWORK_API FString RedactUrlForLog(const FString& Url);
+	EXTENDEDFOUNDATION_API FString RedactUrlForLog(const FString& Url);
 
 	/**
 	 * Seconds to wait before retry number RetryNumber (1 for the first retry): BaseDelay doubled for
 	 * each previous retry, capped at 30 seconds. A positive RetryAfterSeconds from the server is used
 	 * instead, capped at 60 seconds.
 	 */
-	UNREALEXTENDEDFRAMEWORK_API float ComputeRetryDelay(int32 RetryNumber, float BaseDelaySeconds, float RetryAfterSeconds = 0.f);
+	EXTENDEDFOUNDATION_API float ComputeRetryDelay(int32 RetryNumber, float BaseDelaySeconds, float RetryAfterSeconds = 0.f);
 
 	/** Parses "Name: Value" lines into a map, joining repeated names with ", ". */
-	UNREALEXTENDEDFRAMEWORK_API TMap<FString, FString> ParseHeaderLines(const TArray<FString>& HeaderLines);
+	EXTENDEDFOUNDATION_API TMap<FString, FString> ParseHeaderLines(const TArray<FString>& HeaderLines);
 
 	/** Delay-seconds form of a Retry-After header. Returns 0 for HTTP dates and anything unparsable. */
-	UNREALEXTENDEDFRAMEWORK_API float ParseRetryAfterSeconds(const FString& HeaderValue);
+	EXTENDEDFOUNDATION_API float ParseRetryAfterSeconds(const FString& HeaderValue);
 }

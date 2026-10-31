@@ -1,8 +1,8 @@
 // Copyright Moon Punch Games. All Rights Reserved.
 
-#include "Backend/Http/EFHttpSubsystem.h"
+#include "Http/EFHttpSubsystem.h"
 
-#include "Backend/Json/EFJsonLibrary.h"
+#include "Json/EFJsonLibrary.h"
 #include "Engine/Engine.h"
 #include "Engine/GameInstance.h"
 #include "Engine/World.h"

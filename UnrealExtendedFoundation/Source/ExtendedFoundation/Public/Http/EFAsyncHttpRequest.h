@@ -3,8 +3,8 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Backend/Http/EFHttpClient.h"
-#include "Backend/Http/EFHttpTypes.h"
+#include "Http/EFHttpClient.h"
+#include "Http/EFHttpTypes.h"
 #include "Kismet/BlueprintAsyncActionBase.h"
 #include "EFAsyncHttpRequest.generated.h"
 
@@ -17,7 +17,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FEFAsyncHttpResponsePin, const FEFHt
  * headers apply. Without a game instance (editor utilities) the request is sent directly.
  */
 UCLASS()
-class UNREALEXTENDEDFRAMEWORK_API UEFAsyncHttpRequest : public UBlueprintAsyncActionBase
+class EXTENDEDFOUNDATION_API UEFAsyncHttpRequest : public UBlueprintAsyncActionBase
 {
 	GENERATED_BODY()
 

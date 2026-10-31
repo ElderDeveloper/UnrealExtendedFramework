@@ -3,14 +3,14 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Backend/Http/EFHttpTypes.h"
-#include "Backend/Json/EFJsonTypes.h"
+#include "Http/EFHttpTypes.h"
+#include "Json/EFJsonTypes.h"
 #include "Kismet/BlueprintFunctionLibrary.h"
 #include "EFHttpLibrary.generated.h"
 
 /** Helpers for building HTTP requests and reading responses. */
 UCLASS(meta = (ScriptName = "EFHttpLibrary"))
-class UNREALEXTENDEDFRAMEWORK_API UEFHttpLibrary : public UBlueprintFunctionLibrary
+class EXTENDEDFOUNDATION_API UEFHttpLibrary : public UBlueprintFunctionLibrary
 {
 	GENERATED_BODY()
 

@@ -21,17 +21,16 @@
 			"LoadingPhase": "Default"
 		},
 		{
-			"Name": "UnrealExtendedFrameworkLog",
-			"Type": "Runtime",
-			"LoadingPhase": "PreDefault"
-		},
-		{
 			"Name": "UnrealExtendedFrameworkEditor",
 			"Type": "UncookedOnly",
 			"LoadingPhase": "Default"
 		}
 	],
 	"Plugins": [
+		{
+			"Name": "UnrealExtendedFoundation",
+			"Enabled": true
+		},
 		{
 			"Name": "DLSS",
 			"Enabled": true,

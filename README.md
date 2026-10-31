@@ -382,9 +382,9 @@ void AMyPlayerController::LoadPlayerSettings()
 From Blueprint, use **Http Request** (an async node with On Success / On Failure), or build the request with **Make Json Http Request** and read the result with **Get Response Json**. From C++:
 
 ```cpp
-#include "Backend/Http/EFHttpLibrary.h"
-#include "Backend/Http/EFHttpSubsystem.h"
-#include "Backend/Json/EFJsonLibrary.h"
+#include "Http/EFHttpLibrary.h"
+#include "Http/EFHttpSubsystem.h"
+#include "Json/EFJsonLibrary.h"
 
 void UMyLeaderboardClient::FetchTop(UObject* WorldContext)
 {

@@ -1,8 +1,8 @@
 // Copyright Moon Punch Games. All Rights Reserved.
 
-#include "Backend/Http/EFHttpLibrary.h"
+#include "Http/EFHttpLibrary.h"
 
-#include "Backend/Http/EFHttpClient.h"
+#include "Http/EFHttpClient.h"
 
 FEFHttpRequest UEFHttpLibrary::MakeHttpRequest(const FString& Url, EEFHttpVerb Verb)
 {

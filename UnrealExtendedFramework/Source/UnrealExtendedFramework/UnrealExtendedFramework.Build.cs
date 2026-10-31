@@ -177,10 +177,11 @@ public class UnrealExtendedFramework : ModuleRules
 				"NavigationSystem",
 				"PhysicsCore",
 				"AudioMixer",
-				"HTTP",
 				"Json",
 				"JsonUtilities",
-				"XmlParser"
+				"XmlParser",
+				// Shared base: logging, HTTP, JSON, results, async nodes, settings, credentials.
+				"ExtendedFoundation"
 			});
 
 		PrivateDependencyModuleNames.AddRange(

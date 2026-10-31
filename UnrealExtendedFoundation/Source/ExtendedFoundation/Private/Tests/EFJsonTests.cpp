@@ -4,8 +4,8 @@
 
 #if WITH_DEV_AUTOMATION_TESTS
 
-#include "Backend/Http/EFHttpTypes.h"
-#include "Backend/Json/EFJsonLibrary.h"
+#include "Http/EFHttpTypes.h"
+#include "Json/EFJsonLibrary.h"
 #include "HAL/FileManager.h"
 #include "Misc/Guid.h"
 #include "Misc/Paths.h"
@@ -31,7 +31,7 @@ namespace EFJsonTestsPrivate
 	}
 }
 
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEFJsonParseReadTest, "UnrealExtendedFramework.Backend.Json.ParseAndRead",
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEFJsonParseReadTest, "ExtendedFoundation.Json.ParseAndRead",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 
 bool FEFJsonParseReadTest::RunTest(const FString& Parameters)
@@ -96,7 +96,7 @@ bool FEFJsonParseReadTest::RunTest(const FString& Parameters)
 	return true;
 }
 
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEFJsonWriteTest, "UnrealExtendedFramework.Backend.Json.WriteAndRoundTrip",
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEFJsonWriteTest, "ExtendedFoundation.Json.WriteAndRoundTrip",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 
 bool FEFJsonWriteTest::RunTest(const FString& Parameters)
@@ -172,7 +172,7 @@ bool FEFJsonWriteTest::RunTest(const FString& Parameters)
 	return true;
 }
 
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEFJsonPathTest, "UnrealExtendedFramework.Backend.Json.Path",
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEFJsonPathTest, "ExtendedFoundation.Json.Path",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 
 bool FEFJsonPathTest::RunTest(const FString& Parameters)
@@ -214,7 +214,7 @@ bool FEFJsonPathTest::RunTest(const FString& Parameters)
 	return true;
 }
 
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEFJsonStructTest, "UnrealExtendedFramework.Backend.Json.Structs",
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEFJsonStructTest, "ExtendedFoundation.Json.Structs",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 
 bool FEFJsonStructTest::RunTest(const FString& Parameters)
@@ -247,10 +247,10 @@ bool FEFJsonStructTest::RunTest(const FString& Parameters)
 	return true;
 }
 
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEFJsonFileAndLegacyTest, "UnrealExtendedFramework.Backend.Json.FilesAndLegacyNodes",
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEFJsonFileTest, "ExtendedFoundation.Json.Files",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 
-bool FEFJsonFileAndLegacyTest::RunTest(const FString& Parameters)
+bool FEFJsonFileTest::RunTest(const FString& Parameters)
 {
 	const FEFJsonObject Object = EFJsonTestsPrivate::ParseSample(*this);
 
@@ -266,25 +266,6 @@ bool FEFJsonFileAndLegacyTest::RunTest(const FString& Parameters)
 
 	TestFalse(TEXT("a missing file fails"), UEFJsonLibrary::LoadJsonObjectFromFile(FilePath, Loaded));
 	TestFalse(TEXT("an empty handle is not saved"), UEFJsonLibrary::SaveJsonObjectToFile(FEFJsonObject(), FilePath));
-
-	// The deprecated nodes must keep working, and must not crash on an empty handle (the old
-	// array getter dereferenced it).
-	bool bSuccess = true;
-	TArray<FEFJsonObject> Elements;
-	UEFJsonLibrary::GetExtendedArrayField(bSuccess, FEFJsonObject(), TEXT("items"), Elements);
-	TestFalse(TEXT("legacy array getter on an empty handle fails"), bSuccess);
-
-	UEFJsonLibrary::GetExtendedArrayField(bSuccess, Object, TEXT("items"), Elements);
-	TestTrue(TEXT("legacy array getter reads objects"), bSuccess);
-	TestEqual(TEXT("legacy array getter count"), Elements.Num(), 2);
-
-	int32 Age = 0;
-	UEFJsonLibrary::GetExtendedNumberField(bSuccess, Object, TEXT("age"), Age);
-	TestTrue(TEXT("legacy number getter"), bSuccess && Age == 36);
-
-	TArray<FString> Keys;
-	UEFJsonLibrary::GetExtendedJsonValueKeys(bSuccess, Object, Keys);
-	TestTrue(TEXT("legacy key list"), bSuccess && Keys.Contains(TEXT("profile")));
 
 	return true;
 }

@@ -1,8 +1,8 @@
 // Copyright Moon Punch Games. All Rights Reserved.
 
-#include "Backend/Http/EFAsyncHttpRequest.h"
+#include "Http/EFAsyncHttpRequest.h"
 
-#include "Backend/Http/EFHttpSubsystem.h"
+#include "Http/EFHttpSubsystem.h"
 
 UEFAsyncHttpRequest* UEFAsyncHttpRequest::SendHttpRequestAsync(UObject* WorldContextObject, const FEFHttpRequest& InRequest)
 {

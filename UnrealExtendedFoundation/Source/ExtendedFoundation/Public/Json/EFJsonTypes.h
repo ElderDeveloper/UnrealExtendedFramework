@@ -32,7 +32,7 @@ enum class EEFJsonType : uint8
  * convert it to a string or a struct for that.
  */
 USTRUCT(BlueprintType, meta = (DisplayName = "EF Json Object"))
-struct UNREALEXTENDEDFRAMEWORK_API FEFJsonObject
+struct EXTENDEDFOUNDATION_API FEFJsonObject
 {
 	GENERATED_BODY()
 
@@ -57,7 +57,7 @@ struct UNREALEXTENDEDFRAMEWORK_API FEFJsonObject
  * Array and object values share their contents between copies, like FEFJsonObject.
  */
 USTRUCT(BlueprintType, meta = (DisplayName = "EF Json Value"))
-struct UNREALEXTENDEDFRAMEWORK_API FEFJsonValue
+struct EXTENDEDFOUNDATION_API FEFJsonValue
 {
 	GENERATED_BODY()
 
@@ -78,11 +78,11 @@ struct UNREALEXTENDEDFRAMEWORK_API FEFJsonValue
 namespace EFJson
 {
 	/** Maps the engine's EJson to EEFJsonType. A null pointer maps to None. */
-	UNREALEXTENDEDFRAMEWORK_API EEFJsonType ToType(const TSharedPtr<FJsonValue>& Value);
+	EXTENDEDFOUNDATION_API EEFJsonType ToType(const TSharedPtr<FJsonValue>& Value);
 
 	/** Recursively copies arrays and objects. Primitive values are immutable and are shared. */
-	UNREALEXTENDEDFRAMEWORK_API TSharedPtr<FJsonValue> DeepCopyValue(const TSharedPtr<FJsonValue>& Value);
-	UNREALEXTENDEDFRAMEWORK_API TSharedPtr<FJsonObject> DeepCopyObject(const TSharedPtr<FJsonObject>& Object);
+	EXTENDEDFOUNDATION_API TSharedPtr<FJsonValue> DeepCopyValue(const TSharedPtr<FJsonValue>& Value);
+	EXTENDEDFOUNDATION_API TSharedPtr<FJsonObject> DeepCopyObject(const TSharedPtr<FJsonObject>& Object);
 
 	/**
 	 * Resolves a path such as "data.items[2].name" from Root.
@@ -90,17 +90,17 @@ namespace EFJson
 	 * Dots separate object keys and [n] indexes arrays. An empty path resolves to Root itself.
 	 * Keys that contain '.' or '[' cannot be addressed this way.
 	 */
-	UNREALEXTENDEDFRAMEWORK_API bool ResolvePath(const TSharedPtr<FJsonObject>& Root, const FString& Path, TSharedPtr<FJsonValue>& OutValue);
+	EXTENDEDFOUNDATION_API bool ResolvePath(const TSharedPtr<FJsonObject>& Root, const FString& Path, TSharedPtr<FJsonValue>& OutValue);
 
 	/** Parses a JSON object. Fails when the text is not valid JSON or its root is not an object. */
-	UNREALEXTENDEDFRAMEWORK_API bool ParseObject(const FString& JsonText, TSharedPtr<FJsonObject>& OutObject);
+	EXTENDEDFOUNDATION_API bool ParseObject(const FString& JsonText, TSharedPtr<FJsonObject>& OutObject);
 
 	/** Parses any JSON value with an object or array at its root. */
-	UNREALEXTENDEDFRAMEWORK_API bool ParseValue(const FString& JsonText, TSharedPtr<FJsonValue>& OutValue);
+	EXTENDEDFOUNDATION_API bool ParseValue(const FString& JsonText, TSharedPtr<FJsonValue>& OutValue);
 
 	/** Serializes an object. A null object serializes to an empty string. */
-	UNREALEXTENDEDFRAMEWORK_API FString ObjectToString(const TSharedPtr<FJsonObject>& Object, bool bPrettyPrint = false);
+	EXTENDEDFOUNDATION_API FString ObjectToString(const TSharedPtr<FJsonObject>& Object, bool bPrettyPrint = false);
 
 	/** Serializes any value. Primitives produce their JSON literal, e.g. "text" with quotes, 42, true, null. */
-	UNREALEXTENDEDFRAMEWORK_API FString ValueToString(const TSharedPtr<FJsonValue>& Value, bool bPrettyPrint = false);
+	EXTENDEDFOUNDATION_API FString ValueToString(const TSharedPtr<FJsonValue>& Value, bool bPrettyPrint = false);
 }

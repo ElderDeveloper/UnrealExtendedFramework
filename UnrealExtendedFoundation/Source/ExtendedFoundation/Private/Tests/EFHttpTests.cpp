@@ -4,14 +4,14 @@
 
 #if WITH_DEV_AUTOMATION_TESTS
 
-#include "Backend/Http/EFHttpClient.h"
-#include "Backend/Http/EFHttpLibrary.h"
-#include "Backend/Http/EFHttpSubsystem.h"
-#include "Backend/Json/EFJsonLibrary.h"
+#include "Http/EFHttpClient.h"
+#include "Http/EFHttpLibrary.h"
+#include "Http/EFHttpSubsystem.h"
+#include "Json/EFJsonLibrary.h"
 
 // Every test here is offline: none of them opens a connection.
 
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEFHttpUrlTest, "UnrealExtendedFramework.Backend.Http.Urls",
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEFHttpUrlTest, "ExtendedFoundation.Http.Urls",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 
 bool FEFHttpUrlTest::RunTest(const FString& Parameters)
@@ -52,7 +52,7 @@ bool FEFHttpUrlTest::RunTest(const FString& Parameters)
 	return true;
 }
 
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEFHttpPolicyTest, "UnrealExtendedFramework.Backend.Http.RetryPolicy",
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEFHttpPolicyTest, "ExtendedFoundation.Http.RetryPolicy",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 
 bool FEFHttpPolicyTest::RunTest(const FString& Parameters)
@@ -96,7 +96,7 @@ bool FEFHttpPolicyTest::RunTest(const FString& Parameters)
 	return true;
 }
 
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEFHttpInvalidRequestTest, "UnrealExtendedFramework.Backend.Http.InvalidRequestCompletesLater",
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEFHttpInvalidRequestTest, "ExtendedFoundation.Http.InvalidRequestCompletesLater",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 
 bool FEFHttpInvalidRequestTest::RunTest(const FString& Parameters)
@@ -160,7 +160,7 @@ bool FEFHttpInvalidRequestTest::RunTest(const FString& Parameters)
 	return true;
 }
 
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEFHttpSubsystemPrepareTest, "UnrealExtendedFramework.Backend.Http.SubsystemPrepare",
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEFHttpSubsystemPrepareTest, "ExtendedFoundation.Http.SubsystemPrepare",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
 
 bool FEFHttpSubsystemPrepareTest::RunTest(const FString& Parameters)

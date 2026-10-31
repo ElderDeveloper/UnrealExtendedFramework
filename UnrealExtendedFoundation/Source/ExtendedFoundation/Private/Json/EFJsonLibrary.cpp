@@ -1,13 +1,11 @@
 // Copyright Moon Punch Games. All Rights Reserved.
 
-#include "Backend/Json/EFJsonLibrary.h"
+#include "Json/EFJsonLibrary.h"
 
 #include "Blueprint/BlueprintExceptionInfo.h"
 #include "HAL/FileManager.h"
-#include "Libraries/File/EFFileLibrary.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
-#include "UnrealExtendedFramework.h"
 #include "UObject/Script.h"
 #include "UObject/UnrealType.h"
 
@@ -539,82 +537,6 @@ DEFINE_FUNCTION(UEFJsonLibrary::execJsonObjectToStruct)
 	P_NATIVE_BEGIN;
 	*static_cast<bool*>(RESULT_PARAM) = JsonObjectToStructGeneric(JsonObject, StructProperty->Struct, StructData);
 	P_NATIVE_END;
-}
-
-// ─── Deprecated ─────────────────────────────────────────────────────────────────
-
-FEFJsonObject UEFJsonLibrary::ReadJsonFile(EFProjectDirectory DirectoryType, FString FileDirectory, bool& Success, bool DebugDirectory)
-{
-	const FString Source = UEFFileLibrary::GetProjectDirectory(DirectoryType) + FileDirectory;
-	if (DebugDirectory)
-	{
-		UE_LOG(LogExtendedFramework, Display, TEXT("ReadJsonFile: %s"), *Source);
-	}
-
-	FEFJsonObject Result;
-	Success = LoadJsonObjectFromFile(FPaths::ConvertRelativePathToFull(Source), Result);
-	return Result;
-}
-
-FString UEFJsonLibrary::ReadExtendedJsonAsString(EFProjectDirectory DirectoryType, FString FileDirectory, bool& Success)
-{
-	FString Text;
-	Success = FFileHelper::LoadFileToString(Text, *(UEFFileLibrary::GetProjectDirectory(DirectoryType) + FileDirectory));
-	return Text;
-}
-
-void UEFJsonLibrary::GetExtendedStringField(bool& Success, const FEFJsonObject& ExtendedJson, const FString& FieldName, FString& OutString)
-{
-	Success = TryGetStringField(ExtendedJson, FieldName, OutString);
-}
-
-void UEFJsonLibrary::GetExtendedBoolField(bool& Success, const FEFJsonObject& ExtendedJson, const FString& FieldName, bool& OutBool)
-{
-	Success = TryGetBoolField(ExtendedJson, FieldName, OutBool);
-}
-
-void UEFJsonLibrary::GetExtendedNumberField(bool& Success, const FEFJsonObject& ExtendedJson, const FString& FieldName, int32& OutNumber)
-{
-	int64 Value = 0;
-	Success = TryGetIntegerField(ExtendedJson, FieldName, Value);
-	OutNumber = Success ? static_cast<int32>(FMath::Clamp<int64>(Value, MIN_int32, MAX_int32)) : -1;
-}
-
-void UEFJsonLibrary::GetExtendedFloatField(bool& Success, const FEFJsonObject& ExtendedJson, const FString& FieldName, float& OutFloat)
-{
-	double Value = 0.0;
-	Success = TryGetNumberField(ExtendedJson, FieldName, Value);
-	OutFloat = Success ? static_cast<float>(Value) : -1.f;
-}
-
-void UEFJsonLibrary::GetExtendedObjectField(bool& Success, const FEFJsonObject& ExtendedJson, const FString& FieldName, FEFJsonObject& OutObjectField)
-{
-	Success = TryGetObjectField(ExtendedJson, FieldName, OutObjectField);
-}
-
-void UEFJsonLibrary::GetExtendedArrayField(bool& Success, const FEFJsonObject& ExtendedJson, const FString& FieldName, TArray<FEFJsonObject>& OutObjectField)
-{
-	// The old node returned the object elements and reported success only for a non-empty result.
-	OutObjectField.Reset();
-	TArray<FEFJsonValue> Elements;
-	if (TryGetArrayField(ExtendedJson, FieldName, Elements))
-	{
-		for (const FEFJsonValue& Element : Elements)
-		{
-			FEFJsonObject ElementObject;
-			if (TryGetObjectValue(Element, ElementObject))
-			{
-				OutObjectField.Add(MoveTemp(ElementObject));
-			}
-		}
-	}
-	Success = OutObjectField.Num() > 0;
-}
-
-void UEFJsonLibrary::GetExtendedJsonValueKeys(bool& Success, const FEFJsonObject& ExtendedJson, TArray<FString>& GeneratedKeyArray)
-{
-	GeneratedKeyArray = GetFieldNames(ExtendedJson);
-	Success = GeneratedKeyArray.Num() > 0;
 }
 
 #undef LOCTEXT_NAMESPACE

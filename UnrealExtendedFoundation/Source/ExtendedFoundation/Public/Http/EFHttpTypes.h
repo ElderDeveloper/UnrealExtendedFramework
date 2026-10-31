@@ -5,7 +5,7 @@
 #include "CoreMinimal.h"
 #include "EFHttpTypes.generated.h"
 
-UNREALEXTENDEDFRAMEWORK_API DECLARE_LOG_CATEGORY_EXTERN(LogEFHttp, Log, All);
+EXTENDEDFOUNDATION_API DECLARE_LOG_CATEGORY_EXTERN(LogEFHttp, Log, All);
 
 UENUM(BlueprintType)
 enum class EEFHttpVerb : uint8
@@ -39,7 +39,7 @@ enum class EEFHttpResult : uint8
 
 /** Everything needed to send one HTTP request. */
 USTRUCT(BlueprintType)
-struct UNREALEXTENDEDFRAMEWORK_API FEFHttpRequest
+struct EXTENDEDFOUNDATION_API FEFHttpRequest
 {
 	GENERATED_BODY()
 
@@ -92,7 +92,7 @@ struct UNREALEXTENDEDFRAMEWORK_API FEFHttpRequest
 
 /** The outcome of a request: the final attempt's response, or why there was none. */
 USTRUCT(BlueprintType)
-struct UNREALEXTENDEDFRAMEWORK_API FEFHttpResponse
+struct EXTENDEDFOUNDATION_API FEFHttpResponse
 {
 	GENERATED_BODY()
 
@@ -134,7 +134,7 @@ struct UNREALEXTENDEDFRAMEWORK_API FEFHttpResponse
 
 /** Identifies a request sent through UEFHttpSubsystem so it can be cancelled. */
 USTRUCT(BlueprintType)
-struct UNREALEXTENDEDFRAMEWORK_API FEFHttpRequestHandle
+struct EXTENDEDFOUNDATION_API FEFHttpRequestHandle
 {
 	GENERATED_BODY()
 

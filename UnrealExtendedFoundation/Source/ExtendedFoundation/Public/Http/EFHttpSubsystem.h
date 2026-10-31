@@ -3,8 +3,8 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Backend/Http/EFHttpClient.h"
-#include "Backend/Http/EFHttpTypes.h"
+#include "Http/EFHttpClient.h"
+#include "Http/EFHttpTypes.h"
 #include "Subsystems/GameInstanceSubsystem.h"
 #include "EFHttpSubsystem.generated.h"
 
@@ -19,7 +19,7 @@
  * keys, publisher tokens) in a client build: anything a client sends can be read by its player.
  */
 UCLASS()
-class UNREALEXTENDEDFRAMEWORK_API UEFHttpSubsystem : public UGameInstanceSubsystem
+class EXTENDEDFOUNDATION_API UEFHttpSubsystem : public UGameInstanceSubsystem
 {
 	GENERATED_BODY()
 
