@@ -96,6 +96,11 @@ class UDataTable;
  * text/byte/CSV/JSON/XML reading and writing, Base64 encoding/decoding,
  * filesystem operations, DataTable import/export, config INI access,
  * project/engine path queries, and screenshot capture.
+ *
+ * The implementation is split by topic: EFFileLibrary_Paths.cpp, _Text.cpp (text, lines, bytes,
+ * Base64), _Csv.cpp, _StructSerialization.cpp (the wildcard JSON/XML nodes), _FileSystem.cpp,
+ * _Screenshots.cpp, _DataTables.cpp and _Config.cpp. Helpers they share live in
+ * EFFileLibraryPrivate.h.
  */
 UCLASS()
 class UNREALEXTENDEDFRAMEWORK_API UEFFileLibrary : public UBlueprintFunctionLibrary
