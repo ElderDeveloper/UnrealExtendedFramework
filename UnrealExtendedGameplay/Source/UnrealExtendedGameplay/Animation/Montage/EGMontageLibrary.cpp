@@ -4,6 +4,7 @@
 
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
+#include "Assets/EFAssetLoading.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "EGMontagePlayerInterface.h"
 #include "GameFramework/Character.h"
@@ -68,7 +69,8 @@ FEGResolvedAnimation UEGMontageLibrary::ResolveAnimation(const AActor* Actor, FG
 	FEGAnimationSetEntry Entry;
 	if (UEGAnimationSet::PickVariantInSets(Sets, AnimationTag, bExactTag, VariantIndex, Montage, Entry))
 	{
-		Resolved.Montage = Montage.LoadSynchronous();
+		// Normally already loaded: each animation set preloads its montages when it loads.
+		Resolved.Montage = EFAssets::Resolve(Montage, TEXT("UEGMontageLibrary::ResolveAnimation"));
 		Resolved.StartSection = Entry.StartSection;
 		Resolved.PlayRate = Entry.PlayRate;
 		Resolved.StartTime = Entry.StartTime;

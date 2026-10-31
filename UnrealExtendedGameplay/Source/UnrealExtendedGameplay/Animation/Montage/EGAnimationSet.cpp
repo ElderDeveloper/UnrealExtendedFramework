@@ -3,6 +3,7 @@
 #include "EGAnimationSet.h"
 
 #include "Animation/AnimMontage.h"
+#include "Assets/EFAssetLoading.h"
 
 #if WITH_EDITOR
 #include "Misc/DataValidation.h"
@@ -138,12 +139,34 @@ FEGResolvedAnimation UEGAnimationSet::ResolveAnimation(FGameplayTag Tag, int32 V
 	FEGAnimationSetEntry Entry;
 	if (PickVariant(Tag, VariantIndex, Montage, Entry))
 	{
-		Resolved.Montage = Montage.LoadSynchronous();
+		Resolved.Montage = EFAssets::Resolve(Montage, TEXT("UEGAnimationSet::ResolveAnimation"));
 		Resolved.StartSection = Entry.StartSection;
 		Resolved.PlayRate = Entry.PlayRate;
 		Resolved.StartTime = Entry.StartTime;
 	}
 	return Resolved;
+}
+
+void UEGAnimationSet::PostLoad()
+{
+	Super::PostLoad();
+
+	// Commandlets (cooking, validation) load sets without playing them.
+	if (HasAnyFlags(RF_ClassDefaultObject | RF_ArchetypeObject) || IsRunningCommandlet() || !IsInGameThread())
+	{
+		return;
+	}
+
+	// Only this set's own entries: each Parent preloads its own when it loads.
+	TArray<FSoftObjectPath> Paths;
+	for (const TPair<FGameplayTag, FEGAnimationSetEntry>& Pair : Entries)
+	{
+		for (const TSoftObjectPtr<UAnimMontage>& Variant : Pair.Value.Variants)
+		{
+			Paths.AddUnique(Variant.ToSoftObjectPath());
+		}
+	}
+	MontagePreloadHandle = EFAssets::Preload(MoveTemp(Paths));
 }
 
 void UEGAnimationSet::GatherSoftPaths(TArray<FSoftObjectPath>& OutPaths) const
