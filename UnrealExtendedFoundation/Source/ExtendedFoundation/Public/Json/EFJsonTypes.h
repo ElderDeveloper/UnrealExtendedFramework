@@ -103,4 +103,14 @@ namespace EFJson
 
 	/** Serializes any value. Primitives produce their JSON literal, e.g. "text" with quotes, 42, true, null. */
 	EXTENDEDFOUNDATION_API FString ValueToString(const TSharedPtr<FJsonValue>& Value, bool bPrettyPrint = false);
+
+	/**
+	 * Decides whether the JSON file nodes (Load/Save Json Object From/To File) may read or write a
+	 * full path. Return false to refuse; the node then fails. The core framework installs the policy
+	 * of its Extended File Access settings, so these nodes follow the same rules as the file library.
+	 * Without a policy every path is allowed. Game thread only.
+	 */
+	using FFileAccessPolicy = TFunction<bool(const FString& FullPath, bool bForWrite, const TCHAR* FunctionName)>;
+	EXTENDEDFOUNDATION_API void SetFileAccessPolicy(FFileAccessPolicy Policy);
+	EXTENDEDFOUNDATION_API bool IsFileAccessAllowed(const FString& FullPath, bool bForWrite, const TCHAR* FunctionName);
 }

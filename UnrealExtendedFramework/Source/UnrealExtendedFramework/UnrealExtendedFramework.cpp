@@ -7,6 +7,8 @@
 #include "Misc/Paths.h"
 #include "Engine/Engine.h"
 #include "EFFoundationVersion.h"
+#include "Json/EFJsonTypes.h"
+#include "Libraries/File/EFFileLibraryPrivate.h"
 
 EF_REQUIRE_FOUNDATION_VERSION(1, 0, "UnrealExtendedFramework");
 
@@ -16,6 +18,12 @@ DEFINE_LOG_CATEGORY(LogExtendedFramework);
 
 void FUnrealExtendedFrameworkModule::StartupModule()
 {
+	// The foundation's JSON file nodes follow the same Extended File Access rules as the file library.
+	EFJson::SetFileAccessPolicy([](const FString& FullPath, bool bForWrite, const TCHAR* FunctionName)
+	{
+		return bForWrite ? EFFileLibraryAccess::CheckWrite(FunctionName, FullPath) : EFFileLibraryAccess::CheckRead(FunctionName, FullPath);
+	});
+
 #if WITH_EDITOR
 	InitializeGameplayTags();
 #endif
@@ -23,6 +31,7 @@ void FUnrealExtendedFrameworkModule::StartupModule()
 
 void FUnrealExtendedFrameworkModule::ShutdownModule()
 {
+	EFJson::SetFileAccessPolicy(nullptr);
 }
 
 #if WITH_EDITOR

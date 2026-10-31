@@ -25,7 +25,9 @@ public class UnrealExtendedGAS : ModuleRules
 			"GameplayAbilities",
 			"GameplayTags",
 			"GameplayTasks",
-			"UMG"
+			"UMG",
+			// Async node base and asset loading helpers.
+			"ExtendedFoundation"
 		});
 	}
 }

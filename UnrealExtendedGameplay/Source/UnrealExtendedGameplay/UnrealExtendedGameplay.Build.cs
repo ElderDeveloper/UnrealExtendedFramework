@@ -1,4 +1,4 @@
-﻿// Copyright Epic Games, Inc. All Rights Reserved.
+﻿// Copyright Kemal Erdem YILMAZ. All Rights Reserved.
 
 using UnrealBuildTool;
 
@@ -33,11 +33,6 @@ public class UnrealExtendedGameplay : ModuleRules
 				"Slate",
 				"SlateCore",
 				"UMG",
-				"Networking" ,
-				"Sockets",
-				"OnlineSubsystem",
-				"OnlineSubsystemUtils",
-				"OnlineSubsystemNull",
 				"Niagara",
 				"MotionWarping",
 				"PhysicsCore",
@@ -59,8 +54,9 @@ public class UnrealExtendedGameplay : ModuleRules
 				"EngineSettings",
 				"Slate",
 				"SlateCore",
-				"UnrealExtendedFramework"
-				// ... add private dependencies that you statically link with here ...	
+				"UnrealExtendedFramework",
+				// Async nodes and asset loading helpers.
+				"ExtendedFoundation"	
 			}
 			);
 		

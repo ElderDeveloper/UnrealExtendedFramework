@@ -58,6 +58,26 @@ namespace EFJsonPrivate
 	}
 }
 
+namespace EFJsonPrivate
+{
+	EFJson::FFileAccessPolicy& FileAccessPolicy()
+	{
+		static EFJson::FFileAccessPolicy Policy;
+		return Policy;
+	}
+}
+
+void EFJson::SetFileAccessPolicy(FFileAccessPolicy Policy)
+{
+	EFJsonPrivate::FileAccessPolicy() = MoveTemp(Policy);
+}
+
+bool EFJson::IsFileAccessAllowed(const FString& FullPath, bool bForWrite, const TCHAR* FunctionName)
+{
+	const FFileAccessPolicy& Policy = EFJsonPrivate::FileAccessPolicy();
+	return !Policy || Policy(FullPath, bForWrite, FunctionName);
+}
+
 EEFJsonType FEFJsonValue::GetType() const
 {
 	return EFJson::ToType(Value);

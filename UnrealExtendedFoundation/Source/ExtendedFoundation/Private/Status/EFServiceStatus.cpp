@@ -3,6 +3,7 @@
 #include "Status/EFServiceStatus.h"
 
 #include "ExtendedFoundationModule.h"
+#include "EFStatusOverlay.h"
 #include "HAL/IConsoleManager.h"
 
 namespace EFServiceStatusPrivate
@@ -95,6 +96,16 @@ FString FEFServiceStatusRegistry::FormatReport(bool bIncludeDetails)
 		}
 	}
 	return Report;
+}
+
+void UEFServiceStatusLibrary::SetServiceStatusOverlayVisible(bool bVisible)
+{
+	EFStatusOverlay::SetVisible(bVisible);
+}
+
+bool UEFServiceStatusLibrary::IsServiceStatusOverlayVisible()
+{
+	return EFStatusOverlay::IsVisible();
 }
 
 const TCHAR* FEFServiceStatusRegistry::StateToString(EEFServiceState State)

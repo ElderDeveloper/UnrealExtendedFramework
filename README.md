@@ -53,7 +53,7 @@ Each plugin has its own descriptor and module boundary. Install the full reposit
 
 | Plugin | Role | Highlights | Version |
 |:--|:--|:--|:--:|
-| [**UnrealExtendedFoundation**](UnrealExtendedFoundation/) | Shared base for every plugin | Logging, HTTP client and mock, JSON, shared results, async node base, settings base, credential store, `Extended.Status`, test helpers | `1.0.0` |
+| [**UnrealExtendedFoundation**](UnrealExtendedFoundation/) | Shared base for every plugin | Logging, HTTP client and mock, JSON, shared results, async node base, settings base, credential store, `Extended.Status`, asset preloading, test helpers | `1.1.0` |
 | [**UnrealExtendedFramework**](UnrealExtendedFramework/) | Core runtime and editor systems | Modular settings, Blueprint libraries, async nodes, AI/EQS helpers, subtitles, UI Lab, localization tooling, log viewer | `1.0` |
 | [**UnrealExtendedGameplay**](UnrealExtendedGameplay/) | Reusable gameplay systems | AI state machine, interaction system, combat, targeting, cover, traversal, perception, footsteps, input buffering, outlines, spawners, chess and skill-check minigames, animation systems | `1.0` |
 | [**UnrealExtendedGAS**](UnrealExtendedGAS/) | Gameplay Ability System extensions | Ability sets, ASC/attribute bases, effect components, async listeners, ability tasks, debug UI | `1.0` |
@@ -82,7 +82,7 @@ flowchart TB
     Vendor["Optional vendor upscalers<br/>DLSS · FSR · XeSS"]
 
     UE --> Foundation
-    UE --> GAS
+    Foundation --> GAS
     Foundation --> Core
     Foundation --> Quest
     Foundation --> Steam
@@ -107,7 +107,7 @@ flowchart TB
 ```
 
 > [!NOTE]
-> `UnrealExtendedFoundation` depends on no other plugin, so every plugin can use it. Only Gameplay, PlayFab, and EOS also require the core framework; GAS depends on neither. See [ARCHITECTURE.md](ARCHITECTURE.md) for the layering rules.
+> `UnrealExtendedFoundation` depends on no other plugin, so every plugin can use it. Only Gameplay, PlayFab, and EOS also require the core framework. See [ARCHITECTURE.md](ARCHITECTURE.md) for the layering rules.
 
 ## 🚀 Feature Highlights
 
@@ -122,7 +122,7 @@ The small shared base every plugin builds on. It uses only engine modules that e
 - **Async nodes**: `UEFAsyncActionBase` for Blueprint async nodes: finishes exactly once, optional timeout, cancellation through the Async Task pin. `TEFPendingCalls` and `EFCallContext` make sure two identical calls in flight each get their own result.
 - **Settings**: `UEFDeveloperSettings` puts every plugin under **Project Settings → Extended Framework** and warns when a property marked `EFSecret` would ship in a `Default*.ini`.
 - **Credentials**: `FEFCredentialStore` keeps developer tokens and passwords per user, encrypted with DPAPI on Windows and in the Keychain on macOS.
-- **Status**: the `Extended.Status` console command reports every registered service: EOS login, PlayFab session, Steam client and game server, and HTTP requests in flight (`Extended.Status brief` for one line each).
+- **Status**: the `Extended.Status` console command reports every registered service: EOS login, PlayFab session, Steam client and game server, and HTTP requests in flight (`Extended.Status brief` for one line each). `Extended.Status.Overlay 1` draws the same on screen in development builds.
 - **Logging**: the `UnrealExtendedFrameworkLog` module (`EF_LOG` category log files and the Extended Log settings).
 - **Testing**: a test game instance with initialized subsystems, a wait-until latent command, and plugin fixture loading.
 
@@ -138,6 +138,7 @@ The core plugin supplies runtime and editor systems shared by the gameplay-facin
 - Optional compile-time integration for NVIDIA DLSS, AMD FSR variants, and Intel XeSS.
 - Async Blueprint actions for delays, loops, timelines, input, gameplay tags, and character movement.
 - Actor, AI, array, condition, conversion, data-table, file, input, math, monitor, perception, trace, variable, and widget libraries.
+- **Extended File Access**: in shipped builds (by default), Blueprint file nodes may read only under the project, Saved and user folders and write only under Saved, plus any folders you allow. The foundation's JSON file nodes follow the same rules.
 - Subtitle data, style profiles, project settings, playback, and presentation support.
 - Behavior Tree composites, decorators, services, and tasks.
 - EQS contexts, generators, and tests for tactical AI queries.
@@ -350,8 +351,8 @@ All required non-vendor dependencies below ship with the local UE 5.8 installati
 |:--|:--|:--|
 | UnrealExtendedFoundation | — | — *(engine modules only)* |
 | UnrealExtendedFramework | Foundation | EnhancedInput, DLSS *(optional)* |
-| UnrealExtendedGameplay | Framework | Niagara, MotionWarping, OnlineSubsystem, OnlineSubsystemUtils, OnlineSubsystemNull |
-| UnrealExtendedGAS | — | GameplayAbilities, EnhancedInput |
+| UnrealExtendedGameplay | Foundation, Framework | Niagara, MotionWarping |
+| UnrealExtendedGAS | Foundation | GameplayAbilities, EnhancedInput |
 | UnrealExtendedQuest | Foundation | GameplayTagsEditor *(editor only)* |
 | UnrealExtendedPlayFab | Foundation, Framework | — |
 | UnrealExtendedEOS | Foundation, Framework | OnlineSubsystem, OnlineSubsystemUtils, OnlineSubsystemEOS, EOSShared, EOSVoiceChat, AudioCapture |
@@ -465,6 +466,7 @@ Every plugin's settings derive from `UEFDeveloperSettings` and sit under **Proje
 | Subtitles | Extended Framework → Extended Subtitle Settings | `UEFSubtitleProjectSettings` |
 | Atlassian | Extended Framework → Extended Atlassian | `UExtendedAtlassianSettings` |
 | Extended Log | Extended Framework → Extended Log | `UEFLogSettings` |
+| File access | Extended Framework → Extended File Access | `UEFFileAccessSettings` |
 
 Configure only one provider at a time, verify its authentication flow in a development environment, and add the rest after the base path is stable.
 
@@ -531,6 +533,7 @@ Online integrations can expose privileged operations if configured carelessly.
 - Prefer server-authoritative calls for inventory grants, currency mutation, moderation, progression, and other trusted operations.
 - Keep development, staging, and production service configurations separate.
 - Store publishing credentials in your operating-system credential store or CI secret manager. `FEFCredentialStore` does this for editor tools (DPAPI on Windows, Keychain on macOS). Encryption with a key embedded in a client or editor module is obfuscation, not a security boundary.
+- File-system Blueprint nodes are limited to safe folders in shipped builds (**Extended File Access**, default `ShippingOnly`). A shipped game that writes outside `Saved` must add the folder there or set the mode to `Off`.
 - Mark settings properties that could hold a secret with `meta = (EFSecret)`; the editor warns when one would be saved to a `Default*.ini`, which ships with the game.
 - Review packaged configuration and staged files before every release.
 
