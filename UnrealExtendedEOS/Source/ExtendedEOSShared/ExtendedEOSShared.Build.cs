@@ -25,7 +25,10 @@ public class ExtendedEOSShared : ModuleRules
 				"Engine",
 				"OnlineSubsystem",
 				"OnlineSubsystemUtils",
-				"DeveloperSettings"
+				"DeveloperSettings",
+				// Public: EEOSTypes.h converts FEEOSResult to FEFResult, EEOSSettings.h derives
+				// from UEFDeveloperSettings, and the subsystems use EFCallContext.
+				"ExtendedFoundation"
 			}
 			);
 

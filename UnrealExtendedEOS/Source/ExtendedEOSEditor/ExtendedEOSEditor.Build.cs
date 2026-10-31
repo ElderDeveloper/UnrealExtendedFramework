@@ -24,7 +24,9 @@ public class ExtendedEOSEditor : ModuleRules
 				"DeveloperSettings",
 				// Log category (LogExtendedEOS) and the shared settings this module reads the
 				// Dev Auth Tool address from.
-				"ExtendedEOSShared"
+				"ExtendedEOSShared",
+				// Public: UEEOSPIELoginSettings derives from UEFDeveloperSettings.
+				"ExtendedFoundation"
 			}
 			);
 

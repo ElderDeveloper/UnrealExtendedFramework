@@ -8,6 +8,7 @@
 #include "Shared/EEOSBlueprintLibrary.h"
 #include "Shared/EEOSSettings.h"
 #include "UnrealExtendedEOS.h"
+#include "Async/EFCallContext.h"
 
 #include "eos_sdk.h"
 #include "eos_stats.h"
@@ -90,6 +91,9 @@ bool UEEOSLeaderboardSubsystem::RejectIfQueryInFlight(const TCHAR* FunctionName,
 void UEEOSLeaderboardSubsystem::BindLeaderboardReadDelegate(IOnlineLeaderboardsPtr LeaderboardInterface)
 {
 	PendingLeaderboardInterface = LeaderboardInterface; LeaderboardContext = CaptureEOSContext();
+	// Every query variant binds here right before starting its read: remember the caller's call
+	// context so the completion reports under it (see EFCallContext).
+	LeaderboardCallContext = EFCallContext::GetActive();
 	// Bind with a handle on the interface-wide list — never RemoveAll(this): other systems
 	// (or a future second binding) must not be wiped when this one op is cleaned up
 	LeaderboardReadCompleteHandle = LeaderboardInterface->AddOnLeaderboardReadCompleteDelegate_Handle(
@@ -390,11 +394,13 @@ bool UEEOSLeaderboardSubsystem::UploadScore(const FString& LeaderboardId, int32 
 		TWeakObjectPtr<UEEOSLeaderboardSubsystem> Self;
 		FEEOSRequestContext Ownership;
 		FString LeaderboardId;
+		int64 CallContext = 0; // EFCallContext of the caller; active again while the result is broadcast
 	};
 
 	FUploadScoreContext* Context = new FUploadScoreContext();
 	Context->Self = this; Context->Ownership = CaptureEOSContext();
 	Context->LeaderboardId = LeaderboardId;
+	Context->CallContext = EFCallContext::GetActive();
 
 	EOS_Stats_IngestStat(StatsHandle, &Options, Context,
 		[](const EOS_Stats_IngestStatCompleteCallbackInfo* Data)
@@ -406,6 +412,7 @@ bool UEEOSLeaderboardSubsystem::UploadScore(const FString& LeaderboardId, int32 
 			UEEOSLeaderboardSubsystem* Self = Ctx->Self.Get();
 			if (!Self || !Self->IsEOSContextCurrent(Ctx->Ownership)) return;
 
+			EFCallContext::FScope CallScope(Ctx->CallContext);
 			const bool bSuccess = Data->ResultCode == EOS_EResult::EOS_Success;
 			if (bSuccess)
 			{
@@ -492,6 +499,8 @@ void UEEOSLeaderboardSubsystem::HandleLeaderboardReadComplete(bool bWasSuccessfu
 	}
 
 	bWasSuccessful = bWasSuccessful && IsEOSContextCurrent(LeaderboardContext);
+	const int64 CallContext = LeaderboardCallContext;
+	LeaderboardCallContext = 0;
 	CachedEntries.Empty();
 
 	// Rank-window queries (top-N / by-range) over-fetch by up to one record because the
@@ -559,5 +568,6 @@ void UEEOSLeaderboardSubsystem::HandleLeaderboardReadComplete(bool bWasSuccessfu
 
 	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSLeaderboardSubsystem: Leaderboard read %s (%d entries)"),
 		bWasSuccessful ? TEXT("succeeded") : TEXT("failed"), CachedEntries.Num());
+	EFCallContext::FScope CallScope(CallContext);
 	OnLeaderboardQueried.Broadcast(bWasSuccessful, CachedEntries);
 }

@@ -3,7 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Engine/DeveloperSettings.h"
+#include "Settings/EFDeveloperSettings.h"
 #include "EEOSPIELoginSettings.generated.h"
 
 /**
@@ -27,7 +27,7 @@
  * line, so they would all sign in as the same account.
  */
 UCLASS(config = EditorPerProjectUserSettings, defaultconfig, meta = (DisplayName = "Extended EOS - PIE Logins"))
-class UEEOSPIELoginSettings : public UDeveloperSettings
+class UEEOSPIELoginSettings : public UEFDeveloperSettings
 {
 	GENERATED_BODY()
 
@@ -121,8 +121,6 @@ public:
 
 	/** Rebuild the status fields on the CDO. Safe to call from anywhere on the game thread. */
 	static void RefreshStatusOnDefault();
-
-	virtual FName GetCategoryName() const override { return FName(TEXT("Extended Framework")); }
 
 #if WITH_EDITOR
 	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;

@@ -5,6 +5,7 @@
 #include "IEOSSDKManager.h"
 #include "Shared/EEOSBlueprintLibrary.h"
 #include "UnrealExtendedEOS.h"
+#include "Async/EFCallContext.h"
 #include "OnlineSubsystemUtils.h"
 
 #include "eos_sanctions.h"
@@ -95,11 +96,13 @@ void UEEOSSanctionsSubsystem::QueryActiveSanctions(const FString& TargetUserId)
 		TWeakObjectPtr<UEEOSSanctionsSubsystem> Self;
 		FEEOSRequestContext Ownership;
 		FString TargetPuid; // bare PUID — broadcast for correlation
+		int64 CallContext = 0; // EFCallContext of the caller; active again while the result is broadcast
 	};
 
 	FQueryContext* Context = new FQueryContext();
 	Context->Self = this; Context->Ownership = CaptureEOSContext();
 	Context->TargetPuid = TargetPUIDStr;
+	Context->CallContext = EFCallContext::GetActive();
 
 	EOS_Sanctions_QueryActivePlayerSanctions(SanctionsHandle, &Options, Context,
 		[](const EOS_Sanctions_QueryActivePlayerSanctionsCallbackInfo* Data)
@@ -112,6 +115,7 @@ void UEEOSSanctionsSubsystem::QueryActiveSanctions(const FString& TargetUserId)
 			FString TargetId = Ctx->TargetPuid;
 
 			if (!Self || !Self->IsEOSContextCurrent(Ctx->Ownership)) return;
+			EFCallContext::FScope CallScope(Ctx->CallContext);
 
 			if (Data->ResultCode == EOS_EResult::EOS_Success)
 			{
@@ -288,11 +292,13 @@ void UEEOSSanctionsSubsystem::SendPlayerReportWithCategory(const FString& Target
 		TWeakObjectPtr<UEEOSSanctionsSubsystem> Self;
 		FEEOSRequestContext Ownership;
 		FString ReportedPuid; // bare PUID — broadcast for correlation
+		int64 CallContext = 0; // EFCallContext of the caller; active again while the result is broadcast
 	};
 
 	FReportContext* Context = new FReportContext();
 	Context->Self = this; Context->Ownership = CaptureEOSContext();
 	Context->ReportedPuid = ReportedPUIDStr;
+	Context->CallContext = EFCallContext::GetActive();
 
 	EOS_Reports_SendPlayerBehaviorReport(ReportsHandle, &Options, Context,
 		[](const EOS_Reports_SendPlayerBehaviorReportCompleteCallbackInfo* Data)
@@ -303,6 +309,7 @@ void UEEOSSanctionsSubsystem::SendPlayerReportWithCategory(const FString& Target
 
 			UEEOSSanctionsSubsystem* Self = Ctx->Self.Get();
 			if (!Self || !Self->IsEOSContextCurrent(Ctx->Ownership)) return;
+			EFCallContext::FScope CallScope(Ctx->CallContext);
 
 			bool bSuccess = (Data->ResultCode == EOS_EResult::EOS_Success);
 			if (bSuccess)

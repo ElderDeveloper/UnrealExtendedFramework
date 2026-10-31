@@ -179,6 +179,10 @@ private:
 	/** Unread message count per channel (only messages from OTHER users are counted) */
 	TMap<FString, int32> UnreadCounts;
 
+	/** EFCallContext of each JoinChannel call waiting for its room-join completion, oldest first,
+	 *  per channel; active again while that completion is broadcast. */
+	TMap<FString, TArray<int64>> PendingJoinCallContexts;
+
 	/** Whether IOnlineChat is available for real networked chat */
 	bool bUsingOnlineChat = false;
 

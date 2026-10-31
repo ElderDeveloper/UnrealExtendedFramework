@@ -140,6 +140,9 @@ private:
 	bool bIsMatchmaking = false;
 	int64 CycleRequestId = 0;
 	int64 OfferRequestId = 0;
+	/** EFCallContext of the caller that started the current cycle; active while the cycle's
+	 *  events are broadcast, so the caller's async node can claim them. */
+	int64 CycleCallContext = 0;
 	FEEOSRequestContext CycleContext;
 	FEEOSRequestContext MatchJoinContext;
 	FEEOSOperationOutcome CompleteCycle(bool bSuccess, EEOSOperationCode Code, const FString& Message);
