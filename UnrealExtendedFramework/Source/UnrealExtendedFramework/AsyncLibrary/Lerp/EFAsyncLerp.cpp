@@ -3,24 +3,33 @@
 
 #include "EFAsyncLerp.h"
 
-#include "Kismet/KismetSystemLibrary.h"
-
 UEFAsyncLerp* UEFAsyncLerp::AsyncLerp(const UObject* WorldContextObject, float Duration, bool Reversed,bool EaseInEaseOut)
 {
 	UEFAsyncLerp* Node = NewObject<UEFAsyncLerp>();
-	if (Node)
-	{
-		Node->WorldContext=WorldContextObject;
-		Node->LerpDuration = Duration;
-		Node->Reversed = Reversed;
-		Node->EaseInEaseOut = EaseInEaseOut;
-	}
+	Node->LerpDuration = Duration;
+	Node->Reversed = Reversed;
+	Node->EaseInEaseOut = EaseInEaseOut;
+	Node->InitAsyncAction(const_cast<UObject*>(WorldContextObject));
 	return Node;
 }
 
 void UEFAsyncLerp::Timer()
 {
-	const float CurrentGameTime = UKismetSystemLibrary::GetGameTimeInSeconds(WorldContext->GetWorld());
+	if (IsFinished())
+	{
+		return;
+	}
+
+	// Whoever started the lerp (or its world) is gone: stop without firing anything.
+	UWorld* LerpWorld = LerpTimer.GetTimerWorld();
+	if (!LerpWorld || !GetWorldContextObject())
+	{
+		CancelWork();
+		FinishAction();
+		return;
+	}
+
+	const double CurrentGameTime = LerpWorld->GetTimeSeconds();
 
 	if (CurrentGameTime > TargetGameTime)
 	{
@@ -30,47 +39,44 @@ void UEFAsyncLerp::Timer()
 			Loop.Broadcast(Reversed ? 0.f : 1.f);
 			return;
 		}
-		
-		Finished.Broadcast();
-		WorldContext->GetWorld()->GetTimerManager().ClearTimer(LerpHandle);
+
+		CancelWork();
+		if (FinishAction())
+		{
+			Finished.Broadcast();
+		}
 		return;
 	}
-	
+
+	const double Span = TargetGameTime - CreatedGameTime;
+	const float Ratio = Span > 0.0 ? static_cast<float>((CurrentGameTime - CreatedGameTime) / Span) : 1.f;
+
 	if (Reversed)
 	{
-		if (EaseInEaseOut)
-		{
-			LerpAlpha = FMath::InterpEaseInOut(1.f, 0.f, (CurrentGameTime - CreatedGameTime) / (TargetGameTime - CreatedGameTime), 2.f);
-		}
-		else
-		{
-			LerpAlpha = 1 - (CurrentGameTime - CreatedGameTime) / (TargetGameTime - CreatedGameTime);
-		}
+		LerpAlpha = EaseInEaseOut ? FMath::InterpEaseInOut(1.f, 0.f, Ratio, 2.f) : 1.f - Ratio;
 	}
 	else
 	{
-		if (EaseInEaseOut)
-		{
-			LerpAlpha = FMath::InterpEaseInOut(0.f, 1.f, (CurrentGameTime - CreatedGameTime) / (TargetGameTime - CreatedGameTime), 2.f);
-		}
-		else
-		{
-			LerpAlpha = (CurrentGameTime - CreatedGameTime) / (TargetGameTime - CreatedGameTime);
-		}
+		LerpAlpha = EaseInEaseOut ? FMath::InterpEaseInOut(0.f, 1.f, Ratio, 2.f) : Ratio;
 	}
 
 	Loop.Broadcast(LerpAlpha);
 }
 
-void UEFAsyncLerp::Activate()
+void UEFAsyncLerp::ExecuteAction()
 {
-	Super::Activate();
-	
-	if (WorldContext)
+	if (!LerpTimer.Start(GetWorldContextObject(), FTimerDelegate::CreateUObject(this, &UEFAsyncLerp::Timer), 0.01f, true))
 	{
-		CreatedGameTime = UKismetSystemLibrary::GetGameTimeInSeconds(WorldContext->GetWorld());
-		TargetGameTime = CreatedGameTime + LerpDuration;
-		Timer();
-		WorldContext->GetWorld()->GetTimerManager().SetTimer( LerpHandle , this , &UEFAsyncLerp::Timer , 0.01 , true);
+		FailAction(FEFResult::NotAvailable(GetResultSource(), TEXT("a world for the world context")));
+		return;
 	}
+
+	CreatedGameTime = LerpTimer.GetTimerWorld()->GetTimeSeconds();
+	TargetGameTime = CreatedGameTime + LerpDuration;
+	Timer();
+}
+
+void UEFAsyncLerp::CancelWork()
+{
+	LerpTimer.Clear();
 }

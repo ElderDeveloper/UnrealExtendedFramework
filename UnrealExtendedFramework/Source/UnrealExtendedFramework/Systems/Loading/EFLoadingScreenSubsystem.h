@@ -6,6 +6,7 @@
 #include "Containers/Ticker.h"
 #include "CoreMinimal.h"
 #include "Delegates/Delegate.h"
+#include "Engine/StreamableManager.h"
 #include "Subsystems/GameInstanceSubsystem.h"
 #include "UObject/StrongObjectPtr.h"
 #include "EFLoadingScreenSubsystem.generated.h"
@@ -121,6 +122,11 @@ public:
 	bool IsWorldReadyToHideLoadingScreen(UWorld* World) const;
 
 private:
+	/**
+	 * Starts loading the configured background images and tip font, so the first loading screen
+	 * (often the MoviePlayer one, drawn while the game thread is blocked) does not load them there.
+	 */
+	void PreloadLoadingScreenAssets();
 	/** Picks the texture and tip once per loading session, so every widget in the session matches. */
 	void PrepareLoadingSession();
 	TSharedRef<SWidget> CreateLoadingScreenWidget() const;
@@ -144,6 +150,8 @@ private:
 	FString DescribeReadinessBlockers(const UWorld* World) const;
 
 	TSharedPtr<SWidget> ViewportLoadingScreenWidget;
+	/** Keeps the preloaded background images and tip font in memory for the game instance's lifetime. */
+	TSharedPtr<FStreamableHandle> LoadingScreenAssetsHandle;
 	TStrongObjectPtr<UTexture2D> ActiveBackgroundTexture;
 	FText ActiveLoadingTip;
 	bool bLoadingTipResolved = false;

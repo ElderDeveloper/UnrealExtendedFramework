@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Engine/DataAsset.h"
+#include "Engine/StreamableManager.h"
 #include "GameplayTagContainer.h"
 
 #include "EGAnimationSet.generated.h"
@@ -115,18 +116,27 @@ public:
 	 */
 	bool PickVariant(FGameplayTag Tag, int32 VariantIndex, TSoftObjectPtr<UAnimMontage>& OutMontage, FEGAnimationSetEntry& OutEntry) const;
 
-	/** Picks a variant and loads it if needed (synchronously: preload with GatherSoftPaths to avoid a hitch). */
+	/**
+	 * Picks a variant. A set loaded from disk starts loading its montages in PostLoad, so the
+	 * montage is normally in memory; otherwise it loads synchronously (reported in development builds).
+	 */
 	UFUNCTION(BlueprintCallable, Category = "Extended|Animation Set")
 	FEGResolvedAnimation ResolveAnimation(FGameplayTag Tag, int32 VariantIndex = -1) const;
 
 	/** Every montage this set (and its parents) can play, for preloading. */
 	void GatherSoftPaths(TArray<FSoftObjectPath>& OutPaths) const;
 
+	/** Starts loading this set's own montages (each Parent does the same for its own). */
+	virtual void PostLoad() override;
+
 #if WITH_EDITOR
 	virtual EDataValidationResult IsDataValid(class FDataValidationContext& Context) const override;
 #endif
 
 private:
+	/** Keeps the montages PostLoad started loading in memory while this set is. */
+	TSharedPtr<FStreamableHandle> MontagePreloadHandle;
+
 	const FEGAnimationSetEntry* FindExactEntryWithOwner(FGameplayTag Tag, const UEGAnimationSet*& OutOwner) const;
 	bool PickFromEntry(const FEGAnimationSetEntry& Entry, FGameplayTag CursorKey, int32 VariantIndex, TSoftObjectPtr<UAnimMontage>& OutMontage) const;
 

@@ -4,6 +4,7 @@
 
 #include "Abilities/GameplayAbility.h"
 #include "AbilitySystemBlueprintLibrary.h"
+#include "Assets/EFAssetLoading.h"
 #include "EGASGameplayAbility.h"
 #include "EnhancedInputComponent.h"
 #include "Engine/DataTable.h"
@@ -36,11 +37,14 @@ void UEGASAbilitySystemComponent::BeginPlay()
 	// Grant startup effects on BeginPlay (not in InitAbilityActorInfo to avoid
 	// periodic effects ticking when BP is opened in editor)
 	GrantStartupEffects();
+
+	PreloadAbilityInputActions();
 }
 
 void UEGASAbilitySystemComponent::BeginDestroy()
 {
 	ClearAbilityInputBindings();
+	AbilityInputActionsHandle.Reset();
 
 	// Clean up pawn controller delegate
 	if (AbilityActorInfo && AbilityActorInfo->OwnerActor.IsValid())
@@ -535,6 +539,35 @@ TSoftObjectPtr<UInputAction> UEGASAbilitySystemComponent::GetAbilityInputAction(
 	return TSoftObjectPtr<UInputAction>();
 }
 
+void UEGASAbilitySystemComponent::PreloadAbilityInputActions()
+{
+	TArray<FSoftObjectPath> InputActionPaths;
+	const auto AddAbilityInputPath = [this, &InputActionPaths](const TSubclassOf<UGameplayAbility>& AbilityClass)
+	{
+		if (const UGameplayAbility* AbilityCDO = AbilityClass ? AbilityClass->GetDefaultObject<UGameplayAbility>() : nullptr)
+		{
+			InputActionPaths.AddUnique(GetAbilityInputAction(AbilityCDO).ToSoftObjectPath());
+		}
+	};
+
+	for (const TSubclassOf<UGameplayAbility>& StartupAbility : DefaultAbilities)
+	{
+		AddAbilityInputPath(StartupAbility);
+	}
+	for (const UEGASAbilitySet* StartupSet : DefaultAbilitySets)
+	{
+		if (StartupSet)
+		{
+			for (const FEGASAbilitySet_GameplayAbility& SetAbility : StartupSet->GrantedGameplayAbilities)
+			{
+				AddAbilityInputPath(SetAbility.Ability);
+			}
+		}
+	}
+
+	AbilityInputActionsHandle = EFAssets::Preload(MoveTemp(InputActionPaths));
+}
+
 void UEGASAbilitySystemComponent::RefreshAbilityInputBindings()
 {
 	ClearAbilityInputBindings();
@@ -610,7 +643,9 @@ void UEGASAbilitySystemComponent::BindAbilityInput(FGameplayAbilitySpec& Ability
 		return;
 	}
 
-	UInputAction* InputAction = ActivationInputAction.LoadSynchronous();
+	// Usually loaded by PreloadAbilityInputActions. An ability granted in the same frame as
+	// BeginPlay, or one that is not a startup ability, still loads (and is reported) here.
+	UInputAction* InputAction = EFAssets::Resolve(ActivationInputAction, TEXT("UEGASAbilitySystemComponent"));
 	if (!InputAction)
 	{
 		return;

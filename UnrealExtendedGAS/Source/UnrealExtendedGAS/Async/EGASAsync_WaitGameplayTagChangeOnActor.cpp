@@ -11,21 +11,23 @@ UEGASAsync_WaitGameplayTagChangeOnActor* UEGASAsync_WaitGameplayTagChangeOnActor
 	AsyncNode->TargetActor = TargetActor;
 	AsyncNode->Tag = Tag;
 	AsyncNode->bOnlyTriggerOnce = bOnlyTriggerOnce;
+	// Kept alive by the actor's game instance until it ends, so a listener is not collected mid-wait.
+	AsyncNode->InitAsyncAction(TargetActor);
 	return AsyncNode;
 }
 
-void UEGASAsync_WaitGameplayTagChangeOnActor::Activate()
+void UEGASAsync_WaitGameplayTagChangeOnActor::ExecuteAction()
 {
 	if (!TargetActor || !Tag.IsValid())
 	{
-		EndTask();
+		FailInvalidArgument(TEXT("TargetActor and Tag must be valid"));
 		return;
 	}
 
 	AbilitySystemComponent = UAbilitySystemBlueprintLibrary::GetAbilitySystemComponent(TargetActor);
 	if (!AbilitySystemComponent.IsValid())
 	{
-		EndTask();
+		FailAction(FEFResult::NotAvailable(GetResultSource(), TEXT("an ability system on TargetActor")));
 		return;
 	}
 
@@ -34,20 +36,34 @@ void UEGASAsync_WaitGameplayTagChangeOnActor::Activate()
 
 void UEGASAsync_WaitGameplayTagChangeOnActor::EndTask()
 {
+	CancelWork();
+	FinishAction();
+}
+
+void UEGASAsync_WaitGameplayTagChangeOnActor::CancelWork()
+{
 	if (AbilitySystemComponent.IsValid() && Tag.IsValid() && DelegateHandle.IsValid())
 	{
 		AbilitySystemComponent->RegisterGameplayTagEvent(Tag, EGameplayTagEventType::NewOrRemoved).Remove(DelegateHandle);
 	}
-
-	SetReadyToDestroy();
+	DelegateHandle.Reset();
 }
 
 void UEGASAsync_WaitGameplayTagChangeOnActor::HandleTagChanged(const FGameplayTag ChangedTag, int32 NewCount)
 {
-	OnChanged.Broadcast(ChangedTag, NewCount);
+	if (IsFinished())
+	{
+		return;
+	}
 
 	if (bOnlyTriggerOnce)
 	{
-		EndTask();
+		CancelWork();
+		if (!FinishAction())
+		{
+			return;
+		}
 	}
+
+	OnChanged.Broadcast(ChangedTag, NewCount);
 }

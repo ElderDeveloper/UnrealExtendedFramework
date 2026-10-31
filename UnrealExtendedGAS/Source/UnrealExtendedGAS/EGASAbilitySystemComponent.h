@@ -5,6 +5,7 @@
 #include "AbilitySystemComponent.h"
 #include "CoreMinimal.h"
 #include "EGASAbilitySet.h"
+#include "Engine/StreamableManager.h"
 #include "GameplayAbilitySpec.h"
 #include "InputActionValue.h"
 
@@ -310,6 +311,9 @@ private:
 	void HandleAbilityInputReleased(const FInputActionValue& Value, int32 InputID);
 	void RemoveBindingsForInputID(int32 InputID);
 
+	/** Starts loading the activation input actions of DefaultAbilities and DefaultAbilitySets. */
+	void PreloadAbilityInputActions();
+
 	/** Reinit cached actor info when the pawn's controller changes. */
 	UFUNCTION()
 	void OnPawnControllerChanged(APawn* Pawn, AController* NewController);
@@ -321,6 +325,9 @@ private:
 	TMap<int32, FEGASAbilityInputBindingHandles> InputIDBindingHandles;
 
 	TWeakObjectPtr<UEnhancedInputComponent> BoundInputComponent;
+
+	/** Keeps the startup abilities' input actions loaded (from BeginPlay). */
+	TSharedPtr<FStreamableHandle> AbilityInputActionsHandle;
 
 	/** Counter for auto-assigning InputIDs. Starts at 100 to avoid conflicts with manual IDs. */
 	int32 NextAutoInputID = 100;

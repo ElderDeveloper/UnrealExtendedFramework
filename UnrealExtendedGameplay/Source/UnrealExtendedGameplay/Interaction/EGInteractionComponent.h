@@ -6,6 +6,7 @@
 #include "CoreMinimal.h"
 #include "EGInteractionTypes.h"
 #include "Engine/HitResult.h"
+#include "Engine/StreamableManager.h"
 
 #include "EGInteractionComponent.generated.h"
 
@@ -354,6 +355,8 @@ private:
 
 	TWeakObjectPtr<UEnhancedInputComponent> BoundInputComponent;
 	TWeakObjectPtr<UInputAction> BoundInteractionInputAction;
+	/** InteractionInputAction, loading in the background from BeginPlay. */
+	TSharedPtr<FStreamableHandle> InteractionInputActionLoadHandle;
 	uint32 InteractionStartedBindingHandle = 0;
 	uint32 InteractionCompletedBindingHandle = 0;
 	uint32 InteractionCanceledBindingHandle = 0;

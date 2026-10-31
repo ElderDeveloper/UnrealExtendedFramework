@@ -3,7 +3,9 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Kismet/BlueprintAsyncActionBase.h"
+#include "Async/EFAsyncActionBase.h"
+#include "Curves/CurveFloat.h"
+#include "UnrealExtendedFramework/AsyncLibrary/EFAsyncNodeTimer.h"
 #include "UnrealExtendedFramework/Data/EFAsyncTimelineData.h"
 #include "EFAsyncFloatTimeline.generated.h"
 
@@ -12,16 +14,18 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FTimelineFloatLoop,float,Alpha);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FTimelineFloatLoopComplete);
 
 
-
-class UEFAsyncFloatTimeline;
-static TMap<FName,TWeakObjectPtr<UEFAsyncFloatTimeline>> EFFloatTimelines;
-
+/**
+ * Plays FloatCurve, firing Loop with the curve's value every PassTime seconds, then Completed when
+ * it reaches the curve's end (its start when reversed). Timelines are named: starting one with a
+ * name already playing replaces it, and Extended Float Timeline Manipulate steers or stops it.
+ * Stopping, replacing or cancelling it (Async Task pin) ends it without firing Completed.
+ */
 UCLASS()
-class UNREALEXTENDEDFRAMEWORK_API UEFAsyncFloatTimeline : public UBlueprintAsyncActionBase
+class UNREALEXTENDEDFRAMEWORK_API UEFAsyncFloatTimeline : public UEFAsyncActionBase
 {
 	GENERATED_BODY()
 
-	
+
 	/**
 * Internal tick. Will also broadcast the Tick Execution pin in the editor
 */
@@ -29,14 +33,16 @@ class UNREALEXTENDEDFRAMEWORK_API UEFAsyncFloatTimeline : public UBlueprintAsync
 	void InternalTick();
 
 	/**
-	* Internal completed. Clears timers and flags and broadcasts Completed Execution pin in the editor
+	* Internal completed. Stops the timeline without broadcasting anything
 	*/
 	UFUNCTION()
 	void InternalCompleted();
 
-	/**
-	* Static property to prevent restarting the async node multiple times before execution has finished
-	*/
+	/** Clears the timer and forgets this timeline's name. */
+	void StopTimeline();
+
+	/** Reached the end: stops and fires Completed. */
+	void FinishTimeline();
 
 	FName ExtendedTimelineName;
 	float LoopTime = 0.1f;
@@ -45,12 +51,11 @@ class UNREALEXTENDEDFRAMEWORK_API UEFAsyncFloatTimeline : public UBlueprintAsync
 	float CurveFirstTime = 0;
 	EFTimelinePlaySide TimelinePlaySide = Ext_Forward;
 	bool bTickWhenPaused = false;
-	
-	const UObject* WorldContext;
-	FTimerHandle TimerHandle;
+
+	FEFAsyncNodeTimer TickTimer;
 
 public:
-	
+
 	UPROPERTY(BlueprintAssignable)
 	FTimelineFloatLoop Loop;
 
@@ -58,11 +63,11 @@ public:
 	FTimelineFloatLoopComplete Completed;
 
 	UPROPERTY()
-	UCurveFloat* SelectedFloatCurve;
+	UCurveFloat* SelectedFloatCurve = nullptr;
 
-	
-	
-	
+
+
+
 	/**
 	* InternalUseOnly to hide sync version in BPs
 	*/
@@ -71,8 +76,14 @@ public:
 
 	UFUNCTION(BlueprintCallable, meta = (DisplayName=" Extended Float Timeline Manipulate", WorldContext = "WorldContextObject"), Category = "AsyncNode")
 	static void ExtendedFloatTimelineManipulate(const FName TimelineName, const UObject* WorldContextObject , TEnumAsByte<EFTimelinePlayType> TimelinePlayType = Ext_Play);
-	
-	//Overriding BP async action base
-	virtual void Activate() override;
+
+	/** Restarts the tick timer. */
 	void Reset();
+
+protected:
+
+	virtual void ExecuteAction() override;
+	virtual void CancelWork() override;
+	/** No failure pin: cancellation and failures end the timeline without firing Completed. */
+	virtual void BroadcastFailure(const FEFResult& /*Result*/) override {}
 };

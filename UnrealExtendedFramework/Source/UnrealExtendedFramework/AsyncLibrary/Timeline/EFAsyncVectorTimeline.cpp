@@ -7,71 +7,86 @@
 
 void UEFAsyncVectorTimeline::InternalTick()
 {
-	if (SelectedFloatCurve)
+	if (IsFinished())
 	{
-		Loop.Broadcast(SelectedFloatCurve->GetVectorValue(TimePassed));
-		TimePassed += LoopTime;
+		return;
+	}
 
-		if (TimePassed >= CurveLastTime)
+	// The curve, or whoever started the timeline, is gone: stop without firing anything.
+	if (!SelectedFloatCurve || !GetWorldContextObject())
+	{
+		InternalCompleted();
+		return;
+	}
+
+	Loop.Broadcast(SelectedFloatCurve->GetVectorValue(TimePassed));
+	TimePassed += LoopTime;
+
+	if (TimePassed >= CurveLastTime)
+	{
+		CancelWork();
+		if (FinishAction())
 		{
 			Completed.Broadcast();
-			InternalCompleted();
 		}
 	}
 }
 
 void UEFAsyncVectorTimeline::InternalCompleted()
 {
-	if (WorldContext)
-	{
-		WorldContext->GetWorld()->GetTimerManager().ClearTimer(TimerHandle);
-		TimerHandle.Invalidate();
-		SetReadyToDestroy();
-		ConditionalBeginDestroy();
-	}
+	CancelWork();
+	FinishAction();
 }
 
 UEFAsyncVectorTimeline* UEFAsyncVectorTimeline::ExtendedFloatTimeline(UCurveVector* VectorCurve,const UObject* WorldContextObject, float PassTime)
 {
 	if (!ensure(WorldContextObject) && !ensure(VectorCurve))	return nullptr;
 
-	if (VectorCurve->FloatCurves->IsEmpty())
+	if (!VectorCurve)
+	{
+		UE_LOG(LogBlueprint,Warning,TEXT("Vector Curve Is Not Valid")); return nullptr;
+	}
+	// Every dimension needs a key: the first and last key times below are read from all three.
+	if (VectorCurve->FloatCurves[0].IsEmpty() || VectorCurve->FloatCurves[1].IsEmpty() || VectorCurve->FloatCurves[2].IsEmpty())
 	{
 		UE_LOG(LogBlueprint,Warning,TEXT("Vector Curve Is Valid But It Has One Or More Empty Curves , Curve Must Have a Key In Every Dimension etc X , Y , Z ")); return nullptr;
 	}
-	
-	UEFAsyncVectorTimeline* Node = NewObject<UEFAsyncVectorTimeline>();
-	if (Node)
+	if (PassTime <= 0.f)
 	{
-		Node->WorldContext = WorldContextObject;
-		Node->LoopTime = PassTime;
-		Node->SelectedFloatCurve = VectorCurve;
-
-		float Smallest = 9999999;
-		float Biggest = 0;
-
-	
-		for (const auto i : VectorCurve->FloatCurves)
-		{
-			if (Biggest < i.GetLastKey().Time)
-				Biggest = i.GetLastKey().Time;
-			
-			if (Smallest > i.GetFirstKey().Time)
-				Smallest = i.GetFirstKey().Time;
-		}
-		
-		Node->TimePassed = Smallest;
-		Node->CurveLastTime = Biggest;
+		UE_LOG(LogBlueprint,Warning,TEXT("Vector Timeline Pass Time Must Be Greater Than Zero")); return nullptr;
 	}
+
+	UEFAsyncVectorTimeline* Node = NewObject<UEFAsyncVectorTimeline>();
+	Node->LoopTime = PassTime;
+	Node->SelectedFloatCurve = VectorCurve;
+
+	float Smallest = 9999999;
+	float Biggest = 0;
+
+	for (const FRichCurve& Curve : VectorCurve->FloatCurves)
+	{
+		if (Biggest < Curve.GetLastKey().Time)
+			Biggest = Curve.GetLastKey().Time;
+
+		if (Smallest > Curve.GetFirstKey().Time)
+			Smallest = Curve.GetFirstKey().Time;
+	}
+
+	Node->TimePassed = Smallest;
+	Node->CurveLastTime = Biggest;
+	Node->InitAsyncAction(const_cast<UObject*>(WorldContextObject));
 	return Node;
 }
 
-void UEFAsyncVectorTimeline::Activate()
+void UEFAsyncVectorTimeline::ExecuteAction()
 {
-	Super::Activate();
-
-	if (WorldContext)
+	if (!TickTimer.Start(GetWorldContextObject(), FTimerDelegate::CreateUObject(this, &UEFAsyncVectorTimeline::InternalTick), LoopTime, true))
 	{
-		WorldContext->GetWorld()->GetTimerManager().SetTimer(TimerHandle,this,&UEFAsyncVectorTimeline::InternalTick,LoopTime,true);
+		FailAction(FEFResult::NotAvailable(GetResultSource(), TEXT("a world for the world context")));
 	}
+}
+
+void UEFAsyncVectorTimeline::CancelWork()
+{
+	TickTimer.Clear();
 }
