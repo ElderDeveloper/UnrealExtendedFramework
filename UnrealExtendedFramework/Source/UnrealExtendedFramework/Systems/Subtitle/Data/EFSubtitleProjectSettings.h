@@ -1,8 +1,10 @@
-﻿// EFSubtitleProjectSettings.h — Project-wide subtitle configuration (DeveloperSettings)
+﻿// Copyright Moon Punch Games. All Rights Reserved.
+
+// EFSubtitleProjectSettings.h — Project-wide subtitle configuration (DeveloperSettings)
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Engine/DeveloperSettings.h"
+#include "Settings/EFDeveloperSettings.h"
 #include "EFSubtitleData.h"
 #include "EFSubtitleProjectSettings.generated.h"
 
@@ -16,7 +18,7 @@ class UEFSubtitleStyleProfile;
  * Project-wide subtitle settings, editable in Project Settings > Extended Framework > Subtitle.
  */
 UCLASS(Config=Game, defaultconfig, meta=(DisplayName="Extended Subtitle Settings"))
-class UNREALEXTENDEDFRAMEWORK_API UEFSubtitleProjectSettings : public UDeveloperSettings
+class UNREALEXTENDEDFRAMEWORK_API UEFSubtitleProjectSettings : public UEFDeveloperSettings
 {
 	GENERATED_BODY()
 
@@ -61,6 +63,15 @@ public:
 	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Audio")
 	TSubclassOf<UEFSubtitleAudioPlayer> AudioPlayerClass;
 
+	/**
+	 * Load the voice sounds (for the current culture) of every entry in the active data table and
+	 * the registered data assets as soon as they become active, so a subtitle that starts at once
+	 * does not load its sound on the game thread. Turn off for very large voice tables: each
+	 * entry's sound is then still loaded in the background when the entry is queued.
+	 */
+	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Audio")
+	bool bPreloadVoiceSounds = true;
+
 	// -- Appearance --
 
 	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Appearance")
@@ -96,5 +107,4 @@ public:
 	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Appearance")
 	TArray<TSoftObjectPtr<UEFSubtitleStyleProfile>> AvailableStyleProfiles;
 
-	virtual FName GetCategoryName() const override { return TEXT("Extended Framework"); }
 };

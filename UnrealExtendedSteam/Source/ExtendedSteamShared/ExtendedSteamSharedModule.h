@@ -86,6 +86,9 @@ public:
 private:
 	void HandlePostEngineInit();
 
+	/** Extended.Status reporter for the Steam client and game server. */
+	int32 EFStatusHandle = 0;
+
 	/** Gates shared by both automatic paths: settings, run mode and -NoSteam. Ignores the editor/PIE split. */
 	bool IsClientAutoInitAllowed() const;
 

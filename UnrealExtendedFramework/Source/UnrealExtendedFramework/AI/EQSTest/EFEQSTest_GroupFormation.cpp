@@ -1,4 +1,4 @@
-// Copyright Epic Games, Inc. All Rights Reserved.
+// Copyright Moon Punch Games. All Rights Reserved.
 
 #include "EFEQSTest_GroupFormation.h"
 #include "EnvironmentQuery/Items/EnvQueryItemType_VectorBase.h"

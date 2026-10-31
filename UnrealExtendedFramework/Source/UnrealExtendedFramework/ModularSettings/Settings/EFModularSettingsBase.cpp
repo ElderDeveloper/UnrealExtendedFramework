@@ -1,3 +1,5 @@
+// Copyright Moon Punch Games. All Rights Reserved.
+
 #include "EFModularSettingsBase.h"
 
 #include "Engine/Engine.h"

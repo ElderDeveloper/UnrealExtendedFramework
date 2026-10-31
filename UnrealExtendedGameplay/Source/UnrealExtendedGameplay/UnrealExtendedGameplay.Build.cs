@@ -1,4 +1,4 @@
-// Copyright Epic Games, Inc. All Rights Reserved.
+﻿// Copyright Kemal Erdem YILMAZ. All Rights Reserved.
 
 using UnrealBuildTool;
 
@@ -33,17 +33,20 @@ public class UnrealExtendedGameplay : ModuleRules
 				"Slate",
 				"SlateCore",
 				"UMG",
-				"Networking" ,
-				"Sockets",
-				"OnlineSubsystem",
-				"OnlineSubsystemUtils",
-				"OnlineSubsystemNull",
 				"Niagara",
+				"MotionWarping",
+				// Anim nodes (Turn In Place, Foot Lock) derive from its node types.
+				"AnimGraphRuntime",
 				"PhysicsCore",
 				"AIModule",
 				"GameplayTags",
 				"GameplayTasks",
-				"NavigationSystem"
+				"NavigationSystem",
+				// Asset loading helpers, settings base and status reporting. Public:
+				// SoftCollision/EGSoftCollisionSettings.h derives from UEFDeveloperSettings.
+				"ExtendedFoundation",
+				// Public: Cover, Targeting, Footstep and the damage and soft-lock notifies use its types in public headers.
+				"UnrealExtendedFramework"
 				// ... add other public dependencies that you statically link with here ...
 			}
 			);
@@ -54,12 +57,14 @@ public class UnrealExtendedGameplay : ModuleRules
 			{
 				"CoreUObject",
 				"Engine",
+				"NetCore",
+				// Two-bone IK (Foot Lock).
+				"AnimationCore",
 				"EngineSettings",
 				"Slate",
 				"SlateCore",
-				"UnrealExtendedFramework",
+				"DeveloperSettings",
 				"ProceduralMeshComponent"
-				// ... add private dependencies that you statically link with here ...	
 			}
 			);
 		

@@ -560,7 +560,7 @@ void FExtendedAtlassianLiveWorkspaceData::Load(
 		Result.State = EExtendedAtlassianLoadState::Offline;
 		Result.Error.Code = TEXT("NotConfigured");
 		Result.Error.Message =
-			TEXT("Connect an Atlassian Cloud account in Project Settings > Plugins > Extended Atlassian.");
+			TEXT("Connect an Atlassian Cloud account in Project Settings > Extended Framework > Extended Atlassian.");
 		Completion.ExecuteIfBound(Request, Result);
 		return;
 	}

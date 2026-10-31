@@ -1,10 +1,15 @@
-﻿// Fill out your copyright notice in the Description page of Project Settings.
+﻿// Copyright Kemal Erdem YILMAZ. All Rights Reserved.
 
 
 #include "EGCoverComponent.h"
 
 
 
+#include "Animation/AnimInstance.h"
+#include "Animation/AnimMontage.h"
+#include "UnrealExtendedGameplay/Animation/EGAnimationTags.h"
+#include "UnrealExtendedGameplay/Animation/Montage/EGMontageLibrary.h"
+#include "UnrealExtendedGameplay/Animation/TurnInPlace/EGTurnInPlaceComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "GameFramework/Character.h"
 #include "GameFramework/SpringArmComponent.h"
@@ -115,10 +120,14 @@ void UEGCoverComponent::TakeCover()
 		Player->GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
 		
 		bInCover = true;
+		if (UEGTurnInPlaceComponent* const TurnInPlace = UEGTurnInPlaceComponent::FindFor(GetOwner()))
+		{
+			ReleaseTurnInPlaceLock();
+			TurnInPlaceLock = TurnInPlace->PushLock(TEXT("Cover"));
+		}
 		OnCoverStateChanged.Broadcast(true);
 
-		if (GetInCoverMontage)
-			PlayerMesh->GetAnimInstance()->Montage_Play(GetInCoverMontage);
+		PlayCoverMontage(TAG_EGAnim_Cover_GetIn, TAG_EGAnim_Cover_GetIn_Crouched, GetInCoverMontage, CrouchedGetInCoverMontage);
 		
 	}
 }
@@ -136,13 +145,13 @@ void UEGCoverComponent::ProcessRightMovement(const float rightInput)
 		if (RightInputValue > 0)
 		{
 			if (CoverDirection != RightSide)
-				PlayMontageBasedOnPose(CoverTurnRight,CrouchedCoverTurnRight);
+				PlayCoverMontage(TAG_EGAnim_Cover_TurnRight, TAG_EGAnim_Cover_TurnRight_Crouched, CoverTurnRight, CrouchedCoverTurnRight);
 			CoverDirection = RightSide;
 		}
 		else
 		{
 			if (CoverDirection != LeftSide)
-				PlayMontageBasedOnPose(CoverTurnLeft,CrouchedCoverTurnLeft);
+				PlayCoverMontage(TAG_EGAnim_Cover_TurnLeft, TAG_EGAnim_Cover_TurnLeft_Crouched, CoverTurnLeft, CrouchedCoverTurnLeft);
 			CoverDirection = LeftSide;
 		}
 	}
@@ -271,8 +280,9 @@ void UEGCoverComponent::ExitCover()
 	bCameraMoving = true;
 	Player->GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::Type::QueryAndPhysics);
 	bInCover = false;
+	ReleaseTurnInPlaceLock();
 	CoverCameraDirection = CameraCenter;
-	PlayMontageIfValid(GetOutCoverMontage);
+	PlayCoverMontage(TAG_EGAnim_Cover_GetOut, TAG_EGAnim_Cover_GetOut_Crouched, GetOutCoverMontage, CrouchedGetOutCoverMontage);
 	OnCoverStateChanged.Broadcast(bInCover);
 }
 
@@ -480,69 +490,135 @@ void UEGCoverComponent::StorePlayerValues()
 
 
 
-void UEGCoverComponent::PlayMontageIfValid(UAnimMontage* MontageToPlay)
+FEGResolvedAnimation UEGCoverComponent::ResolveCoverAnimation(FGameplayTag Tag, UAnimMontage* Fallback, bool bExactTag) const
 {
-	if (MontageToPlay && PlayerMesh)
+	// The character's animation set, then this component's, then the montage slot.
+	FEGResolvedAnimation Resolved = UEGMontageLibrary::ResolveAnimation(GetOwner(), Tag, -1, AnimationSet, bExactTag);
+	if (!Resolved.IsValid())
 	{
-		PlayerMesh->GetAnimInstance()->OnMontageStarted.AddDynamic(this,&UEGCoverComponent::OnMontageBegin);
-		PlayerMesh->GetAnimInstance()->OnMontageBlendingOut.AddDynamic(this,&UEGCoverComponent::OnMontageEnded);
-		PlayerMesh->GetAnimInstance()->Montage_Play(MontageToPlay);
+		Resolved.Montage = Fallback;
 	}
-		
-
-	
+	return Resolved;
 }
 
-void UEGCoverComponent::PlayMontageBasedOnDirection(UAnimMontage* RightSideMontage,UAnimMontage* LeftSideMontage)
+void UEGCoverComponent::PlayCoverMontage(FGameplayTag StandingTag, FGameplayTag CrouchedTag, UAnimMontage* StandingMontage, UAnimMontage* CrouchedMontage)
 {
-	if (CoverDirection == RightSide)
-		PlayMontageIfValid(RightSideMontage);
-	else
-		PlayMontageIfValid(LeftSideMontage);
-}
-
-void UEGCoverComponent::PlayMontageBasedOnDirectionAndPose(UAnimMontage* IdleRightSideMontage,UAnimMontage* IdleLeftSideMontage, UAnimMontage* CrouchRightSideMontage, UAnimMontage* CrouchLeftSideMontage)
-{
+	// Crouched: a crouched clip from any set, then the crouched slot, before any standing clip.
 	if (bInCoverCrouched)
 	{
-		if (CoverDirection == RightSide)
-			PlayMontageIfValid(CrouchRightSideMontage);
-		else
-			PlayMontageIfValid(CrouchLeftSideMontage);
+		const FEGResolvedAnimation Crouched = ResolveCoverAnimation(CrouchedTag, CrouchedMontage, true);
+		if (Crouched.IsValid())
+		{
+			PlayResolvedAnimation(Crouched);
+			return;
+		}
 	}
-	else
+	PlayResolvedAnimation(ResolveCoverAnimation(StandingTag, StandingMontage, false));
+}
+
+void UEGCoverComponent::PlayResolvedAnimation(const FEGResolvedAnimation& Animation)
+{
+	if (!Animation.IsValid())
 	{
-		if (CoverDirection == RightSide)
-			PlayMontageIfValid(IdleRightSideMontage);
-		else
-			PlayMontageIfValid(IdleLeftSideMontage);
+		return;
 	}
-	
-	
 
-	
-}
+	UAnimInstance* AnimInstance = nullptr;
+	const EEGMontagePlayResult Result = UEGMontageLibrary::PlayMontage(GetOwner(), Animation.Montage, Animation.PlayRate, Animation.StartSection, Animation.StartTime, TAG_EGAnim_Mesh_Body, AnimInstance);
 
-void UEGCoverComponent::PlayMontageBasedOnPose(UAnimMontage* IdleMontage , UAnimMontage* CrouchMontage)
-{
-	if (bInCoverCrouched)
-		PlayMontageIfValid(CrouchMontage);
-	else
-		PlayMontageIfValid(IdleMontage);
-}
+	// Played by the owner somewhere we cannot see: nothing to track.
+	if (Result == EEGMontagePlayResult::Failed || !AnimInstance || !AnimInstance->Montage_IsPlaying(Animation.Montage))
+	{
+		return;
+	}
 
-
-void UEGCoverComponent::OnMontageBegin(UAnimMontage* MontageToPlay)
-{
+	// Track this montage only. The anim instance's shared events fire for every montage on the
+	// character, so they are filtered by montage, and bound at most once.
+	++CoverMontagePlayId;
 	IsInMontage = true;
+	StopTrackingOwnerMontage();
+
+	if (Result == EEGMontagePlayResult::Played)
+	{
+		FOnMontageBlendingOutStarted BlendingOutDelegate = FOnMontageBlendingOutStarted::CreateUObject(this, &UEGCoverComponent::OnCoverMontageBlendingOut, CoverMontagePlayId);
+		AnimInstance->Montage_SetBlendingOutDelegate(BlendingOutDelegate, Animation.Montage);
+	}
+	else
+	{
+		OwnerPlayedMontage = Animation.Montage;
+		OwnerPlayedAnimInstance = AnimInstance;
+		AnimInstance->OnMontageBlendingOut.AddUniqueDynamic(this, &UEGCoverComponent::OnOwnerMontageBlendingOut);
+	}
 }
 
-void UEGCoverComponent::OnMontageEnded(UAnimMontage* Montage, bool bInterrupted)
+void UEGCoverComponent::OnOwnerMontageBlendingOut(UAnimMontage* Montage, bool bInterrupted)
 {
-	IsInMontage = false;
-	if (PlayerMesh)
+	UAnimInstance* const AnimInstance = OwnerPlayedAnimInstance.Get();
+	if (!Montage || Montage != OwnerPlayedMontage.Get() || (AnimInstance && AnimInstance->Montage_IsPlaying(Montage)))
 	{
-		PlayerMesh->GetAnimInstance()->OnMontageStarted.RemoveDynamic(this,&UEGCoverComponent::OnMontageBegin);
-		PlayerMesh->GetAnimInstance()->OnMontageBlendingOut.RemoveDynamic(this,&UEGCoverComponent::OnMontageEnded);
+		// Another montage, or an older play of ours while the newest still runs.
+		return;
 	}
+	IsInMontage = false;
+	StopTrackingOwnerMontage();
+}
+
+void UEGCoverComponent::StopTrackingOwnerMontage()
+{
+	if (UAnimInstance* const AnimInstance = OwnerPlayedAnimInstance.Get())
+	{
+		AnimInstance->OnMontageBlendingOut.RemoveDynamic(this, &UEGCoverComponent::OnOwnerMontageBlendingOut);
+	}
+	OwnerPlayedMontage.Reset();
+	OwnerPlayedAnimInstance.Reset();
+}
+
+void UEGCoverComponent::OnCoverMontageBlendingOut(UAnimMontage* Montage, bool bInterrupted, uint32 PlayId)
+{
+	// A newer cover montage interrupted this one; that montage owns the flag now.
+	if (PlayId == CoverMontagePlayId)
+	{
+		IsInMontage = false;
+	}
+}
+
+FGameplayTagContainer UEGCoverComponent::GetAnimStateTags_Implementation() const
+{
+	FGameplayTagContainer Tags;
+	if (!bInCover)
+	{
+		return Tags;
+	}
+
+	Tags.AddTag(TAG_EGAnim_State_Cover);
+	if (bInCoverCrouched)
+	{
+		Tags.AddTag(TAG_EGAnim_State_Cover_Crouched);
+	}
+	if (IsMoving)
+	{
+		Tags.AddTag(TAG_EGAnim_State_Cover_Moving);
+	}
+	Tags.AddTag(CoverDirection == RightSide ? TAG_EGAnim_State_Cover_Right : TAG_EGAnim_State_Cover_Left);
+	if (IsInMontage)
+	{
+		Tags.AddTag(TAG_EGAnim_State_Cover_Montage);
+	}
+	return Tags;
+}
+
+void UEGCoverComponent::ReleaseTurnInPlaceLock()
+{
+	if (UEGTurnInPlaceComponent* const TurnInPlace = UEGTurnInPlaceComponent::FindFor(GetOwner()))
+	{
+		TurnInPlace->RemoveRequest(TurnInPlaceLock);
+	}
+	TurnInPlaceLock.Invalidate();
+}
+
+void UEGCoverComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	ReleaseTurnInPlaceLock();
+	StopTrackingOwnerMontage();
+	Super::EndPlay(EndPlayReason);
 }

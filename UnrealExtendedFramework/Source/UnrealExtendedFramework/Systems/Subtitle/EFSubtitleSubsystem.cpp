@@ -1,10 +1,15 @@
-﻿// EFSubtitleSubsystem.cpp
+﻿// Copyright Moon Punch Games. All Rights Reserved.
+
+// EFSubtitleSubsystem.cpp
 
 #include "EFSubtitleSubsystem.h"
+#include "Assets/EFAssetLoading.h"
 #include "UnrealExtendedFramework/Systems/Subtitle/Data/EFSubtitleProjectSettings.h"
 #include "UnrealExtendedFramework/Systems/Subtitle/Data/EFSubtitleDataAsset.h"
+#include "UnrealExtendedFramework/Systems/Subtitle/Policy/EFSubtitleAudioPlayer.h"
 #include "UnrealExtendedFramework/Systems/Subtitle/Subsystem/EFSubtitleReceiverComponent.h"
 #include "UnrealExtendedFramework/Systems/Subtitle/Subsystem/EFSubtitleLocalSubsystem.h"
+#include "UnrealExtendedFramework/Systems/Subtitle/UserSettings/EFSubtitleSettingsHelpers.h"
 #include "Engine/DataTable.h"
 #include "GameFramework/PlayerController.h"
 #include "GameFramework/PlayerState.h"
@@ -20,19 +25,36 @@ void UEFSubtitleSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
 	Super::Initialize(Collection);
 
-	// Load default data sources from project settings
+	// Load default data sources from project settings, in the background. The data assets are
+	// registered when they arrive, or at once if a subtitle is requested before that.
 	const auto* Settings = GetDefault<UEFSubtitleProjectSettings>();
 	if (Settings)
 	{
 		ActiveDataTable = Settings->DefaultDataTable;
 
+		TArray<FSoftObjectPath> Paths;
+		Paths.Reserve(Settings->DefaultDataAssets.Num() + 1);
 		for (const auto& AssetPtr : Settings->DefaultDataAssets)
 		{
-			if (UEFSubtitleDataAsset* Asset = AssetPtr.LoadSynchronous())
-			{
-				RegisteredDataAssets.AddUnique(Asset);
-			}
+			Paths.Add(AssetPtr.ToSoftObjectPath());
 		}
+		Paths.Add(Settings->DefaultDataTable.ToSoftObjectPath());
+
+		TWeakObjectPtr<UEFSubtitleSubsystem> WeakSubsystem(this);
+		DefaultSourcesHandle = EFAssets::Preload(MoveTemp(Paths), [WeakSubsystem]()
+		{
+			if (UEFSubtitleSubsystem* Subtitles = WeakSubsystem.Get())
+			{
+				Subtitles->RegisterDefaultDataAssets();
+				Subtitles->PreloadActiveDataTableVoices();
+			}
+		});
+	}
+
+	// Style profiles feed the style setting's options and the display widget; nothing draws them on a dedicated server.
+	if (!IsRunningDedicatedServer())
+	{
+		StyleProfilesHandle = EFSubtitleSettingsHelpers::PreloadStyleProfiles();
 	}
 }
 
@@ -49,6 +71,18 @@ void UEFSubtitleSubsystem::Deinitialize()
 	}
 	ActiveSequences.Empty();
 	RegisteredDataAssets.Empty();
+
+	// Lets the preloaded data sources, voices and style profiles unload with the game instance.
+	// The default sources are cancelled rather than released, so their completion callback
+	// cannot register anything on a deinitialized subsystem.
+	if (DefaultSourcesHandle.IsValid())
+	{
+		DefaultSourcesHandle->CancelHandle();
+		DefaultSourcesHandle.Reset();
+	}
+	StyleProfilesHandle.Reset();
+	DataAssetVoiceHandles.Reset();
+	DataTableVoiceHandle.Reset();
 
 	Super::Deinitialize();
 }
@@ -281,6 +315,7 @@ void UEFSubtitleSubsystem::RegisterSubtitleSource(UEFSubtitleDataAsset* DataAsse
 	if (DataAsset)
 	{
 		RegisteredDataAssets.AddUnique(DataAsset);
+		PreloadDataAssetVoices(DataAsset);
 		UE_LOG(LogEFSubtitle, Log, TEXT("Registered subtitle data asset: %s"), *DataAsset->GetName());
 	}
 }
@@ -288,20 +323,117 @@ void UEFSubtitleSubsystem::RegisterSubtitleSource(UEFSubtitleDataAsset* DataAsse
 
 void UEFSubtitleSubsystem::UnregisterSubtitleSource(UEFSubtitleDataAsset* DataAsset)
 {
+	// A default asset still loading would otherwise come back when its load finishes.
+	RegisterDefaultDataAssets();
+
 	RegisteredDataAssets.Remove(DataAsset);
+	DataAssetVoiceHandles.Remove(FObjectKey(DataAsset));
 }
 
 
 void UEFSubtitleSubsystem::SetActiveDataTable(UDataTable* DataTable)
 {
 	ActiveDataTable = DataTable;
+	PreloadActiveDataTableVoices();
+}
+
+
+// ── Preloading ──
+
+void UEFSubtitleSubsystem::RegisterDefaultDataAssets()
+{
+	if (bDefaultDataAssetsRegistered)
+	{
+		return;
+	}
+	bDefaultDataAssetsRegistered = true;
+
+	const auto* Settings = GetDefault<UEFSubtitleProjectSettings>();
+	if (!Settings)
+	{
+		return;
+	}
+
+	TArray<UEFSubtitleDataAsset*> DefaultAssets;
+	for (const auto& AssetPtr : Settings->DefaultDataAssets)
+	{
+		if (UEFSubtitleDataAsset* Asset = EFAssets::Resolve(AssetPtr, TEXT("UEFSubtitleSubsystem")))
+		{
+			DefaultAssets.AddUnique(Asset);
+		}
+	}
+
+	// Searched first, as when they were registered in Initialize, even if the game registered its
+	// own sources while these were still loading.
+	for (UEFSubtitleDataAsset* Asset : DefaultAssets)
+	{
+		RegisteredDataAssets.Remove(Asset);
+	}
+	RegisteredDataAssets.Insert(DefaultAssets, 0);
+
+	for (const UEFSubtitleDataAsset* Asset : DefaultAssets)
+	{
+		PreloadDataAssetVoices(Asset);
+	}
+}
+
+void UEFSubtitleSubsystem::PreloadDataAssetVoices(const UEFSubtitleDataAsset* DataAsset)
+{
+	const auto* Settings = GetDefault<UEFSubtitleProjectSettings>();
+	if (!DataAsset || !Settings || !Settings->bPreloadVoiceSounds || IsRunningDedicatedServer())
+	{
+		return;
+	}
+
+	TArray<FSoftObjectPath> Paths;
+	for (const TPair<FName, FEFSubtitleEntry>& Pair : DataAsset->Entries)
+	{
+		UEFSubtitleAudioPlayer::GatherSubtitleSoundPaths(Pair.Value, Paths);
+	}
+
+	if (TSharedPtr<FStreamableHandle> VoiceHandle = EFAssets::Preload(MoveTemp(Paths)))
+	{
+		DataAssetVoiceHandles.Add(FObjectKey(DataAsset), VoiceHandle);
+	}
+}
+
+void UEFSubtitleSubsystem::PreloadActiveDataTableVoices()
+{
+	DataTableVoiceHandle.Reset();
+
+	const auto* Settings = GetDefault<UEFSubtitleProjectSettings>();
+	const UDataTable* DataTable = ActiveDataTable.Get();
+	if (!DataTable || !Settings || !Settings->bPreloadVoiceSounds || IsRunningDedicatedServer())
+	{
+		return;
+	}
+
+	const UScriptStruct* RowStruct = DataTable->GetRowStruct();
+	if (!RowStruct || !RowStruct->IsChildOf(FEFSubtitleEntry::StaticStruct()))
+	{
+		return;
+	}
+
+	TArray<FSoftObjectPath> Paths;
+	for (const TPair<FName, uint8*>& Row : DataTable->GetRowMap())
+	{
+		if (const FEFSubtitleEntry* Entry = reinterpret_cast<const FEFSubtitleEntry*>(Row.Value))
+		{
+			UEFSubtitleAudioPlayer::GatherSubtitleSoundPaths(*Entry, Paths);
+		}
+	}
+
+	DataTableVoiceHandle = EFAssets::Preload(MoveTemp(Paths));
 }
 
 
 // ── Data Resolution ──
 
-bool UEFSubtitleSubsystem::ResolveSubtitleEntry(FName SubtitleKey, FEFSubtitleEntry& OutEntry) const
+bool UEFSubtitleSubsystem::ResolveSubtitleEntry(FName SubtitleKey, FEFSubtitleEntry& OutEntry)
 {
+	// The defaults normally finished loading long before the first subtitle; if not, load them now.
+	RegisterDefaultDataAssets();
+
 	// 1. Search registered DataAssets first
 	for (const auto* Asset : RegisteredDataAssets)
 	{
@@ -315,10 +447,10 @@ bool UEFSubtitleSubsystem::ResolveSubtitleEntry(FName SubtitleKey, FEFSubtitleEn
 		}
 	}
 
-	// 2. Search active DataTable
-	if (ActiveDataTable.IsValid())
+	// 2. Search active DataTable (preloaded in Initialize; resolved here if that has not finished)
+	if (!ActiveDataTable.IsNull())
 	{
-		if (UDataTable* DT = ActiveDataTable.LoadSynchronous())
+		if (UDataTable* DT = EFAssets::Resolve(ActiveDataTable, TEXT("UEFSubtitleSubsystem")))
 		{
 			if (FEFSubtitleEntry* Found = DT->FindRow<FEFSubtitleEntry>(SubtitleKey, TEXT("")))
 			{

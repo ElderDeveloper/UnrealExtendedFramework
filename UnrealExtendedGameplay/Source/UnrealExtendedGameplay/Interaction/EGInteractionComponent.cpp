@@ -3,6 +3,7 @@
 #include "EGInteractionComponent.h"
 #include "Internationalization/StringTableRegistry.h"
 
+#include "Assets/EFAssetLoading.h"
 #include "Blueprint/UserWidget.h"
 #include "Components/PrimitiveComponent.h"
 #include "DrawDebugHelpers.h"
@@ -55,6 +56,12 @@ void UEGInteractionComponent::BeginPlay()
 		OwnerPawn->ReceiveControllerChangedDelegate.AddUniqueDynamic(this, &UEGInteractionComponent::HandleOwnerControllerChanged);
 	}
 
+	// Binding waits for this load (the tick retries it) instead of loading the input action synchronously.
+	if (bAutoBindInteractionInput && !InteractionInputAction.IsNull())
+	{
+		InteractionInputActionLoadHandle = EFAssets::Preload({ InteractionInputAction.ToSoftObjectPath() });
+	}
+
 	RefreshOwnerControlState();
 }
 
@@ -66,6 +73,7 @@ void UEGInteractionComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	}
 
 	ClearInteractionInputBindings();
+	InteractionInputActionLoadHandle.Reset();
 	InteractionEnd();
 	ClearFocus();
 	HidePromptWidget();
@@ -194,11 +202,17 @@ void UEGInteractionComponent::EnsureInteractionInputBindings()
 		return;
 	}
 
+	// Still loading from BeginPlay: the tick retries, as it does while the input component is missing.
+	if (InteractionInputActionLoadHandle.IsValid() && InteractionInputActionLoadHandle->IsLoadingInProgress() && !InteractionInputAction.Get())
+	{
+		return;
+	}
+
 	const APawn* OwnerPawn = Cast<APawn>(GetOwner());
 	UEnhancedInputComponent* EnhancedInput = OwnerPawn
 		? Cast<UEnhancedInputComponent>(OwnerPawn->InputComponent)
 		: nullptr;
-	UInputAction* InputAction = InteractionInputAction.LoadSynchronous();
+	UInputAction* InputAction = EFAssets::Resolve(InteractionInputAction, TEXT("UEGInteractionComponent"));
 	if (!EnhancedInput || !InputAction)
 	{
 		if (BoundInputComponent.IsValid())

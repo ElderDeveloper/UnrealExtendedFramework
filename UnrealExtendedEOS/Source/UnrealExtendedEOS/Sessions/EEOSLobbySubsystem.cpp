@@ -11,6 +11,7 @@
 #include "OnlineSubsystemEOSTypesPublic.h"
 #include "Shared/EEOSSettings.h"
 #include "UnrealExtendedEOS.h"
+#include "Async/EFCallContext.h"
 #include "Shared/EEOSBlueprintLibrary.h"
 #include "Engine/GameInstance.h"
 #include "Engine/Engine.h"
@@ -594,7 +595,7 @@ bool UEEOSLobbySubsystem::FindLobbiesFiltered(int32 MaxResults, const TMap<FStri
 		return false;
 	}
 	const int64 Token = BeginOperation(TEXT("FindLobbies"), FString(), GetSearchCoordinator()->GetRequestId());
-	SearchSessions = Sessions; SearchContext = CaptureEOSContext();
+	SearchSessions = Sessions; SearchContext = CaptureEOSContext(); SearchCallContext = EFCallContext::GetActive();
 	LobbySearchGeneration = Token;
 	LobbySearchTime = FPlatformTime::Seconds();
 	LobbySearch = MakeShared<FOnlineSessionSearch>();
@@ -849,10 +850,14 @@ void UEEOSLobbySubsystem::FinishJoiningLobby(bool bSuccess, const FString& Error
 	LastLobbyJoinError = !bContextCurrent ? TEXT("Original identity/platform retired before join completion.") : !bSuccess && Error.IsEmpty() ? TEXT("Join completed without a usable named lobby session.") : Error;
 	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSLobbySubsystem: Join %s target='%s', current='%s', member=%d, error='%s'"),
 		bSuccess ? TEXT("succeeded") : TEXT("failed"), *FEEOSNativeOperationLease::SafeField(TargetId), *FEEOSNativeOperationLease::SafeField(CurrentLobbyId), bInLobby, *FEEOSNativeOperationLease::SafeField(LastLobbyJoinError));
-	MembershipLease.Reset(); OperationSessions.Reset();
+	// The admitted join finishes on a later tick: report under the call context of the caller that
+	// started it (see EFCallContext).
+	const int64 CallContext = MembershipLease.IsValid() ? MembershipCallContext : EFCallContext::GetActive();
+	MembershipLease.Reset(); OperationSessions.Reset(); MembershipCallContext = 0;
 	{
 		const auto Outcome = CompleteOperation(TEXT("JoinLobby"), bSuccess, bSuccess ? EEOSOperationCode::Succeeded : Code, LastLobbyJoinError, CurrentLobbyId, NativeResult, Source, SDKResult);
 		FEEOSOutcomeDispatchScope Dispatch(this, Outcome);
+		EFCallContext::FScope CallScope(CallContext);
 		if (!bShuttingDown) { OnLobbyJoined.Broadcast(bSuccess, CurrentLobbyId); OnOperationCompleted.Broadcast(Outcome); }
 	}
 	// A join reported as failed must not leave the player inside the lobby it targeted: every
@@ -1682,6 +1687,9 @@ void UEEOSLobbySubsystem::HandleFindSessionsComplete(bool bWasSuccessful)
 	SearchSessions.Reset();
 	FindLobbiesCompleteHandle.Reset();
 	ReleaseSearchSlot();
+	// Report under the call context of the caller that started this search (see EFCallContext).
+	const int64 CallContext = SearchCallContext;
+	SearchCallContext = 0;
 
 	TArray<FEEOSSessionSearchResult> Results;
 
@@ -1719,6 +1727,7 @@ void UEEOSLobbySubsystem::HandleFindSessionsComplete(bool bWasSuccessful)
 	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSLobbySubsystem: Found %d lobbies (search %s)"), Results.Num(), bWasSuccessful ? TEXT("succeeded") : TEXT("failed"));
 	const auto Outcome = CompleteOperation(TEXT("FindLobbies"), bWasSuccessful, !bContextCurrent ? EEOSOperationCode::Canceled : bWasSuccessful ? EEOSOperationCode::Succeeded : EEOSOperationCode::NativeFailure, !bContextCurrent ? TEXT("Lobby search context retired before completion.") : bWasSuccessful ? TEXT("Lobby search succeeded.") : TEXT("Native lobby search failed."), FString(), bNativeSuccess ? TEXT("Success") : TEXT("Failure"), EEOSResultSource::NativeCallback);
 	FEEOSOutcomeDispatchScope Dispatch(this, Outcome);
+	EFCallContext::FScope CallScope(CallContext);
 	if (!bShuttingDown) { OnLobbiesFound.Broadcast(Results); OnOperationCompleted.Broadcast(Outcome); }
 }
 
@@ -2371,7 +2380,7 @@ bool UEEOSLobbySubsystem::AcquireLobbyMembership(FName Operation, const FString&
 		RejectOperation(Operation, EEOSOperationCode::Busy, TEXT("The native lobby is owned by another operation."));
 		return false;
 	}
-	OperationSessions = Sessions; MembershipContext = CaptureEOSContext();
+	OperationSessions = Sessions; MembershipContext = CaptureEOSContext(); MembershipCallContext = EFCallContext::GetActive();
 	LastMembershipRequestId = BeginOperation(Operation, TargetId, MembershipLease.GetRequestId());
 	TagOperationContext(Operation, CurrentLobbyId, int64(LobbyGeneration));
 	return true;
@@ -2422,9 +2431,13 @@ void UEEOSLobbySubsystem::FinishLobbyCreation(bool bSuccess, EEOSOperationCode C
 		MembershipLease.GetRequestId(), *FEEOSNativeOperationLease::SafeField(Readiness.Instance.ToString()), PendingCreateLobbySettings.NumPublicConnections + PendingCreateLobbySettings.NumPrivateConnections,
 		GetLobbyCapacity().Maximum, Readiness.bHasEpicAccount, Readiness.bConnectLoggedIn, IsLobbyOwner(), GetWorld() ? int32(GetWorld()->GetNetMode()) : -1);
 
-	MembershipLease.Reset(); OperationSessions.Reset();
+	// The admitted create finishes on a later tick: report under the call context of the caller
+	// that started it (see EFCallContext).
+	const int64 CallContext = MembershipLease.IsValid() ? MembershipCallContext : EFCallContext::GetActive();
+	MembershipLease.Reset(); OperationSessions.Reset(); MembershipCallContext = 0;
 	const auto Outcome = CompleteOperation(TEXT("CreateLobby"), bSuccess, bSuccess ? EEOSOperationCode::Succeeded : Code, bSuccess ? Message : !bContextCurrent ? TEXT("Original identity/platform retired before creation completion.") : Code == EEOSOperationCode::NativeFailure ? TEXT("Native lobby creation did not leave usable membership.") : Message, CurrentLobbyId, NativeResult, Source);
 	FEEOSOutcomeDispatchScope Dispatch(this, Outcome);
+	EFCallContext::FScope CallScope(CallContext);
 	if (!bShuttingDown) { OnLobbyCreated.Broadcast(bSuccess, CurrentLobbyId); OnOperationCompleted.Broadcast(Outcome); }
 }
 

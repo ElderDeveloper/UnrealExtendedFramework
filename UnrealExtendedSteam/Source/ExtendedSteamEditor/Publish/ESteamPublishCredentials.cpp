@@ -2,6 +2,7 @@
 
 #include "Publish/ESteamPublishCredentials.h"
 
+#include "Credentials/EFCredentialStore.h"
 #include "ExtendedSteamEditor.h"
 #include "HAL/FileManager.h"
 #include "Misc/AES.h"
@@ -13,19 +14,85 @@ namespace
 {
 	static const TCHAR* GSectionHeader = TEXT("[SteamPublish]");
 	static const TCHAR* GUsernameKey   = TEXT("Username=");
-	static const TCHAR* GPasswordKey   = TEXT("Password=");
+
+	// Legacy: older versions wrote the AES-encrypted password on this line. Load() migrates it to the
+	// credential store and rewrites the file without it; nothing writes this line any more.
+	static const TCHAR* GLegacyPasswordKey = TEXT("Password=");
+
+	// FEFCredentialStore service holding the upload password. The account is the Steam user name.
+	static const TCHAR* GCredentialService = TEXT("UnrealExtendedSteam.Publish");
 
 	// AES block size (bytes). Buffers handed to FAES must be a multiple of this.
 	static constexpr int32 GAesBlockSize = 16;
 
-	// Embedded 32-byte AES-256 key. This is deliberately baked into the binary: it hardens casual reads
-	// of the credentials file but is NOT secrecy against anyone who has the plugin source (the app must
-	// decrypt unaided to pass the password to steamcmd). Must be exactly 32 characters.
-	void MakeAesKey(FAES::FAESKey& OutKey)
+	// The 32-byte AES-256 key older versions embedded in the plugin to encrypt the password in the
+	// credentials file. Kept ONLY to decrypt such a file once, for migration; nothing is encrypted
+	// with it any more. Must be exactly 32 characters.
+	void MakeLegacyAesKey(FAES::FAESKey& OutKey)
 	{
 		static const ANSICHAR KeyMaterial[] = "ExtSteamPublish-AES256-v1-Key!!!";
 		static_assert(sizeof(KeyMaterial) == 32 + 1, "AES-256 key material must be exactly 32 bytes.");
 		FMemory::Memcpy(OutKey.Key, KeyMaterial, 32);
+	}
+
+	/** What the credentials file holds. */
+	struct FCredentialsFileContents
+	{
+		FString Username;
+
+		/** True while the file still has a legacy Password= line (even an empty one). */
+		bool bHasLegacyPassword = false;
+		FString LegacyEncryptedPassword;
+	};
+
+	bool ReadCredentialsFile(const FString& FilePath, FCredentialsFileContents& OutContents)
+	{
+		FString Text;
+		if (!FFileHelper::LoadFileToString(Text, *FilePath))
+		{
+			return false;
+		}
+
+		TArray<FString> Lines;
+		Text.ParseIntoArrayLines(Lines);
+		for (const FString& Raw : Lines)
+		{
+			const FString Line = Raw.TrimStartAndEnd();
+			if (Line.StartsWith(GUsernameKey))
+			{
+				OutContents.Username = Line.RightChop(FCString::Strlen(GUsernameKey)).TrimStartAndEnd();
+			}
+			else if (Line.StartsWith(GLegacyPasswordKey))
+			{
+				OutContents.bHasLegacyPassword = true;
+				OutContents.LegacyEncryptedPassword = Line.RightChop(FCString::Strlen(GLegacyPasswordKey)).TrimStartAndEnd();
+			}
+		}
+		return true;
+	}
+
+	/** Writes the credentials file with the user name only; the password never goes into it. */
+	bool WriteCredentialsFile(const FString& Directory, const FString& FilePath, const FString& UserName, FString& OutError)
+	{
+		if (!IFileManager::Get().MakeDirectory(*Directory, /*Tree*/ true))
+		{
+			OutError = FString::Printf(TEXT("Could not create secrets folder: %s"), *Directory);
+			return false;
+		}
+
+		FString Text;
+		Text += FString::Printf(TEXT("; Extended Steam upload credentials — DO NOT COMMIT.%s"), LINE_TERMINATOR);
+		Text += FString::Printf(TEXT("; Only the Steam user name is kept here. The password is in %s, never in project files.%s"),
+			*FEFCredentialStore::GetStorageDescription(), LINE_TERMINATOR);
+		Text += FString::Printf(TEXT("%s%s"), GSectionHeader, LINE_TERMINATOR);
+		Text += FString::Printf(TEXT("%s%s%s"), GUsernameKey, *UserName, LINE_TERMINATOR);
+
+		if (!FFileHelper::SaveStringToFile(Text, *FilePath))
+		{
+			OutError = FString::Printf(TEXT("Could not write credentials file: %s"), *FilePath);
+			return false;
+		}
+		return true;
 	}
 }
 
@@ -44,38 +111,22 @@ bool FESteamPublishCredentials::Exists()
 	return FPaths::FileExists(GetCredentialsFilePath());
 }
 
-FString FESteamPublishCredentials::Encrypt(const FString& Plain)
+const TCHAR* FESteamPublishCredentials::GetCredentialStoreService()
 {
-	if (Plain.IsEmpty())
-	{
-		return FString();
-	}
-
-	FTCHARToUTF8 Utf8(*Plain);
-	const int32 PlainLen = Utf8.Length();
-
-	// Layout: [uint32 LE original length][UTF-8 bytes], zero-padded up to a multiple of the block size.
-	const int32 HeaderLen = sizeof(uint32);
-	int32 TotalLen = HeaderLen + PlainLen;
-	if (const int32 Remainder = TotalLen % GAesBlockSize)
-	{
-		TotalLen += GAesBlockSize - Remainder;
-	}
-
-	TArray<uint8> Buffer;
-	Buffer.SetNumZeroed(TotalLen);
-	const uint32 LenLE = static_cast<uint32>(PlainLen);
-	FMemory::Memcpy(Buffer.GetData(), &LenLE, HeaderLen);
-	FMemory::Memcpy(Buffer.GetData() + HeaderLen, Utf8.Get(), PlainLen);
-
-	FAES::FAESKey Key;
-	MakeAesKey(Key);
-	FAES::EncryptData(Buffer.GetData(), Buffer.Num(), Key);
-
-	return FBase64::Encode(Buffer);
+	return GCredentialService;
 }
 
-FString FESteamPublishCredentials::Decrypt(const FString& Encoded)
+FString FESteamPublishCredentials::GetPasswordStorageDescription()
+{
+	return FEFCredentialStore::GetStorageDescription();
+}
+
+bool FESteamPublishCredentials::IsPasswordProtectedAtRest()
+{
+	return FEFCredentialStore::IsProtectedAtRest();
+}
+
+FString FESteamPublishCredentials::DecryptLegacyPassword(const FString& Encoded)
 {
 	if (Encoded.IsEmpty())
 	{
@@ -90,9 +141,10 @@ FString FESteamPublishCredentials::Decrypt(const FString& Encoded)
 	}
 
 	FAES::FAESKey Key;
-	MakeAesKey(Key);
+	MakeLegacyAesKey(Key);
 	FAES::DecryptData(Buffer.GetData(), Buffer.Num(), Key);
 
+	// Layout written by the old code: [uint32 LE original length][UTF-8 bytes], zero-padded to the block size.
 	uint32 PlainLen = 0;
 	FMemory::Memcpy(&PlainLen, Buffer.GetData(), sizeof(uint32));
 	if (PlainLen > static_cast<uint32>(Buffer.Num()) - sizeof(uint32))
@@ -106,56 +158,97 @@ FString FESteamPublishCredentials::Decrypt(const FString& Encoded)
 	PlainBytes.Append(Buffer.GetData() + sizeof(uint32), PlainLen);
 	PlainBytes.Add(0); // null-terminate for UTF8 conversion
 
-	return FString(UTF8_TO_TCHAR(reinterpret_cast<const char*>(PlainBytes.GetData())));
+	const FString Plain = FString(UTF8_TO_TCHAR(reinterpret_cast<const char*>(PlainBytes.GetData())));
+	FMemory::Memzero(Buffer.GetData(), Buffer.Num());
+	FMemory::Memzero(PlainBytes.GetData(), PlainBytes.Num());
+	return Plain;
 }
 
 bool FESteamPublishCredentials::Load(FESteamPublishCredentials& Out)
 {
 	const FString FilePath = GetCredentialsFilePath();
-	FString Contents;
-	if (!FFileHelper::LoadFileToString(Contents, *FilePath))
+	FCredentialsFileContents File;
+	if (!ReadCredentialsFile(FilePath, File))
 	{
 		return false;
 	}
 
-	TArray<FString> Lines;
-	Contents.ParseIntoArrayLines(Lines);
-	for (const FString& Raw : Lines)
+	Out.Username = File.Username;
+
+	FString LoadedPassword;
+
+	// One-time migration from older versions, which kept the password AES-encrypted in this file:
+	// decrypt it with the old code, save it to the credential store, then rewrite the file without it.
+	if (File.bHasLegacyPassword)
 	{
-		const FString Line = Raw.TrimStartAndEnd();
-		if (Line.StartsWith(GUsernameKey))
+		LoadedPassword = DecryptLegacyPassword(File.LegacyEncryptedPassword);
+
+		const bool bStored = LoadedPassword.IsEmpty() || FEFCredentialStore::Save(GCredentialService, File.Username, LoadedPassword);
+		if (!bStored)
 		{
-			Out.Username = Line.RightChop(FCString::Strlen(GUsernameKey)).TrimStartAndEnd();
+			// Keep the old line so the password is not lost; the migration is retried on the next load.
+			UE_LOG(LogExtendedSteamEditor, Warning,
+				TEXT("Credentials: could not move the Steam publish password into %s; it stays in %s for now."),
+				*FEFCredentialStore::GetStorageDescription(), *FilePath);
 		}
-		else if (Line.StartsWith(GPasswordKey))
+		else
 		{
-			const FString Encoded = Line.RightChop(FCString::Strlen(GPasswordKey)).TrimStartAndEnd();
-			Out.Password = Decrypt(Encoded);
+			FString Error;
+			if (!WriteCredentialsFile(GetSecretsDirectory(), FilePath, File.Username, Error))
+			{
+				UE_LOG(LogExtendedSteamEditor, Warning,
+					TEXT("Credentials: the old password entry could not be removed from the credentials file (%s). Delete its Password= line by hand."),
+					*Error);
+			}
+			else if (!LoadedPassword.IsEmpty())
+			{
+				UE_LOG(LogExtendedSteamEditor, Display,
+					TEXT("Credentials: moved the Steam publish password from %s into %s."),
+					*FilePath, *FEFCredentialStore::GetStorageDescription());
+			}
+			else if (!File.LegacyEncryptedPassword.IsEmpty())
+			{
+				UE_LOG(LogExtendedSteamEditor, Warning,
+					TEXT("Credentials: removed an unreadable password from %s. Enter it again and click 'Save Credentials'."),
+					*FilePath);
+			}
 		}
+	}
+
+	if (LoadedPassword.IsEmpty())
+	{
+		FString StoredPassword;
+		if (FEFCredentialStore::Load(GCredentialService, File.Username, StoredPassword))
+		{
+			LoadedPassword = MoveTemp(StoredPassword);
+		}
+	}
+
+	if (!LoadedPassword.IsEmpty())
+	{
+		Out.Password = MoveTemp(LoadedPassword);
 	}
 	return true;
 }
 
 bool FESteamPublishCredentials::Save(const FESteamPublishCredentials& In, FString& OutError)
 {
-	const FString Directory = GetSecretsDirectory();
-	if (!IFileManager::Get().MakeDirectory(*Directory, /*Tree*/ true))
+	if (In.Password.IsEmpty())
 	{
-		OutError = FString::Printf(TEXT("Could not create secrets folder: %s"), *Directory);
+		FEFCredentialStore::Delete(GCredentialService, In.Username);
+	}
+	else if (!FEFCredentialStore::Save(GCredentialService, In.Username, In.Password))
+	{
+		OutError = FString::Printf(TEXT("Could not save the password to %s."), *FEFCredentialStore::GetStorageDescription());
 		return false;
 	}
 
-	FString Contents;
-	Contents += FString::Printf(TEXT("; Extended Steam upload credentials — DO NOT COMMIT.%s"), LINE_TERMINATOR);
-	Contents += FString::Printf(TEXT("; Password is AES-256 encrypted with a key embedded in the plugin. Keep this folder in your VCS ignore list.%s"), LINE_TERMINATOR);
-	Contents += FString::Printf(TEXT("%s%s"), GSectionHeader, LINE_TERMINATOR);
-	Contents += FString::Printf(TEXT("%s%s%s"), GUsernameKey, *In.Username, LINE_TERMINATOR);
-	Contents += FString::Printf(TEXT("%s%s%s"), GPasswordKey, *Encrypt(In.Password), LINE_TERMINATOR);
-
-	if (!FFileHelper::SaveStringToFile(Contents, *GetCredentialsFilePath()))
+	// Switching to another account must not leave the previous account's password behind.
+	FCredentialsFileContents Previous;
+	if (ReadCredentialsFile(GetCredentialsFilePath(), Previous) && !Previous.Username.Equals(In.Username, ESearchCase::IgnoreCase))
 	{
-		OutError = FString::Printf(TEXT("Could not write credentials file: %s"), *GetCredentialsFilePath());
-		return false;
+		FEFCredentialStore::Delete(GCredentialService, Previous.Username);
 	}
-	return true;
+
+	return WriteCredentialsFile(GetSecretsDirectory(), GetCredentialsFilePath(), In.Username, OutError);
 }

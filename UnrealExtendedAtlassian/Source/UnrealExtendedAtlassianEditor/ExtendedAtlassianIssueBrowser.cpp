@@ -741,7 +741,7 @@ void SExtendedAtlassianIssueBrowser::Refresh()
 		}
 
 		SetStatus(LOCTEXT("NotConnected",
-			"Not connected. Set the site URL and credentials in Project Settings > Plugins > Extended Atlassian."), true);
+			"Not connected. Set the site URL and credentials in Project Settings > Extended Framework > Extended Atlassian."), true);
 		return;
 	}
 

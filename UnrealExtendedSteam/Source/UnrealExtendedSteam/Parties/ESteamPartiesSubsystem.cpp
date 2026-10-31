@@ -3,6 +3,7 @@
 #include "Parties/ESteamPartiesSubsystem.h"
 #include "Shared/ESteamLog.h"
 #include "Shared/ESteamSDK.h"
+#include "Async/EFCallContext.h"
 
 #if WITH_EXTENDEDSTEAM_SDK
 THIRD_PARTY_INCLUDES_START
@@ -21,13 +22,18 @@ public:
 	{
 	}
 
+	// Track* also remember the EFCallContext active when the call was made; it is made active again
+	// while the result is broadcast, so async nodes can tell concurrent calls apart.
+
 	void TrackJoinRequest(SteamAPICall_t Call)
 	{
+		JoinPartyContext = EFCallContext::GetActive();
 		JoinPartyResult.Set(Call, this, &FESteamPartiesCallbacks::HandleJoinPartyResult);
 	}
 
 	void TrackCreateRequest(SteamAPICall_t Call)
 	{
+		CreateBeaconContext = EFCallContext::GetActive();
 		CreateBeaconResult.Set(Call, this, &FESteamPartiesCallbacks::HandleCreateBeaconResult);
 	}
 
@@ -73,6 +79,7 @@ private:
 
 	void HandleJoinPartyResult(JoinPartyCallback_t* Data, bool bIOFailure)
 	{
+		EFCallContext::FScope Scope(JoinPartyContext);
 		if (UESteamPartiesSubsystem* Subsystem = Owner.Get())
 		{
 			const bool bSuccess = !bIOFailure && Data->m_eResult == k_EResultOK;
@@ -85,6 +92,7 @@ private:
 
 	void HandleCreateBeaconResult(CreateBeaconCallback_t* Data, bool bIOFailure)
 	{
+		EFCallContext::FScope Scope(CreateBeaconContext);
 		if (UESteamPartiesSubsystem* Subsystem = Owner.Get())
 		{
 			const bool bSuccess = !bIOFailure && Data->m_eResult == k_EResultOK;
@@ -103,6 +111,8 @@ private:
 
 	TWeakObjectPtr<UESteamPartiesSubsystem> Owner;
 	int64 PendingSlotsBeaconId = 0;
+	int64 JoinPartyContext = 0;
+	int64 CreateBeaconContext = 0;
 	CCallback<FESteamPartiesCallbacks, ReservationNotificationCallback_t> ReservationNotification;
 	CCallback<FESteamPartiesCallbacks, ActiveBeaconsUpdated_t> ActiveBeaconsUpdated;
 	CCallback<FESteamPartiesCallbacks, AvailableBeaconLocationsUpdated_t> AvailableBeaconLocationsUpdated;

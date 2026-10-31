@@ -1,3 +1,5 @@
+// Copyright Moon Punch Games. All Rights Reserved.
+
 // EFSubtitleReceiverComponent.cpp
 
 #include "EFSubtitleReceiverComponent.h"

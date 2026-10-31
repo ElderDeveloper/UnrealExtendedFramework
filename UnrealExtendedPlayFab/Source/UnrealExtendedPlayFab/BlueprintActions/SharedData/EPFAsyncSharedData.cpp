@@ -1,84 +1,103 @@
 // Copyright Kemal Erdem YILMAZ. All Rights Reserved.
 
 #include "EPFAsyncSharedData.h"
-#include "Engine/GameInstance.h"
 
 // ── Create Shared Group ──────────────────────────────────────────────────────
 UEPFAsyncCreateSharedGroup* UEPFAsyncCreateSharedGroup::CreateSharedGroup(UObject* WorldContext, const FString& SharedGroupId)
 {
-	auto* A = NewObject<UEPFAsyncCreateSharedGroup>(); A->GroupId = SharedGroupId; A->WorldContext = WorldContext; A->RegisterWithGameInstance(WorldContext); return A;
+	auto* A = NewObject<UEPFAsyncCreateSharedGroup>(); A->GroupId = SharedGroupId; A->InitAsyncAction(WorldContext); return A;
 }
-void UEPFAsyncCreateSharedGroup::Activate()
+void UEPFAsyncCreateSharedGroup::ExecuteAction()
 {
-	if (GroupId.IsEmpty()) { BroadcastEPFFailure(OnFailure, MakeEPFAsyncError(TEXT("SharedGroupId cannot be empty"))); SetReadyToDestroy(); return; }
-	auto* S = GetEPFSubsystemFromContext<UEPFSharedDataSubsystem>(WorldContext.Get());
-	if (!S) { BroadcastEPFFailure(OnFailure, MakeEPFAsyncError(TEXT("SharedData subsystem not available"))); SetReadyToDestroy(); return; }
+	if (GroupId.IsEmpty()) { FailInvalidArgument(TEXT("SharedGroupId cannot be empty")); return; }
+	auto* S = RequireGameInstanceSubsystem<UEPFSharedDataSubsystem>();
+	if (!S) return;
 	S->OnGroupCreated.AddDynamic(this, &UEPFAsyncCreateSharedGroup::HandleComplete);
-	S->CreateSharedGroup(GroupId);
+	CallWithContext([&] { S->CreateSharedGroup(GroupId); });
+}
+void UEPFAsyncCreateSharedGroup::CancelWork()
+{
+	if (auto* S = GetGameInstanceSubsystem<UEPFSharedDataSubsystem>()) S->OnGroupCreated.RemoveDynamic(this, &UEPFAsyncCreateSharedGroup::HandleComplete);
 }
 void UEPFAsyncCreateSharedGroup::HandleComplete(const FEPFResult& Result, const FString& Id)
 {
-	if (auto* S = GetEPFSubsystemFromContext<UEPFSharedDataSubsystem>(WorldContext.Get())) S->OnGroupCreated.RemoveDynamic(this, &UEPFAsyncCreateSharedGroup::HandleComplete);
+	if (!IsResultForThisCall()) return;
+	CancelWork();
+	if (!FinishAction()) return;
 	Result.bSuccess ? OnSuccess.Broadcast(Id) : BroadcastEPFFailure(OnFailure, MakeEPFAsyncError(Result, TEXT("Failed to create shared group")));
-	SetReadyToDestroy();
 }
 
 // ── Get Shared Data ──────────────────────────────────────────────────────────
 UEPFAsyncGetSharedData* UEPFAsyncGetSharedData::GetSharedGroupData(UObject* WorldContext, const FString& SharedGroupId, const TArray<FString>& Keys)
 {
-	auto* A = NewObject<UEPFAsyncGetSharedData>(); A->GroupId = SharedGroupId; A->Keys = Keys; A->WorldContext = WorldContext; A->RegisterWithGameInstance(WorldContext); return A;
+	auto* A = NewObject<UEPFAsyncGetSharedData>(); A->GroupId = SharedGroupId; A->RequestedKeys = Keys; A->InitAsyncAction(WorldContext); return A;
 }
-void UEPFAsyncGetSharedData::Activate()
+void UEPFAsyncGetSharedData::ExecuteAction()
 {
-	if (GroupId.IsEmpty()) { BroadcastEPFFailure(OnFailure, MakeEPFAsyncError(TEXT("SharedGroupId cannot be empty"))); SetReadyToDestroy(); return; }
-	auto* S = GetEPFSubsystemFromContext<UEPFSharedDataSubsystem>(WorldContext.Get());
-	if (!S) { BroadcastEPFFailure(OnFailure, MakeEPFAsyncError(TEXT("SharedData subsystem not available"))); SetReadyToDestroy(); return; }
+	if (GroupId.IsEmpty()) { FailInvalidArgument(TEXT("SharedGroupId cannot be empty")); return; }
+	auto* S = RequireGameInstanceSubsystem<UEPFSharedDataSubsystem>();
+	if (!S) return;
 	S->OnDataReceived.AddDynamic(this, &UEPFAsyncGetSharedData::HandleComplete);
-	S->GetSharedGroupData(GroupId, Keys);
+	CallWithContext([&] { S->GetSharedGroupData(GroupId, RequestedKeys); });
+}
+void UEPFAsyncGetSharedData::CancelWork()
+{
+	if (auto* S = GetGameInstanceSubsystem<UEPFSharedDataSubsystem>()) S->OnDataReceived.RemoveDynamic(this, &UEPFAsyncGetSharedData::HandleComplete);
 }
 void UEPFAsyncGetSharedData::HandleComplete(const FEPFResult& Result)
 {
-	if (auto* S = GetEPFSubsystemFromContext<UEPFSharedDataSubsystem>(WorldContext.Get())) S->OnDataReceived.RemoveDynamic(this, &UEPFAsyncGetSharedData::HandleComplete);
+	if (!IsResultForThisCall()) return;
+	CancelWork();
+	if (!FinishAction()) return;
 	Result.bSuccess ? OnSuccess.Broadcast() : BroadcastEPFFailure(OnFailure, MakeEPFAsyncError(Result, TEXT("Failed to get shared data")));
-	SetReadyToDestroy();
 }
 
 // ── Update Shared Data ───────────────────────────────────────────────────────
 UEPFAsyncUpdateSharedData* UEPFAsyncUpdateSharedData::UpdateSharedGroupData(UObject* WorldContext, const FString& SharedGroupId, const TMap<FString, FString>& Data)
 {
-	auto* A = NewObject<UEPFAsyncUpdateSharedData>(); A->GroupId = SharedGroupId; A->Data = Data; A->WorldContext = WorldContext; A->RegisterWithGameInstance(WorldContext); return A;
+	auto* A = NewObject<UEPFAsyncUpdateSharedData>(); A->GroupId = SharedGroupId; A->UpdatedData = Data; A->InitAsyncAction(WorldContext); return A;
 }
-void UEPFAsyncUpdateSharedData::Activate()
+void UEPFAsyncUpdateSharedData::ExecuteAction()
 {
-	if (GroupId.IsEmpty()) { BroadcastEPFFailure(OnFailure, MakeEPFAsyncError(TEXT("SharedGroupId cannot be empty"))); SetReadyToDestroy(); return; }
-	auto* S = GetEPFSubsystemFromContext<UEPFSharedDataSubsystem>(WorldContext.Get());
-	if (!S) { BroadcastEPFFailure(OnFailure, MakeEPFAsyncError(TEXT("SharedData subsystem not available"))); SetReadyToDestroy(); return; }
+	if (GroupId.IsEmpty()) { FailInvalidArgument(TEXT("SharedGroupId cannot be empty")); return; }
+	auto* S = RequireGameInstanceSubsystem<UEPFSharedDataSubsystem>();
+	if (!S) return;
 	S->OnDataUpdated.AddDynamic(this, &UEPFAsyncUpdateSharedData::HandleComplete);
-	S->UpdateSharedGroupData(GroupId, Data);
+	CallWithContext([&] { S->UpdateSharedGroupData(GroupId, UpdatedData); });
+}
+void UEPFAsyncUpdateSharedData::CancelWork()
+{
+	if (auto* S = GetGameInstanceSubsystem<UEPFSharedDataSubsystem>()) S->OnDataUpdated.RemoveDynamic(this, &UEPFAsyncUpdateSharedData::HandleComplete);
 }
 void UEPFAsyncUpdateSharedData::HandleComplete(const FEPFResult& Result)
 {
-	if (auto* S = GetEPFSubsystemFromContext<UEPFSharedDataSubsystem>(WorldContext.Get())) S->OnDataUpdated.RemoveDynamic(this, &UEPFAsyncUpdateSharedData::HandleComplete);
+	if (!IsResultForThisCall()) return;
+	CancelWork();
+	if (!FinishAction()) return;
 	Result.bSuccess ? OnSuccess.Broadcast() : BroadcastEPFFailure(OnFailure, MakeEPFAsyncError(Result, TEXT("Failed to update shared data")));
-	SetReadyToDestroy();
 }
 
 // ── Add Members ──────────────────────────────────────────────────────────────
 UEPFAsyncAddSharedMembers* UEPFAsyncAddSharedMembers::AddMembers(UObject* WorldContext, const FString& SharedGroupId, const TArray<FString>& PlayFabIds)
 {
-	auto* A = NewObject<UEPFAsyncAddSharedMembers>(); A->GroupId = SharedGroupId; A->Ids = PlayFabIds; A->WorldContext = WorldContext; A->RegisterWithGameInstance(WorldContext); return A;
+	auto* A = NewObject<UEPFAsyncAddSharedMembers>(); A->GroupId = SharedGroupId; A->Ids = PlayFabIds; A->InitAsyncAction(WorldContext); return A;
 }
-void UEPFAsyncAddSharedMembers::Activate()
+void UEPFAsyncAddSharedMembers::ExecuteAction()
 {
-	if (GroupId.IsEmpty()) { BroadcastEPFFailure(OnFailure, MakeEPFAsyncError(TEXT("SharedGroupId cannot be empty"))); SetReadyToDestroy(); return; }
-	auto* S = GetEPFSubsystemFromContext<UEPFSharedDataSubsystem>(WorldContext.Get());
-	if (!S) { BroadcastEPFFailure(OnFailure, MakeEPFAsyncError(TEXT("SharedData subsystem not available"))); SetReadyToDestroy(); return; }
+	if (GroupId.IsEmpty()) { FailInvalidArgument(TEXT("SharedGroupId cannot be empty")); return; }
+	auto* S = RequireGameInstanceSubsystem<UEPFSharedDataSubsystem>();
+	if (!S) return;
 	S->OnMembersChanged.AddDynamic(this, &UEPFAsyncAddSharedMembers::HandleComplete);
-	S->AddSharedGroupMembers(GroupId, Ids);
+	CallWithContext([&] { S->AddSharedGroupMembers(GroupId, Ids); });
+}
+void UEPFAsyncAddSharedMembers::CancelWork()
+{
+	if (auto* S = GetGameInstanceSubsystem<UEPFSharedDataSubsystem>()) S->OnMembersChanged.RemoveDynamic(this, &UEPFAsyncAddSharedMembers::HandleComplete);
 }
 void UEPFAsyncAddSharedMembers::HandleComplete(const FEPFResult& Result)
 {
-	if (auto* S = GetEPFSubsystemFromContext<UEPFSharedDataSubsystem>(WorldContext.Get())) S->OnMembersChanged.RemoveDynamic(this, &UEPFAsyncAddSharedMembers::HandleComplete);
+	if (!IsResultForThisCall()) return;
+	CancelWork();
+	if (!FinishAction()) return;
 	Result.bSuccess ? OnSuccess.Broadcast() : BroadcastEPFFailure(OnFailure, MakeEPFAsyncError(Result, TEXT("Failed to add members")));
-	SetReadyToDestroy();
 }

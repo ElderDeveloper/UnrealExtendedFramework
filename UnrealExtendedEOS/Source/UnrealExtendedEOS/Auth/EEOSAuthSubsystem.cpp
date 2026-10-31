@@ -10,6 +10,8 @@
 #include "OnlineSubsystemUtils.h"
 #include "Interfaces/OnlineIdentityInterface.h"
 #include "UnrealExtendedEOS.h"
+#include "Async/EFCallContext.h"
+#include "Status/EFServiceStatus.h"
 #include "Engine/GameInstance.h"
 #include "TimerManager.h"
 
@@ -26,6 +28,42 @@
 void UEEOSAuthSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
 	Super::Initialize(Collection);
+
+	// Extended.Status: login and game-services state for this game instance. No tokens.
+	TWeakObjectPtr<UEEOSAuthSubsystem> WeakThis(this);
+	EFStatusHandle = FEFServiceStatusRegistry::Register(TEXT("EOS"), [WeakThis]
+	{
+		FEFServiceStatus Status;
+		const UEEOSAuthSubsystem* This = WeakThis.Get();
+		if (!This || !This->IsEOSAvailable())
+		{
+			Status.State = EEFServiceState::Unavailable;
+			Status.Summary = TEXT("The EOS online subsystem is not available.");
+			return Status;
+		}
+
+		const bool bLoggedIn = This->IsLoggedIn();
+		const bool bConnected = This->IsConnectedToGameServices();
+		switch (This->CurrentLoginStatus)
+		{
+		case EEOSLoginStatus::LoggingIn: Status.State = EEFServiceState::Starting; break;
+		case EEOSLoginStatus::Failed:    Status.State = bConnected ? EEFServiceState::Degraded : EEFServiceState::Error; break;
+		default:                         Status.State = (bLoggedIn || bConnected) ? EEFServiceState::Ready : EEFServiceState::Starting; break;
+		}
+
+		Status.Summary = bLoggedIn
+			? FString::Printf(TEXT("Logged in as %s"), *This->GetDisplayName())
+			: (bConnected ? FString(TEXT("Connected to game services without an Epic account")) : FString(TEXT("Not logged in")));
+		Status.Details.Add(TEXT("Epic account"), bLoggedIn ? TEXT("logged in") : TEXT("not logged in"));
+		Status.Details.Add(TEXT("Game services (Connect)"), bConnected ? TEXT("connected") : TEXT("not connected"));
+		const FString ProductUserId = This->GetProductUserId();
+		if (!ProductUserId.IsEmpty())
+		{
+			Status.Details.Add(TEXT("Product user id"), ProductUserId);
+		}
+		return Status;
+	});
+
 	TickNativeIdentity(0);
 	IdentityTicker = FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateUObject(this, &UEEOSAuthSubsystem::TickNativeIdentity), 0.5f);
 
@@ -68,6 +106,9 @@ void UEEOSAuthSubsystem::KickOffAutoLogin()
 
 void UEEOSAuthSubsystem::Deinitialize()
 {
+	FEFServiceStatusRegistry::Unregister(EFStatusHandle);
+	EFStatusHandle = 0;
+
 	BeginEOSShutdown(); bShuttingDown = true;
 	if (GetGameInstance()) GetGameInstance()->GetTimerManager().ClearTimer(AutoLoginTimer);
 	if (IdentityTicker.IsValid()) FTSTicker::GetCoreTicker().RemoveTicker(IdentityTicker);
@@ -79,7 +120,7 @@ void UEEOSAuthSubsystem::Deinitialize()
 		OperationIdentity->ClearOnLoginCompleteDelegate_Handle(0, LoginDelegateHandle);
 		OperationIdentity->ClearOnLogoutCompleteDelegate_Handle(0, LogoutDelegateHandle);
 	}
-	LoginDelegateHandle.Reset(); LogoutDelegateHandle.Reset(); IdentityLease.Reset(); OperationIdentity.Reset(); bNativeIdentitySubmitted = false; ConnectLease.Reset(); ConnectOperationIdentity.Reset(); ActiveSDKConnectRequest = 0; ActivePersistentAuthRequest = 0;
+	LoginDelegateHandle.Reset(); LogoutDelegateHandle.Reset(); IdentityLease.Reset(); OperationIdentity.Reset(); bNativeIdentitySubmitted = false; ConnectLease.Reset(); ConnectOperationIdentity.Reset(); ActiveSDKConnectRequest = 0; ConnectCallContext = 0; ActivePersistentAuthRequest = 0;
 	CachedProductUserId.Empty(); bConnectedToGameServices = false;
 	Super::Deinitialize();
 }
@@ -595,6 +636,7 @@ bool UEEOSAuthSubsystem::ConnectLoginWithDeviceId(const FString& DisplayName)
 		ConnectOperationIdentity = Identity;
 		ActiveSDKConnectRequest = BeginOperation(TEXT("ConnectLogin"), FString(), ConnectLease.GetRequestId());
 		SDKConnectContext = CaptureEOSContext();
+		ConnectCallContext = EFCallContext::GetActive();
 	}
 	struct FDeviceIdContext
 	{
@@ -960,6 +1002,7 @@ bool UEEOSAuthSubsystem::PerformConnectLogin(EEOSConnectLoginType LoginType, con
 		ConnectOperationIdentity = Identity;
 		ActiveSDKConnectRequest = BeginOperation(TEXT("ConnectLogin"), FString(), ConnectLease.GetRequestId());
 		SDKConnectContext = CaptureEOSContext();
+		ConnectCallContext = EFCallContext::GetActive();
 	}
 	FConnectLoginContext* Ctx = new FConnectLoginContext{this, bAutoCreate, PlatformOwner, ConnectLease, ActiveSDKConnectRequest, ConnectOperationIdentity, FString()};
 
@@ -981,13 +1024,17 @@ bool UEEOSAuthSubsystem::PerformConnectLogin(EEOSConnectLoginType LoginType, con
 void UEEOSAuthSubsystem::SetConnectLoginResult(bool bSuccess, const FString& ProductUserId, const FString& Error, int64 RequestId, const FString& SDKResult)
 {
 	if (bShuttingDown || (RequestId && RequestId != ActiveSDKConnectRequest)) return;
-	bConnectLoginInFlight = false; ActiveSDKConnectRequest = 0; ConnectLease.Reset(); ConnectOperationIdentity.Reset();
+	// Every completion path (device-id chain, CreateUser, continuance token) lands here on a later
+	// tick: report under the call context of the caller that started the login (see EFCallContext).
+	const int64 CallContext = ActiveSDKConnectRequest ? ConnectCallContext : EFCallContext::GetActive();
+	bConnectLoginInFlight = false; ActiveSDKConnectRequest = 0; ConnectCallContext = 0; ConnectLease.Reset(); ConnectOperationIdentity.Reset();
 	bConnectedToGameServices = bSuccess && !ProductUserId.IsEmpty();
 	CachedProductUserId = bConnectedToGameServices ? ProductUserId : FString();
 	auto Outcome = CompleteOperation(TEXT("ConnectLogin"), bConnectedToGameServices,
 		bConnectedToGameServices ? EEOSOperationCode::Succeeded : EEOSOperationCode::NativeFailure,
 		Error.IsEmpty() ? TEXT("Connect login completed.") : Error, FString(), FString(), SDKResult.IsEmpty() ? EEOSResultSource::Plugin : EEOSResultSource::SDKCallback, SDKResult);
 	FEEOSOutcomeDispatchScope Dispatch(this, Outcome);
+	EFCallContext::FScope CallScope(CallContext);
 	OnConnectLoginComplete.Broadcast(bConnectedToGameServices, CachedProductUserId, Error);
 	OnOperationCompleted.Broadcast(Outcome);
 }
@@ -1196,9 +1243,11 @@ bool UEEOSAuthSubsystem::TickNativeIdentity(float)
 	if (ConnectLease.IsValid() && !IsEOSContextCurrent(SDKConnectContext))
 	{
 		const auto Outcome = CompleteOperation(TEXT("ConnectLogin"), false, EEOSOperationCode::Canceled, TEXT("Original identity/platform retired; SDK completion remains owned by its retained context."));
-		ActiveSDKConnectRequest = 0; bConnectLoginInFlight = false; ConnectLease.Reset(); ConnectOperationIdentity.Reset();
+		const int64 CallContext = ConnectCallContext;
+		ActiveSDKConnectRequest = 0; ConnectCallContext = 0; bConnectLoginInFlight = false; ConnectLease.Reset(); ConnectOperationIdentity.Reset();
 		CachedProductUserId.Empty(); bConnectedToGameServices = false;
 		FEEOSOutcomeDispatchScope Dispatch(this, Outcome);
+		EFCallContext::FScope CallScope(CallContext);
 		OnConnectLoginComplete.Broadcast(false, FString(), FString()); OnOperationCompleted.Broadcast(Outcome);
 	}
 	if (IdentityLease.IsValid() || ConnectLease.IsValid()) return true;

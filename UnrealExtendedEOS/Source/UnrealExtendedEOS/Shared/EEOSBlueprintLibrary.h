@@ -107,6 +107,10 @@ public:
 	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "EOS|Utilities")
 	static FString BytesToString(const TArray<uint8>& Data);
 
+	/** The same outcome as a shared Extended result, for UI and retry logic that handles every service alike. */
+	UFUNCTION(BlueprintPure, Category = "EOS|Utilities", meta = (DisplayName = "To EF Result (EOS Result)", CompactNodeTitle = "->", BlueprintAutocast))
+	static FEFResult EOSResultToEFResult(const FEEOSResult& Result) { return Result.ToEFResult(); }
+
 	// ── Platform Info ────────────────────────────────────────────────────────
 
 	/** Get the EOS subsystem name (e.g., "EOS", "EOSPlus") */

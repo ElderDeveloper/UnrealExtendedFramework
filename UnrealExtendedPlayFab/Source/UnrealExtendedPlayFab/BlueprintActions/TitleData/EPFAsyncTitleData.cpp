@@ -2,29 +2,37 @@
 
 #include "EPFAsyncTitleData.h"
 #include "TitleData/EPFTitleDataSubsystem.h"
-#include "Engine/GameInstance.h"
 
 UEPFAsyncGetTitleData* UEPFAsyncGetTitleData::GetTitleData(UObject* WorldContext, const TArray<FString>& Keys)
 {
 	auto* Action = NewObject<UEPFAsyncGetTitleData>();
-	Action->Keys = Keys;
-	Action->WorldContext = WorldContext;
-	Action->RegisterWithGameInstance(WorldContext);
+	Action->RequestedKeys = Keys;
+	Action->InitAsyncAction(WorldContext);
 	return Action;
 }
 
-void UEPFAsyncGetTitleData::Activate()
+void UEPFAsyncGetTitleData::ExecuteAction()
 {
-	auto* Sub = GetEPFSubsystemFromContext<UEPFTitleDataSubsystem>(WorldContext.Get());
-	if (!Sub) { BroadcastEPFFailure(OnFailure, MakeEPFAsyncError(TEXT("TitleData subsystem not available"))); SetReadyToDestroy(); return; }
+	auto* Sub = RequireGameInstanceSubsystem<UEPFTitleDataSubsystem>();
+	if (!Sub) return;
 	Sub->OnTitleDataReceived.AddDynamic(this, &UEPFAsyncGetTitleData::HandleComplete);
-	Keys.Num() > 0 ? Sub->GetTitleData(Keys) : Sub->GetAllTitleData();
+	CallWithContext([&]
+	{
+		if (RequestedKeys.Num() > 0) { Sub->GetTitleData(RequestedKeys); }
+		else { Sub->GetAllTitleData(); }
+	});
+}
+
+void UEPFAsyncGetTitleData::CancelWork()
+{
+	if (auto* Sub = GetGameInstanceSubsystem<UEPFTitleDataSubsystem>())
+		Sub->OnTitleDataReceived.RemoveDynamic(this, &UEPFAsyncGetTitleData::HandleComplete);
 }
 
 void UEPFAsyncGetTitleData::HandleComplete(const FEPFResult& Result)
 {
-	if (auto* Sub = GetEPFSubsystemFromContext<UEPFTitleDataSubsystem>(WorldContext.Get()))
-		Sub->OnTitleDataReceived.RemoveDynamic(this, &UEPFAsyncGetTitleData::HandleComplete);
+	if (!IsResultForThisCall()) return;
+	CancelWork();
+	if (!FinishAction()) return;
 	Result.bSuccess ? OnSuccess.Broadcast() : BroadcastEPFFailure(OnFailure, MakeEPFAsyncError(Result, TEXT("Failed to get title data")));
-	SetReadyToDestroy();
 }

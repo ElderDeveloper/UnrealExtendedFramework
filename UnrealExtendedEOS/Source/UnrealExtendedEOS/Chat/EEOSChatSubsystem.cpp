@@ -4,6 +4,7 @@
 #include "Shared/EEOSNativeOperation.h"
 #include "Shared/EEOSIdentityUtils.h"
 #include "UnrealExtendedEOS.h"
+#include "Async/EFCallContext.h"
 #include "OnlineSubsystemUtils.h"
 #include "Interfaces/OnlineChatInterface.h"
 #include "Interfaces/OnlineIdentityInterface.h"
@@ -79,6 +80,24 @@ void UEEOSChatSubsystem::BindNativeChat()
 				{
 					if (bShuttingDown || !IsEOSContextCurrent(Ownership) || Ownership.LocalId != UserId.ToString()) return;
 					FString ChannelName = RoomId;
+
+					// Report under the call context of the oldest JoinChannel call still waiting
+					// for this room (see EFCallContext); joins this subsystem did not start carry none.
+					int64 CallContext = 0;
+					if (TArray<int64>* Waiting = PendingJoinCallContexts.Find(ChannelName))
+					{
+						if (Waiting->Num() > 0)
+						{
+							CallContext = (*Waiting)[0];
+							Waiting->RemoveAt(0);
+						}
+						if (Waiting->Num() == 0)
+						{
+							PendingJoinCallContexts.Remove(ChannelName);
+						}
+					}
+					EFCallContext::FScope CallScope(CallContext);
+
 					if (bWasSuccessful)
 					{
 						FEEOSChatChannel Channel;
@@ -190,7 +209,7 @@ bool UEEOSChatSubsystem::TickNativeChat(float)
 	const bool bLocalUserChanged = !BoundChat.IsValid() && Now.LocalId != ChatBindingContext.LocalId;
 	if (bInterfaceChanged || bBindingRetired || (bLocalUserChanged && !ChatBindingContext.LocalId.IsEmpty()))
 	{
-		UnbindNativeChat(); JoinedChannels.Empty(); ChannelHistory.Empty(); UnreadCounts.Empty();
+		UnbindNativeChat(); JoinedChannels.Empty(); ChannelHistory.Empty(); UnreadCounts.Empty(); PendingJoinCallContexts.Empty();
 		BindNativeChat();
 	}
 	else if (bLocalUserChanged)
@@ -213,7 +232,7 @@ void UEEOSChatSubsystem::Deinitialize()
 	ChatBindingTicker.Reset(); UnbindNativeChat();
 	if (bOriginalMember && OriginalChat.IsValid() && Local.IsValid() && Local->IsValid())
 		for (const auto& Channel : JoinedChannels) OriginalChat->ExitRoom(*Local, FChatRoomId(Channel.Key));
-	JoinedChannels.Empty(); ChannelHistory.Empty(); UnreadCounts.Empty();
+	JoinedChannels.Empty(); ChannelHistory.Empty(); UnreadCounts.Empty(); PendingJoinCallContexts.Empty();
 	Super::Deinitialize();
 }
 
@@ -239,10 +258,22 @@ bool UEEOSChatSubsystem::JoinChannel(const FString& ChannelName)
 		if (ChatInterface.IsValid() && UserId.IsValid() && UserId->IsValid() && Identity->GetLoginStatus(0) == ELoginStatus::LoggedIn)
 		{
 			FString PlayerNickname = EEOSIdentity::SafeLocalNickname(EOSSub->GetIdentityInterface());
+			PendingJoinCallContexts.FindOrAdd(ChannelName).Add(EFCallContext::GetActive());
 			if (!ChatInterface->JoinPublicRoom(*UserId, FChatRoomId(ChannelName), PlayerNickname, FChatRoomConfig()))
 			{
 				// A false return means NO room delegate will ever fire — fail observably
 				// instead of leaving OnChannelJoined waiters hanging
+				if (TArray<int64>* Waiting = PendingJoinCallContexts.Find(ChannelName))
+				{
+					if (Waiting->Num() > 0)
+					{
+						Waiting->RemoveAt(Waiting->Num() - 1);
+					}
+					if (Waiting->Num() == 0)
+					{
+						PendingJoinCallContexts.Remove(ChannelName);
+					}
+				}
 				UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSChatSubsystem::JoinChannel — JoinPublicRoom was refused for '%s'"), *FEEOSNativeOperationLease::SafeField(ChannelName));
 				OnChannelJoined.Broadcast(false, ChannelName);
 				return false;

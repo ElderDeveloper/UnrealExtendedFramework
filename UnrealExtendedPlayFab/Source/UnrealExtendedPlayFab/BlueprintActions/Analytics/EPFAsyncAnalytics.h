@@ -14,7 +14,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnEPFAsyncBatchEventsLogged);
 // ── Log Single Event ─────────────────────────────────────────────────────────
 
 UCLASS(meta = (DisplayName = "PlayFab: Log Event"))
-class UNREALEXTENDEDPLAYFAB_API UEPFAsyncLogEvent : public UBlueprintAsyncActionBase
+class UNREALEXTENDEDPLAYFAB_API UEPFAsyncLogEvent : public UEPFAsyncActionBase
 {
 	GENERATED_BODY()
 
@@ -23,20 +23,21 @@ public:
 	static UEPFAsyncLogEvent* LogEvent(UObject* WorldContext, const FString& EventName, const TMap<FString, FString>& Body);
 
 	UPROPERTY(BlueprintAssignable) FOnEPFAsyncEventLogged OnSuccess;
-	UPROPERTY(BlueprintAssignable) FOnEPFAsyncFailed OnFailure;
-	virtual void Activate() override;
+
+protected:
+	virtual void ExecuteAction() override;
+	virtual void CancelWork() override;
 
 private:
-	FString EventName;
-	TMap<FString, FString> Body;
-	TWeakObjectPtr<UObject> WorldContext;
+	FString LoggedEventName;
+	TMap<FString, FString> EventBody;
 	UFUNCTION() void HandleComplete(const FEPFResult& Result);
 };
 
 // ── Log Batch Events ─────────────────────────────────────────────────────────
 
 UCLASS(meta = (DisplayName = "PlayFab: Log Events (Batch)"))
-class UNREALEXTENDEDPLAYFAB_API UEPFAsyncLogEvents : public UBlueprintAsyncActionBase
+class UNREALEXTENDEDPLAYFAB_API UEPFAsyncLogEvents : public UEPFAsyncActionBase
 {
 	GENERATED_BODY()
 
@@ -45,11 +46,12 @@ public:
 	static UEPFAsyncLogEvents* LogEvents(UObject* WorldContext, const TArray<FEPFAnalyticsEvent>& Events);
 
 	UPROPERTY(BlueprintAssignable) FOnEPFAsyncBatchEventsLogged OnSuccess;
-	UPROPERTY(BlueprintAssignable) FOnEPFAsyncFailed OnFailure;
-	virtual void Activate() override;
+
+protected:
+	virtual void ExecuteAction() override;
+	virtual void CancelWork() override;
 
 private:
-	TArray<FEPFAnalyticsEvent> Events;
-	TWeakObjectPtr<UObject> WorldContext;
+	TArray<FEPFAnalyticsEvent> EventsToLog;
 	UFUNCTION() void HandleComplete(const FEPFResult& Result);
 };

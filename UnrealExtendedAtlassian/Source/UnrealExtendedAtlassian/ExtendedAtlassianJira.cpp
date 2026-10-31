@@ -1653,7 +1653,7 @@ void FExtendedAtlassianJira::CreateIssue(const FExtendedAtlassianNewIssue& NewIs
 	{
 		FExtendedAtlassianError Error;
 		Error.Code = TEXT("NotConfigured");
-		Error.Message = TEXT("Set a Jira project key and issue type in Project Settings > Plugins > Extended Atlassian.");
+		Error.Message = TEXT("Set a Jira project key and issue type in Project Settings > Extended Framework > Extended Atlassian.");
 		OnComplete.ExecuteIfBound(false, FString(), Error);
 		return;
 	}

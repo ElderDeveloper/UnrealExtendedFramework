@@ -2,7 +2,4 @@
 
 #include "Core/ESteamWebSettings.h"
 
-FName UESteamWebSettings::GetCategoryName() const
-{
-	return TEXT("Extended Framework");
-}
+// The settings page sits under Project Settings -> Extended Framework through UEFDeveloperSettings.

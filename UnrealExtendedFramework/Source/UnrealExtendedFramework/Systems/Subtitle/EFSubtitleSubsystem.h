@@ -1,8 +1,12 @@
-﻿// EFSubtitleSubsystem.h — Authority subtitle subsystem (GameInstanceSubsystem)
+﻿// Copyright Moon Punch Games. All Rights Reserved.
+
+// EFSubtitleSubsystem.h — Authority subtitle subsystem (GameInstanceSubsystem)
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Engine/StreamableManager.h"
 #include "Subsystems/GameInstanceSubsystem.h"
+#include "UObject/ObjectKey.h"
 #include "UnrealExtendedFramework/Systems/Subtitle/Data/EFSubtitleData.h"
 #include "EFSubtitleSubsystem.generated.h"
 
@@ -97,8 +101,19 @@ public:
 private:
 	// ── Data Resolution ──
 
-	// Resolve a subtitle key across all data sources
-	bool ResolveSubtitleEntry(FName SubtitleKey, FEFSubtitleEntry& OutEntry) const;
+	// Resolve a subtitle key across all data sources. Registers the default data assets first
+	// when their background load has not finished yet.
+	bool ResolveSubtitleEntry(FName SubtitleKey, FEFSubtitleEntry& OutEntry);
+
+	// ── Preloading ──
+
+	// Registers the project's default data assets, ahead of any source registered at runtime.
+	// Runs once: when their background load finishes, or earlier (loading them) if they are needed first.
+	void RegisterDefaultDataAssets();
+
+	// Starts loading the voice sounds of a data source that just became active (bPreloadVoiceSounds).
+	void PreloadDataAssetVoices(const UEFSubtitleDataAsset* DataAsset);
+	void PreloadActiveDataTableVoices();
 
 	// ── Dispatch ──
 
@@ -118,6 +133,18 @@ private:
 
 	UPROPERTY()
 	TSoftObjectPtr<UDataTable> ActiveDataTable;
+
+	// Default data assets and data table from project settings, loading in the background.
+	TSharedPtr<FStreamableHandle> DefaultSourcesHandle;
+
+	// Style profiles from project settings, for the style setting and the display widget.
+	TSharedPtr<FStreamableHandle> StyleProfilesHandle;
+
+	// Voice sounds of each registered data asset and of the active data table.
+	TMap<FObjectKey, TSharedPtr<FStreamableHandle>> DataAssetVoiceHandles;
+	TSharedPtr<FStreamableHandle> DataTableVoiceHandle;
+
+	bool bDefaultDataAssetsRegistered = false;
 
 	// ── Request ID tracking ──
 	int32 NextRequestId = 1;

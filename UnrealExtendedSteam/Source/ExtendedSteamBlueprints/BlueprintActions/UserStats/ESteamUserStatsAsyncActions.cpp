@@ -1,89 +1,74 @@
 // Copyright Kemal Erdem YILMAZ. All Rights Reserved.
 
 #include "BlueprintActions/UserStats/ESteamUserStatsAsyncActions.h"
-#include "Engine/Engine.h"
-#include "Engine/GameInstance.h"
-#include "Engine/World.h"
 
-namespace
-{
-	UESteamUserStatsSubsystem* GetUserStatsSubsystem(const UObject* WorldContext)
-	{
-		if (const UWorld* World = GEngine ? GEngine->GetWorldFromContextObject(WorldContext, EGetWorldErrorMode::LogAndReturnNull) : nullptr)
-		{
-			if (const UGameInstance* GameInstance = World->GetGameInstance())
-			{
-				return GameInstance->GetSubsystem<UESteamUserStatsSubsystem>();
-			}
-		}
-		return nullptr;
-	}
-}
+// Every node below keeps its subsystem in a member named Subsystem, so locals use StatsSubsystem.
 
 // ---- USteamAsyncFindLeaderboard ----
 
 USteamAsyncFindLeaderboard* USteamAsyncFindLeaderboard::FindLeaderboard(UObject* WorldContext, const FString& LeaderboardName, bool bCreateIfMissing, EESteamLeaderboardSortMethod SortMethod, EESteamLeaderboardDisplayType DisplayType, float Timeout)
 {
 	USteamAsyncFindLeaderboard* Action = NewObject<USteamAsyncFindLeaderboard>();
-	Action->WorldContextObject = WorldContext;
-	Action->Subsystem = GetUserStatsSubsystem(WorldContext);
 	Action->RequestedName = LeaderboardName;
 	Action->bCreateIfMissing = bCreateIfMissing;
 	Action->SortMethod = SortMethod;
 	Action->DisplayType = DisplayType;
-	Action->Timeout = Timeout;
-	Action->RegisterWithGameInstance(WorldContext);
+	Action->InitAsyncAction(WorldContext, Timeout);
 	return Action;
 }
 
-void USteamAsyncFindLeaderboard::Activate()
+void USteamAsyncFindLeaderboard::ExecuteAction()
 {
-	UESteamUserStatsSubsystem* StatsSubsystem = Subsystem.Get();
+	UESteamUserStatsSubsystem* StatsSubsystem = RequireGameInstanceSubsystem<UESteamUserStatsSubsystem>();
 	if (!StatsSubsystem)
 	{
-		Complete(false, 0);
 		return;
 	}
 
+	Subsystem = StatsSubsystem;
 	StatsSubsystem->OnLeaderboardFound.AddDynamic(this, &USteamAsyncFindLeaderboard::HandleLeaderboardFound);
 
-	const bool bStarted = bCreateIfMissing
-		? StatsSubsystem->FindOrCreateLeaderboard(RequestedName, SortMethod, DisplayType)
-		: StatsSubsystem->FindLeaderboard(RequestedName);
+	bool bStarted = false;
+	CallWithContext([&]
+	{
+		bStarted = bCreateIfMissing
+			? StatsSubsystem->FindOrCreateLeaderboard(RequestedName, SortMethod, DisplayType)
+			: StatsSubsystem->FindLeaderboard(RequestedName);
+	});
 	if (!bStarted)
 	{
 		Complete(false, 0);
-		return;
 	}
-
-	// Fail the node if the subsystem delegate never fires.
-	ArmTimeout(Timeout);
 }
 
 void USteamAsyncFindLeaderboard::HandleLeaderboardFound(bool bSuccess, int64 LeaderboardHandle, FString LeaderboardName)
 {
-	if (LeaderboardName != RequestedName)
+	if (!IsResultForThisCall() || LeaderboardName != RequestedName)
 	{
 		return;
 	}
 	Complete(bSuccess, LeaderboardHandle);
 }
 
-void USteamAsyncFindLeaderboard::OnTimeoutFailure()
+void USteamAsyncFindLeaderboard::BroadcastFailure(const FEFResult& /*Result*/)
 {
-	Complete(false, 0);
+	OnFailure.Broadcast(0);
+}
+
+void USteamAsyncFindLeaderboard::CancelWork()
+{
+	if (UESteamUserStatsSubsystem* StatsSubsystem = Subsystem.Get())
+	{
+		StatsSubsystem->OnLeaderboardFound.RemoveDynamic(this, &USteamAsyncFindLeaderboard::HandleLeaderboardFound);
+	}
 }
 
 void USteamAsyncFindLeaderboard::Complete(bool bSuccess, int64 LeaderboardHandle)
 {
-	if (!BeginComplete())
+	CancelWork();
+	if (!FinishAction())
 	{
 		return;
-	}
-
-	if (UESteamUserStatsSubsystem* StatsSubsystem = Subsystem.Get())
-	{
-		StatsSubsystem->OnLeaderboardFound.RemoveDynamic(this, &USteamAsyncFindLeaderboard::HandleLeaderboardFound);
 	}
 
 	if (bSuccess)
@@ -94,7 +79,6 @@ void USteamAsyncFindLeaderboard::Complete(bool bSuccess, int64 LeaderboardHandle
 	{
 		OnFailure.Broadcast(LeaderboardHandle);
 	}
-	SetReadyToDestroy();
 }
 
 // ---- USteamAsyncUploadLeaderboardScore ----
@@ -102,59 +86,62 @@ void USteamAsyncFindLeaderboard::Complete(bool bSuccess, int64 LeaderboardHandle
 USteamAsyncUploadLeaderboardScore* USteamAsyncUploadLeaderboardScore::UploadLeaderboardScore(UObject* WorldContext, int64 LeaderboardHandle, int32 Score, bool bForceUpdate, float Timeout)
 {
 	USteamAsyncUploadLeaderboardScore* Action = NewObject<USteamAsyncUploadLeaderboardScore>();
-	Action->WorldContextObject = WorldContext;
-	Action->Subsystem = GetUserStatsSubsystem(WorldContext);
 	Action->LeaderboardHandle = LeaderboardHandle;
 	Action->Score = Score;
 	Action->bForceUpdate = bForceUpdate;
-	Action->Timeout = Timeout;
-	Action->RegisterWithGameInstance(WorldContext);
+	Action->InitAsyncAction(WorldContext, Timeout);
 	return Action;
 }
 
-void USteamAsyncUploadLeaderboardScore::Activate()
+void USteamAsyncUploadLeaderboardScore::ExecuteAction()
 {
-	UESteamUserStatsSubsystem* StatsSubsystem = Subsystem.Get();
+	UESteamUserStatsSubsystem* StatsSubsystem = RequireGameInstanceSubsystem<UESteamUserStatsSubsystem>();
 	if (!StatsSubsystem)
 	{
-		Complete(false, 0);
 		return;
 	}
 
+	Subsystem = StatsSubsystem;
 	StatsSubsystem->OnLeaderboardScoreUploaded.AddDynamic(this, &USteamAsyncUploadLeaderboardScore::HandleScoreUploaded);
 
-	if (!StatsSubsystem->UploadLeaderboardScore(LeaderboardHandle, Score, bForceUpdate))
+	bool bStarted = false;
+	CallWithContext([&] { bStarted = StatsSubsystem->UploadLeaderboardScore(LeaderboardHandle, Score, bForceUpdate); });
+	if (!bStarted)
 	{
 		Complete(false, 0);
-		return;
 	}
-
-	// Fail the node if the subsystem delegate never fires.
-	ArmTimeout(Timeout);
 }
 
 void USteamAsyncUploadLeaderboardScore::HandleScoreUploaded(bool bSuccess, int32 UploadedScore, bool bScoreChanged, int32 NewGlobalRank)
 {
-	// NOTE: FOnSteamLeaderboardScoreUploaded carries no leaderboard handle; cannot discriminate.
-	// Relies on Timeout + one-in-flight subsystem limit.
+	// FOnSteamLeaderboardScoreUploaded carries no leaderboard handle; the subsystem tags each result
+	// with the call context of its request.
+	if (!IsResultForThisCall())
+	{
+		return;
+	}
 	Complete(bSuccess, NewGlobalRank);
 }
 
-void USteamAsyncUploadLeaderboardScore::OnTimeoutFailure()
+void USteamAsyncUploadLeaderboardScore::BroadcastFailure(const FEFResult& /*Result*/)
 {
-	Complete(false, 0);
+	OnFailure.Broadcast(0);
+}
+
+void USteamAsyncUploadLeaderboardScore::CancelWork()
+{
+	if (UESteamUserStatsSubsystem* StatsSubsystem = Subsystem.Get())
+	{
+		StatsSubsystem->OnLeaderboardScoreUploaded.RemoveDynamic(this, &USteamAsyncUploadLeaderboardScore::HandleScoreUploaded);
+	}
 }
 
 void USteamAsyncUploadLeaderboardScore::Complete(bool bSuccess, int32 NewGlobalRank)
 {
-	if (!BeginComplete())
+	CancelWork();
+	if (!FinishAction())
 	{
 		return;
-	}
-
-	if (UESteamUserStatsSubsystem* StatsSubsystem = Subsystem.Get())
-	{
-		StatsSubsystem->OnLeaderboardScoreUploaded.RemoveDynamic(this, &USteamAsyncUploadLeaderboardScore::HandleScoreUploaded);
 	}
 
 	if (bSuccess)
@@ -165,7 +152,6 @@ void USteamAsyncUploadLeaderboardScore::Complete(bool bSuccess, int32 NewGlobalR
 	{
 		OnFailure.Broadcast(NewGlobalRank);
 	}
-	SetReadyToDestroy();
 }
 
 // ---- USteamAsyncDownloadLeaderboardEntries ----
@@ -173,60 +159,63 @@ void USteamAsyncUploadLeaderboardScore::Complete(bool bSuccess, int32 NewGlobalR
 USteamAsyncDownloadLeaderboardEntries* USteamAsyncDownloadLeaderboardEntries::DownloadLeaderboardEntries(UObject* WorldContext, int64 LeaderboardHandle, EESteamLeaderboardDataRequest RequestType, int32 RangeStart, int32 RangeEnd, float Timeout)
 {
 	USteamAsyncDownloadLeaderboardEntries* Action = NewObject<USteamAsyncDownloadLeaderboardEntries>();
-	Action->WorldContextObject = WorldContext;
-	Action->Subsystem = GetUserStatsSubsystem(WorldContext);
 	Action->LeaderboardHandle = LeaderboardHandle;
 	Action->RequestType = RequestType;
 	Action->RangeStart = RangeStart;
 	Action->RangeEnd = RangeEnd;
-	Action->Timeout = Timeout;
-	Action->RegisterWithGameInstance(WorldContext);
+	Action->InitAsyncAction(WorldContext, Timeout);
 	return Action;
 }
 
-void USteamAsyncDownloadLeaderboardEntries::Activate()
+void USteamAsyncDownloadLeaderboardEntries::ExecuteAction()
 {
-	UESteamUserStatsSubsystem* StatsSubsystem = Subsystem.Get();
+	UESteamUserStatsSubsystem* StatsSubsystem = RequireGameInstanceSubsystem<UESteamUserStatsSubsystem>();
 	if (!StatsSubsystem)
 	{
-		Complete(false, TArray<FESteamLeaderboardEntry>());
 		return;
 	}
 
+	Subsystem = StatsSubsystem;
 	StatsSubsystem->OnLeaderboardEntriesDownloaded.AddDynamic(this, &USteamAsyncDownloadLeaderboardEntries::HandleEntriesDownloaded);
 
-	if (!StatsSubsystem->DownloadLeaderboardEntries(LeaderboardHandle, RequestType, RangeStart, RangeEnd))
+	bool bStarted = false;
+	CallWithContext([&] { bStarted = StatsSubsystem->DownloadLeaderboardEntries(LeaderboardHandle, RequestType, RangeStart, RangeEnd); });
+	if (!bStarted)
 	{
 		Complete(false, TArray<FESteamLeaderboardEntry>());
-		return;
 	}
-
-	// Fail the node if the subsystem delegate never fires.
-	ArmTimeout(Timeout);
 }
 
 void USteamAsyncDownloadLeaderboardEntries::HandleEntriesDownloaded(bool bSuccess, const TArray<FESteamLeaderboardEntry>& Entries)
 {
-	// NOTE: FOnSteamLeaderboardEntriesDownloaded carries no leaderboard handle; cannot discriminate.
-	// Relies on Timeout + one-in-flight subsystem limit.
+	// FOnSteamLeaderboardEntriesDownloaded carries no leaderboard handle; the subsystem tags each
+	// result with the call context of its request.
+	if (!IsResultForThisCall())
+	{
+		return;
+	}
 	Complete(bSuccess, Entries);
 }
 
-void USteamAsyncDownloadLeaderboardEntries::OnTimeoutFailure()
+void USteamAsyncDownloadLeaderboardEntries::BroadcastFailure(const FEFResult& /*Result*/)
 {
-	Complete(false, TArray<FESteamLeaderboardEntry>());
+	OnFailure.Broadcast(TArray<FESteamLeaderboardEntry>());
+}
+
+void USteamAsyncDownloadLeaderboardEntries::CancelWork()
+{
+	if (UESteamUserStatsSubsystem* StatsSubsystem = Subsystem.Get())
+	{
+		StatsSubsystem->OnLeaderboardEntriesDownloaded.RemoveDynamic(this, &USteamAsyncDownloadLeaderboardEntries::HandleEntriesDownloaded);
+	}
 }
 
 void USteamAsyncDownloadLeaderboardEntries::Complete(bool bSuccess, const TArray<FESteamLeaderboardEntry>& Entries)
 {
-	if (!BeginComplete())
+	CancelWork();
+	if (!FinishAction())
 	{
 		return;
-	}
-
-	if (UESteamUserStatsSubsystem* StatsSubsystem = Subsystem.Get())
-	{
-		StatsSubsystem->OnLeaderboardEntriesDownloaded.RemoveDynamic(this, &USteamAsyncDownloadLeaderboardEntries::HandleEntriesDownloaded);
 	}
 
 	if (bSuccess)
@@ -237,7 +226,6 @@ void USteamAsyncDownloadLeaderboardEntries::Complete(bool bSuccess, const TArray
 	{
 		OnFailure.Broadcast(Entries);
 	}
-	SetReadyToDestroy();
 }
 
 // ---- USteamAsyncRequestUserStats ----
@@ -245,59 +233,58 @@ void USteamAsyncDownloadLeaderboardEntries::Complete(bool bSuccess, const TArray
 USteamAsyncRequestUserStats* USteamAsyncRequestUserStats::RequestUserStats(UObject* WorldContext, FESteamId TargetUser, float Timeout)
 {
 	USteamAsyncRequestUserStats* Action = NewObject<USteamAsyncRequestUserStats>();
-	Action->WorldContextObject = WorldContext;
-	Action->Subsystem = GetUserStatsSubsystem(WorldContext);
 	Action->TargetUser = TargetUser;
-	Action->Timeout = Timeout;
-	Action->RegisterWithGameInstance(WorldContext);
+	Action->InitAsyncAction(WorldContext, Timeout);
 	return Action;
 }
 
-void USteamAsyncRequestUserStats::Activate()
+void USteamAsyncRequestUserStats::ExecuteAction()
 {
-	UESteamUserStatsSubsystem* StatsSubsystem = Subsystem.Get();
+	UESteamUserStatsSubsystem* StatsSubsystem = RequireGameInstanceSubsystem<UESteamUserStatsSubsystem>();
 	if (!StatsSubsystem)
 	{
-		Complete(false);
 		return;
 	}
 
+	Subsystem = StatsSubsystem;
 	StatsSubsystem->OnUserStatsReceived.AddDynamic(this, &USteamAsyncRequestUserStats::HandleUserStatsReceived);
 
-	if (!StatsSubsystem->RequestUserStats(TargetUser))
+	bool bStarted = false;
+	CallWithContext([&] { bStarted = StatsSubsystem->RequestUserStats(TargetUser); });
+	if (!bStarted)
 	{
 		Complete(false);
-		return;
 	}
-
-	// Fail the node if the subsystem delegate never fires.
-	ArmTimeout(Timeout);
 }
 
 void USteamAsyncRequestUserStats::HandleUserStatsReceived(FESteamId SteamId, bool bSuccess)
 {
-	if (SteamId != TargetUser)
+	if (!IsResultForThisCall() || SteamId != TargetUser)
 	{
 		return;
 	}
 	Complete(bSuccess);
 }
 
-void USteamAsyncRequestUserStats::OnTimeoutFailure()
+void USteamAsyncRequestUserStats::BroadcastFailure(const FEFResult& /*Result*/)
 {
-	Complete(false);
+	OnFailure.Broadcast();
+}
+
+void USteamAsyncRequestUserStats::CancelWork()
+{
+	if (UESteamUserStatsSubsystem* StatsSubsystem = Subsystem.Get())
+	{
+		StatsSubsystem->OnUserStatsReceived.RemoveDynamic(this, &USteamAsyncRequestUserStats::HandleUserStatsReceived);
+	}
 }
 
 void USteamAsyncRequestUserStats::Complete(bool bSuccess)
 {
-	if (!BeginComplete())
+	CancelWork();
+	if (!FinishAction())
 	{
 		return;
-	}
-
-	if (UESteamUserStatsSubsystem* StatsSubsystem = Subsystem.Get())
-	{
-		StatsSubsystem->OnUserStatsReceived.RemoveDynamic(this, &USteamAsyncRequestUserStats::HandleUserStatsReceived);
 	}
 
 	if (bSuccess)
@@ -308,7 +295,6 @@ void USteamAsyncRequestUserStats::Complete(bool bSuccess)
 	{
 		OnFailure.Broadcast();
 	}
-	SetReadyToDestroy();
 }
 
 // ---- USteamAsyncGetNumberOfCurrentPlayers ----
@@ -316,54 +302,57 @@ void USteamAsyncRequestUserStats::Complete(bool bSuccess)
 USteamAsyncGetNumberOfCurrentPlayers* USteamAsyncGetNumberOfCurrentPlayers::GetNumberOfCurrentPlayers(UObject* WorldContext, float Timeout)
 {
 	USteamAsyncGetNumberOfCurrentPlayers* Action = NewObject<USteamAsyncGetNumberOfCurrentPlayers>();
-	Action->WorldContextObject = WorldContext;
-	Action->Subsystem = GetUserStatsSubsystem(WorldContext);
-	Action->Timeout = Timeout;
-	Action->RegisterWithGameInstance(WorldContext);
+	Action->InitAsyncAction(WorldContext, Timeout);
 	return Action;
 }
 
-void USteamAsyncGetNumberOfCurrentPlayers::Activate()
+void USteamAsyncGetNumberOfCurrentPlayers::ExecuteAction()
 {
-	UESteamUserStatsSubsystem* StatsSubsystem = Subsystem.Get();
+	UESteamUserStatsSubsystem* StatsSubsystem = RequireGameInstanceSubsystem<UESteamUserStatsSubsystem>();
 	if (!StatsSubsystem)
 	{
-		Complete(false, 0);
 		return;
 	}
 
+	Subsystem = StatsSubsystem;
 	StatsSubsystem->OnNumberOfCurrentPlayers.AddDynamic(this, &USteamAsyncGetNumberOfCurrentPlayers::HandleNumberOfCurrentPlayers);
 
-	if (!StatsSubsystem->GetNumberOfCurrentPlayers())
+	bool bStarted = false;
+	CallWithContext([&] { bStarted = StatsSubsystem->GetNumberOfCurrentPlayers(); });
+	if (!bStarted)
 	{
 		Complete(false, 0);
-		return;
 	}
-
-	// Fail the node if the subsystem delegate never fires.
-	ArmTimeout(Timeout);
 }
 
 void USteamAsyncGetNumberOfCurrentPlayers::HandleNumberOfCurrentPlayers(bool bSuccess, int32 PlayerCount)
 {
+	if (!IsResultForThisCall())
+	{
+		return;
+	}
 	Complete(bSuccess, PlayerCount);
 }
 
-void USteamAsyncGetNumberOfCurrentPlayers::OnTimeoutFailure()
+void USteamAsyncGetNumberOfCurrentPlayers::BroadcastFailure(const FEFResult& /*Result*/)
 {
-	Complete(false, 0);
+	OnFailure.Broadcast(0);
+}
+
+void USteamAsyncGetNumberOfCurrentPlayers::CancelWork()
+{
+	if (UESteamUserStatsSubsystem* StatsSubsystem = Subsystem.Get())
+	{
+		StatsSubsystem->OnNumberOfCurrentPlayers.RemoveDynamic(this, &USteamAsyncGetNumberOfCurrentPlayers::HandleNumberOfCurrentPlayers);
+	}
 }
 
 void USteamAsyncGetNumberOfCurrentPlayers::Complete(bool bSuccess, int32 PlayerCount)
 {
-	if (!BeginComplete())
+	CancelWork();
+	if (!FinishAction())
 	{
 		return;
-	}
-
-	if (UESteamUserStatsSubsystem* StatsSubsystem = Subsystem.Get())
-	{
-		StatsSubsystem->OnNumberOfCurrentPlayers.RemoveDynamic(this, &USteamAsyncGetNumberOfCurrentPlayers::HandleNumberOfCurrentPlayers);
 	}
 
 	if (bSuccess)
@@ -374,7 +363,6 @@ void USteamAsyncGetNumberOfCurrentPlayers::Complete(bool bSuccess, int32 PlayerC
 	{
 		OnFailure.Broadcast(PlayerCount);
 	}
-	SetReadyToDestroy();
 }
 
 // ---- USteamAsyncRequestGlobalStats ----
@@ -382,55 +370,58 @@ void USteamAsyncGetNumberOfCurrentPlayers::Complete(bool bSuccess, int32 PlayerC
 USteamAsyncRequestGlobalStats* USteamAsyncRequestGlobalStats::RequestGlobalStats(UObject* WorldContext, int32 HistoryDays, float Timeout)
 {
 	USteamAsyncRequestGlobalStats* Action = NewObject<USteamAsyncRequestGlobalStats>();
-	Action->WorldContextObject = WorldContext;
-	Action->Subsystem = GetUserStatsSubsystem(WorldContext);
 	Action->HistoryDays = HistoryDays;
-	Action->Timeout = Timeout;
-	Action->RegisterWithGameInstance(WorldContext);
+	Action->InitAsyncAction(WorldContext, Timeout);
 	return Action;
 }
 
-void USteamAsyncRequestGlobalStats::Activate()
+void USteamAsyncRequestGlobalStats::ExecuteAction()
 {
-	UESteamUserStatsSubsystem* StatsSubsystem = Subsystem.Get();
+	UESteamUserStatsSubsystem* StatsSubsystem = RequireGameInstanceSubsystem<UESteamUserStatsSubsystem>();
 	if (!StatsSubsystem)
 	{
-		Complete(false);
 		return;
 	}
 
+	Subsystem = StatsSubsystem;
 	StatsSubsystem->OnGlobalStatsReceived.AddDynamic(this, &USteamAsyncRequestGlobalStats::HandleGlobalStatsReceived);
 
-	if (!StatsSubsystem->RequestGlobalStats(HistoryDays))
+	bool bStarted = false;
+	CallWithContext([&] { bStarted = StatsSubsystem->RequestGlobalStats(HistoryDays); });
+	if (!bStarted)
 	{
 		Complete(false);
-		return;
 	}
-
-	// Fail the node if the subsystem delegate never fires.
-	ArmTimeout(Timeout);
 }
 
 void USteamAsyncRequestGlobalStats::HandleGlobalStatsReceived(bool bSuccess)
 {
+	if (!IsResultForThisCall())
+	{
+		return;
+	}
 	Complete(bSuccess);
 }
 
-void USteamAsyncRequestGlobalStats::OnTimeoutFailure()
+void USteamAsyncRequestGlobalStats::BroadcastFailure(const FEFResult& /*Result*/)
 {
-	Complete(false);
+	OnFailure.Broadcast();
+}
+
+void USteamAsyncRequestGlobalStats::CancelWork()
+{
+	if (UESteamUserStatsSubsystem* StatsSubsystem = Subsystem.Get())
+	{
+		StatsSubsystem->OnGlobalStatsReceived.RemoveDynamic(this, &USteamAsyncRequestGlobalStats::HandleGlobalStatsReceived);
+	}
 }
 
 void USteamAsyncRequestGlobalStats::Complete(bool bSuccess)
 {
-	if (!BeginComplete())
+	CancelWork();
+	if (!FinishAction())
 	{
 		return;
-	}
-
-	if (UESteamUserStatsSubsystem* StatsSubsystem = Subsystem.Get())
-	{
-		StatsSubsystem->OnGlobalStatsReceived.RemoveDynamic(this, &USteamAsyncRequestGlobalStats::HandleGlobalStatsReceived);
 	}
 
 	if (bSuccess)
@@ -441,7 +432,6 @@ void USteamAsyncRequestGlobalStats::Complete(bool bSuccess)
 	{
 		OnFailure.Broadcast();
 	}
-	SetReadyToDestroy();
 }
 
 // ---- USteamAsyncRequestGlobalAchievementPercentages ----
@@ -449,54 +439,57 @@ void USteamAsyncRequestGlobalStats::Complete(bool bSuccess)
 USteamAsyncRequestGlobalAchievementPercentages* USteamAsyncRequestGlobalAchievementPercentages::RequestGlobalAchievementPercentages(UObject* WorldContext, float Timeout)
 {
 	USteamAsyncRequestGlobalAchievementPercentages* Action = NewObject<USteamAsyncRequestGlobalAchievementPercentages>();
-	Action->WorldContextObject = WorldContext;
-	Action->Subsystem = GetUserStatsSubsystem(WorldContext);
-	Action->Timeout = Timeout;
-	Action->RegisterWithGameInstance(WorldContext);
+	Action->InitAsyncAction(WorldContext, Timeout);
 	return Action;
 }
 
-void USteamAsyncRequestGlobalAchievementPercentages::Activate()
+void USteamAsyncRequestGlobalAchievementPercentages::ExecuteAction()
 {
-	UESteamUserStatsSubsystem* StatsSubsystem = Subsystem.Get();
+	UESteamUserStatsSubsystem* StatsSubsystem = RequireGameInstanceSubsystem<UESteamUserStatsSubsystem>();
 	if (!StatsSubsystem)
 	{
-		Complete(false);
 		return;
 	}
 
+	Subsystem = StatsSubsystem;
 	StatsSubsystem->OnGlobalAchievementPercentagesReady.AddDynamic(this, &USteamAsyncRequestGlobalAchievementPercentages::HandlePercentagesReady);
 
-	if (!StatsSubsystem->RequestGlobalAchievementPercentages())
+	bool bStarted = false;
+	CallWithContext([&] { bStarted = StatsSubsystem->RequestGlobalAchievementPercentages(); });
+	if (!bStarted)
 	{
 		Complete(false);
-		return;
 	}
-
-	// Fail the node if the subsystem delegate never fires.
-	ArmTimeout(Timeout);
 }
 
 void USteamAsyncRequestGlobalAchievementPercentages::HandlePercentagesReady(bool bSuccess)
 {
+	if (!IsResultForThisCall())
+	{
+		return;
+	}
 	Complete(bSuccess);
 }
 
-void USteamAsyncRequestGlobalAchievementPercentages::OnTimeoutFailure()
+void USteamAsyncRequestGlobalAchievementPercentages::BroadcastFailure(const FEFResult& /*Result*/)
 {
-	Complete(false);
+	OnFailure.Broadcast();
+}
+
+void USteamAsyncRequestGlobalAchievementPercentages::CancelWork()
+{
+	if (UESteamUserStatsSubsystem* StatsSubsystem = Subsystem.Get())
+	{
+		StatsSubsystem->OnGlobalAchievementPercentagesReady.RemoveDynamic(this, &USteamAsyncRequestGlobalAchievementPercentages::HandlePercentagesReady);
+	}
 }
 
 void USteamAsyncRequestGlobalAchievementPercentages::Complete(bool bSuccess)
 {
-	if (!BeginComplete())
+	CancelWork();
+	if (!FinishAction())
 	{
 		return;
-	}
-
-	if (UESteamUserStatsSubsystem* StatsSubsystem = Subsystem.Get())
-	{
-		StatsSubsystem->OnGlobalAchievementPercentagesReady.RemoveDynamic(this, &USteamAsyncRequestGlobalAchievementPercentages::HandlePercentagesReady);
 	}
 
 	if (bSuccess)
@@ -507,7 +500,6 @@ void USteamAsyncRequestGlobalAchievementPercentages::Complete(bool bSuccess)
 	{
 		OnFailure.Broadcast();
 	}
-	SetReadyToDestroy();
 }
 
 // ---- USteamAsyncDownloadLeaderboardEntriesForUsers ----
@@ -515,58 +507,61 @@ void USteamAsyncRequestGlobalAchievementPercentages::Complete(bool bSuccess)
 USteamAsyncDownloadLeaderboardEntriesForUsers* USteamAsyncDownloadLeaderboardEntriesForUsers::DownloadLeaderboardEntriesForUsers(UObject* WorldContext, int64 LeaderboardHandle, const TArray<FESteamId>& Users, float Timeout)
 {
 	USteamAsyncDownloadLeaderboardEntriesForUsers* Action = NewObject<USteamAsyncDownloadLeaderboardEntriesForUsers>();
-	Action->WorldContextObject = WorldContext;
-	Action->Subsystem = GetUserStatsSubsystem(WorldContext);
 	Action->LeaderboardHandle = LeaderboardHandle;
 	Action->Users = Users;
-	Action->Timeout = Timeout;
-	Action->RegisterWithGameInstance(WorldContext);
+	Action->InitAsyncAction(WorldContext, Timeout);
 	return Action;
 }
 
-void USteamAsyncDownloadLeaderboardEntriesForUsers::Activate()
+void USteamAsyncDownloadLeaderboardEntriesForUsers::ExecuteAction()
 {
-	UESteamUserStatsSubsystem* StatsSubsystem = Subsystem.Get();
+	UESteamUserStatsSubsystem* StatsSubsystem = RequireGameInstanceSubsystem<UESteamUserStatsSubsystem>();
 	if (!StatsSubsystem)
 	{
-		Complete(false, TArray<FESteamLeaderboardEntry>());
 		return;
 	}
 
+	Subsystem = StatsSubsystem;
 	StatsSubsystem->OnLeaderboardEntriesDownloaded.AddDynamic(this, &USteamAsyncDownloadLeaderboardEntriesForUsers::HandleEntriesDownloaded);
 
-	if (!StatsSubsystem->DownloadLeaderboardEntriesForUsers(LeaderboardHandle, Users))
+	bool bStarted = false;
+	CallWithContext([&] { bStarted = StatsSubsystem->DownloadLeaderboardEntriesForUsers(LeaderboardHandle, Users); });
+	if (!bStarted)
 	{
 		Complete(false, TArray<FESteamLeaderboardEntry>());
-		return;
 	}
-
-	// Fail the node if the subsystem delegate never fires.
-	ArmTimeout(Timeout);
 }
 
 void USteamAsyncDownloadLeaderboardEntriesForUsers::HandleEntriesDownloaded(bool bSuccess, const TArray<FESteamLeaderboardEntry>& Entries)
 {
-	// NOTE: FOnSteamLeaderboardEntriesDownloaded carries no leaderboard handle; cannot discriminate.
-	// Relies on Timeout + the subsystem's single-in-flight download queue.
+	// FOnSteamLeaderboardEntriesDownloaded carries no leaderboard handle; both download nodes share
+	// it. The subsystem tags each result with the call context of its request.
+	if (!IsResultForThisCall())
+	{
+		return;
+	}
 	Complete(bSuccess, Entries);
 }
 
-void USteamAsyncDownloadLeaderboardEntriesForUsers::OnTimeoutFailure()
+void USteamAsyncDownloadLeaderboardEntriesForUsers::BroadcastFailure(const FEFResult& /*Result*/)
 {
-	Complete(false, TArray<FESteamLeaderboardEntry>());
+	OnFailure.Broadcast(TArray<FESteamLeaderboardEntry>());
+}
+
+void USteamAsyncDownloadLeaderboardEntriesForUsers::CancelWork()
+{
+	if (UESteamUserStatsSubsystem* StatsSubsystem = Subsystem.Get())
+	{
+		StatsSubsystem->OnLeaderboardEntriesDownloaded.RemoveDynamic(this, &USteamAsyncDownloadLeaderboardEntriesForUsers::HandleEntriesDownloaded);
+	}
 }
 
 void USteamAsyncDownloadLeaderboardEntriesForUsers::Complete(bool bSuccess, const TArray<FESteamLeaderboardEntry>& Entries)
 {
-	if (!BeginComplete())
+	CancelWork();
+	if (!FinishAction())
 	{
 		return;
-	}
-
-	if (UESteamUserStatsSubsystem* StatsSubsystem = Subsystem.Get())
-	{
-		StatsSubsystem->OnLeaderboardEntriesDownloaded.RemoveDynamic(this, &USteamAsyncDownloadLeaderboardEntriesForUsers::HandleEntriesDownloaded);
 	}
 
 	if (bSuccess)
@@ -577,7 +572,6 @@ void USteamAsyncDownloadLeaderboardEntriesForUsers::Complete(bool bSuccess, cons
 	{
 		OnFailure.Broadcast(Entries);
 	}
-	SetReadyToDestroy();
 }
 
 // ---- USteamAsyncAttachLeaderboardUGC ----
@@ -585,58 +579,61 @@ void USteamAsyncDownloadLeaderboardEntriesForUsers::Complete(bool bSuccess, cons
 USteamAsyncAttachLeaderboardUGC* USteamAsyncAttachLeaderboardUGC::AttachLeaderboardUGC(UObject* WorldContext, int64 LeaderboardHandle, int64 UGCHandle, float Timeout)
 {
 	USteamAsyncAttachLeaderboardUGC* Action = NewObject<USteamAsyncAttachLeaderboardUGC>();
-	Action->WorldContextObject = WorldContext;
-	Action->Subsystem = GetUserStatsSubsystem(WorldContext);
 	Action->LeaderboardHandle = LeaderboardHandle;
 	Action->UGCHandle = UGCHandle;
-	Action->Timeout = Timeout;
-	Action->RegisterWithGameInstance(WorldContext);
+	Action->InitAsyncAction(WorldContext, Timeout);
 	return Action;
 }
 
-void USteamAsyncAttachLeaderboardUGC::Activate()
+void USteamAsyncAttachLeaderboardUGC::ExecuteAction()
 {
-	UESteamUserStatsSubsystem* StatsSubsystem = Subsystem.Get();
+	UESteamUserStatsSubsystem* StatsSubsystem = RequireGameInstanceSubsystem<UESteamUserStatsSubsystem>();
 	if (!StatsSubsystem)
 	{
-		Complete(false);
 		return;
 	}
 
+	Subsystem = StatsSubsystem;
 	StatsSubsystem->OnLeaderboardUGCSet.AddDynamic(this, &USteamAsyncAttachLeaderboardUGC::HandleUGCSet);
 
-	if (!StatsSubsystem->AttachLeaderboardUGC(LeaderboardHandle, UGCHandle))
+	bool bStarted = false;
+	CallWithContext([&] { bStarted = StatsSubsystem->AttachLeaderboardUGC(LeaderboardHandle, UGCHandle); });
+	if (!bStarted)
 	{
 		Complete(false);
-		return;
 	}
-
-	// Fail the node if the subsystem delegate never fires.
-	ArmTimeout(Timeout);
 }
 
 void USteamAsyncAttachLeaderboardUGC::HandleUGCSet(bool bSuccess)
 {
-	// NOTE: FOnSteamLeaderboardUGCSet carries no leaderboard handle; cannot discriminate.
-	// Relies on Timeout + the subsystem's single-in-flight attach-UGC queue.
+	// FOnSteamLeaderboardUGCSet carries no leaderboard handle; the subsystem tags each result with
+	// the call context of its request.
+	if (!IsResultForThisCall())
+	{
+		return;
+	}
 	Complete(bSuccess);
 }
 
-void USteamAsyncAttachLeaderboardUGC::OnTimeoutFailure()
+void USteamAsyncAttachLeaderboardUGC::BroadcastFailure(const FEFResult& /*Result*/)
 {
-	Complete(false);
+	OnFailure.Broadcast();
+}
+
+void USteamAsyncAttachLeaderboardUGC::CancelWork()
+{
+	if (UESteamUserStatsSubsystem* StatsSubsystem = Subsystem.Get())
+	{
+		StatsSubsystem->OnLeaderboardUGCSet.RemoveDynamic(this, &USteamAsyncAttachLeaderboardUGC::HandleUGCSet);
+	}
 }
 
 void USteamAsyncAttachLeaderboardUGC::Complete(bool bSuccess)
 {
-	if (!BeginComplete())
+	CancelWork();
+	if (!FinishAction())
 	{
 		return;
-	}
-
-	if (UESteamUserStatsSubsystem* StatsSubsystem = Subsystem.Get())
-	{
-		StatsSubsystem->OnLeaderboardUGCSet.RemoveDynamic(this, &USteamAsyncAttachLeaderboardUGC::HandleUGCSet);
 	}
 
 	if (bSuccess)
@@ -647,5 +644,4 @@ void USteamAsyncAttachLeaderboardUGC::Complete(bool bSuccess)
 	{
 		OnFailure.Broadcast();
 	}
-	SetReadyToDestroy();
 }

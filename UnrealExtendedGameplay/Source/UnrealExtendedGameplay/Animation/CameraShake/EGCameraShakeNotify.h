@@ -1,38 +1,37 @@
-﻿// Fill out your copyright notice in the Description page of Project Settings.
+﻿// Copyright Kemal Erdem YILMAZ. All Rights Reserved.
 
 #pragma once
 
+#include "Animation/AnimNotifies/AnimNotify.h"
 #include "CoreMinimal.h"
-#include "UObject/Object.h"
+#include "Templates/SubclassOf.h"
+
 #include "EGCameraShakeNotify.generated.h"
 
-/**
- * 
- */
+class UCameraShakeBase;
+
+/** Plays a world camera shake centred on the mesh, for every local camera within range. */
 UCLASS()
 class UNREALEXTENDEDGAMEPLAY_API UEGCameraShakeNotify : public UAnimNotify
 {
 	GENERATED_BODY()
 
 public:
-	
-	// Begin UAnimNotify interface
 	virtual FString GetNotifyName_Implementation() const override;
+	virtual void Notify(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, const FAnimNotifyEventReference& EventReference) override;
 
-	#if	ENGINE_MAJOR_VERSION == 5
-		virtual void Notify(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, const FAnimNotifyEventReference& EventReference) override;
-	#endif
-		
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="AnimNotify", meta=(ExposeOnSpawn = true))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AnimNotify")
 	TSubclassOf<UCameraShakeBase> CameraShake;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="AnimNotify", meta=(ExposeOnSpawn = true))
-	float InnerRadius;
+	/** Cameras within this distance of the mesh get the full shake. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AnimNotify", meta = (ClampMin = "0", Units = "cm"))
+	float InnerRadius = 300.0f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="AnimNotify", meta=(ExposeOnSpawn = true))
-	float OuterRadius;
+	/** Cameras between InnerRadius and this get a weaker shake; beyond it, none. At or below InnerRadius there is no falloff band. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AnimNotify", meta = (ClampMin = "0", Units = "cm"))
+	float OuterRadius = 1500.0f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="AnimNotify", meta=(ExposeOnSpawn = true))
-	float Falloff;
+	/** Exponent of the falloff between the two radii; 1 is linear. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AnimNotify", meta = (ClampMin = "0"))
+	float Falloff = 1.0f;
 };

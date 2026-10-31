@@ -1,3 +1,5 @@
+// Copyright Kemal Erdem YILMAZ. All Rights Reserved.
+
 #include "Tasks/EGASAbilityTask_WaitAttributeChange.h"
 
 #include "AbilitySystemComponent.h"

@@ -1,3 +1,5 @@
+// Copyright Moon Punch Games. All Rights Reserved.
+
 // EFKeyRebindingWidget.cpp
 // Implementation of the EFKeyRebindingWidget class
 

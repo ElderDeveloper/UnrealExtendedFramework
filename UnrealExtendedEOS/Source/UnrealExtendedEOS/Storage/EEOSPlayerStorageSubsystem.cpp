@@ -4,6 +4,7 @@
 #include "Shared/EEOSNativeOperation.h"
 #include "OnlineSubsystemUtils.h"
 #include "UnrealExtendedEOS.h"
+#include "Async/EFCallContext.h"
 #include "Kismet/GameplayStatics.h"
 #include "GameFramework/SaveGame.h"
 
@@ -28,6 +29,8 @@ void UEEOSPlayerStorageSubsystem::Deinitialize()
 	PendingReadFiles.Empty();
 	PendingDeleteFiles.Empty();
 	PendingSaveGameReads.Empty();
+	PendingWriteCallContexts.Empty();
+	PendingReadCallContexts.Empty();
 	bEnumerateInFlight = false;
 	CachedFileList.Empty();
 	Super::Deinitialize();
@@ -103,11 +106,13 @@ bool UEEOSPlayerStorageSubsystem::WritePlayerData(const FString& FileName, const
 
 	if (!EnsureCloudDelegatesBound(*CloudInterface)) return false;
 	PendingWriteFiles.Add(FileName);
+	PendingWriteCallContexts.Add(FileName, EFCallContext::GetActive());
 	TArray<uint8> MutableData = Data;
 	if (!CloudInterface->WriteUserFile(*UserId, FileName, MutableData))
 	{
 		// Failed to start; if the completion delegate fired synchronously it already
 		// removed the entry and broadcast, so only report if the file is still pending.
+		PendingWriteCallContexts.Remove(FileName);
 		if (PendingWriteFiles.Remove(FileName) > 0)
 		{
 			UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSPlayerStorageSubsystem::WritePlayerData — WriteUserFile failed to start for '%s'"), *FEEOSNativeOperationLease::SafeField(FileName));
@@ -193,8 +198,10 @@ bool UEEOSPlayerStorageSubsystem::ReadPlayerData(const FString& FileName)
 
 	if (!EnsureCloudDelegatesBound(*CloudInterface)) return false;
 	PendingReadFiles.Add(FileName);
+	PendingReadCallContexts.Add(FileName, EFCallContext::GetActive());
 	if (!CloudInterface->ReadUserFile(*UserId, FileName))
 	{
+		PendingReadCallContexts.Remove(FileName);
 		if (PendingReadFiles.Remove(FileName) > 0)
 		{
 			UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSPlayerStorageSubsystem::ReadPlayerData — ReadUserFile failed to start for '%s'"), *FEEOSNativeOperationLease::SafeField(FileName));
@@ -355,6 +362,10 @@ void UEEOSPlayerStorageSubsystem::HandleWriteUserFileComplete(bool bWasSuccessfu
 		return;
 	}
 
+	// Report under the call context of the caller that started this write (see EFCallContext).
+	int64 CallContext = 0;
+	PendingWriteCallContexts.RemoveAndCopyValue(FileName, CallContext);
+	EFCallContext::FScope CallScope(CallContext);
 	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSPlayerStorageSubsystem: Write '%s' %s"), *FEEOSNativeOperationLease::SafeField(FileName), bWasSuccessful ? TEXT("succeeded") : TEXT("failed"));
 	OnPlayerDataWritten.Broadcast(bWasSuccessful, FileName);
 }
@@ -368,6 +379,12 @@ void UEEOSPlayerStorageSubsystem::HandleReadUserFileComplete(bool bWasSuccessful
 		// Not an operation we started (or already reported) — ignore
 		return;
 	}
+
+	// Report under the call context of the caller that started this read (see EFCallContext);
+	// ReadSaveGame's OnSaveGameRead broadcast runs inside this scope too.
+	int64 CallContext = 0;
+	PendingReadCallContexts.RemoveAndCopyValue(FileName, CallContext);
+	EFCallContext::FScope CallScope(CallContext);
 
 	TArray<uint8> FileData;
 

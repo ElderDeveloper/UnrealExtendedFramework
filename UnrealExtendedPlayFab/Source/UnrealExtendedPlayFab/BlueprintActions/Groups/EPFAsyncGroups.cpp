@@ -1,148 +1,182 @@
 // Copyright Kemal Erdem YILMAZ. All Rights Reserved.
 
 #include "EPFAsyncGroups.h"
-#include "Engine/GameInstance.h"
 
 // ── Create ───────────────────────────────────────────────────────────────────
 
 UEPFAsyncCreateGroup* UEPFAsyncCreateGroup::CreateGroup(UObject* WorldContext, const FString& GroupName)
 {
-	auto* A = NewObject<UEPFAsyncCreateGroup>(); A->GroupName = GroupName; A->WorldContext = WorldContext; A->RegisterWithGameInstance(WorldContext); return A;
+	auto* A = NewObject<UEPFAsyncCreateGroup>(); A->NewGroupName = GroupName; A->InitAsyncAction(WorldContext); return A;
 }
-void UEPFAsyncCreateGroup::Activate()
+void UEPFAsyncCreateGroup::ExecuteAction()
 {
-	if (GroupName.IsEmpty()) { BroadcastEPFFailure(OnFailure, TEXT("Group name cannot be empty")); SetReadyToDestroy(); return; }
-	auto* S = GetEPFSubsystemFromContext<UEPFGroupsSubsystem>(WorldContext.Get());
-	if (!S) { BroadcastEPFFailure(OnFailure, TEXT("Groups subsystem not available")); SetReadyToDestroy(); return; }
+	if (NewGroupName.IsEmpty()) { FailInvalidArgument(TEXT("Group name cannot be empty")); return; }
+	auto* S = RequireGameInstanceSubsystem<UEPFGroupsSubsystem>();
+	if (!S) return;
 	S->OnGroupCreated.AddDynamic(this, &UEPFAsyncCreateGroup::HandleComplete);
-	S->CreateGroup(GroupName);
+	CallWithContext([&] { S->CreateGroup(NewGroupName); });
+}
+void UEPFAsyncCreateGroup::CancelWork()
+{
+	if (auto* S = GetGameInstanceSubsystem<UEPFGroupsSubsystem>()) S->OnGroupCreated.RemoveDynamic(this, &UEPFAsyncCreateGroup::HandleComplete);
 }
 void UEPFAsyncCreateGroup::HandleComplete(const FEPFResult& Result, const FString& GroupId)
 {
-	if (auto* S = GetEPFSubsystemFromContext<UEPFGroupsSubsystem>(WorldContext.Get())) S->OnGroupCreated.RemoveDynamic(this, &UEPFAsyncCreateGroup::HandleComplete);
+	if (!IsResultForThisCall()) return;
+	CancelWork();
+	if (!FinishAction()) return;
 	Result.bSuccess ? OnSuccess.Broadcast(GroupId) : BroadcastEPFFailure(OnFailure, MakeEPFAsyncError(Result, TEXT("Failed to create group")));
-	SetReadyToDestroy();
 }
 
 // ── Delete ───────────────────────────────────────────────────────────────────
 
 UEPFAsyncDeleteGroup* UEPFAsyncDeleteGroup::DeleteGroup(UObject* WorldContext, const FString& GroupId)
 {
-	auto* A = NewObject<UEPFAsyncDeleteGroup>(); A->GroupId = GroupId; A->WorldContext = WorldContext; A->RegisterWithGameInstance(WorldContext); return A;
+	auto* A = NewObject<UEPFAsyncDeleteGroup>(); A->TargetGroupId = GroupId; A->InitAsyncAction(WorldContext); return A;
 }
-void UEPFAsyncDeleteGroup::Activate()
+void UEPFAsyncDeleteGroup::ExecuteAction()
 {
-	if (GroupId.IsEmpty()) { BroadcastEPFFailure(OnFailure, TEXT("GroupId cannot be empty")); SetReadyToDestroy(); return; }
-	auto* S = GetEPFSubsystemFromContext<UEPFGroupsSubsystem>(WorldContext.Get());
-	if (!S) { BroadcastEPFFailure(OnFailure, TEXT("Groups subsystem not available")); SetReadyToDestroy(); return; }
+	if (TargetGroupId.IsEmpty()) { FailInvalidArgument(TEXT("GroupId cannot be empty")); return; }
+	auto* S = RequireGameInstanceSubsystem<UEPFGroupsSubsystem>();
+	if (!S) return;
 	S->OnGroupDeleted.AddDynamic(this, &UEPFAsyncDeleteGroup::HandleComplete);
-	S->DeleteGroup(GroupId);
+	CallWithContext([&] { S->DeleteGroup(TargetGroupId); });
+}
+void UEPFAsyncDeleteGroup::CancelWork()
+{
+	if (auto* S = GetGameInstanceSubsystem<UEPFGroupsSubsystem>()) S->OnGroupDeleted.RemoveDynamic(this, &UEPFAsyncDeleteGroup::HandleComplete);
 }
 void UEPFAsyncDeleteGroup::HandleComplete(const FEPFResult& Result)
 {
-	if (auto* S = GetEPFSubsystemFromContext<UEPFGroupsSubsystem>(WorldContext.Get())) S->OnGroupDeleted.RemoveDynamic(this, &UEPFAsyncDeleteGroup::HandleComplete);
+	if (!IsResultForThisCall()) return;
+	CancelWork();
+	if (!FinishAction()) return;
 	Result.bSuccess ? OnSuccess.Broadcast() : BroadcastEPFFailure(OnFailure, MakeEPFAsyncError(Result, TEXT("Failed to delete group")));
-	SetReadyToDestroy();
 }
 
 // ── Get Group Info ───────────────────────────────────────────────────────────
 
 UEPFAsyncGetGroupInfo* UEPFAsyncGetGroupInfo::GetGroupInfo(UObject* WorldContext, const FString& GroupId)
 {
-	auto* A = NewObject<UEPFAsyncGetGroupInfo>(); A->GroupId = GroupId; A->WorldContext = WorldContext; A->RegisterWithGameInstance(WorldContext); return A;
+	auto* A = NewObject<UEPFAsyncGetGroupInfo>(); A->TargetGroupId = GroupId; A->InitAsyncAction(WorldContext); return A;
 }
-void UEPFAsyncGetGroupInfo::Activate()
+void UEPFAsyncGetGroupInfo::ExecuteAction()
 {
-	if (GroupId.IsEmpty()) { BroadcastEPFFailure(OnFailure, TEXT("GroupId cannot be empty")); SetReadyToDestroy(); return; }
-	auto* S = GetEPFSubsystemFromContext<UEPFGroupsSubsystem>(WorldContext.Get());
-	if (!S) { BroadcastEPFFailure(OnFailure, TEXT("Groups subsystem not available")); SetReadyToDestroy(); return; }
+	if (TargetGroupId.IsEmpty()) { FailInvalidArgument(TEXT("GroupId cannot be empty")); return; }
+	auto* S = RequireGameInstanceSubsystem<UEPFGroupsSubsystem>();
+	if (!S) return;
 	S->OnGroupInfoReceived.AddDynamic(this, &UEPFAsyncGetGroupInfo::HandleComplete);
-	S->GetGroup(GroupId);
+	CallWithContext([&] { S->GetGroup(TargetGroupId); });
+}
+void UEPFAsyncGetGroupInfo::CancelWork()
+{
+	if (auto* S = GetGameInstanceSubsystem<UEPFGroupsSubsystem>()) S->OnGroupInfoReceived.RemoveDynamic(this, &UEPFAsyncGetGroupInfo::HandleComplete);
 }
 void UEPFAsyncGetGroupInfo::HandleComplete(const FEPFResult& Result, const FEPFGroupInfo& Info)
 {
-	if (auto* S = GetEPFSubsystemFromContext<UEPFGroupsSubsystem>(WorldContext.Get())) S->OnGroupInfoReceived.RemoveDynamic(this, &UEPFAsyncGetGroupInfo::HandleComplete);
+	if (!IsResultForThisCall()) return;
+	CancelWork();
+	if (!FinishAction()) return;
 	Result.bSuccess ? OnSuccess.Broadcast(Info) : BroadcastEPFFailure(OnFailure, MakeEPFAsyncError(Result, TEXT("Failed to get group info")));
-	SetReadyToDestroy();
 }
 
 // ── List Memberships ─────────────────────────────────────────────────────────
 
 UEPFAsyncListMemberships* UEPFAsyncListMemberships::ListMemberships(UObject* WorldContext)
 {
-	auto* A = NewObject<UEPFAsyncListMemberships>(); A->WorldContext = WorldContext; A->RegisterWithGameInstance(WorldContext); return A;
+	auto* A = NewObject<UEPFAsyncListMemberships>(); A->InitAsyncAction(WorldContext); return A;
 }
-void UEPFAsyncListMemberships::Activate()
+void UEPFAsyncListMemberships::ExecuteAction()
 {
-	auto* S = GetEPFSubsystemFromContext<UEPFGroupsSubsystem>(WorldContext.Get());
-	if (!S) { BroadcastEPFFailure(OnFailure, TEXT("Groups subsystem not available")); SetReadyToDestroy(); return; }
+	auto* S = RequireGameInstanceSubsystem<UEPFGroupsSubsystem>();
+	if (!S) return;
 	S->OnGroupsListed.AddDynamic(this, &UEPFAsyncListMemberships::HandleComplete);
-	S->ListMembership();
+	CallWithContext([&] { S->ListMembership(); });
+}
+void UEPFAsyncListMemberships::CancelWork()
+{
+	if (auto* S = GetGameInstanceSubsystem<UEPFGroupsSubsystem>()) S->OnGroupsListed.RemoveDynamic(this, &UEPFAsyncListMemberships::HandleComplete);
 }
 void UEPFAsyncListMemberships::HandleComplete(const FEPFResult& Result, const TArray<FEPFGroupInfo>& Groups)
 {
-	if (auto* S = GetEPFSubsystemFromContext<UEPFGroupsSubsystem>(WorldContext.Get())) S->OnGroupsListed.RemoveDynamic(this, &UEPFAsyncListMemberships::HandleComplete);
+	if (!IsResultForThisCall()) return;
+	CancelWork();
+	if (!FinishAction()) return;
 	Result.bSuccess ? OnSuccess.Broadcast(Groups) : BroadcastEPFFailure(OnFailure, MakeEPFAsyncError(Result, TEXT("Failed to list memberships")));
-	SetReadyToDestroy();
 }
 
 // ── List Group Members ───────────────────────────────────────────────────────
 
 UEPFAsyncListGroupMembers* UEPFAsyncListGroupMembers::ListGroupMembers(UObject* WorldContext, const FString& GroupId)
 {
-	auto* A = NewObject<UEPFAsyncListGroupMembers>(); A->GroupId = GroupId; A->WorldContext = WorldContext; A->RegisterWithGameInstance(WorldContext); return A;
+	auto* A = NewObject<UEPFAsyncListGroupMembers>(); A->TargetGroupId = GroupId; A->InitAsyncAction(WorldContext); return A;
 }
-void UEPFAsyncListGroupMembers::Activate()
+void UEPFAsyncListGroupMembers::ExecuteAction()
 {
-	if (GroupId.IsEmpty()) { BroadcastEPFFailure(OnFailure, TEXT("GroupId cannot be empty")); SetReadyToDestroy(); return; }
-	auto* S = GetEPFSubsystemFromContext<UEPFGroupsSubsystem>(WorldContext.Get());
-	if (!S) { BroadcastEPFFailure(OnFailure, TEXT("Groups subsystem not available")); SetReadyToDestroy(); return; }
+	if (TargetGroupId.IsEmpty()) { FailInvalidArgument(TEXT("GroupId cannot be empty")); return; }
+	auto* S = RequireGameInstanceSubsystem<UEPFGroupsSubsystem>();
+	if (!S) return;
 	S->OnGroupMembersReceived.AddDynamic(this, &UEPFAsyncListGroupMembers::HandleComplete);
-	S->ListGroupMembers(GroupId);
+	CallWithContext([&] { S->ListGroupMembers(TargetGroupId); });
+}
+void UEPFAsyncListGroupMembers::CancelWork()
+{
+	if (auto* S = GetGameInstanceSubsystem<UEPFGroupsSubsystem>()) S->OnGroupMembersReceived.RemoveDynamic(this, &UEPFAsyncListGroupMembers::HandleComplete);
 }
 void UEPFAsyncListGroupMembers::HandleComplete(const FEPFResult& Result, const TArray<FEPFGroupMember>& Members)
 {
-	if (auto* S = GetEPFSubsystemFromContext<UEPFGroupsSubsystem>(WorldContext.Get())) S->OnGroupMembersReceived.RemoveDynamic(this, &UEPFAsyncListGroupMembers::HandleComplete);
+	if (!IsResultForThisCall()) return;
+	CancelWork();
+	if (!FinishAction()) return;
 	Result.bSuccess ? OnSuccess.Broadcast(Members) : BroadcastEPFFailure(OnFailure, MakeEPFAsyncError(Result, TEXT("Failed to list group members")));
-	SetReadyToDestroy();
 }
 
 // ── Apply / Leave ────────────────────────────────────────────────────────────
 
 UEPFAsyncApplyToGroup* UEPFAsyncApplyToGroup::ApplyToGroup(UObject* WorldContext, const FString& GroupId)
 {
-	auto* A = NewObject<UEPFAsyncApplyToGroup>(); A->GroupId = GroupId; A->WorldContext = WorldContext; A->RegisterWithGameInstance(WorldContext); return A;
+	auto* A = NewObject<UEPFAsyncApplyToGroup>(); A->TargetGroupId = GroupId; A->InitAsyncAction(WorldContext); return A;
 }
-void UEPFAsyncApplyToGroup::Activate()
+void UEPFAsyncApplyToGroup::ExecuteAction()
 {
-	if (GroupId.IsEmpty()) { BroadcastEPFFailure(OnFailure, TEXT("GroupId cannot be empty")); SetReadyToDestroy(); return; }
-	auto* S = GetEPFSubsystemFromContext<UEPFGroupsSubsystem>(WorldContext.Get());
-	if (!S) { BroadcastEPFFailure(OnFailure, TEXT("Groups subsystem not available")); SetReadyToDestroy(); return; }
+	if (TargetGroupId.IsEmpty()) { FailInvalidArgument(TEXT("GroupId cannot be empty")); return; }
+	auto* S = RequireGameInstanceSubsystem<UEPFGroupsSubsystem>();
+	if (!S) return;
 	S->OnMembershipChanged.AddDynamic(this, &UEPFAsyncApplyToGroup::HandleComplete);
-	S->ApplyToGroup(GroupId);
+	CallWithContext([&] { S->ApplyToGroup(TargetGroupId); });
+}
+void UEPFAsyncApplyToGroup::CancelWork()
+{
+	if (auto* S = GetGameInstanceSubsystem<UEPFGroupsSubsystem>()) S->OnMembershipChanged.RemoveDynamic(this, &UEPFAsyncApplyToGroup::HandleComplete);
 }
 void UEPFAsyncApplyToGroup::HandleComplete(const FEPFResult& Result)
 {
-	if (auto* S = GetEPFSubsystemFromContext<UEPFGroupsSubsystem>(WorldContext.Get())) S->OnMembershipChanged.RemoveDynamic(this, &UEPFAsyncApplyToGroup::HandleComplete);
+	if (!IsResultForThisCall()) return;
+	CancelWork();
+	if (!FinishAction()) return;
 	Result.bSuccess ? OnSuccess.Broadcast() : BroadcastEPFFailure(OnFailure, MakeEPFAsyncError(Result, TEXT("Failed to apply to group")));
-	SetReadyToDestroy();
 }
 
 UEPFAsyncLeaveGroup* UEPFAsyncLeaveGroup::LeaveGroup(UObject* WorldContext, const FString& GroupId)
 {
-	auto* A = NewObject<UEPFAsyncLeaveGroup>(); A->GroupId = GroupId; A->WorldContext = WorldContext; A->RegisterWithGameInstance(WorldContext); return A;
+	auto* A = NewObject<UEPFAsyncLeaveGroup>(); A->TargetGroupId = GroupId; A->InitAsyncAction(WorldContext); return A;
 }
-void UEPFAsyncLeaveGroup::Activate()
+void UEPFAsyncLeaveGroup::ExecuteAction()
 {
-	if (GroupId.IsEmpty()) { BroadcastEPFFailure(OnFailure, TEXT("GroupId cannot be empty")); SetReadyToDestroy(); return; }
-	auto* S = GetEPFSubsystemFromContext<UEPFGroupsSubsystem>(WorldContext.Get());
-	if (!S) { BroadcastEPFFailure(OnFailure, TEXT("Groups subsystem not available")); SetReadyToDestroy(); return; }
+	if (TargetGroupId.IsEmpty()) { FailInvalidArgument(TEXT("GroupId cannot be empty")); return; }
+	auto* S = RequireGameInstanceSubsystem<UEPFGroupsSubsystem>();
+	if (!S) return;
 	S->OnMembershipChanged.AddDynamic(this, &UEPFAsyncLeaveGroup::HandleComplete);
-	S->LeaveGroup(GroupId);
+	CallWithContext([&] { S->LeaveGroup(TargetGroupId); });
+}
+void UEPFAsyncLeaveGroup::CancelWork()
+{
+	if (auto* S = GetGameInstanceSubsystem<UEPFGroupsSubsystem>()) S->OnMembershipChanged.RemoveDynamic(this, &UEPFAsyncLeaveGroup::HandleComplete);
 }
 void UEPFAsyncLeaveGroup::HandleComplete(const FEPFResult& Result)
 {
-	if (auto* S = GetEPFSubsystemFromContext<UEPFGroupsSubsystem>(WorldContext.Get())) S->OnMembershipChanged.RemoveDynamic(this, &UEPFAsyncLeaveGroup::HandleComplete);
+	if (!IsResultForThisCall()) return;
+	CancelWork();
+	if (!FinishAction()) return;
 	Result.bSuccess ? OnSuccess.Broadcast() : BroadcastEPFFailure(OnFailure, MakeEPFAsyncError(Result, TEXT("Failed to leave group")));
-	SetReadyToDestroy();
 }

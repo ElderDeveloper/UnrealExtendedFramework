@@ -26,7 +26,9 @@ public class UnrealExtendedPlayFab : ModuleRules
 				"JsonUtilities",
 				"DeveloperSettings",
 				// Public: UnrealExtendedPlayFab.h includes EFLog.h, so anything including it needs the path.
-				"UnrealExtendedFrameworkLog"
+				"UnrealExtendedFrameworkLog",
+				// Public: async nodes derive from UEFAsyncActionBase; results convert to FEFResult.
+				"ExtendedFoundation"
 			}
 			);
 

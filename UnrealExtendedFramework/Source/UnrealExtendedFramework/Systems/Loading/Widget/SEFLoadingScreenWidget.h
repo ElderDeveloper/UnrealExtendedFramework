@@ -1,3 +1,5 @@
+// Copyright Moon Punch Games. All Rights Reserved.
+
 // SEFLoadingScreenWidget.h — Slate loading screen surface
 #pragma once
 

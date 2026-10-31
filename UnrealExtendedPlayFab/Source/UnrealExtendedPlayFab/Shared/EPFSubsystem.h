@@ -3,11 +3,13 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Containers/Ticker.h"
 #include "Dom/JsonObject.h"
 #include "Engine/TimerHandle.h"
 #include "Subsystems/GameInstanceSubsystem.h"
 #include "Interfaces/IHttpRequest.h"
 #include "Interfaces/IHttpResponse.h"
+#include "Http/EFHttpTypes.h"
 #include "Shared/EPFTypes.h"
 #include "EPFSubsystem.generated.h"
 
@@ -107,6 +109,9 @@ protected:
 
 	static FEPFAuthContext SharedAuthContext;
 
+	/** The plugin's automation tests install a session through it and put the previous one back (Tests/EPFSharedAuthTestScope.h). */
+	friend struct FEPFSharedAuthTestScope;
+
 private:
 
 #if WITH_DEV_AUTOMATION_TESTS
@@ -128,9 +133,7 @@ private:
 	);
 
 	void HandleHttpResponse(
-		FHttpRequestPtr Request,
-		FHttpResponsePtr Response,
-		bool bConnectedSuccessfully,
+		const FEFHttpResponse& Response,
 		const FString& ApiPath,
 		const FString& RequestBodyString,
 		EEPFAuthMode AuthMode,
@@ -150,10 +153,13 @@ private:
 
 	TArray<FPendingRequest> PendingRequestQueue;
 	int32 RequestsThisSecond = 0;
-	FTimerHandle RateLimitResetHandle;
+	FTSTicker::FDelegateHandle RateLimitResetHandle;
 
 	void ProcessRequestQueue();
 	void ResetRateLimitCounter();
+	/** Sends the request again after Delay seconds, unless this subsystem is gone by then. */
+	void ScheduleRetry(const FString& ApiPath, const FString& RequestBodyString, EEPFAuthMode AuthMode,
+		const FOnPlayFabResponseDetailed& OnComplete, int32 RetryAttempt, float Delay);
 
 	/**
 	 * True when PlayFab rejected the call because the session is no longer good.

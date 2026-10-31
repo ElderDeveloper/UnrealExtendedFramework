@@ -3,22 +3,21 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Engine/DeveloperSettings.h"
+#include "Settings/EFDeveloperSettings.h"
 
 #include "EFLogViewerSettings.generated.h"
 
 /**
- * Editor Preferences > Plugins > Extended Log Viewer. Per user, per project: which tabs were open
+ * Editor Preferences > Extended Framework > Extended Log Viewer. Per user, per project: which tabs were open
  * and which were closed on purpose live here too, so the window comes back as it was left.
  */
 UCLASS(config = EditorPerProjectUserSettings, meta = (DisplayName = "Extended Log Viewer"))
-class UEFLogViewerSettings : public UDeveloperSettings
+class UEFLogViewerSettings : public UEFDeveloperSettings
 {
 	GENERATED_BODY()
 
 public:
 	virtual FName GetContainerName() const override { return TEXT("Editor"); }
-	virtual FName GetCategoryName() const override { return TEXT("Plugins"); }
 
 	/** A log file that appears while the window is open gets a tab of its own, unless you closed that file's tab before. */
 	UPROPERTY(config, EditAnywhere, Category = "Tabs")

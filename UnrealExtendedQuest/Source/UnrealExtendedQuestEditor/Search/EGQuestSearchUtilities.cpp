@@ -1,3 +1,5 @@
+// Copyright Csaba Molnar, Daniel Butum. All Rights Reserved.
+
 #include "EGQuestSearchUtilities.h"
 
 #include "UnrealExtendedQuest/EGQuestHelper.h"

@@ -94,3 +94,14 @@ DerivedDataCache/*
 /UnrealExtendedAtlassian/Tests
 /UnrealExtendedAtlassian/Tools/Parity/__pycache__
 /UnrealExtendedEOS/Thirdparty/EOS/SDK/Tools/EOS_DevAuthTool-win32-x64-1.2.1
+
+# Claude Code local state (agent worktrees, settings)
+.claude/
+
+# Build output of every plugin in this repository, including new ones
+/*/Binaries/
+/*/Intermediate/
+
+# Python bytecode from Scripts/ and the plugin tools
+__pycache__/
+*.pyc

@@ -4,29 +4,37 @@
 #include "Shared/ESteamLog.h"
 #include "Shared/ESteamSDK.h"
 #include "Containers/Queue.h"
+#include "Async/EFCallContext.h"
 
 #if WITH_EXTENDEDSTEAM_SDK
 THIRD_PARTY_INCLUDES_START
 #include "steam/steam_api.h"
 THIRD_PARTY_INCLUDES_END
 
+// Each pending struct carries CallContext: the EFCallContext active when the request was made
+// (stamped by Enqueue*). It is made active again while the request's result is broadcast, so async
+// nodes waiting on the shared delegates can tell concurrent calls apart.
+
 /** Parameters captured to (re-)issue a queued FileWriteAsync call. */
 struct FESteamPendingFileWrite
 {
 	FString FileName;
 	TArray<uint8> Data;
+	int64 CallContext = 0;
 };
 
 /** Parameters captured to (re-)issue a queued FileReadAsync call. */
 struct FESteamPendingFileRead
 {
 	FString FileName;
+	int64 CallContext = 0;
 };
 
 /** Parameters captured to (re-)issue a queued FileShare call. */
 struct FESteamPendingFileShare
 {
 	FString FileName;
+	int64 CallContext = 0;
 };
 
 /**
@@ -40,6 +48,7 @@ struct FESteamPendingUGCDownload
 	uint32 Priority = 0;
 	bool bToLocation = false;
 	FString Location;
+	int64 CallContext = 0;
 };
 
 /**
@@ -66,8 +75,9 @@ public:
 	// immediate path when the Steam call could not be issued (preserves the public methods'
 	// historical "return false when the request could not be issued" contract).
 
-	bool EnqueueFileWrite(const FESteamPendingFileWrite& Request)
+	bool EnqueueFileWrite(FESteamPendingFileWrite Request)
 	{
+		Request.CallContext = EFCallContext::GetActive();
 		if (bWriteBusy)
 		{
 			WriteQueue.Enqueue(Request);
@@ -76,8 +86,9 @@ public:
 		return IssueFileWrite(Request);
 	}
 
-	bool EnqueueFileRead(const FESteamPendingFileRead& Request)
+	bool EnqueueFileRead(FESteamPendingFileRead Request)
 	{
+		Request.CallContext = EFCallContext::GetActive();
 		if (bReadBusy)
 		{
 			ReadQueue.Enqueue(Request);
@@ -86,8 +97,9 @@ public:
 		return IssueFileRead(Request);
 	}
 
-	bool EnqueueFileShare(const FESteamPendingFileShare& Request)
+	bool EnqueueFileShare(FESteamPendingFileShare Request)
 	{
+		Request.CallContext = EFCallContext::GetActive();
 		if (bShareBusy)
 		{
 			ShareQueue.Enqueue(Request);
@@ -96,8 +108,9 @@ public:
 		return IssueFileShare(Request);
 	}
 
-	bool EnqueueUGCDownload(const FESteamPendingUGCDownload& Request)
+	bool EnqueueUGCDownload(FESteamPendingUGCDownload Request)
 	{
+		Request.CallContext = EFCallContext::GetActive();
 		if (bDownloadBusy)
 		{
 			DownloadQueue.Enqueue(Request);
@@ -125,12 +138,14 @@ private:
 		}
 		PendingWriteFileName = Request.FileName;
 		WriteResult.Set(Call, this, &FESteamRemoteStorageCallbacks::HandleWriteComplete);
+		WriteContext = Request.CallContext;
 		bWriteBusy = true;
 		return true;
 	}
 
 	void HandleWriteComplete(RemoteStorageFileWriteAsyncComplete_t* Data, bool bIOFailure)
 	{
+		EFCallContext::FScope Scope(WriteContext);
 		const FString FileName = MoveTemp(PendingWriteFileName);
 		PendingWriteFileName.Reset();
 
@@ -154,6 +169,7 @@ private:
 			}
 			if (!IssueFileWrite(Request))
 			{
+				EFCallContext::FScope RequestScope(Request.CallContext);
 				// Steam went away while draining: fail this queued request instead of dropping it.
 				if (UESteamRemoteStorageSubsystem* Subsystem = Owner.Get())
 				{
@@ -188,12 +204,14 @@ private:
 		}
 		PendingReadFileName = Request.FileName;
 		ReadResult.Set(Call, this, &FESteamRemoteStorageCallbacks::HandleReadComplete);
+		ReadContext = Request.CallContext;
 		bReadBusy = true;
 		return true;
 	}
 
 	void HandleReadComplete(RemoteStorageFileReadAsyncComplete_t* Data, bool bIOFailure)
 	{
+		EFCallContext::FScope Scope(ReadContext);
 		const FString FileName = MoveTemp(PendingReadFileName);
 		PendingReadFileName.Reset();
 
@@ -227,6 +245,7 @@ private:
 			}
 			if (!IssueFileRead(Request))
 			{
+				EFCallContext::FScope RequestScope(Request.CallContext);
 				if (UESteamRemoteStorageSubsystem* Subsystem = Owner.Get())
 				{
 					const TArray<uint8> EmptyData;
@@ -253,12 +272,14 @@ private:
 		}
 		PendingShareFileName = Request.FileName;
 		ShareResult.Set(Call, this, &FESteamRemoteStorageCallbacks::HandleShareComplete);
+		ShareContext = Request.CallContext;
 		bShareBusy = true;
 		return true;
 	}
 
 	void HandleShareComplete(RemoteStorageFileShareResult_t* Data, bool bIOFailure)
 	{
+		EFCallContext::FScope Scope(ShareContext);
 		const FString FileName = MoveTemp(PendingShareFileName);
 		PendingShareFileName.Reset();
 
@@ -282,6 +303,7 @@ private:
 			}
 			if (!IssueFileShare(Request))
 			{
+				EFCallContext::FScope RequestScope(Request.CallContext);
 				if (UESteamRemoteStorageSubsystem* Subsystem = Owner.Get())
 				{
 					Subsystem->OnFileShared.Broadcast(false, Request.FileName, 0);
@@ -308,12 +330,14 @@ private:
 			return false;
 		}
 		DownloadResult.Set(Call, this, &FESteamRemoteStorageCallbacks::HandleUGCDownloaded);
+		DownloadContext = Request.CallContext;
 		bDownloadBusy = true;
 		return true;
 	}
 
 	void HandleUGCDownloaded(RemoteStorageDownloadUGCResult_t* Data, bool bIOFailure)
 	{
+		EFCallContext::FScope Scope(DownloadContext);
 		if (UESteamRemoteStorageSubsystem* Subsystem = Owner.Get())
 		{
 			const bool bSuccess = !bIOFailure && Data->m_eResult == k_EResultOK;
@@ -338,6 +362,7 @@ private:
 			}
 			if (!IssueUGCDownload(Request))
 			{
+				EFCallContext::FScope RequestScope(Request.CallContext);
 				if (UESteamRemoteStorageSubsystem* Subsystem = Owner.Get())
 				{
 					Subsystem->OnUGCDownloaded.Broadcast(false, static_cast<int64>(Request.Handle), FString(), 0);
@@ -368,6 +393,12 @@ private:
 	TQueue<FESteamPendingFileRead> ReadQueue;
 	TQueue<FESteamPendingFileShare> ShareQueue;
 	TQueue<FESteamPendingUGCDownload> DownloadQueue;
+
+	// EFCallContext of the request each operation has in flight (see the pending structs).
+	int64 WriteContext = 0;
+	int64 ReadContext = 0;
+	int64 ShareContext = 0;
+	int64 DownloadContext = 0;
 };
 #else
 class FESteamRemoteStorageCallbacks

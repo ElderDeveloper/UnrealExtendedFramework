@@ -150,7 +150,7 @@ public:
 	static bool JumpToGraphNode(const UEdGraphNode* GraphNode);
 	static bool JumpToGraphNodeIndex(const UEGQuestGraph* Quest, int32 NodeIndex);
 
-	// Wrapper over standard message box that that also logs to the console
+	// Wrapper over standard message box that also logs to the console
 	static EAppReturnType::Type ShowMessageBox(EAppMsgType::Type MsgType, const FString& Text, const FString& Caption);
 
 	// Returns true if the TestPoint is inside the Geometry.
@@ -168,7 +168,7 @@ public:
 	// @return True on success or false on failure.
 	static bool SaveAllQuests();
 
-	// Deletes all teh quests text files
+	// Deletes all the quests text files
 	// @return True on success or false on failure.
 	static bool DeleteAllQuestsTextFiles();
 
@@ -176,7 +176,7 @@ public:
 	* Pops up a class picker dialog to choose the class that is a child of the Classprovided.
 	*
 	* @param	TitleText		The title of the class picker dialog
-	* @param	OutChosenClass  The class chosen (if this function returns false, this will be null) by the the user
+	* @param	OutChosenClass  The class chosen (if this function returns false, this will be null) by the user
 	* @param	Class			The children of this class we are displaying and prompting the user to choose from.
 	*
 	* @return true if OK was pressed, false otherwise
@@ -200,7 +200,7 @@ public:
 	// Same as BlueprintGetOrAddFunction but does not add it
 	static UEdGraph* BlueprintGetFunction(UBlueprint* Blueprint, FName FunctionName, UClass* FunctionClassSignature);
 
-	// Same as BlueprintGetOrAddFunction but only for an overriden event
+	// Same as BlueprintGetOrAddFunction but only for an overridden event
 	static UK2Node_Event* BlueprintGetOrAddEvent(UBlueprint* Blueprint, FName EventName, UClass* EventClassSignature);
 
 	// Same as BlueprintGetOrAddEvent but does not add it

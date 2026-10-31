@@ -1,0 +1,38 @@
+// {{Copyright}}
+
+#include "{{Prefix}}AsyncEcho.h"
+
+#include "{{Prefix}}Subsystem.h"
+
+U{{Prefix}}AsyncEcho* U{{Prefix}}AsyncEcho::Echo(UObject* WorldContextObject, const FString& Text, float TimeoutSeconds)
+{
+	U{{Prefix}}AsyncEcho* Action = NewObject<U{{Prefix}}AsyncEcho>();
+	Action->EchoText = Text;
+	Action->InitAsyncAction(WorldContextObject, TimeoutSeconds);
+	return Action;
+}
+
+void U{{Prefix}}AsyncEcho::ExecuteAction()
+{
+	U{{Prefix}}Subsystem* Subsystem = RequireGameInstanceSubsystem<U{{Prefix}}Subsystem>();
+	if (!Subsystem)
+	{
+		return;
+	}
+
+	Subsystem->Echo(EchoText, MakeWeakCallback<const FEFResult&, const FString&>([this](const FEFResult& Result, const FString& Text)
+	{
+		if (!FinishAction())
+		{
+			return;
+		}
+		if (Result.IsSuccess())
+		{
+			OnSuccess.Broadcast(Text);
+		}
+		else
+		{
+			OnFailure.Broadcast(Result);
+		}
+	}));
+}

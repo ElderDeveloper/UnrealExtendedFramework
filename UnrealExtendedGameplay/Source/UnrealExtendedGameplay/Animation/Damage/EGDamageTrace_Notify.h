@@ -1,47 +1,45 @@
-﻿// Fill out your copyright notice in the Description page of Project Settings.
+﻿// Copyright Kemal Erdem YILMAZ. All Rights Reserved.
 
 #pragma once
 
-#include "CoreMinimal.h"
-#include "GameplayTagContainer.h"
 #include "Animation/AnimNotifies/AnimNotifyState_Trail.h"
+#include "CoreMinimal.h"
+#include "Engine/HitResult.h"
+#include "GameplayTagContainer.h"
+#include "TimerManager.h"
 #include "UnrealExtendedFramework/Data/EFEnums.h"
 #include "UnrealExtendedFramework/Data/EFTraceData.h"
-#include "UObject/Object.h"
+
 #include "EGDamageTrace_Notify.generated.h"
 
-
+class UDamageType;
 class UEGDamageTrace_DamageObject;
 
-
+/** Settings for UEF_ApplyRadialDamage (AreaDamageRadius) and UEF_ApplyRadialDamageFalloff (the rest). */
 USTRUCT(BlueprintType)
 struct FEGNotifyRadialDamageStruct
 {
 	GENERATED_BODY()
+
 public:
-	UPROPERTY(EditAnywhere)
-	bool bEditEnabled = false;
-	
-	UPROPERTY(EditAnywhere, meta = (EditCondition = "bEditEnabled"), Category="Trace Damage|Area Falloff")
+	UPROPERTY(EditAnywhere, Category = "Trace Damage|Area Falloff")
 	float AreaDamageMinimum = 5;
-	
-	UPROPERTY(EditAnywhere, meta = (EditCondition = "bEditEnabled"), Category="Trace Damage|Area Falloff")
+
+	UPROPERTY(EditAnywhere, Category = "Trace Damage|Area Falloff")
 	float AreaDamageMaximum = 10;
 
-	
-	UPROPERTY(EditAnywhere, meta = (EditCondition = "bEditEnabled"), Category="Trace Damage|Area")
+	UPROPERTY(EditAnywhere, Category = "Trace Damage|Area")
 	float AreaDamageRadius = 200;
-	
-	UPROPERTY(EditAnywhere, meta = (EditCondition = "bEditEnabled"), Category="Trace Damage|Area Falloff")
+
+	UPROPERTY(EditAnywhere, Category = "Trace Damage|Area Falloff")
 	float AreaDamageInnerRadius = 100;
-	
-	UPROPERTY(EditAnywhere, meta = (EditCondition = "bEditEnabled"), Category="Trace Damage|Area Falloff")
+
+	UPROPERTY(EditAnywhere, Category = "Trace Damage|Area Falloff")
 	float AreaDamageOuterRadius = 300;
-	
-	UPROPERTY(EditAnywhere, meta = (EditCondition = "bEditEnabled"), Category="Trace Damage|Area Falloff")
+
+	UPROPERTY(EditAnywhere, Category = "Trace Damage|Area Falloff")
 	float AreaDamageFalloff = 1;
 };
-
 
 USTRUCT(BlueprintType)
 struct FEGNotifyDamageStruct
@@ -49,36 +47,32 @@ struct FEGNotifyDamageStruct
 	GENERATED_BODY()
 
 public:
-
-	UPROPERTY(EditAnywhere ,BlueprintReadWrite)
+	/** Called for every hit actor, in addition to the built-in damage when that is on. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Trace Damage")
 	TSubclassOf<UEGDamageTrace_DamageObject> CustomApplyDamageObject;
 
-	UPROPERTY(EditAnywhere ,BlueprintReadWrite)
+	/** Handed to the custom damage object as DamageTag. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Trace Damage")
 	FGameplayTag DamageCustomTag;
 
-	UPROPERTY(EditAnywhere)
+	/** Apply engine damage (ApplyDamageType below) to every hit actor. */
+	UPROPERTY(EditAnywhere, Category = "Trace Damage")
 	bool bApplyAnimNotifyDamage = true;
 
-	UPROPERTY(EditAnywhere, Category="Trace Damage|Area")
+	UPROPERTY(EditAnywhere, Category = "Trace Damage|Area")
 	TEnumAsByte<ECollisionChannel> AreaDamageBlockChannel = ECollisionChannel::ECC_WorldStatic;
 
-	UPROPERTY(EditAnywhere , Category="Trace Damage")
+	UPROPERTY(EditAnywhere, Category = "Trace Damage")
 	TSubclassOf<UDamageType> DamageType;
-	
-	UPROPERTY(EditAnywhere , Category="Trace Damage")
+
+	UPROPERTY(EditAnywhere, Category = "Trace Damage")
 	TEnumAsByte<EFApplyDamageType> ApplyDamageType = UEF_ApplyDamage;
 
-	
-	UPROPERTY(EditAnywhere, meta = (EditCondition = "!ApplyDamageType==EUEFApplyDamageType::UEF_ApplyRadialDamageFalloff") , Category="Trace Damage")
+	UPROPERTY(EditAnywhere, Category = "Trace Damage", meta = (EditCondition = "ApplyDamageType != EFApplyDamageType::UEF_ApplyRadialDamageFalloff"))
 	float AnimNotifyDamage = 10;
 
-	UPROPERTY(EditAnywhere, meta = (EditCondition = "ApplyDamageType==EUEFApplyDamageType::UEF_ApplyRadialDamageFalloff"), Category="Trace Damage|Area Falloff")
+	UPROPERTY(EditAnywhere, Category = "Trace Damage|Area", meta = (EditCondition = "ApplyDamageType == EFApplyDamageType::UEF_ApplyRadialDamage || ApplyDamageType == EFApplyDamageType::UEF_ApplyRadialDamageFalloff"))
 	FEGNotifyRadialDamageStruct RadialDamageStruct;
-	
-	
-	FEGNotifyDamageStruct()
-	{}
-	
 };
 
 USTRUCT(BlueprintType)
@@ -87,77 +81,87 @@ struct FEGNotifyTraceStruct
 	GENERATED_BODY()
 
 public:
-	UPROPERTY(EditAnywhere , Category="TraceSettings")
-	TEnumAsByte<ETraceShapes>  TraceShape = ETraceShapes::Sphere;
+	/** Sphere, Box or Line. Start and End are filled from the trail's first and second sockets every trace. */
+	UPROPERTY(EditAnywhere, Category = "Trace Settings")
+	TEnumAsByte<ETraceShapes> TraceShape = ETraceShapes::Sphere;
 
-	UPROPERTY(EditAnywhere  , meta = (EditCondition = "TraceShape==ETraceShapes::Sphere") , Category="Trace Settings")
+	UPROPERTY(EditAnywhere, Category = "Trace Settings", meta = (EditCondition = "TraceShape==ETraceShapes::Sphere"))
 	FSphereTraceStruct SphereTraceSettings;
 
-	UPROPERTY(EditAnywhere  , meta = (EditCondition = "TraceShape==ETraceShapes::Box") , Category="Trace Settings")
+	UPROPERTY(EditAnywhere, Category = "Trace Settings", meta = (EditCondition = "TraceShape==ETraceShapes::Box"))
 	FBoxTraceStruct BoxTraceSettings;
-	
-	UPROPERTY(EditAnywhere  , meta = (EditCondition = "TraceShape==ETraceShapes::Line") , Category="Trace Settings")
+
+	UPROPERTY(EditAnywhere, Category = "Trace Settings", meta = (EditCondition = "TraceShape==ETraceShapes::Line"))
 	FLineTraceStruct LineTraceSettings;
-	
 };
 
-
-
+/**
+ * Traces between the trail's two sockets for the length of the window and damages each actor it
+ * touches once per window. Inherits the trail notify, so a trail effect can be set as well.
+ *
+ * Superseded by the Melee Window notify with UEGMeleeTraceComponent, which sweeps between frames
+ * (fast swings cannot skip a target), supports weapons as separate actors and takes a pluggable
+ * damage policy. Kept so existing animations keep working.
+ */
 UCLASS()
 class UNREALEXTENDEDGAMEPLAY_API UEGDamageTrace_Notify : public UAnimNotifyState_Trail
 {
 	GENERATED_BODY()
 
-	UEGDamageTrace_Notify();
 public:
+	UEGDamageTrace_Notify();
 
+	/**
+	 * Trace and apply damage only where the owner has authority (server or standalone). Clients
+	 * damaging their own copies of actors desynchronise health and fire death events locally; turn
+	 * this off only for client-side or cosmetic-only setups.
+	 */
+	UPROPERTY(EditAnywhere, Category = "Trace Damage")
+	bool bAuthorityOnly = true;
 
-	UPROPERTY(EditAnywhere , Category="Trace Damage")
+	/** Trace on every anim tick. Off traces on a timer at CollisionCalculationTickSpeed instead. */
+	UPROPERTY(EditAnywhere, Category = "Trace Damage")
 	bool UseEngineTickForCollisionCalculation = true;
 
-	UPROPERTY(EditAnywhere, meta = (EditCondition = "!UseEngineTickForCollisionCalculation") , Category="Trace Damage")
+	UPROPERTY(EditAnywhere, Category = "Trace Damage", meta = (EditCondition = "!UseEngineTickForCollisionCalculation", ClampMin = "0.001", Units = "s"))
 	float CollisionCalculationTickSpeed = 0.01f;
-	
 
-
-	UPROPERTY(EditAnywhere , Category="Trace Damage")
+	UPROPERTY(EditAnywhere, Category = "Trace Damage")
 	FEGNotifyTraceStruct NotifyTraceStruct;
-	
 
-	UPROPERTY(EditAnywhere , Category="Trace Damage")
+	UPROPERTY(EditAnywhere, Category = "Trace Damage")
 	FEGNotifyDamageStruct NotifyDamageStruct;
 
-	
-	UPROPERTY(EditAnywhere , Category="Trace Push")
+	UPROPERTY(EditAnywhere, Category = "Trace Push")
 	bool bShouldPush = false;
 
-	UPROPERTY(EditAnywhere , Category="Trace Push")
-	float PushStrength = 4000000.0;
+	/** Force added to a hit character's movement for one frame, away from the attacker. */
+	UPROPERTY(EditAnywhere, Category = "Trace Push", meta = (EditCondition = "bShouldPush"))
+	float PushStrength = 4000000.0f;
 
-private:
-	
-	UPROPERTY()
-	TArray<AActor*> HitActorArray;
-
-	UPROPERTY()
-	USkeletalMeshComponent* OwnerMesh;
-
-	FTimerHandle Handle;
-
-
-	bool DrawSphereTrace(USkeletalMeshComponent* MeshComp , TArray<FHitResult>& HitResults);
-	bool DrawBoxTrace(USkeletalMeshComponent* MeshComp, TArray<FHitResult>& HitResults);
-	bool DrawLineTrace(USkeletalMeshComponent* MeshComp, TArray<FHitResult>& HitResults);
-	void Tick(USkeletalMeshComponent* MeshComp,float FrameDeltaTime);
-	
-	void DamageTick();
-	
 	virtual void NotifyBegin(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, float TotalDuration, const FAnimNotifyEventReference& EventReference) override;
 	virtual void NotifyTick(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, float FrameDeltaTime, const FAnimNotifyEventReference& EventReference) override;
 	virtual void NotifyEnd(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, const FAnimNotifyEventReference& EventReference) override;
-public:
-	
-	void HandleDamage(USkeletalMeshComponent* MeshComp , FHitResult HitResult);
+
+	void HandleDamage(USkeletalMeshComponent* MeshComp, const FHitResult& HitResult);
+
+private:
+	struct FActiveTrace
+	{
+		TArray<TWeakObjectPtr<AActor>> HitActors;
+		FTimerHandle TimerHandle;
+		/** Kept so the timer can still be cleared after the mesh is gone. */
+		TWeakObjectPtr<UWorld> World;
+	};
+
+	/** One entry per mesh currently inside this window. */
+	TMap<TWeakObjectPtr<USkeletalMeshComponent>, FActiveTrace> ActiveTraces;
+
+	bool ShouldTrace(const USkeletalMeshComponent* MeshComp) const;
+	bool RunTrace(USkeletalMeshComponent* MeshComp, TArray<FHitResult>& OutHits) const;
+	void TraceAndApply(USkeletalMeshComponent* MeshComp);
+	void HandleTraceTimer(TWeakObjectPtr<USkeletalMeshComponent> WeakMesh);
+	void ApplyPush(USkeletalMeshComponent* MeshComp, AActor* HitActor) const;
+	void StopTrace(const TWeakObjectPtr<USkeletalMeshComponent>& MeshKey);
+	static void ClearTraceTimer(FActiveTrace& Trace);
 };
-
-

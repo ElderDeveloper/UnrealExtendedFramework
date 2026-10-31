@@ -1,6 +1,11 @@
-// Copyright Epic Games, Inc. All Rights Reserved.
+// Copyright Kemal Erdem YILMAZ. All Rights Reserved.
 
 #include "UnrealExtendedGameplay.h"
+
+#include "EFFoundationVersion.h"
+
+// Asset preloading (EFAssets) arrived in foundation 1.1.
+EF_REQUIRE_FOUNDATION_VERSION(1, 1, "UnrealExtendedGameplay");
 
 #define LOCTEXT_NAMESPACE "FUnrealExtendedGameplayModule"
 

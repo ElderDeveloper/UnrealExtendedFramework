@@ -1,7 +1,9 @@
-﻿// Fill out your copyright notice in the Description page of Project Settings.
+﻿// Copyright Moon Punch Games. All Rights Reserved.
 
 
 #include "EFAsyncForLoopDelay.h"
+
+#include "UnrealExtendedFramework/UnrealExtendedFramework.h"
 
 
 
@@ -10,12 +12,25 @@
 
 void UEFAsyncForLoopDelay::InternalTick()
 {
+	if (IsFinished())
+	{
+		return;
+	}
+
+	// Whoever started the loop is gone: stop without firing anything.
+	if (!GetWorldContextObject())
+	{
+		CancelWork();
+		FinishAction();
+		return;
+	}
+
 	if (LoopIndex < LastArrayIndex)
 	{
-		Loop.Broadcast(LoopIndex);
-		LoopIndex++;
+		const int32 CurrentIndex = LoopIndex++;
+		Loop.Broadcast(CurrentIndex);
 	}
-	
+
 	else
 	{
 		InternalCompleted();
@@ -26,13 +41,11 @@ void UEFAsyncForLoopDelay::InternalTick()
 
 void UEFAsyncForLoopDelay::InternalCompleted()
 {
-	if (WorldContext)
+	CancelWork();
+	if (FinishAction())
 	{
-		WorldContext->GetWorld()->GetTimerManager().ClearTimer(TimerHandle);
+		Completed.Broadcast(LastArrayIndex);
 	}
-	TimerHandle.Invalidate();
-	SetReadyToDestroy();
-	ConditionalBeginDestroy();
 }
 
 
@@ -41,20 +54,30 @@ UEFAsyncForLoopDelay* UEFAsyncForLoopDelay::EFForLoopWithDelay(const int32 First
 	if (!ensure(WorldContextObject))	return nullptr;
 
 	UEFAsyncForLoopDelay* Node = NewObject<UEFAsyncForLoopDelay>();
-	if (Node)
-	{
-		Node->WorldContext = WorldContextObject;
-		Node->LoopTime = Delay;
-		Node->FirstArrayIndex = FirstIndex;
-		Node->LastArrayIndex = LastIndex;
-	}
+	Node->LoopTime = Delay;
+	Node->FirstArrayIndex = FirstIndex;
+	Node->LastArrayIndex = LastIndex;
+	Node->InitAsyncAction(const_cast<UObject*>(WorldContextObject));
 	return Node;
 }
 
-void UEFAsyncForLoopDelay::Activate()
+void UEFAsyncForLoopDelay::ExecuteAction()
 {
-	if (WorldContext)
+	if (LoopTime <= 0.f)
 	{
-		WorldContext->GetWorld()->GetTimerManager().SetTimer(TimerHandle,this,&UEFAsyncForLoopDelay::InternalTick,LoopTime,true);
+		UE_LOG(LogExtendedFramework, Warning, TEXT("For Loop With Delay: Delay must be greater than zero (got %f); the loop does not run."), LoopTime);
+		FailInvalidArgument(TEXT("Delay must be greater than zero"));
+		return;
 	}
+
+	LoopIndex = FirstArrayIndex;
+	if (!LoopTimer.Start(GetWorldContextObject(), FTimerDelegate::CreateUObject(this, &UEFAsyncForLoopDelay::InternalTick), LoopTime, true))
+	{
+		FailAction(FEFResult::NotAvailable(GetResultSource(), TEXT("a world for the world context")));
+	}
+}
+
+void UEFAsyncForLoopDelay::CancelWork()
+{
+	LoopTimer.Clear();
 }

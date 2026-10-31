@@ -1,4 +1,6 @@
-﻿// EFSubtitleLocalSubsystem.cpp
+﻿// Copyright Moon Punch Games. All Rights Reserved.
+
+// EFSubtitleLocalSubsystem.cpp
 #include "EFSubtitleLocalSubsystem.h"
 
 #include "Blueprint/UserWidget.h"
@@ -51,6 +53,7 @@ void UEFSubtitleLocalSubsystem::Deinitialize()
 
 	QueuePolicy = nullptr;
 	AudioPlayer = nullptr;
+	QueuedVoiceHandles.Reset();
 
 	Super::Deinitialize();
 }
@@ -109,6 +112,16 @@ void UEFSubtitleLocalSubsystem::ReceiveSubtitle(const FEFSubtitleEntry& Entry, c
 
 	if (QueuePolicy)
 	{
+		// Start loading the voice now, so an entry that waits for its Delay or behind another one
+		// finds its sound in memory when it starts.
+		if (AudioPlayer && Request.RequestId != 0)
+		{
+			if (TSharedPtr<FStreamableHandle> VoiceHandle = AudioPlayer->PreloadSubtitleAudio(Entry))
+			{
+				QueuedVoiceHandles.Add(Request.RequestId, VoiceHandle);
+			}
+		}
+
 		QueuePolicy->Enqueue(Entry, Request);
 	}
 }
@@ -116,6 +129,7 @@ void UEFSubtitleLocalSubsystem::ReceiveSubtitle(const FEFSubtitleEntry& Entry, c
 void UEFSubtitleLocalSubsystem::CancelSubtitle(int32 RequestId)
 {
 	EnsurePoliciesReady();
+	QueuedVoiceHandles.Remove(RequestId);
 	if (QueuePolicy)
 	{
 		QueuePolicy->Cancel(RequestId);
@@ -133,6 +147,7 @@ void UEFSubtitleLocalSubsystem::ClearAllSubtitles()
 	{
 		QueuePolicy->ClearAll();
 	}
+	QueuedVoiceHandles.Reset();
 
 	if (DisplayWidget)
 	{
@@ -342,6 +357,12 @@ void UEFSubtitleLocalSubsystem::OnActiveSubtitleChanged(const FEFActiveSubtitle&
 
 void UEFSubtitleLocalSubsystem::OnSubtitleExpired(int32 RequestId)
 {
+	QueuedVoiceHandles.Remove(RequestId);
+	if (QueuePolicy && QueuePolicy->IsEmpty())
+	{
+		QueuedVoiceHandles.Reset();
+	}
+
 	if (DisplayWidget && QueuePolicy)
 	{
 		if (QueuePolicy->GetQueueMode() == EEFSubtitleQueueMode::Stack)

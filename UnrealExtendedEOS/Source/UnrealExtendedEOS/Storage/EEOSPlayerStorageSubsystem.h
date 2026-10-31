@@ -111,6 +111,11 @@ private:
 	TSet<FString> PendingDeleteFiles;
 	TSet<FString> PendingSaveGameReads;
 
+	/** EFCallContext of the caller that started each in-flight write/read, keyed like the pending
+	 *  sets; active again while that file's completion is broadcast. */
+	TMap<FString, int64> PendingWriteCallContexts;
+	TMap<FString, int64> PendingReadCallContexts;
+
 	/** Whether an EnumerateUserFiles request is in flight */
 	bool bEnumerateInFlight = false;
 

@@ -1,3 +1,5 @@
+// Copyright Moon Punch Games. All Rights Reserved.
+
 // EFSubtitleQueue.h — Subtitle scheduling & priority queue
 #pragma once
 

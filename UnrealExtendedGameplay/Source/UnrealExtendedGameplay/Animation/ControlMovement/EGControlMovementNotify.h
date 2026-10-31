@@ -1,33 +1,35 @@
-﻿// Fill out your copyright notice in the Description page of Project Settings.
+﻿// Copyright Kemal Erdem YILMAZ. All Rights Reserved.
 
 #pragma once
 
-#include "CoreMinimal.h"
 #include "Animation/AnimNotifies/AnimNotifyState.h"
+#include "CoreMinimal.h"
+#include "UnrealExtendedGameplay/Movement/EGMovementModifierComponent.h"
+
 #include "EGControlMovementNotify.generated.h"
 
 /**
- * 
+ * Scales the owning character's movement for the length of the window, through
+ * UEGMovementModifierComponent (added on demand). The default zeroes acceleration so input
+ * cannot steer the character; velocity it already has still decays through braking.
+ *
+ * Overlapping windows stack in the component instead of saving and restoring values themselves.
  */
 UCLASS()
-class UNREALEXTENDEDGAMEPLAY_API UEGControlMovementNotify : public  UAnimNotifyState
+class UNREALEXTENDEDGAMEPLAY_API UEGControlMovementNotify : public UAnimNotifyState
 {
 	GENERATED_BODY()
 
 public:
-	
-	float DefaultAcceleration;
+	UEGControlMovementNotify();
 
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Movement")
+	FEGMovementModifier Modifier;
 
-	#if ENGINE_MAJOR_VERSION != 5
-		virtual void NotifyBegin(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, float TotalDuration) override;
-		virtual void NotifyEnd(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation) override;
-	#endif
-	
+	virtual void NotifyBegin(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, float TotalDuration, const FAnimNotifyEventReference& EventReference) override;
+	virtual void NotifyEnd(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, const FAnimNotifyEventReference& EventReference) override;
 
-	#if ENGINE_MAJOR_VERSION == 5
-		virtual void NotifyBegin(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, float TotalDuration, const FAnimNotifyEventReference& EventReference) override;
-		virtual void NotifyEnd(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, const FAnimNotifyEventReference& EventReference) override;
-	#endif
-	
+private:
+	/** Handles per mesh, oldest first; the notify object is shared by every mesh playing the clip. */
+	TMap<TWeakObjectPtr<USkeletalMeshComponent>, TArray<FEGMovementModifierHandle>> ActiveHandles;
 };

@@ -1,9 +1,12 @@
+// Copyright Moon Punch Games. All Rights Reserved.
+
 // EFLoadingScreenSubsystem.h — Async loading screen owner (GameInstanceSubsystem)
 #pragma once
 
 #include "Containers/Ticker.h"
 #include "CoreMinimal.h"
 #include "Delegates/Delegate.h"
+#include "Engine/StreamableManager.h"
 #include "Subsystems/GameInstanceSubsystem.h"
 #include "UObject/StrongObjectPtr.h"
 #include "EFLoadingScreenSubsystem.generated.h"
@@ -124,6 +127,11 @@ public:
 	bool IsWorldReadyToHideLoadingScreen(UWorld* World) const;
 
 private:
+	/**
+	 * Starts loading the configured background images, tip font and layer materials, so the first loading
+	 * screen (often the MoviePlayer one, drawn while the game thread is blocked) does not load them there.
+	 */
+	void PreloadLoadingScreenAssets();
 	/** Picks the texture, tip and layer materials once per loading session, so every widget in the session matches. */
 	void PrepareLoadingSession();
 	TSharedRef<SWidget> CreateLoadingScreenWidget(bool bForMoviePlayer=false) const;
@@ -155,6 +163,8 @@ private:
 	FString DescribeReadinessBlockers(const UWorld* World) const;
 
 	TSharedPtr<SWidget> ViewportLoadingScreenWidget;
+	/** Keeps the preloaded background images and tip font in memory for the game instance's lifetime. */
+	TSharedPtr<FStreamableHandle> LoadingScreenAssetsHandle;
 	TStrongObjectPtr<UTexture2D> ActiveBackgroundTexture;
 	FText ActiveLoadingTip;
 	bool bLoadingTipResolved = false;

@@ -1,4 +1,6 @@
-﻿// EFSubtitleProjectSettings.cpp
+﻿// Copyright Moon Punch Games. All Rights Reserved.
+
+// EFSubtitleProjectSettings.cpp
 #include "EFSubtitleProjectSettings.h"
 #include "UnrealExtendedFramework/Systems/Subtitle/Policy/EFSubtitleAudioPlayer.h"
 #include "UnrealExtendedFramework/Systems/Subtitle/Policy/EFSubtitleQueuePolicy.h"

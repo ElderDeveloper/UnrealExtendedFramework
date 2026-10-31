@@ -9,6 +9,14 @@ public class ExtendedSteamBlueprints : ModuleRules
 		PCHUsage = ModuleRules.PCHUsageMode.UseExplicitOrSharedPCHs;
 		PublicIncludePaths.Add(ModuleDirectory);
 
+		// Public: BlueprintActions/ESteamAsyncActionBase.h derives from UEFAsyncActionBase.
+		PublicDependencyModuleNames.AddRange(
+			new string[]
+			{
+				"ExtendedFoundation"
+			}
+		);
+
 		PrivateDependencyModuleNames.AddRange(
 			new string[]
 			{

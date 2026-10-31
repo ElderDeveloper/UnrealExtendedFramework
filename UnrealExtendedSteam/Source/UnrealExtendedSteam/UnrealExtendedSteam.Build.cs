@@ -19,12 +19,17 @@ public class UnrealExtendedSteam : ModuleRules
 		// resolve "Shared/ESteamBlueprintLibrary.h" and internal files resolve their siblings.
 		PublicIncludePaths.Add(ModuleDirectory);
 
+		// ExtendedFoundation is public: Platform/ESteamPlatformProvider.h derives from
+		// UEFPlatformProviderSubsystem (the Steam provider of the Extended platform layer). The
+		// subsystem .cpp files also use it for EFCallContext propagation, and the module .cpp for
+		// the foundation version check.
 		PublicDependencyModuleNames.AddRange(
 			new string[]
 			{
 				"Core",
 				"CoreUObject",
 				"Engine",
+				"ExtendedFoundation",
 				"ExtendedSteamShared",
 				"OnlineSubsystem"
 			}

@@ -1,6 +1,12 @@
-﻿#include "Components/ActorComponent.h"
+﻿// Copyright Kemal Erdem YILMAZ. All Rights Reserved.
+
+#include "Components/ActorComponent.h"
 #include "UnrealExtendedFramework/Data/EFTraceData.h"
 #include "UnrealExtendedFramework/Data/EFEnums.h"
+#include "GameplayTagContainer.h"
+#include "UnrealExtendedGameplay/Animation/AnimInstance/EGAnimStateProvider.h"
+#include "UnrealExtendedGameplay/Animation/Montage/EGAnimationSet.h"
+#include "UnrealExtendedGameplay/Animation/TurnInPlace/EGTurnInPlaceTypes.h"
 #include "EGCoverComponent.generated.h"
 
 
@@ -24,9 +30,10 @@ DECLARE_LOG_CATEGORY_EXTERN(LogCover, Error, All);
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnCoverStateChanged , bool , CoverState);
 
+class UAnimInstance;
 class UAnimMontage;
 UCLASS(ClassGroup=(Custom), meta=(BlueprintSpawnableComponent))
-class UNREALEXTENDEDGAMEPLAY_API UEGCoverComponent : public UActorComponent
+class UNREALEXTENDEDGAMEPLAY_API UEGCoverComponent : public UActorComponent, public IEGAnimStateProvider
 {
 	GENERATED_BODY()
 
@@ -76,6 +83,14 @@ public:
 
 	
 	//<<<<<<<<<<<<<<<<<<<<< MONTAGES >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+	/**
+	 * Cover montages by ExtendedGameplay.Anim.Cover.* tag, used when the character's own set
+	 * (IEGMontagePlayerInterface::GetAnimationSet) has none. The slots below are the last fallback.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category="Cover|Montages")
+	TObjectPtr<UEGAnimationSet> AnimationSet = nullptr;
+
 	UPROPERTY(EditDefaultsOnly,BlueprintReadWrite , Category="Cover|Montages|GetInOut")
 	UAnimMontage* GetInCoverMontage = nullptr;
 	
@@ -134,6 +149,9 @@ public:
 	
 	UFUNCTION(BlueprintPure , Category="Cover")
 	FORCEINLINE bool GetIsInMontage() const { return IsInMontage; }
+
+	/** ExtendedGameplay.Anim.State.Cover (+ .Crouched, .Moving, .Left / .Right, .Montage) for UEGAnimInstance. */
+	virtual FGameplayTagContainer GetAnimStateTags_Implementation() const override;
 	
 	
 	
@@ -162,6 +180,7 @@ public:
 protected:
 	
 	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType,FActorComponentTickFunction* ThisTickFunction) override;
 
 	FORCEINLINE FVector GetActorForwardMultiply(const float X = 1 , const float Y = 1,const float Z = 1) const { return FVector(PlayerRotation.Vector().X*X , PlayerRotation.Vector().Y*Y , PlayerRotation.Vector().Z*Z); }
@@ -243,15 +262,30 @@ private:
 	void StorePlayerValues();
 
 	//<<<<<<<<<<<<<<<<<<<<<< Animation >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-	void PlayMontageIfValid(UAnimMontage* MontageToPlay);
-	void PlayMontageBasedOnDirection(UAnimMontage* RightSideMontage , UAnimMontage* LeftSideMontage);
-	void PlayMontageBasedOnPose(UAnimMontage* IdleMontage , UAnimMontage* CrouchMontage);
-	void PlayMontageBasedOnDirectionAndPose(UAnimMontage* IdleRightSideMontage , UAnimMontage* IdleLeftSideMontage , UAnimMontage* CrouchRightSideMontage , UAnimMontage* CrouchLeftSideMontage);
+	FEGResolvedAnimation ResolveCoverAnimation(FGameplayTag Tag, UAnimMontage* Fallback, bool bExactTag) const;
+	void PlayCoverMontage(FGameplayTag StandingTag, FGameplayTag CrouchedTag, UAnimMontage* StandingMontage, UAnimMontage* CrouchedMontage);
+	void PlayResolvedAnimation(const FEGResolvedAnimation& Animation);
 
+	void OnCoverMontageBlendingOut(UAnimMontage* Montage, bool bInterrupted, uint32 PlayId);
+
+	/**
+	 * For montages the owner played itself (IEGMontagePlayerInterface): its single-slot montage
+	 * delegates belong to the owner, so the shared event is used instead.
+	 */
 	UFUNCTION()
-	void OnMontageBegin(UAnimMontage* MontageToPlay);
-	UFUNCTION()
-	void OnMontageEnded(UAnimMontage* Montage, bool bInterrupted);
+	void OnOwnerMontageBlendingOut(UAnimMontage* Montage, bool bInterrupted);
+
+	void StopTrackingOwnerMontage();
+
+	TWeakObjectPtr<UAnimMontage> OwnerPlayedMontage;
+	TWeakObjectPtr<UAnimInstance> OwnerPlayedAnimInstance;
+
+	/** Cover owns the character's facing while in cover: turn in place is locked meanwhile. */
+	FEGTurnInPlaceRequestHandle TurnInPlaceLock;
+	void ReleaseTurnInPlaceLock();
+
+	/** Bumped for every cover montage, so a montage interrupted by the next one does not clear IsInMontage. */
+	uint32 CoverMontagePlayId = 0;
 };
 
 #pragma once

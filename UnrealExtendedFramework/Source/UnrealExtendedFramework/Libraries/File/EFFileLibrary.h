@@ -1,4 +1,4 @@
-﻿// Fill out your copyright notice in the Description page of Project Settings.
+﻿// Copyright Moon Punch Games. All Rights Reserved.
 
 #pragma once
 
@@ -96,6 +96,16 @@ class UDataTable;
  * text/byte/CSV/JSON/XML reading and writing, Base64 encoding/decoding,
  * filesystem operations, DataTable import/export, config INI access,
  * project/engine path queries, and screenshot capture.
+ *
+ * Every node that takes a file path checks it against the Extended File Access settings
+ * (UEFFileAccessSettings) first. By default Shipping builds may read only under the project, Saved
+ * and user directories and write only under Saved; a refused call fails the way the node already
+ * reports failure and logs a warning. IsPathAllowed asks the same question without touching the disk.
+ *
+ * The implementation is split by topic: EFFileLibrary_Paths.cpp, _Text.cpp (text, lines, bytes,
+ * Base64), _Csv.cpp, _StructSerialization.cpp (the wildcard JSON/XML nodes), _FileSystem.cpp,
+ * _Screenshots.cpp, _DataTables.cpp, _Config.cpp and _Access.cpp (the path checks). Helpers they
+ * share live in EFFileLibraryPrivate.h.
  */
 UCLASS()
 class UNREALEXTENDEDFRAMEWORK_API UEFFileLibrary : public UBlueprintFunctionLibrary
@@ -253,6 +263,15 @@ public:
 
 	
 	/* File system */
+	/**
+	 * True when the Extended File Access settings let this path be read, listed and queried or, with
+	 * For Write set, written, moved, deleted or created. Always true when the restriction does not
+	 * apply to this build (by default it applies to Shipping builds only). Logs nothing.
+	 */
+	UFUNCTION(BlueprintPure, meta = (DisplayName = "IsPathAllowed", Keywords = "File plugin path access allowed restriction shipping"), Category = "FileSystem")
+	static bool IsPathAllowed(const FString& Path, bool bForWrite);
+
+
 	UFUNCTION(BlueprintCallable, meta = (DisplayName = "IsFile", CompactNodeTitle = "IsFile", Keywords = "File plugin check file exist", ToolTip = "Check whether a file exists"), Category = "FileSystem")
 	static bool IsFile(FString Path);
 

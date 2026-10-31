@@ -137,6 +137,13 @@ void FEGQuestGraphConnectionDrawingPolicy::DrawConnection(
 		const float QueryDistanceToBoundingBoxSquared = QueryDistanceTriggerThresholdSquared;
 #endif
 
+		// UE 5.8 renamed the cursor position the base policy keeps; it was always the absolute one.
+#if NY_ENGINE_VERSION >= 508
+		const FNYVector2f MousePosition = AbsoluteMousePosition;
+#else
+		const FNYVector2f MousePosition(LocalMousePosition.X, LocalMousePosition.Y);
+#endif
+
 		bool bCloseToSpline = false;
 		{
 			// The curve will include the endpoints but can extend out of a tight bounds because of the tangents
@@ -150,9 +157,9 @@ void FEGQuestGraphConnectionDrawingPolicy::DrawConnection(
 			Bounds += FNYVector2f(P1 - MaximumTangentContribution * P1Tangent);
 
 #if NY_ENGINE_VERSION >= 500
-			bCloseToSpline = Bounds.ComputeSquaredDistanceToPoint(LocalMousePosition) < QueryDistanceForCloseSquared;
+			bCloseToSpline = Bounds.ComputeSquaredDistanceToPoint(MousePosition) < QueryDistanceForCloseSquared;
 #else
-			bCloseToSpline = Bounds.ComputeSquaredDistanceToPoint(LocalMousePosition) < QueryDistanceToBoundingBoxSquared;
+			bCloseToSpline = Bounds.ComputeSquaredDistanceToPoint(MousePosition) < QueryDistanceToBoundingBoxSquared;
 #endif
 		}
 
@@ -169,7 +176,7 @@ void FEGQuestGraphConnectionDrawingPolicy::DrawConnection(
 			{
 				const FNYVector2f Point2 = FMath::CubicInterp(P0, P0Tangent, P1, P1Tangent, TestAlpha + StepInterval);
 
-				const FNYVector2f LocalMousePosition2D(LocalMousePosition.X, LocalMousePosition.Y);
+				const FNYVector2f LocalMousePosition2D(MousePosition.X, MousePosition.Y);
 				const FNYVector2f ClosestPointToSegment = FMath::ClosestPointOnSegment2D(LocalMousePosition2D, Point1, Point2);
 				const float DistanceSquared = (LocalMousePosition2D - ClosestPointToSegment).SizeSquared();
 

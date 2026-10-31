@@ -1,3 +1,5 @@
+// Copyright Moon Punch Games. All Rights Reserved.
+
 // EFSubtitleDataAsset.h — DataAsset alternative to DataTable for subtitle data
 #pragma once
 

@@ -1,0 +1,23 @@
+# {{FriendlyName}}
+
+{{Description}}
+
+## Setup
+
+1. Enable **{{FriendlyName}}** (it enables **Unreal Extended Foundation**, which it depends on).
+2. Open **Project Settings → Extended Framework → {{FriendlyName}}**.
+
+## Usage
+
+- C++: `U{{Prefix}}Subsystem` (game instance subsystem). Every asynchronous call takes its own
+  completion callback and reports an `FEFResult`.
+- Blueprint: **{{ShortName}}: Echo** async node. Cancel it through its Async Task pin.
+- `Extended.Status` in the console shows the service's state.
+
+## Tests
+
+Run `Automation RunTests {{PluginName}}` (all offline).
+
+## Conventions
+
+This plugin follows the repository's [ARCHITECTURE.md](../ARCHITECTURE.md).

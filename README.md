@@ -15,7 +15,7 @@
 <p align="center">
   <img alt="Unreal Engine 5.8" src="https://img.shields.io/badge/Unreal%20Engine-5.8-0E1128?style=for-the-badge&logo=unrealengine&logoColor=white">
   <img alt="C++ and Blueprint" src="https://img.shields.io/badge/API-C%2B%2B%20%2B%20Blueprint-00599C?style=for-the-badge&logo=cplusplus&logoColor=white">
-  <img alt="Eight plugins" src="https://img.shields.io/badge/Suite-8%20Plugins-00A6A6?style=for-the-badge">
+  <img alt="Twelve plugins" src="https://img.shields.io/badge/Suite-12%20Plugins-00A6A6?style=for-the-badge">
   <img alt="Mixed licensing" src="https://img.shields.io/badge/License-MIT%20%2B%20Additional%20Terms-F2C94C?style=for-the-badge">
 </p>
 
@@ -31,20 +31,30 @@
 
 ---
 
-Unreal Extended Framework is a collection of focused Unreal Engine plugins for projects that need more than a small utility library but do not want a single, tightly coupled framework. It combines reusable runtime systems, gameplay building blocks, a Gameplay Ability System layer, a graph-based quest system, online-service integrations, editor workflows, and evidence-driven performance tooling.
+Unreal Extended Framework is a collection of focused Unreal Engine plugins for projects that need more than a small utility library but do not want a single, tightly coupled framework. It combines:
+
+- reusable runtime systems;
+- the parts every game shares whatever its genre: save games, a message bus, analytics, one platform API over every store, object pooling, and debug tools for packaged builds;
+- gameplay building blocks and a Gameplay Ability System layer;
+- a graph-based quest system;
+- online-service integrations;
+- editor workflows, including Jira/Confluence collaboration inside the editor;
+- evidence-driven performance tooling.
 
 Each plugin has its own descriptor and module boundary. Install the full repository once, then enable only the capabilities your project needs.
 
 > [!IMPORTANT]
-> This repository targets **Unreal Engine 5.8**. Earlier engine versions may require API and build-rule changes.
+> This repository targets **Unreal Engine 5.8**. Earlier engine versions may require API and build-rule changes. `UnrealExtendedAtlassian` was developed against UE 5.6 and is documented as such in [its own README](UnrealExtendedAtlassian/README.md).
 
 ## ✨ Why Extended Framework?
 
-- **Modular by design** — eight separately enableable plugins instead of one monolith.
+- **Modular by design** — twelve separately enableable plugins instead of one monolith, on a shared foundation that depends on no other plugin.
+- **Write once, ship on every store** — achievements, stats, leaderboards, cloud saves and presence go through one platform API. Steam, EOS and PlayFab (or the built-in Local provider) answer behind it.
 - **Blueprint-friendly** — subsystems, async actions, actor components, settings, and data types are exposed where appropriate.
 - **C++ ready** — explicit module boundaries and reusable public APIs for native projects.
 - **Runtime + editor workflows** — gameplay systems are paired with validation, authoring, reporting, and debugging tools.
 - **Online-service breadth** — EOS, PlayFab, and Steam integrations live behind dedicated modules.
+- **Team workflow in the editor** — Jira and Confluence work, sprint boards, and annotated bug capture without leaving Unreal.
 - **Production-minded systems** — persistence, replication, diagnostics, commandlets, automation tests, and performance evidence are first-class concerns.
 - **Selective adoption** — the core is useful by itself, while several specialized plugins can also stand alone.
 
@@ -52,35 +62,49 @@ Each plugin has its own descriptor and module boundary. Install the full reposit
 
 | Plugin | Role | Highlights | Version |
 |:--|:--|:--|:--:|
-| [**UnrealExtendedFramework**](UnrealExtendedFramework/) | Core runtime and editor foundation | Modular settings, Blueprint libraries, async nodes, AI/EQS helpers, subtitles, HTTP/JSON, UI Lab, localization tooling | `1.0` |
-| [**UnrealExtendedGameplay**](UnrealExtendedGameplay/) | Reusable gameplay systems | AI state machine, combat, targeting, cover, traversal, perception, footsteps, input buffering, outlines, spawners, animation notifies | `1.0` |
+| [**UnrealExtendedFoundation**](UnrealExtendedFoundation/) | Shared base for every plugin | Logging, HTTP client and mock, JSON, shared results, async node base, settings base, credential store, `Extended.Status`, asset preloading, message bus, analytics, store-neutral platform layer, test helpers | `1.2.0` |
+| [**UnrealExtendedFramework**](UnrealExtendedFramework/) | Core runtime and editor systems | Modular settings, Blueprint libraries, async nodes, AI/EQS helpers, subtitles, object pool, UI Lab, localization tooling, log viewer | `1.0` |
+| [**UnrealExtendedSave**](UnrealExtendedSave/) | Save games | Slots with metadata, crash-safe backups, versioned migrations, saveable actors and objects, autosave, cloud sync | `0.1.0` beta |
+| [**UnrealExtendedDebug**](UnrealExtendedDebug/) | Debug tools for packaged development builds | Server-routed cheats, in-game debug menu, on-screen watches, live status/messages/analytics; compiled out of Shipping | `0.1.0` beta |
+| [**UnrealExtendedGameplay**](UnrealExtendedGameplay/) | Reusable gameplay systems | AI state machine, interaction system, melee combat, targeting, cover, line of sight, footsteps, outlines, time dilation, chess and skill-check minigames, animation systems | `1.0` |
 | [**UnrealExtendedGAS**](UnrealExtendedGAS/) | Gameplay Ability System extensions | Ability sets, ASC/attribute bases, effect components, async listeners, ability tasks, debug UI | `1.0` |
 | [**UnrealExtendedQuest**](UnrealExtendedQuest/) | Runtime and editor quest framework | Custom graph editor, stages/objectives, facts, replication, JSON I/O, simulator, search, debugger, commandlets | `1.0` |
 | [**UnrealExtendedPlayFab**](UnrealExtendedPlayFab/) | PlayFab client integration | Authentication, player data, inventory, currency, matchmaking, CloudScript, groups, analytics, async Blueprint actions | `1.0` |
 | [**UnrealExtendedEOS**](UnrealExtendedEOS/) | Epic Online Services integration | Auth/connect, sessions, lobbies, matchmaking, social, stats, achievements, storage, voice, anti-cheat, e-commerce | `1.0` |
 | [**UnrealExtendedSteam**](UnrealExtendedSteam/) | Steamworks, OSS, sockets, and Web API | Client/server APIs, custom online subsystem, networking, async Blueprint nodes, Web API, publishing tools | `0.1.0` |
 | [**UnrealExtendedPerfSentinel**](UnrealExtendedPerfSentinel/) | Performance capture and regression analysis | Trace capture, stat harvesting, deterministic analysis, budget gates, spike evidence, editor reports | `1.0.0` beta |
+| [**UnrealExtendedAtlassian**](UnrealExtendedAtlassian/) | Jira and Confluence inside the editor | Backlot workspace: docs, issues, sprint board, asset pins, inbox, annotated editor/PIE capture to Jira | `0.1.0` beta |
 
 ### How the pieces fit together
 
 ```mermaid
 flowchart TB
     UE["Unreal Engine 5.8"]
+    Foundation["UnrealExtendedFoundation<br/>log · HTTP · JSON · results · async · settings · credentials<br/>messages · analytics · platform layer"]
     Core["UnrealExtendedFramework<br/>core systems + editor tools"]
     Gameplay["UnrealExtendedGameplay"]
     GAS["UnrealExtendedGAS"]
     Quest["UnrealExtendedQuest"]
+    Save["UnrealExtendedSave"]
+    Debug["UnrealExtendedDebug<br/>development builds"]
     PlayFab["UnrealExtendedPlayFab"]
     EOS["UnrealExtendedEOS"]
     Steam["UnrealExtendedSteam"]
     Perf["UnrealExtendedPerfSentinel"]
+    Atlassian["UnrealExtendedAtlassian<br/>editor-only"]
     Vendor["Optional vendor upscalers<br/>DLSS · FSR · XeSS"]
 
-    UE --> Core
-    UE --> GAS
-    UE --> Quest
-    UE --> Steam
-    UE --> Perf
+    UE --> Foundation
+    Foundation --> GAS
+    Foundation --> Core
+    Foundation --> Quest
+    Foundation --> Save
+    Foundation --> Debug
+    Foundation --> Steam
+    Foundation --> Perf
+    Foundation --> Atlassian
+    Foundation --> PlayFab
+    Foundation --> EOS
     Core -->|required| Gameplay
     Core -->|required| PlayFab
     Core -->|required| EOS
@@ -91,20 +115,38 @@ flowchart TB
     classDef gameplay fill:#123524,stroke:#5AC878,color:#fff;
     classDef online fill:#3D234A,stroke:#C084FC,color:#fff;
     classDef tooling fill:#4A3215,stroke:#F5B942,color:#fff;
-    class Core foundation;
-    class Gameplay,GAS,Quest gameplay;
+    class Foundation,Core foundation;
+    class Gameplay,GAS,Quest,Save gameplay;
     class PlayFab,EOS,Steam online;
-    class Perf,Vendor tooling;
+    class Perf,Vendor,Atlassian,Debug tooling;
 ```
 
 > [!NOTE]
-> `UnrealExtendedGAS`, `UnrealExtendedQuest`, `UnrealExtendedSteam`, and `UnrealExtendedPerfSentinel` do not require the core plugin in their descriptors. Gameplay, PlayFab, and EOS do.
+> `UnrealExtendedFoundation` depends on no other plugin, so every plugin can use it. Only Gameplay, PlayFab, and EOS also require the core framework. Steam, EOS and PlayFab each implement the foundation's platform provider, so game code talks to one API and never to a specific store. See [ARCHITECTURE.md](ARCHITECTURE.md) for the layering rules.
 
 ## 🚀 Feature Highlights
 
+### 🧩 Extended Foundation
+
+The small shared base every plugin builds on. It uses only engine modules that every install has.
+
+- **HTTP**: `FEFHttpOperation` (all common verbs, headers, query parameters, text or binary bodies, timeouts, retries with capped backoff that honors `Retry-After`, no automatic retry of POST/PATCH, cancellation, URLs logged without query strings or credentials), `UEFHttpSubsystem` with a base URL and default headers, and the **Http Request** async node.
+- **HTTP mock**: `FEFScopedHttpMock` answers requests from canned rules and records them, so any client built on `FEFHttpOperation` can be tested offline.
+- **JSON**: read, build, path lookup (`data.items[2].name`), deep copy, file I/O, and converting any native or Blueprint struct to and from JSON.
+- **Results**: `FEFResult`, one success/failure shape (source, code, message, HTTP status, retryable) that PlayFab, EOS, Steam and HTTP results convert to.
+- **Async nodes**: `UEFAsyncActionBase` for Blueprint async nodes: finishes exactly once, optional timeout, cancellation through the Async Task pin. `TEFPendingCalls` and `EFCallContext` make sure two identical calls in flight each get their own result.
+- **Settings**: `UEFDeveloperSettings` puts every plugin under **Project Settings → Extended Framework** and warns when a property marked `EFSecret` would ship in a `Default*.ini`.
+- **Credentials**: `FEFCredentialStore` keeps developer tokens and passwords per user, encrypted with DPAPI on Windows and in the Keychain on macOS.
+- **Status**: the `Extended.Status` console command reports every registered service: EOS login, PlayFab session, Steam client and game server, and HTTP requests in flight (`Extended.Status brief` for one line each). `Extended.Status.Overlay 1` draws the same on screen in development builds.
+- **Message bus**: `UEFMessageSubsystem` sends any USTRUCT on gameplay-tag channels, with exact or parent-channel listening and payload-type filters. Blueprint has **Broadcast Message** and **Listen For Message**. One "enemy killed" message can feed quests, achievements, the HUD and analytics without any of them referencing the others.
+- **Analytics**: `UEFAnalyticsSubsystem` batches events to every sink: log, JSON-lines file, an HTTP endpoint with offline persistence, PlayFab. It handles opt-in consent, session ids, sequence numbers and build attributes, and can forward message bus channels as events automatically.
+- **Platform layer**: `UEFPlatformSubsystem` serves achievements, stats, leaderboards, per-user cloud files and presence from whichever store can serve them now. Providers come from Steam, EOS and PlayFab, plus a built-in Local provider for the editor, store-less builds and tests. A catalog maps game ids to store ids, writes queue until a store is signed in, and every call has a matching async Blueprint node.
+- **Logging**: the `UnrealExtendedFrameworkLog` module (`EF_LOG` category log files and the Extended Log settings).
+- **Testing**: a test game instance with initialized subsystems, a wait-until latent command, and plugin fixture loading.
+
 ### 🧱 Core Framework
 
-The core plugin supplies the shared runtime and editor foundation used across the suite.
+The core plugin supplies runtime and editor systems shared by the gameplay-facing plugins.
 
 **Runtime systems**
 
@@ -113,9 +155,10 @@ The core plugin supplies the shared runtime and editor foundation used across th
 - Graphics, audio, display, input, accessibility, and upscaler-oriented setting types.
 - Optional compile-time integration for NVIDIA DLSS, AMD FSR variants, and Intel XeSS.
 - Async Blueprint actions for delays, loops, timelines, input, gameplay tags, and character movement.
-- HTTP and JSON helpers for backend-facing gameplay code.
 - Actor, AI, array, condition, conversion, data-table, file, input, math, monitor, perception, trace, variable, and widget libraries.
+- **Extended File Access**: in shipped builds (by default), Blueprint file nodes may read only under the project, Saved and user folders and write only under Saved, plus any folders you allow. The foundation's JSON file nodes follow the same rules.
 - Subtitle data, style profiles, project settings, playback, and presentation support.
+- Object pooling (`UEFObjectPoolSubsystem`): acquire and release actors instead of spawning and destroying them. It covers prewarming, per-class limits, automatic release after a lifetime, `IEFPoolable` callbacks and `Extended.Pool.Stats`.
 - Behavior Tree composites, decorators, services, and tasks.
 - EQS contexts, generators, and tests for tactical AI queries.
 - Custom animation nodes and editor graph-node support.
@@ -124,22 +167,49 @@ The core plugin supplies the shared runtime and editor foundation used across th
 
 - UI Lab fixtures, providers, focus/input tooling, scripted interaction, and automation support.
 - Localization workbench with glossary, context, validation, review, pseudo-localization, providers, and pipeline tooling.
+- Log viewer for browsing and filtering Unreal log files inside the editor.
 - Editor utilities and cheat-manager helpers.
 
 ### 🎮 Extended Gameplay
 
 Composable components and actors for common action-game needs:
 
+- **Interaction system** — server-validated interactions: `UEGInteractionSystemComponent` on the interactor, provider components/interfaces on targets, instanced `UEGInteraction` definitions (hold, provider event), latent interaction tasks (montage, hold, input release, range), tag-named input slots, and prompt widgets. A simpler `UEGInteractionComponent` + interactable actor/interface path is also included.
 - **AI state machine** — replicated stack-based state machine (`UEGStateMachineComponent`, `UEGState`) with per-actor instanced states, an explicit default state, declarative transition policy, opt-in client mirroring, and a world debug overlay.
-- Area damage actors and data-driven enemy spawning.
-- Sight, hearing, faction sense, stimuli sources, and procedural patrol generation.
-- Damage reactions and stat components.
-- Cover, ladder, mantle/ledge, line-of-sight, and targeting systems.
-- Footstep handling and input buffering.
+- Cover, line-of-sight, and targeting (static and dynamic lock-on) systems.
+- Footstep handling.
 - Basic and advanced outline components, symbols, and helper library.
-- Feet IK animation support.
-- Animation notifies for damage traces, camera shake, movement control, particles, perception noise, montage control, play rate, slow motion, and soft lock.
-- Input-image widgets for player-facing control prompts.
+- Time dilation stack (`UEGTimeDilationSubsystem`) for slow motion and hit pause from several sources at once.
+- **Soft collision** — pawns stop blocking each other and push themselves apart instead: predicted for players without a movement-component subclass (optional move-data transport for projects that have one), server-driven for AI, physics and pawn-movement pawns, up to about a thousand pawns per world, with modifiers, a montage notify, anim state tags and `Extended.Status` reporting. See [`UnrealExtendedGameplay/Docs/SoftCollision.md`](UnrealExtendedGameplay/Docs/SoftCollision.md).
+- **Animation systems** — tagged anim events, swept melee hit detection with pluggable damage policies and hit pause, stacked time dilation and movement modifiers, predicted root-motion moves, Motion Warping targets from lock-on, animation sets by gameplay tag, async montage nodes, a thread-safe anim instance base, component-based actor turn in place with a single anim node, and foot-lock IK. See [`UnrealExtendedGameplay/Docs/Animation.md`](UnrealExtendedGameplay/Docs/Animation.md).
+- Animation notifies for camera shake, particles, perception noise, footsteps, montage control, play rate, slow motion, movement control, and soft lock.
+- **Chess minigame** — replicated chess table actor with seats and sit interaction, full rules/move generation and notation, a rule-based AI with data-driven profiles, time controls, board feedback, piece visuals, sound/animation sets, UI base widget, and debug console commands.
+- **Skill-check minigame** — rotating-indicator skill checks (wrap or ping-pong sweep, hit zones) with a base widget.
+
+### 💾 Extended Save
+
+Save games for any genre, standalone on the foundation:
+
+- **What gets saved:**
+  - actors with a **Saveable** component: their SaveGame variables and their components', the transform, and whether a placed actor was destroyed;
+  - actors spawned at run time, which are spawned again on load;
+  - objects that implement `IESaveable`;
+  - a key/value store for flags.
+- **Slots for menus:** each slot carries its display name, time, play time, level, a thumbnail and extra fields, and can be listed without loading it.
+- **Crash-safe:** each save writes over the older of two copies, and loading falls back to the backup when the newest copy is damaged.
+- **Versioned:** `UESaveMigration` steps upgrade old saves, and saves from newer builds are refused.
+- **Streaming levels:** their state is kept while they are unloaded.
+- **Autosave:** on a timer or on request, blockable by reason (cutscene, combat, menu).
+- **Cloud sync** through the platform layer, with a conflict policy.
+
+### 🛠️ Extended Debug
+
+Debug tools for packaged development builds, compiled out of Shipping:
+
+- Cheats from C++ or Blueprint, run with `Extended.Cheat <Name> args` or from the menu. **Run On Server** cheats are sent to the server for the player who asked.
+- In-game debug menu (F10 or both thumbsticks) with cheats by category, live `Extended.Status`, message bus traffic, analytics events and watches.
+- On-screen watches (`EDBG_WATCH`, **Set Debug Watch**).
+- Built-in cheats for time dilation, status, achievements and analytics consent. Every cheat used is recorded as an analytics event.
 
 ### ⚡ Extended GAS
 
@@ -204,10 +274,25 @@ A desktop-focused Steam integration split into small runtime and editor modules:
 - Steam Networking Sockets subsystem, socket implementation, and net driver.
 - Async Blueprint actions for major Steam interfaces.
 - HTTP/JSON Steam Web API clients covering apps, economy, inventory, leaderboards, lobbies, microtransactions, news, published files, remote storage, users, and user stats.
-- Editor publishing workflow for Steam content builds.
+- Editor publishing workflow for Steam content builds; the Steam login password is kept in the OS credential store, never in project config.
 
 > [!WARNING]
 > Steam modules are restricted to **Win64, Linux, and macOS** by the plugin descriptor. Access to and redistribution of the Steamworks SDK are governed by Valve's terms.
+
+### 📋 Extended Atlassian
+
+A native Slate **Backlot** workspace for Jira and Confluence Cloud inside the editor — no embedded browser:
+
+- **Docs** — Confluence page tree and search, structured editing, page operations, comments, and linked Jira work.
+- **Issues / Issue Detail** — Jira filters and views, inline transitions, create/edit/delete with Undo, activity, and comments.
+- **Board** — active-sprint columns, card CRUD, estimates, WIP limits, transitions, and ranking.
+- **Pins** — shared Unreal asset, level, Blueprint, and page pins with collaborative threads, stored as versioned Confluence content properties.
+- **Inbox** — synthesized per-user notifications with read, dismiss, and archive.
+- **Capture** — `Ctrl+Shift+B` / `Cmd+Shift+B` screenshots of the PIE or editor viewport with PIN/BOX/BLUR annotations, engine/level/camera/source-control context, and log tails, filed directly as Jira issues.
+- Per-user credentials stored outside project config (DPAPI-protected on Windows), permission-aware actions, draft preservation on failure, and rate-limit handling.
+
+> [!NOTE]
+> Atlassian Cloud only (`https://<site>.atlassian.net`); Jira/Confluence Server and Data Center are not supported. See the [Atlassian plugin README](UnrealExtendedAtlassian/README.md) for setup, configuration, and troubleshooting.
 
 ### 📈 Perf Sentinel
 
@@ -256,14 +341,18 @@ YourProject/
 ├── YourProject.uproject
 └── Plugins/
     └── ExtendedFramework/
+        ├── UnrealExtendedFoundation/
         ├── UnrealExtendedFramework/
         ├── UnrealExtendedGameplay/
         ├── UnrealExtendedGAS/
         ├── UnrealExtendedQuest/
+        ├── UnrealExtendedSave/
+        ├── UnrealExtendedDebug/
         ├── UnrealExtendedPlayFab/
         ├── UnrealExtendedEOS/
         ├── UnrealExtendedSteam/
-        └── UnrealExtendedPerfSentinel/
+        ├── UnrealExtendedPerfSentinel/
+        └── UnrealExtendedAtlassian/
 ```
 
 ### Option B — download a source archive
@@ -285,6 +374,7 @@ You can also enable plugins directly in your `.uproject`:
 ```json
 {
   "Plugins": [
+    { "Name": "UnrealExtendedFoundation", "Enabled": true },
     { "Name": "UnrealExtendedFramework", "Enabled": true },
     { "Name": "UnrealExtendedGameplay", "Enabled": true },
     { "Name": "UnrealExtendedGAS", "Enabled": true },
@@ -294,7 +384,7 @@ You can also enable plugins directly in your `.uproject`:
 ```
 
 > [!TIP]
-> Start with `UnrealExtendedFramework`, then add one specialized plugin at a time. This keeps configuration and service credentials easy to reason about.
+> Enabling any Extended plugin enables `UnrealExtendedFoundation` automatically. Start with the plugin you need, then add one more at a time. This keeps configuration and service credentials easy to reason about.
 
 ## 🔗 Dependencies
 
@@ -302,14 +392,18 @@ All required non-vendor dependencies below ship with the local UE 5.8 installati
 
 | Plugin | Extended dependency | Unreal Engine plugin dependencies |
 |:--|:--|:--|
-| UnrealExtendedFramework | — | GameplayAbilities, Niagara, OnlineSubsystem, OnlineSubsystemUtils, OnlineSubsystemNull, VoiceChat, EnhancedInput |
-| UnrealExtendedGameplay | UnrealExtendedFramework | Niagara, OnlineSubsystem, OnlineSubsystemUtils, OnlineSubsystemNull |
-| UnrealExtendedGAS | — | GameplayAbilities, EnhancedInput |
-| UnrealExtendedQuest | — | GameplayTagsEditor *(editor only)* |
-| UnrealExtendedPlayFab | UnrealExtendedFramework | — |
-| UnrealExtendedEOS | UnrealExtendedFramework | OnlineSubsystem, OnlineSubsystemUtils, OnlineSubsystemEOS, EOSShared, EOSVoiceChat |
-| UnrealExtendedSteam | — | OnlineSubsystem, OnlineSubsystemUtils |
-| UnrealExtendedPerfSentinel | — | — |
+| UnrealExtendedFoundation | — | — *(engine modules only)* |
+| UnrealExtendedFramework | Foundation | EnhancedInput, VoiceChat, DLSS *(optional)* |
+| UnrealExtendedGameplay | Foundation, Framework | Niagara, MotionWarping, ProceduralMeshComponent |
+| UnrealExtendedGAS | Foundation | GameplayAbilities, EnhancedInput |
+| UnrealExtendedQuest | Foundation | GameplayTagsEditor *(editor only)* |
+| UnrealExtendedSave | Foundation | — |
+| UnrealExtendedDebug | Foundation | — *(engine modules only: Slate, InputCore)* |
+| UnrealExtendedPlayFab | Foundation, Framework | — |
+| UnrealExtendedEOS | Foundation, Framework | OnlineSubsystem, OnlineSubsystemUtils, OnlineSubsystemEOS, EOSShared, EOSVoiceChat, AudioCapture |
+| UnrealExtendedSteam | Foundation | OnlineSubsystem, OnlineSubsystemUtils |
+| UnrealExtendedPerfSentinel | Foundation | ToolsetRegistry *(editor only)* |
+| UnrealExtendedAtlassian | Foundation | — *(engine modules only: HTTP, Json, Slate, UnrealEd)* |
 
 `DLSS` is an optional descriptor dependency. The core build rules also detect `FSR`, `FSR3`, `FSR4`, and `XeSS` when one of those vendor plugins is installed and enabled. The framework builds without them.
 
@@ -347,6 +441,43 @@ void AMyPlayerController::LoadPlayerSettings()
 }
 ```
 
+### Call a web API
+
+From Blueprint, use **Http Request** (an async node with On Success / On Failure), or build the request with **Make Json Http Request** and read the result with **Get Response Json**. From C++, add `ExtendedFoundation` to your module's dependencies and:
+
+```cpp
+#include "Http/EFHttpLibrary.h"
+#include "Http/EFHttpSubsystem.h"
+#include "Json/EFJsonLibrary.h"
+
+void UMyLeaderboardClient::FetchTop(UObject* WorldContext)
+{
+    UEFHttpSubsystem* Http = UEFHttpSubsystem::Get(WorldContext);
+    if (!Http)
+    {
+        return;
+    }
+    Http->SetBaseUrl(TEXT("https://api.example.com/v1"));
+
+    FEFHttpRequest Request;
+    Request.Url = TEXT("leaderboards/top");
+    Request.QueryParameters.Add(TEXT("limit"), TEXT("10"));
+    Request.MaxRetries = 2;
+
+    Http->Send(Request, [](const FEFHttpResponse& Response)
+    {
+        FEFJsonObject Body;
+        if (Response.IsSuccess() && UEFHttpLibrary::GetResponseJson(Response, Body))
+        {
+            FEFJsonValue FirstName;
+            UEFJsonLibrary::TryGetFieldByPath(Body, TEXT("entries[0].name"), FirstName);
+        }
+    });
+}
+```
+
+`FEFHttpOperation::Start` sends a request without a game instance, for editor tools and other modules. POST and PATCH are not retried unless the request allows it, because a retried non-idempotent request can be applied twice.
+
 ### Configure modular settings
 
 1. Create one or more **Modular Settings Container** data assets.
@@ -366,7 +497,7 @@ void AMyPlayerController::LoadPlayerSettings()
 
 ### Configure an online provider
 
-Provider settings are exposed through `UDeveloperSettings`:
+Every plugin's settings derive from `UEFDeveloperSettings` and sit under **Project Settings → Extended Framework**:
 
 | Provider | Project Settings section | Primary settings class |
 |:--|:--|:--|
@@ -379,6 +510,13 @@ Provider settings are exposed through `UDeveloperSettings`:
 | Quest editor | Extended Framework → Extended Quest | `UEGQuestPluginSettings` |
 | Subtitles | Extended Framework → Extended Subtitle Settings | `UEFSubtitleProjectSettings` |
 | Atlassian | Extended Framework → Extended Atlassian | `UExtendedAtlassianSettings` |
+| Extended Log | Extended Framework → Extended Log | `UEFLogSettings` |
+| File access | Extended Framework → Extended File Access | `UEFFileAccessSettings` |
+| Platform layer (provider order, catalog, Local provider) | Extended Framework → Extended Platform | `UEFPlatformSettings` |
+| Analytics (consent, sinks, forwarded channels) | Extended Framework → Extended Analytics | `UEFAnalyticsSettings` |
+| Save games | Extended Framework → Extended Save | `UESaveSettings` |
+| Debug tools | Extended Framework → Extended Debug | `UEDbgSettings` |
+| Object pool | Extended Framework → Extended Object Pool | `UEFObjectPoolSettings` |
 
 Configure only one provider at a time, verify its authentication flow in a development environment, and add the rest after the base path is stable.
 
@@ -388,12 +526,16 @@ Use the module that owns the API you include:
 
 | Capability | Module name |
 |:--|:--|
+| Foundation: HTTP, JSON, results, async, settings, credentials, status, messages, analytics, platform layer, test helpers | `ExtendedFoundation` |
+| Foundation: `EF_LOG` logging | `UnrealExtendedFrameworkLog` |
 | Core runtime | `UnrealExtendedFramework` |
 | Core editor tools | `UnrealExtendedFrameworkEditor` |
 | Gameplay systems | `UnrealExtendedGameplay` |
 | GAS extensions | `UnrealExtendedGAS` |
 | Quest runtime | `UnrealExtendedQuest` |
 | Quest editor | `UnrealExtendedQuestEditor` |
+| Save games | `ExtendedSave` |
+| Debug tools | `ExtendedDebug` |
 | PlayFab | `UnrealExtendedPlayFab` |
 | EOS shared types/settings | `ExtendedEOSShared` |
 | EOS runtime services | `UnrealExtendedEOS` |
@@ -406,53 +548,67 @@ Use the module that owns the API you include:
 | Steam Blueprint async actions | `ExtendedSteamBlueprints` |
 | Perf Sentinel runtime | `UnrealExtendedPerfSentinel` |
 | Perf Sentinel editor | `UnrealExtendedPerfSentinelEditor` |
+| Atlassian API, models, credentials | `UnrealExtendedAtlassian` |
+| Atlassian Backlot editor UI | `UnrealExtendedAtlassianEditor` |
 
 Editor modules must never be added to a shipping runtime target.
 
 ## 🧪 Testing and Validation
 
-The suite includes Unreal Automation tests across the core, EOS, PlayFab, Quest, Steam, and Perf Sentinel plugins. Steam contains the broadest offline contract suite, covering subsystem registration and major client, OSS, sockets, storage, UGC, and Web API surfaces.
+The suite includes Unreal Automation tests across the foundation, core, Gameplay, EOS, PlayFab, Quest, Steam, Perf Sentinel, and Atlassian plugins. They run offline: HTTP-based clients are tested against `FEFScopedHttpMock`. Steam contains the broadest offline contract suite, covering subsystem registration and major client, OSS, sockets, storage, UGC, and Web API surfaces.
 
 ### From the editor
 
 1. Open **Tools → Test Automation**.
 2. Disable smoke-only filtering if you want the full set.
-3. Filter for `UnrealExtended`, `ExtendedSteam`, `ExtendedEOS`, `PlayFab`, `Quest`, or `PerfSentinel`.
+3. Filter for `ExtendedFoundation`, `ExtendedFramework`, `UnrealExtended` (core, Gameplay, Save, Debug, PlayFab, EOS, Steam), `ExtendedAtlassian`, `QuestPlugin`, or `PerfSentinel`.
 4. Run the relevant group before integrating a plugin update.
 
 ### From the command line
 
 ```powershell
 UnrealEditor-Cmd.exe YourProject.uproject `
-  -ExecCmds="Automation RunTests UnrealExtended;Quit" `
+  -ExecCmds="Automation RunTests ExtendedFoundation+ExtendedFramework+UnrealExtended+ExtendedAtlassian+QuestPlugin+PerfSentinel;Quit" `
   -unattended -nop4 -NullRHI -TestExit="Automation Test Queue Empty"
 ```
 
-Quest content can additionally be checked with the included validation and statistics commandlets. Perf Sentinel can be driven by console commands or its analyze commandlet for repeatable performance gates.
+Without Unreal, `python3 Scripts/lint_repository.py` checks plugin descriptors, cross-plugin and cross-module dependencies, copyright headers and redirect syntax; CI runs it on every push.
+
+Quest content can additionally be checked with the included validation and statistics commandlets. Perf Sentinel can be driven by console commands or its analyze commandlet for repeatable performance gates. Atlassian ships network-free parity and visual golden-capture suites (`ExtendedAtlassian.Parity`, `ExtendedAtlassian.Visual.GoldenCapture`).
 
 ## 🔐 Credentials and Security
 
 Online integrations can expose privileged operations if configured carelessly.
 
-- Never ship PlayFab secret keys, Steam publisher Web API keys, service-account credentials, or private signing material in a client build.
+- Never ship PlayFab secret keys, Atlassian API tokens, Steam publisher Web API keys, service-account credentials, or private signing material in a client build.
 - Treat client-visible identifiers and authentication tokens according to the provider's current security guidance.
 - Prefer server-authoritative calls for inventory grants, currency mutation, moderation, progression, and other trusted operations.
 - Keep development, staging, and production service configurations separate.
-- Store publishing credentials in your operating-system credential store or CI secret manager. Encryption with a key embedded in a client or editor module is obfuscation, not a security boundary.
+- Store publishing credentials in your operating-system credential store or CI secret manager. `FEFCredentialStore` does this for editor tools (DPAPI on Windows, Keychain on macOS). Encryption with a key embedded in a client or editor module is obfuscation, not a security boundary.
+- File-system Blueprint nodes are limited to safe folders in shipped builds (**Extended File Access**, default `ShippingOnly`). A shipped game that writes outside `Saved` must add the folder there or set the mode to `Off`.
+- Mark settings properties that could hold a secret with `meta = (EFSecret)`; the editor warns when one would be saved to a `Default*.ini`, which ships with the game.
 - Review packaged configuration and staged files before every release.
 
 ## 🗂️ Repository Layout
 
 ```text
 ExtendedFramework/
-├── UnrealExtendedFramework/       # Core runtime + editor foundation
+├── UnrealExtendedFoundation/      # Shared base: log, HTTP, JSON, results, async, settings, credentials, messages, analytics, platform
+├── UnrealExtendedFramework/       # Core runtime + editor systems
 ├── UnrealExtendedGameplay/        # Reusable gameplay systems
 ├── UnrealExtendedGAS/             # Gameplay Ability System extensions
 ├── UnrealExtendedQuest/           # Quest runtime + custom editor
+├── UnrealExtendedSave/            # Save games: slots, backups, migrations, saveables, cloud sync
+├── UnrealExtendedDebug/           # Cheats, debug menu, watches for development builds
 ├── UnrealExtendedPlayFab/         # PlayFab services + async Blueprint nodes
 ├── UnrealExtendedEOS/             # EOS services + Blueprint layer
 ├── UnrealExtendedSteam/           # Steamworks, OSS, sockets, Web API, editor
 ├── UnrealExtendedPerfSentinel/    # Capture, analysis, reports, regression gates
+├── UnrealExtendedAtlassian/       # Jira/Confluence Backlot workspace + capture (editor)
+├── Templates/ExtendedPlugin/      # Template for new plugins (see Scripts/new_extended_plugin.py)
+├── Scripts/                       # Plugin generator and repository lint
+├── .github/workflows/             # CI: repository lint and template check
+├── ARCHITECTURE.md                # Layering, conventions, async and settings rules
 ├── LICENSE
 └── README.md
 ```
@@ -467,11 +623,14 @@ The public API prefixes help identify ownership at a glance:
 |:--|:--|
 | `EF` / `UEF` | Core Extended Framework |
 | `EG` / `UEG` | Extended Gameplay and Quest runtime |
+| `ESave` / `UESave` | Extended Save |
+| `EDbg` / `UEDbg` | Extended Debug |
 | `EGAS` / `UEGAS` | Gameplay Ability System extensions |
 | `EPF` / `UEPF` | PlayFab integration |
 | `EEOS` / `UEEOS` | Epic Online Services integration |
 | `ESteam` / `UESteam` | Steam integration |
 | `PerfSentinel` | Performance tooling |
+| `ExtendedAtlassian` / `SExtendedAtlassian` | Atlassian integration |
 
 ## 🩺 Troubleshooting
 
@@ -524,11 +683,13 @@ When reporting a problem, include:
 
 For code changes:
 
-1. Keep changes within the smallest reasonable module boundary.
-2. Preserve Blueprint compatibility and serialized names unless a migration path is included.
-3. Add or update automation coverage when behavior changes.
-4. Do not commit generated build products, credentials, provider SDKs without redistribution rights, or unrelated formatting churn.
-5. Document new settings, console commands, modules, and external dependencies.
+1. Follow [ARCHITECTURE.md](ARCHITECTURE.md). Start new plugins with `python3 Scripts/new_extended_plugin.py <Name> --prefix <Prefix>`.
+2. Run `python3 Scripts/lint_repository.py` before pushing.
+3. Keep changes within the smallest reasonable module boundary.
+4. Preserve Blueprint compatibility and serialized names unless a migration path is included (CoreRedirects).
+5. Add or update automation coverage when behavior changes.
+6. Do not commit generated build products, credentials, provider SDKs without redistribution rights, or unrelated formatting churn.
+7. Document new settings, console commands, modules, and external dependencies.
 
 ## 📄 License
 
@@ -537,7 +698,7 @@ Licensing is intentionally called out because the repository contains multiple c
 - The repository-level code is provided under the [MIT License](LICENSE), except where a more specific license applies.
 - `UnrealExtendedSteam` is governed by its [separate proprietary license](UnrealExtendedSteam/LICENSE).
 - Third-party SDKs, sample code, fonts, icons, and libraries retain their respective owners' licenses and notices.
-- Epic Online Services, PlayFab, Steamworks, and optional upscaler technologies are subject to their providers' terms.
+- Epic Online Services, PlayFab, Steamworks, Atlassian Cloud, and optional upscaler technologies are subject to their providers' terms.
 
 Review every applicable license before redistributing source, binaries, SDK content, or packaged products.
 

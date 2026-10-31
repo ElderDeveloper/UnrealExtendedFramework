@@ -18,7 +18,9 @@ public class ExtendedEOSBlueprints : ModuleRules
 				"OnlineSubsystem",
 				"OnlineSubsystemUtils",
 				"ExtendedEOSShared",
-				"UnrealExtendedEOS"
+				"UnrealExtendedEOS",
+				// Public: the async nodes derive from UEFAsyncActionBase.
+				"ExtendedFoundation"
 			}
 			);
 	}

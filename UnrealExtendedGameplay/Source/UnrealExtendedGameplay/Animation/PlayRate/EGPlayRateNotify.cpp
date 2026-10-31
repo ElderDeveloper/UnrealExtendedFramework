@@ -1,52 +1,32 @@
-﻿// Fill out your copyright notice in the Description page of Project Settings.
-
+﻿// Copyright Kemal Erdem YILMAZ. All Rights Reserved.
 
 #include "EGPlayRateNotify.h"
 
+#include "Animation/AnimInstance.h"
+#include "Animation/AnimMontage.h"
+#include "Components/SkeletalMeshComponent.h"
 
-#if ENGINE_MAJOR_VERSION != 5
-void UEGPlayRateNotify::NotifyBegin(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation,
-	float TotalDuration)
+void UEGPlayRateNotify::SetPlayRate(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, float PlayRate)
 {
-	Super::NotifyBegin(MeshComp, Animation, TotalDuration);
+	UAnimInstance* const AnimInstance = MeshComp ? MeshComp->GetAnimInstance() : nullptr;
+	if (!AnimInstance)
+	{
+		return;
+	}
 
-	MeshComp->GetAnimInstance()->Montage_SetPlayRate(nullptr,BeginPlayRate);
+	// Null (every active montage) only when the notify is not on a montage. Targeting the owning
+	// montage keeps the end of the window from re-timing a montage that has since replaced it.
+	AnimInstance->Montage_SetPlayRate(Cast<UAnimMontage>(Animation), PlayRate);
 }
-	
 
-void UEGPlayRateNotify::NotifyEnd(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation)
-{
-	Super::NotifyEnd(MeshComp, Animation);
-	
-	MeshComp->GetAnimInstance()->Montage_SetPlayRate(nullptr,EndPlayRate);
-}
-#endif
-
-
-
-
-#if ENGINE_MAJOR_VERSION == 5
-void UEGPlayRateNotify::NotifyBegin(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, float TotalDuration,const FAnimNotifyEventReference& EventReference)
+void UEGPlayRateNotify::NotifyBegin(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, float TotalDuration, const FAnimNotifyEventReference& EventReference)
 {
 	Super::NotifyBegin(MeshComp, Animation, TotalDuration, EventReference);
-
-	if (MeshComp)
-	{
-		if (MeshComp->GetAnimInstance())
-			MeshComp->GetAnimInstance()->Montage_SetPlayRate(nullptr,BeginPlayRate);
-	}
-
+	SetPlayRate(MeshComp, Animation, BeginPlayRate);
 }
 
-void UEGPlayRateNotify::NotifyEnd(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation,const FAnimNotifyEventReference& EventReference)
+void UEGPlayRateNotify::NotifyEnd(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, const FAnimNotifyEventReference& EventReference)
 {
 	Super::NotifyEnd(MeshComp, Animation, EventReference);
-
-	if (MeshComp)
-	{
-		if (MeshComp->GetAnimInstance())
-			MeshComp->GetAnimInstance()->Montage_SetPlayRate(nullptr,EndPlayRate);
-	}
-	
+	SetPlayRate(MeshComp, Animation, EndPlayRate);
 }
-#endif

@@ -6,7 +6,7 @@
 	"Description": "Extended PlayFab integration",
 	"Category": "Extended",
 	"CreatedBy": "Kemal Erdem YILMAZ",
-	"CreatedByURL": "moonpunchgames.com",
+	"CreatedByURL": "https://moonpunchgames.com",
 	"DocsURL": "",
 	"MarketplaceURL": "",
 	"SupportURL": "",
@@ -22,6 +22,10 @@
 		}
 	],
 	"Plugins": [
+		{
+			"Name": "UnrealExtendedFoundation",
+			"Enabled": true
+		},
 		{
 			"Name": "UnrealExtendedFramework",
 			"Enabled": true

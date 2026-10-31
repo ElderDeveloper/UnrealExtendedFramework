@@ -1,0 +1,31 @@
+// {{Copyright}}
+
+#pragma once
+
+#include "CoreMinimal.h"
+#include "Settings/EFDeveloperSettings.h"
+#include "{{Prefix}}Settings.generated.h"
+
+/**
+ * Project Settings > Extended Framework > {{FriendlyName}}.
+ *
+ * Saved to DefaultGame.ini, which ships with the game: never store secrets here. Mark any property
+ * that could hold one with meta = (EFSecret) so the editor warns, and keep the real value in
+ * FEFCredentialStore (per developer) or on a server.
+ */
+UCLASS(config = Game, defaultconfig, meta = (DisplayName = "{{FriendlyName}}"))
+class {{API}} U{{Prefix}}Settings : public UEFDeveloperSettings
+{
+	GENERATED_BODY()
+
+public:
+	static const U{{Prefix}}Settings* Get() { return GetDefault<U{{Prefix}}Settings>(); }
+
+	/** Turns the plugin's services off without removing the plugin. */
+	UPROPERTY(config, EditAnywhere, Category = "General")
+	bool bEnabled = true;
+
+	/** Seconds the example Echo call waits before answering. */
+	UPROPERTY(config, EditAnywhere, Category = "General", meta = (ClampMin = "0", Units = "Seconds"))
+	float EchoDelaySeconds = 0.1f;
+};

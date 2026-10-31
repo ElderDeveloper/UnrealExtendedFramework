@@ -4,6 +4,7 @@
 #include "Shared/ESteamLog.h"
 #include "Shared/ESteamSDK.h"
 #include "Containers/Queue.h"
+#include "Async/EFCallContext.h"
 
 #if WITH_EXTENDEDSTEAM_SDK
 THIRD_PARTY_INCLUDES_START
@@ -66,10 +67,15 @@ namespace
 	}
 }
 
+// Each pending struct carries CallContext: the EFCallContext active when the request was made
+// (stamped by Enqueue*). It is made active again while the request's result is broadcast, so async
+// nodes waiting on the shared delegates can tell concurrent calls apart.
+
 /** Parameters captured to (re-)issue a queued ISteamUserStats::RequestUserStats call. */
 struct FESteamPendingUserStatsRequest
 {
 	FESteamId User;
+	int64 CallContext = 0;
 };
 
 /** Parameters captured to (re-)issue a queued Find / FindOrCreateLeaderboard call. */
@@ -79,6 +85,7 @@ struct FESteamPendingLeaderboardFind
 	ELeaderboardSortMethod SortMethod = k_ELeaderboardSortMethodNone;
 	ELeaderboardDisplayType DisplayType = k_ELeaderboardDisplayTypeNone;
 	bool bCreate = false;
+	int64 CallContext = 0;
 };
 
 /** Parameters captured to (re-)issue a queued UploadLeaderboardScore call. */
@@ -89,6 +96,7 @@ struct FESteamPendingLeaderboardUpload
 	ELeaderboardUploadScoreMethod Method = k_ELeaderboardUploadScoreMethodKeepBest;
 	/** Optional game-defined score details (empty = none). Capped to k_cLeaderboardDetailsMax. */
 	TArray<int32> Details;
+	int64 CallContext = 0;
 };
 
 /**
@@ -104,22 +112,26 @@ struct FESteamPendingLeaderboardDownload
 	int32 RangeEnd = 0;
 	bool bForUsers = false;
 	TArray<CSteamID> Users;
+	int64 CallContext = 0;
 };
 
 /** Parameters captured to (re-)issue a queued GetNumberOfCurrentPlayers call (no arguments). */
 struct FESteamPendingNumberOfCurrentPlayers
 {
+	int64 CallContext = 0;
 };
 
 /** Parameters captured to (re-)issue a queued RequestGlobalStats call. */
 struct FESteamPendingGlobalStats
 {
 	int32 HistoryDays = 0;
+	int64 CallContext = 0;
 };
 
 /** Parameters captured to (re-)issue a queued RequestGlobalAchievementPercentages call (no arguments). */
 struct FESteamPendingGlobalAchievementPercentages
 {
+	int64 CallContext = 0;
 };
 
 /** Parameters captured to (re-)issue a queued AttachLeaderboardUGC call. */
@@ -127,6 +139,7 @@ struct FESteamPendingLeaderboardAttachUGC
 {
 	SteamLeaderboard_t Handle = 0;
 	UGCHandle_t UGC = 0;
+	int64 CallContext = 0;
 };
 
 /**
@@ -155,8 +168,9 @@ public:
 	// the immediate path when the Steam call could not be issued (preserves the public methods'
 	// historical "return false when the request could not be issued" contract).
 
-	bool EnqueueUserStatsRequest(const FESteamPendingUserStatsRequest& Request)
+	bool EnqueueUserStatsRequest(FESteamPendingUserStatsRequest Request)
 	{
+		Request.CallContext = EFCallContext::GetActive();
 		if (bUserStatsRequestBusy)
 		{
 			UserStatsRequestQueue.Enqueue(Request);
@@ -165,8 +179,9 @@ public:
 		return IssueUserStatsRequest(Request);
 	}
 
-	bool EnqueueLeaderboardFind(const FESteamPendingLeaderboardFind& Request)
+	bool EnqueueLeaderboardFind(FESteamPendingLeaderboardFind Request)
 	{
+		Request.CallContext = EFCallContext::GetActive();
 		if (bLeaderboardFindBusy)
 		{
 			LeaderboardFindQueue.Enqueue(Request);
@@ -175,8 +190,9 @@ public:
 		return IssueLeaderboardFind(Request);
 	}
 
-	bool EnqueueLeaderboardUpload(const FESteamPendingLeaderboardUpload& Request)
+	bool EnqueueLeaderboardUpload(FESteamPendingLeaderboardUpload Request)
 	{
+		Request.CallContext = EFCallContext::GetActive();
 		if (bLeaderboardUploadBusy)
 		{
 			LeaderboardUploadQueue.Enqueue(Request);
@@ -185,8 +201,9 @@ public:
 		return IssueLeaderboardUpload(Request);
 	}
 
-	bool EnqueueLeaderboardDownload(const FESteamPendingLeaderboardDownload& Request)
+	bool EnqueueLeaderboardDownload(FESteamPendingLeaderboardDownload Request)
 	{
+		Request.CallContext = EFCallContext::GetActive();
 		if (bLeaderboardDownloadBusy)
 		{
 			LeaderboardDownloadQueue.Enqueue(Request);
@@ -195,8 +212,9 @@ public:
 		return IssueLeaderboardDownload(Request);
 	}
 
-	bool EnqueueLeaderboardAttachUGC(const FESteamPendingLeaderboardAttachUGC& Request)
+	bool EnqueueLeaderboardAttachUGC(FESteamPendingLeaderboardAttachUGC Request)
 	{
+		Request.CallContext = EFCallContext::GetActive();
 		if (bLeaderboardAttachUGCBusy)
 		{
 			LeaderboardAttachUGCQueue.Enqueue(Request);
@@ -205,8 +223,9 @@ public:
 		return IssueLeaderboardAttachUGC(Request);
 	}
 
-	bool EnqueueNumberOfCurrentPlayers(const FESteamPendingNumberOfCurrentPlayers& Request)
+	bool EnqueueNumberOfCurrentPlayers(FESteamPendingNumberOfCurrentPlayers Request)
 	{
+		Request.CallContext = EFCallContext::GetActive();
 		if (bNumberOfCurrentPlayersBusy)
 		{
 			NumberOfCurrentPlayersQueue.Enqueue(Request);
@@ -215,8 +234,9 @@ public:
 		return IssueNumberOfCurrentPlayers(Request);
 	}
 
-	bool EnqueueGlobalStats(const FESteamPendingGlobalStats& Request)
+	bool EnqueueGlobalStats(FESteamPendingGlobalStats Request)
 	{
+		Request.CallContext = EFCallContext::GetActive();
 		if (bGlobalStatsBusy)
 		{
 			GlobalStatsQueue.Enqueue(Request);
@@ -225,8 +245,9 @@ public:
 		return IssueGlobalStats(Request);
 	}
 
-	bool EnqueueGlobalAchievementPercentages(const FESteamPendingGlobalAchievementPercentages& Request)
+	bool EnqueueGlobalAchievementPercentages(FESteamPendingGlobalAchievementPercentages Request)
 	{
+		Request.CallContext = EFCallContext::GetActive();
 		if (bGlobalAchievementPercentagesBusy)
 		{
 			GlobalAchievementPercentagesQueue.Enqueue(Request);
@@ -299,12 +320,14 @@ private:
 			return false;
 		}
 		UserStatsRequestResult.Set(Call, this, &FESteamUserStatsCallbacks::HandleUserStatsRequestResult);
+		UserStatsRequestContext = Request.CallContext;
 		bUserStatsRequestBusy = true;
 		return true;
 	}
 
 	void HandleUserStatsRequestResult(UserStatsReceived_t* Data, bool bIOFailure)
 	{
+		EFCallContext::FScope Scope(UserStatsRequestContext);
 		if (UESteamUserStatsSubsystem* Subsystem = Owner.Get())
 		{
 			Subsystem->OnUserStatsReceived.Broadcast(
@@ -326,6 +349,7 @@ private:
 			}
 			if (!IssueUserStatsRequest(Request))
 			{
+				EFCallContext::FScope RequestScope(Request.CallContext);
 				// Steam went away while draining: fail this queued request instead of dropping it.
 				if (UESteamUserStatsSubsystem* Subsystem = Owner.Get())
 				{
@@ -354,12 +378,14 @@ private:
 		}
 		PendingLeaderboardName = Request.Name;
 		LeaderboardFindResult.Set(Call, this, &FESteamUserStatsCallbacks::HandleLeaderboardFindResult);
+		LeaderboardFindContext = Request.CallContext;
 		bLeaderboardFindBusy = true;
 		return true;
 	}
 
 	void HandleLeaderboardFindResult(LeaderboardFindResult_t* Data, bool bIOFailure)
 	{
+		EFCallContext::FScope Scope(LeaderboardFindContext);
 		const FString LeaderboardName = MoveTemp(PendingLeaderboardName);
 		PendingLeaderboardName.Reset();
 
@@ -384,6 +410,7 @@ private:
 			}
 			if (!IssueLeaderboardFind(Request))
 			{
+				EFCallContext::FScope RequestScope(Request.CallContext);
 				if (UESteamUserStatsSubsystem* Subsystem = Owner.Get())
 				{
 					Subsystem->OnLeaderboardFound.Broadcast(false, 0, Request.Name);
@@ -410,12 +437,14 @@ private:
 			return false;
 		}
 		LeaderboardUploadResult.Set(Call, this, &FESteamUserStatsCallbacks::HandleLeaderboardUploadResult);
+		LeaderboardUploadContext = Request.CallContext;
 		bLeaderboardUploadBusy = true;
 		return true;
 	}
 
 	void HandleLeaderboardUploadResult(LeaderboardScoreUploaded_t* Data, bool bIOFailure)
 	{
+		EFCallContext::FScope Scope(LeaderboardUploadContext);
 		if (UESteamUserStatsSubsystem* Subsystem = Owner.Get())
 		{
 			const bool bSuccess = !bIOFailure && Data->m_bSuccess != 0;
@@ -437,6 +466,7 @@ private:
 			}
 			if (!IssueLeaderboardUpload(Request))
 			{
+				EFCallContext::FScope RequestScope(Request.CallContext);
 				if (UESteamUserStatsSubsystem* Subsystem = Owner.Get())
 				{
 					Subsystem->OnLeaderboardScoreUploaded.Broadcast(false, Request.Score, false, 0);
@@ -474,12 +504,14 @@ private:
 			return false;
 		}
 		LeaderboardDownloadResult.Set(Call, this, &FESteamUserStatsCallbacks::HandleLeaderboardDownloadResult);
+		LeaderboardDownloadContext = Request.CallContext;
 		bLeaderboardDownloadBusy = true;
 		return true;
 	}
 
 	void HandleLeaderboardDownloadResult(LeaderboardScoresDownloaded_t* Data, bool bIOFailure)
 	{
+		EFCallContext::FScope Scope(LeaderboardDownloadContext);
 		if (UESteamUserStatsSubsystem* Subsystem = Owner.Get())
 		{
 			TArray<FESteamLeaderboardEntry> Entries;
@@ -520,6 +552,7 @@ private:
 			}
 			if (!IssueLeaderboardDownload(Request))
 			{
+				EFCallContext::FScope RequestScope(Request.CallContext);
 				if (UESteamUserStatsSubsystem* Subsystem = Owner.Get())
 				{
 					const TArray<FESteamLeaderboardEntry> EmptyEntries;
@@ -545,12 +578,14 @@ private:
 			return false;
 		}
 		LeaderboardAttachUGCResult.Set(Call, this, &FESteamUserStatsCallbacks::HandleLeaderboardAttachUGCResult);
+		LeaderboardAttachUGCContext = Request.CallContext;
 		bLeaderboardAttachUGCBusy = true;
 		return true;
 	}
 
 	void HandleLeaderboardAttachUGCResult(LeaderboardUGCSet_t* Data, bool bIOFailure)
 	{
+		EFCallContext::FScope Scope(LeaderboardAttachUGCContext);
 		if (UESteamUserStatsSubsystem* Subsystem = Owner.Get())
 		{
 			Subsystem->OnLeaderboardUGCSet.Broadcast(!bIOFailure && Data->m_eResult == k_EResultOK);
@@ -570,6 +605,7 @@ private:
 			}
 			if (!IssueLeaderboardAttachUGC(Request))
 			{
+				EFCallContext::FScope RequestScope(Request.CallContext);
 				if (UESteamUserStatsSubsystem* Subsystem = Owner.Get())
 				{
 					Subsystem->OnLeaderboardUGCSet.Broadcast(false);
@@ -594,12 +630,14 @@ private:
 			return false;
 		}
 		NumberOfCurrentPlayersResult.Set(Call, this, &FESteamUserStatsCallbacks::HandleNumberOfCurrentPlayersResult);
+		NumberOfCurrentPlayersContext = Request.CallContext;
 		bNumberOfCurrentPlayersBusy = true;
 		return true;
 	}
 
 	void HandleNumberOfCurrentPlayersResult(NumberOfCurrentPlayers_t* Data, bool bIOFailure)
 	{
+		EFCallContext::FScope Scope(NumberOfCurrentPlayersContext);
 		if (UESteamUserStatsSubsystem* Subsystem = Owner.Get())
 		{
 			const bool bSuccess = !bIOFailure && Data->m_bSuccess != 0;
@@ -620,6 +658,7 @@ private:
 			}
 			if (!IssueNumberOfCurrentPlayers(Request))
 			{
+				EFCallContext::FScope RequestScope(Request.CallContext);
 				if (UESteamUserStatsSubsystem* Subsystem = Owner.Get())
 				{
 					Subsystem->OnNumberOfCurrentPlayers.Broadcast(false, 0);
@@ -644,12 +683,14 @@ private:
 			return false;
 		}
 		GlobalStatsResult.Set(Call, this, &FESteamUserStatsCallbacks::HandleGlobalStatsResult);
+		GlobalStatsContext = Request.CallContext;
 		bGlobalStatsBusy = true;
 		return true;
 	}
 
 	void HandleGlobalStatsResult(GlobalStatsReceived_t* Data, bool bIOFailure)
 	{
+		EFCallContext::FScope Scope(GlobalStatsContext);
 		if (UESteamUserStatsSubsystem* Subsystem = Owner.Get())
 		{
 			Subsystem->OnGlobalStatsReceived.Broadcast(!bIOFailure && Data->m_eResult == k_EResultOK);
@@ -669,6 +710,7 @@ private:
 			}
 			if (!IssueGlobalStats(Request))
 			{
+				EFCallContext::FScope RequestScope(Request.CallContext);
 				if (UESteamUserStatsSubsystem* Subsystem = Owner.Get())
 				{
 					Subsystem->OnGlobalStatsReceived.Broadcast(false);
@@ -693,12 +735,14 @@ private:
 			return false;
 		}
 		GlobalAchievementPercentagesResult.Set(Call, this, &FESteamUserStatsCallbacks::HandleGlobalAchievementPercentagesResult);
+		GlobalAchievementPercentagesContext = Request.CallContext;
 		bGlobalAchievementPercentagesBusy = true;
 		return true;
 	}
 
 	void HandleGlobalAchievementPercentagesResult(GlobalAchievementPercentagesReady_t* Data, bool bIOFailure)
 	{
+		EFCallContext::FScope Scope(GlobalAchievementPercentagesContext);
 		if (UESteamUserStatsSubsystem* Subsystem = Owner.Get())
 		{
 			Subsystem->OnGlobalAchievementPercentagesReady.Broadcast(!bIOFailure && Data->m_eResult == k_EResultOK);
@@ -718,6 +762,7 @@ private:
 			}
 			if (!IssueGlobalAchievementPercentages(Request))
 			{
+				EFCallContext::FScope RequestScope(Request.CallContext);
 				if (UESteamUserStatsSubsystem* Subsystem = Owner.Get())
 				{
 					Subsystem->OnGlobalAchievementPercentagesReady.Broadcast(false);
@@ -762,6 +807,16 @@ private:
 	TQueue<FESteamPendingNumberOfCurrentPlayers> NumberOfCurrentPlayersQueue;
 	TQueue<FESteamPendingGlobalStats> GlobalStatsQueue;
 	TQueue<FESteamPendingGlobalAchievementPercentages> GlobalAchievementPercentagesQueue;
+
+	// EFCallContext of the request each operation has in flight (see the pending structs).
+	int64 UserStatsRequestContext = 0;
+	int64 LeaderboardFindContext = 0;
+	int64 LeaderboardUploadContext = 0;
+	int64 LeaderboardDownloadContext = 0;
+	int64 LeaderboardAttachUGCContext = 0;
+	int64 NumberOfCurrentPlayersContext = 0;
+	int64 GlobalStatsContext = 0;
+	int64 GlobalAchievementPercentagesContext = 0;
 };
 #else
 class FESteamUserStatsCallbacks

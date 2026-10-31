@@ -204,6 +204,9 @@ public:
 
 private:
 
+	/** Extended.Status reporter for this game instance's PlayFab session. */
+	int32 EFStatusHandle = 0;
+
 	FString CachedDisplayName;
 	FString CachedEntityId;
 	FString CachedEntityType;

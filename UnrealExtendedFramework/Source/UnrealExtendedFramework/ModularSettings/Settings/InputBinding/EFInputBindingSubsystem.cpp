@@ -1,3 +1,5 @@
+// Copyright Moon Punch Games. All Rights Reserved.
+
 #include "EFInputBindingSubsystem.h"
 
 #include "EnhancedActionKeyMapping.h"

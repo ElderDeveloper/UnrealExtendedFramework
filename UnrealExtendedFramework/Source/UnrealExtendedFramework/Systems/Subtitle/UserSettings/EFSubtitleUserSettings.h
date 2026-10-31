@@ -1,7 +1,10 @@
-﻿// EFSubtitleUserSettings.h — Per-player subtitle preferences via ModularSettings
+﻿// Copyright Moon Punch Games. All Rights Reserved.
+
+// EFSubtitleUserSettings.h — Per-player subtitle preferences via ModularSettings
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Engine/StreamableManager.h"
 #include "UnrealExtendedFramework/ModularSettings/Settings/EFModularSettingsBase.h"
 #include "EFSubtitleUserSettings.generated.h"
 
@@ -59,4 +62,11 @@ public:
 	UEFSubtitleStyleProfileSetting();
 	virtual void Apply_Implementation() override;
 	virtual void RefreshValues_Implementation() override;
+
+	/** Starts loading the style profiles, whose ids and names make up this setting's options. */
+	virtual void OnRegistered() override;
+
+private:
+	/** Keeps the style profiles loaded while the setting exists. */
+	TSharedPtr<FStreamableHandle> StyleProfilesHandle;
 };

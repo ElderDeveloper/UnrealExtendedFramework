@@ -16,7 +16,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnEPFAsyncItemConsumed, int32, Rema
 // ── Get Inventory ────────────────────────────────────────────────────────────
 
 UCLASS(meta = (DisplayName = "PlayFab: Get Inventory"))
-class UNREALEXTENDEDPLAYFAB_API UEPFAsyncGetInventory : public UBlueprintAsyncActionBase
+class UNREALEXTENDEDPLAYFAB_API UEPFAsyncGetInventory : public UEPFAsyncActionBase
 {
 	GENERATED_BODY()
 
@@ -25,18 +25,19 @@ public:
 	static UEPFAsyncGetInventory* GetInventory(UObject* WorldContext);
 
 	UPROPERTY(BlueprintAssignable) FOnEPFAsyncInventoryReceived OnSuccess;
-	UPROPERTY(BlueprintAssignable) FOnEPFAsyncFailed OnFailure;
-	virtual void Activate() override;
+
+protected:
+	virtual void ExecuteAction() override;
+	virtual void CancelWork() override;
 
 private:
-	TWeakObjectPtr<UObject> WorldContext;
 	UFUNCTION() void HandleComplete(const FEPFResult& Result, const TArray<FEPFInventoryItem>& Items);
 };
 
 // ── Get Catalog ──────────────────────────────────────────────────────────────
 
 UCLASS(meta = (DisplayName = "PlayFab: Get Catalog"))
-class UNREALEXTENDEDPLAYFAB_API UEPFAsyncGetCatalog : public UBlueprintAsyncActionBase
+class UNREALEXTENDEDPLAYFAB_API UEPFAsyncGetCatalog : public UEPFAsyncActionBase
 {
 	GENERATED_BODY()
 
@@ -45,19 +46,20 @@ public:
 	static UEPFAsyncGetCatalog* GetCatalog(UObject* WorldContext, const FString& CatalogVersion = TEXT(""));
 
 	UPROPERTY(BlueprintAssignable) FOnEPFAsyncCatalogReceived OnSuccess;
-	UPROPERTY(BlueprintAssignable) FOnEPFAsyncFailed OnFailure;
-	virtual void Activate() override;
+
+protected:
+	virtual void ExecuteAction() override;
+	virtual void CancelWork() override;
 
 private:
-	FString CatalogVersion;
-	TWeakObjectPtr<UObject> WorldContext;
+	FString RequestedCatalogVersion;
 	UFUNCTION() void HandleComplete(const FEPFResult& Result, const TArray<FEPFCatalogItem>& Items);
 };
 
 // ── Purchase Item ────────────────────────────────────────────────────────────
 
 UCLASS(meta = (DisplayName = "PlayFab: Purchase Item"))
-class UNREALEXTENDEDPLAYFAB_API UEPFAsyncPurchaseItem : public UBlueprintAsyncActionBase
+class UNREALEXTENDEDPLAYFAB_API UEPFAsyncPurchaseItem : public UEPFAsyncActionBase
 {
 	GENERATED_BODY()
 
@@ -66,21 +68,22 @@ public:
 	static UEPFAsyncPurchaseItem* PurchaseItem(UObject* WorldContext, const FString& ItemId, const FString& CurrencyCode, int32 Price);
 
 	UPROPERTY(BlueprintAssignable) FOnEPFAsyncItemPurchased OnSuccess;
-	UPROPERTY(BlueprintAssignable) FOnEPFAsyncFailed OnFailure;
-	virtual void Activate() override;
+
+protected:
+	virtual void ExecuteAction() override;
+	virtual void CancelWork() override;
 
 private:
-	FString ItemId;
-	FString CurrencyCode;
-	int32 Price;
-	TWeakObjectPtr<UObject> WorldContext;
+	FString PurchaseItemId;
+	FString PurchaseCurrencyCode;
+	int32 PurchasePrice = 0;
 	UFUNCTION() void HandleComplete(const FEPFResult& Result, const FString& ItemInstanceId);
 };
 
 // ── Consume Item ─────────────────────────────────────────────────────────────
 
 UCLASS(meta = (DisplayName = "PlayFab: Consume Item"))
-class UNREALEXTENDEDPLAYFAB_API UEPFAsyncConsumeItem : public UBlueprintAsyncActionBase
+class UNREALEXTENDEDPLAYFAB_API UEPFAsyncConsumeItem : public UEPFAsyncActionBase
 {
 	GENERATED_BODY()
 
@@ -89,12 +92,13 @@ public:
 	static UEPFAsyncConsumeItem* ConsumeItem(UObject* WorldContext, const FString& ItemInstanceId, int32 ConsumeCount = 1);
 
 	UPROPERTY(BlueprintAssignable) FOnEPFAsyncItemConsumed OnSuccess;
-	UPROPERTY(BlueprintAssignable) FOnEPFAsyncFailed OnFailure;
-	virtual void Activate() override;
+
+protected:
+	virtual void ExecuteAction() override;
+	virtual void CancelWork() override;
 
 private:
-	FString ItemInstanceId;
-	int32 ConsumeCount;
-	TWeakObjectPtr<UObject> WorldContext;
+	FString ConsumedInstanceId;
+	int32 ConsumeAmount = 1;
 	UFUNCTION() void HandleComplete(const FEPFResult& Result, int32 RemainingUses);
 };

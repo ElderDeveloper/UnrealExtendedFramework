@@ -1,84 +1,65 @@
 // Copyright Kemal Erdem YILMAZ. All Rights Reserved.
 
 #include "BlueprintActions/Parties/ESteamPartiesAsyncActions.h"
-#include "Engine/Engine.h"
-#include "Engine/GameInstance.h"
-#include "Engine/World.h"
-
-namespace
-{
-	UESteamPartiesSubsystem* GetPartiesSubsystem(const UObject* WorldContextObject)
-	{
-		if (const UWorld* World = GEngine ? GEngine->GetWorldFromContextObject(WorldContextObject, EGetWorldErrorMode::LogAndReturnNull) : nullptr)
-		{
-			if (const UGameInstance* GameInstance = World->GetGameInstance())
-			{
-				return GameInstance->GetSubsystem<UESteamPartiesSubsystem>();
-			}
-		}
-		return nullptr;
-	}
-}
 
 // ---- USteamAsyncJoinParty ----
 
 USteamAsyncJoinParty* USteamAsyncJoinParty::JoinParty(UObject* WorldContext, int64 BeaconId, float Timeout)
 {
 	USteamAsyncJoinParty* Action = NewObject<USteamAsyncJoinParty>();
-	Action->WorldContextObject = WorldContext;
 	Action->BeaconId = BeaconId;
-	Action->Timeout = Timeout;
-	Action->RegisterWithGameInstance(WorldContext);
+	Action->InitAsyncAction(WorldContext, Timeout);
 	return Action;
 }
 
-void USteamAsyncJoinParty::Activate()
+void USteamAsyncJoinParty::ExecuteAction()
 {
-	UESteamPartiesSubsystem* Subsystem = GetPartiesSubsystem(WorldContextObject);
+	UESteamPartiesSubsystem* Subsystem = RequireGameInstanceSubsystem<UESteamPartiesSubsystem>();
 	if (!Subsystem)
 	{
-		Complete(false, BeaconId, FString());
 		return;
 	}
 
 	PartiesSubsystem = Subsystem;
 	Subsystem->OnPartyJoined.AddDynamic(this, &USteamAsyncJoinParty::HandlePartyJoined);
 
-	if (!Subsystem->JoinParty(BeaconId))
+	bool bStarted = false;
+	CallWithContext([&] { bStarted = Subsystem->JoinParty(BeaconId); });
+	if (!bStarted)
 	{
 		Complete(false, BeaconId, FString());
-		return;
 	}
-
-	// Fail the node if the subsystem delegate never fires.
-	ArmTimeout(Timeout);
 }
 
 void USteamAsyncJoinParty::HandlePartyJoined(bool bSuccess, int64 InBeaconId, const FString& ConnectString)
 {
 	// Only one join is tracked at a time by the subsystem; still guard against unrelated beacons.
-	if (bSuccess && InBeaconId != BeaconId)
+	if (!IsResultForThisCall() || (bSuccess && InBeaconId != BeaconId))
 	{
 		return;
 	}
 	Complete(bSuccess, InBeaconId, ConnectString);
 }
 
-void USteamAsyncJoinParty::OnTimeoutFailure()
+void USteamAsyncJoinParty::BroadcastFailure(const FEFResult& /*Result*/)
 {
-	Complete(false, BeaconId, FString());
+	OnFailure.Broadcast(BeaconId, FString());
+}
+
+void USteamAsyncJoinParty::CancelWork()
+{
+	if (UESteamPartiesSubsystem* Subsystem = PartiesSubsystem.Get())
+	{
+		Subsystem->OnPartyJoined.RemoveDynamic(this, &USteamAsyncJoinParty::HandlePartyJoined);
+	}
 }
 
 void USteamAsyncJoinParty::Complete(bool bSuccess, int64 InBeaconId, const FString& ConnectString)
 {
-	if (!BeginComplete())
+	CancelWork();
+	if (!FinishAction())
 	{
 		return;
-	}
-
-	if (UESteamPartiesSubsystem* Subsystem = PartiesSubsystem.Get())
-	{
-		Subsystem->OnPartyJoined.RemoveDynamic(this, &USteamAsyncJoinParty::HandlePartyJoined);
 	}
 
 	if (bSuccess)
@@ -89,8 +70,6 @@ void USteamAsyncJoinParty::Complete(bool bSuccess, int64 InBeaconId, const FStri
 	{
 		OnFailure.Broadcast(InBeaconId, ConnectString);
 	}
-
-	SetReadyToDestroy();
 }
 
 // ---- USteamAsyncCreateBeacon ----
@@ -98,58 +77,62 @@ void USteamAsyncJoinParty::Complete(bool bSuccess, int64 InBeaconId, const FStri
 USteamAsyncCreateBeacon* USteamAsyncCreateBeacon::CreateBeacon(UObject* WorldContext, int32 OpenSlots, const FString& ConnectString, const FString& Metadata, float Timeout)
 {
 	USteamAsyncCreateBeacon* Action = NewObject<USteamAsyncCreateBeacon>();
-	Action->WorldContextObject = WorldContext;
 	Action->OpenSlots = OpenSlots;
 	Action->ConnectString = ConnectString;
 	Action->Metadata = Metadata;
-	Action->Timeout = Timeout;
-	Action->RegisterWithGameInstance(WorldContext);
+	Action->InitAsyncAction(WorldContext, Timeout);
 	return Action;
 }
 
-void USteamAsyncCreateBeacon::Activate()
+void USteamAsyncCreateBeacon::ExecuteAction()
 {
-	UESteamPartiesSubsystem* Subsystem = GetPartiesSubsystem(WorldContextObject);
+	UESteamPartiesSubsystem* Subsystem = RequireGameInstanceSubsystem<UESteamPartiesSubsystem>();
 	if (!Subsystem)
 	{
-		Complete(false, 0);
 		return;
 	}
 
 	PartiesSubsystem = Subsystem;
 	Subsystem->OnPartyBeaconCreated.AddDynamic(this, &USteamAsyncCreateBeacon::HandleBeaconCreated);
 
-	if (!Subsystem->CreateBeacon(OpenSlots, ConnectString, Metadata))
+	bool bStarted = false;
+	CallWithContext([&] { bStarted = Subsystem->CreateBeacon(OpenSlots, ConnectString, Metadata); });
+	if (!bStarted)
 	{
 		Complete(false, 0);
-		return;
 	}
-
-	// Fail the node if the subsystem delegate never fires.
-	ArmTimeout(Timeout);
 }
 
 void USteamAsyncCreateBeacon::HandleBeaconCreated(bool bSuccess, int64 InBeaconId)
 {
-	// NOTE: shared delegate carries no request id; relies on Timeout + one-in-flight subsystem limit.
+	// The shared delegate carries no request id; the subsystem tags the result with the call
+	// context of its request.
+	if (!IsResultForThisCall())
+	{
+		return;
+	}
 	Complete(bSuccess, InBeaconId);
 }
 
-void USteamAsyncCreateBeacon::OnTimeoutFailure()
+void USteamAsyncCreateBeacon::BroadcastFailure(const FEFResult& /*Result*/)
 {
-	Complete(false, 0);
+	OnFailure.Broadcast(0);
+}
+
+void USteamAsyncCreateBeacon::CancelWork()
+{
+	if (UESteamPartiesSubsystem* Subsystem = PartiesSubsystem.Get())
+	{
+		Subsystem->OnPartyBeaconCreated.RemoveDynamic(this, &USteamAsyncCreateBeacon::HandleBeaconCreated);
+	}
 }
 
 void USteamAsyncCreateBeacon::Complete(bool bSuccess, int64 InBeaconId)
 {
-	if (!BeginComplete())
+	CancelWork();
+	if (!FinishAction())
 	{
 		return;
-	}
-
-	if (UESteamPartiesSubsystem* Subsystem = PartiesSubsystem.Get())
-	{
-		Subsystem->OnPartyBeaconCreated.RemoveDynamic(this, &USteamAsyncCreateBeacon::HandleBeaconCreated);
 	}
 
 	if (bSuccess)
@@ -160,6 +143,4 @@ void USteamAsyncCreateBeacon::Complete(bool bSuccess, int64 InBeaconId)
 	{
 		OnFailure.Broadcast(InBeaconId);
 	}
-
-	SetReadyToDestroy();
 }

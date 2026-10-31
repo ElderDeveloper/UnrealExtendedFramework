@@ -1,3 +1,5 @@
+// Copyright Moon Punch Games. All Rights Reserved.
+
 #pragma once
 #include "CoreMinimal.h"
 #include "UnrealExtendedFramework/ModularSettings/UI/EFSettingsWidgetBase.h"

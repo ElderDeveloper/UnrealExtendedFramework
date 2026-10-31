@@ -1,11 +1,10 @@
-// Copyright Epic Games, Inc. All Rights Reserved.
+// Copyright Moon Punch Games. All Rights Reserved.
 
 #pragma once
 
 #include "CoreMinimal.h"
 #include "Internationalization/StringTableRegistry.h"
 #include "Modules/ModuleManager.h"
-#include "Interfaces/IPluginManager.h"
 
 /** Plugin-wide log category for UnrealExtendedFramework. */
 UNREALEXTENDEDFRAMEWORK_API DECLARE_LOG_CATEGORY_EXTERN(LogExtendedFramework, Log, All);
@@ -35,6 +34,12 @@ public:
 	static void RegisterStringTable();
 
 private:
-	/** Initialize gameplay tags from CSV file */
+#if WITH_EDITOR
+	/**
+	 * Adds the modular-settings tags from ExtendedSettingTags.csv to the project's
+	 * Config/Tags/ExtendedSettingsTags.ini. Editor only: the CSV is not staged into packaged builds,
+	 * and a shipped game must not rewrite its own config. The generated .ini ships with the project.
+	 */
 	void InitializeGameplayTags();
+#endif
 };
