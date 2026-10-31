@@ -292,7 +292,7 @@ void SExtendedAtlassianNewIssueDialog::Construct(const FArguments& InArgs)
 	if (!Client.IsValid() || !Client->IsReady())
 	{
 		SetStatus(LOCTEXT("NotConnectedStatus",
-			"Not connected to Atlassian. Set the site URL and credentials in Project Settings > Plugins > Extended Atlassian."), true);
+			"Not connected to Atlassian. Set the site URL and credentials in Project Settings > Extended Framework > Extended Atlassian."), true);
 		return;
 	}
 
@@ -342,7 +342,7 @@ void SExtendedAtlassianNewIssueDialog::Submit()
 
 	if (ProjectKey.IsEmpty())
 	{
-		SetStatus(LOCTEXT("NeedProject", "Set a Jira project key in Project Settings > Plugins > Extended Atlassian."), true);
+		SetStatus(LOCTEXT("NeedProject", "Set a Jira project key in Project Settings > Extended Framework > Extended Atlassian."), true);
 		return;
 	}
 

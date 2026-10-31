@@ -17,6 +17,9 @@ public class UnrealExtendedAtlassian : ModuleRules
 			"CoreUObject",
 			"Engine",
 			"DeveloperSettings",
+			// Public: ExtendedAtlassianSettings.h derives from UEFDeveloperSettings. The client sends
+			// through FEFHttpOperation and the API token lives in FEFCredentialStore.
+			"ExtendedFoundation",
 		});
 
 		PrivateDependencyModuleNames.AddRange(new string[]
@@ -39,8 +42,8 @@ public class UnrealExtendedAtlassian : ModuleRules
 			});
 		}
 
-		// DPAPI (CryptProtectData/CryptUnprotectData) backs the per-user credential
-		// store so the Atlassian API token is never written to disk in plain text.
+		// DPAPI (CryptUnprotectData) reads the pre-foundation credentials.ini once, to move its
+		// token into FEFCredentialStore. The store itself links what it needs.
 		if (Target.Platform == UnrealTargetPlatform.Win64)
 		{
 			PublicSystemLibraries.Add("Crypt32.lib");
