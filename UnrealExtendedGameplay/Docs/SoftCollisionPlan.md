@@ -16,7 +16,7 @@ It is a drop-in system: one component on the pawn. It needs no Character, Charac
 
 Performance budgets, to be confirmed with Unreal Insights in Phase 6:
 
-- Server, 1000 registered pawns, 900 of them AI: under 0.5 ms game thread per frame for registry, grid and push application, with the narrow phase spread across worker threads.
+- Server, 1000 registered pawns, 900 of them AI: under 0.5 ms game thread per frame for registry, grid and push application, with the narrow phase on worker threads.
 - Client: under 0.1 ms game thread per frame. A client scans only its own pawn.
 - Bandwidth: about 12 bytes per push request from a client. Nothing extra per AI pawn except throttled cosmetic bump events.
 
@@ -24,10 +24,46 @@ Performance budgets, to be confirmed with Unreal Insights in Phase 6:
 
 1. **A pawn only ever pushes itself.** Each pawn moves itself away from what it overlaps; nothing moves another pawn. Every push is decided by the machine that already owns that pawn's movement, which is what makes prediction possible. Pushing someone out of the way comes from the strength model: when a runner hits an idle pawn, the idle pawn pushes itself away hard and the runner is barely deflected.
 2. **A predicted push is a CharacterMovementComponent root motion source.** Root motion sources are the only way to add predicted movement to an unmodified CMC: the client stores the active sources in its saved moves and replays them after a correction.
-   - Rejected: `AddForce`, `AddImpulse` and `LaunchCharacter` on a player-controlled pawn. They are not stored in saved moves, so client and server diverge. They are fine on pawns the server alone simulates (see drivers).
+   - Rejected: `AddForce`, `AddImpulse` and `LaunchCharacter` on a player-controlled pawn. They are not stored in saved moves; a server-only impulse on a remote client's pawn gets corrected. They are fine on pawns the server alone simulates (see drivers).
    - Rejected: `AddMovementInput`. It is predicted for free, but it changes acceleration, which turns characters that orient to movement and starts walk animations.
    - Rejected: a CMC subclass with custom move data. It would force every project onto our movement component and block modular use.
 3. **One push per pawn at a time.** All neighbours are summed into a single vector and a new push replaces the active one. Never one source per neighbour.
+
+## Engine facts
+
+Checked against Epic's API reference and documentation (through search excerpts; see the access note), community code and forum reports. The engine source has not been read yet.
+
+Status: **Confirmed** = Epic documentation text. **Likely** = secondhand or consistent reports. **Unknown** = needs the engine source or a test map.
+
+| Fact | Status | What it means for the design |
+| --- | --- | --- |
+| `FRootMotionSource::StartTime` is in character movement client time and exists to handle inconsistent tick times | Confirmed | The client move timestamp is the right key for when a push starts |
+| `IsStartTimeValid()` tells whether the start time was set, so callers may set it | Confirmed | The server can set the client's start time on the source it applies |
+| `FRootMotionSourceGroup::SetPendingRootMotionSourceMinStartTimes` "can be used on servers to match client-side start times" | Confirmed | The engine itself supports matching a client start time on the server |
+| `ApplyTimeStampReset` shifts the start times of sources when the timestamp resets | Confirmed | Active sources survive resets; only requests in flight need handling |
+| Unset start time defaults to `ClientData->CurrentTimeStamp` on the autonomous proxy and `ServerData->CurrentClientTimeStamp` on the authority | Likely | Both sides start the source on the move after that timestamp |
+| How `PrepareRootMotion` treats a start time in the past (trimmed first tick, no catch-up?) | Unknown | Decides how a late request is applied; Phase 0 |
+| `Matches` decides which local source a server correction applies to; Epic suggests child classes use their own unique ID | Confirmed | Our source matches on `Sequence` |
+| A source that exists only on the client is never removed by server corrections | Likely | The client must remove a push the server rejected or never acknowledged |
+| Root motion sources are saved in `FSavedMove_Character` and replayed on correction (autonomous proxies) | Confirmed | Predicted pushes replay correctly |
+| Moves are not combined while root motion sources are active | Likely | A pushing player sends every move, which costs bandwidth and server CPU; pushes must be short and rare |
+| `RepRootMotion.AuthoritativeRootMotion` replicates active sources to simulated proxies, resent while active | Confirmed / Likely | Extra traffic per pushing player; only player pawns use root motion |
+| `ServerMovePacked` is unreliable and carries new, pending and old important moves | Confirmed | Push requests copy the same redundancy idea |
+| RPC execution order is kept for all RPCs on an actor and its subobjects; reliable vs unreliable order is not guaranteed; under Iris unicast RPCs go to the reliable queue | Confirmed | A push request sent before the move arrives before it, if it arrives |
+| Client RPCs run during network receive at the start of the server frame, before the tick groups | Likely | The server applies a remote player's push inside the RPC handler |
+| `bServerAcceptClientAuthoritativePosition` and `bIgnoreClientMovementErrorChecksAndCorrection` are public, Blueprint read-write, read only on the server | Confirmed | The safety net can toggle them from a component |
+| `MAXPOSITIONERRORSQUARED` is a squared distance; default 3.0, about 1.7 cm | Confirmed / Likely | Tiny timing differences exceed it, so Level 1 matters |
+| `IsClientTimeStampValid` is a public const check that reports timestamp resets; `OnClientTimeStampResetDetected` needs a subclass | Confirmed | Resets are detected by calling the check or watching the timestamp jump back |
+| `APawn::ReceiveControllerChangedDelegate (Pawn, OldController, NewController)` fires on the server and owning client | Confirmed | Switching between predicted and authority drivers on possession |
+| `AddForce` uses mass; `AddImpulse` with `bVelocityChange` ignores it; both accumulate and apply on the next movement update | Confirmed / Likely | Basis of the AI driver |
+| `FTickableGameObject` and tickable world subsystems tick after the tick groups, at the end of the frame | Likely | Where the scan is snapshotted and launched |
+| Iris is Experimental in 5.6; Iris replicates structs with custom `NetSerialize` from their reflected properties and warns about it | Confirmed / Likely | Every replicated field is a `UPROPERTY`; a real Iris serializer comes later |
+| Mover is Experimental in 5.6, its prediction backend does not work with Iris in 5.6, and layered moves are being reworked | Confirmed | The Mover driver is deferred |
+| Open engine issue UE-206616: root motion source desync under forced adjustment | Confirmed | Watch it in the network tests |
+
+### Access note
+
+Epic's documentation and forum sites (`dev.epicgames.com`, `forums.unrealengine.com`, `docs.unrealengine.com`) are blocked by this environment's network policy, and the engine repository (`EpicGames/UnrealEngine`) is not available to this session's GitHub account. Facts were taken from search excerpts of those pages. Before Phase 0 closes, the Unknown and Likely rows should be checked in the 5.6 engine source.
 
 ## Who does what
 
@@ -36,7 +72,7 @@ Performance budgets, to be confirmed with Unreal Insights in Phase 6:
 | Standalone, listen-server host's own pawn | Yes | Directly | Normal movement replication |
 | Server, AI or other server-controlled pawn | Yes | Directly, through an authority driver | Normal movement replication |
 | Owning client, its own player pawn | Yes | Immediately, predicted | Sends push requests to the server |
-| Server, a remote player's pawn | No | Validates the request, applies the same push on the same move | Ack or reject |
+| Server, a remote player's pawn | No | In the request's RPC handler, before the matching move is processed | Ack or reject |
 | Client, everyone else's pawns | No | No | Follows replicated movement; receives cosmetic bump events |
 
 A client scans one pawn. The server scans only the pawns it controls.
@@ -53,21 +89,28 @@ struct FEGSoftPushKey
 };
 ```
 
-- `Sequence` identifies a push for de-duplication, acks and rejects, like the interaction system's `ActivationId`.
-- `ClientTimeStamp` is read from `GetPredictionData_Client_Character()->CurrentTimeStamp`. Client and server already share this clock for the pawn's moves, so the key names the move the push starts on. A GAS prediction key names an activation, not a move; this is where the system can be more precise than GAS.
+- `Sequence` identifies a push for de-duplication, acks, rejects and source matching, like the interaction system's `ActivationId`.
+- `ClientTimeStamp` is `GetPredictionData_Client_Character()->CurrentTimeStamp` at the moment the push is applied. It is the clock the engine already uses for root motion start times, so the key names the move the push starts on.
 
-### Flow
+### Frame timing
 
-1. **Client.** Compute the push, quantize it, apply it locally with its start time set to `ClientTimeStamp`, and queue a request.
-2. **Client, once per frame.** Send `ServerSoftPush(Batch)`. The RPC is unreliable and every batch repeats the requests not yet acknowledged from the last 100 to 150 ms, the same redundancy the CMC uses for its own moves. A reliable RPC that gets resent arrives too late to be useful.
-3. **Server.** Drop duplicates by `Sequence`. A request normally arrives before or with the move it belongs to; the server then starts the push at the same timestamp and both machines simulate the same thing. A late request is applied with the time already missed trimmed off, and the safety net covers the remainder.
-4. **Ack.** An owner-only, push-model replicated `LastAcceptedSequence`. It is delta replicated and costs almost nothing.
-5. **Reject.** `ClientRejectSoftPush(Sequence)`. The client removes its push and the CMC's own correction fixes the position.
-6. **Timestamp resets.** The CMC periodically resets client timestamps. When a reset is detected, the server applies pending requests immediately instead of scheduling them.
+1. **Start of the client frame**, from `FWorldDelegates::OnWorldPreActorTick`, before any movement ticks: apply the pending push results. The source's start time is the current client timestamp, so it starts on this frame's move. Send the request at once, before the CMC sends that move.
+2. **Server, network receive.** The request runs before the move it belongs to, when both arrive. The handler applies the source with the client's start time, so the next move simulates exactly what the client simulated.
+3. **End of the frame**, after all tick groups: snapshot positions and launch the scan for the next frame (see Threading).
+
+### Request flow
+
+1. **Client.** Quantize the push, apply it with its start time set to `ClientTimeStamp`, and queue the request.
+2. **Client, once per frame.** Send `ServerSoftPush(Batch)`. The RPC is unreliable and every batch repeats the requests not yet acknowledged from the last 100 to 150 ms, as the CMC does for important moves. A reliable RPC that gets resent arrives too late to be useful.
+3. **Server.** Drop duplicates by `Sequence`, validate, and apply with the client's start time. A request that arrives after its move (its first copy was lost) is applied the way Phase 0 decides: either trimmed so it ends at the same timestamp as on the client, or rejected.
+4. **Ack.** An owner-only, push-model replicated `LastAcceptedSequence`.
+5. **Reject.** `ClientRejectSoftPush(Sequence)`. The client removes its source and the CMC's correction fixes the position.
+6. **No answer.** A client-only source is never removed by server corrections. If a push is neither acknowledged nor rejected within the round-trip time plus a margin, the client removes it.
+7. **Timestamp resets.** Active sources are shifted by the engine. Requests in flight across a reset are applied immediately instead of scheduled; the server detects the reset with `IsClientTimeStampValid`.
 
 ### Quantization is for correctness, not only bandwidth
 
-The client applies the de-quantized values locally, so client and server build bit-identical sources. During a correction the CMC pairs server and client root motion sources by comparing them, so any difference would break the pairing.
+The client applies the de-quantized values locally, so client and server build identical sources. Corrections compare server and client sources, so any difference shows up as an error.
 
 | Field | Size |
 | --- | --- |
@@ -81,38 +124,47 @@ Duration and falloff come from the profile and are never sent.
 
 ## Root motion source: `FEGRootMotionSource_SoftPush`
 
-A `USTRUCT` deriving from `FRootMotionSource`.
+A `USTRUCT` deriving from `FRootMotionSource`, with `TStructOpsTypeTraits` `WithNetSerializer` and `WithCopy`, and overrides of `Clone`, `GetScriptStruct`, `Matches`, `MatchesAndHasSameState`, `UpdateStateFrom`, `PrepareRootMotion` and `NetSerialize`.
 
+- Every replicated field is a `UPROPERTY` of a small type (quantized yaw and strength, `Sequence`), so it replicates correctly under both the classic path and Iris.
+- `Matches` calls the base and then compares `Sequence`.
 - Falloff is an analytic formula (constant, linear, ease-out), so no curve asset reference has to replicate.
-- Small custom `NetSerialize` of the quantized values.
-- `Matches` compares `Sequence`, so server and client copies pair reliably during corrections.
-- Additive, low priority, does not accumulate vertical velocity so gravity still works, and keeps or clamps its last velocity when it ends.
-- `ACharacter` replicates active root motion sources to simulated proxies through `RepRootMotion`. Only player pawns use this source, which keeps that cost limited to players. Phase 0 measures it.
-- Moves that carry an active root motion source combine less often, so a pushing player sends somewhat more movement RPCs. Short pushes and the reissue rule keep this down.
+- Additive, low priority, `IgnoreZAccumulate` so gravity still works, and keeps or clamps its last velocity when it ends.
+- Costs that come with root motion: moves are not combined while it is active, and simulated proxies receive it through `RepRootMotion`. Both are limited to player pawns and kept small by short pushes and the reissue rule. Phase 6 measures them.
 
 ## Sync safety net
 
 Set per profile.
 
 - **Level 0, always on.** The move-anchored prediction keys above.
-- **Level 1, on by default.** While a push is active, enable the CMC's `bServerAcceptClientAuthoritativePosition`. The engine documents it for short bursts of movement that are hard to sync. The server still checks its normal error tolerance; inside the tolerance it adopts the client's position, so tiny timing differences do not accumulate into corrections. It adds no way to cheat.
-- **Level 2, opt-in, a reasonable choice for co-op.** Also enable `bIgnoreClientMovementErrorChecksAndCorrection` during the push window. The server checks each move: if the client moved further than max speed times delta time plus the push allowance, it closes the window and forces a correction.
+- **Level 1, on by default.** While a push is active, enable `bServerAcceptClientAuthoritativePosition`. The engine documents it for short bursts of movement that are hard to sync. The server still checks its normal error tolerance; inside the tolerance it adopts the client's position, so tiny timing differences do not accumulate into corrections. It adds no way to cheat.
+- **Level 2, opt-in, a reasonable choice for co-op.** Also enable `bIgnoreClientMovementErrorChecksAndCorrection` during the push window. Together the two flags give the client full authority, so the server checks each move itself: if the client moved further than max speed times delta time plus the push allowance, it closes the window and forces a correction.
 - Both flags are shared CMC state. The component takes a counted lease and restores the previous values when the last push ends. A game that toggles the same flags itself must be told in the documentation.
+
+## Threading
+
+The calculation runs on worker threads inside one frame. It never runs asynchronously across frames: a push must land on a specific move, and late results would be built from stale positions.
+
+1. **Snapshot, game thread, end of frame.** Copy position, velocity, shape and cached rule flags of every registered pawn into flat arrays and update the grid. Worker threads only ever read this copy, never an actor.
+2. **Compute, worker threads.** Launch a `UE::Tasks` task that runs the neighbour tests and strength sums with `ParallelFor`. Each scanner writes only its own result slot, so no locks are needed. Neighbour lists use fixed-size buffers, so the loop never allocates. The game thread is not blocked.
+3. **Apply, game thread, start of the next frame.** In `OnWorldPreActorTick`, wait on the task (normally already finished), apply the pushes, and send requests.
+
+Below about 64 scanners the computation runs inline, because starting tasks would cost more than the work. A client scans one pawn, so it never uses worker threads.
+
+Game rules that need UObjects (the interface's `CanPush` and `CanBePushedBy`, profile overrides) are resolved into flags during the snapshot, never on a worker thread.
 
 ## Scanning and performance
 
 Built for a thousand pawns from the start.
 
-- **Registry.** `UEGSoftCollisionSubsystem`, a world subsystem, keeps every registered pawn in flat arrays (structure of arrays): position, velocity, shape, cached profile values, flags and cell. Components never tick.
-- **Spatial grid.** A uniform 2D hash grid with cells twice the largest push radius. Updated once per frame; an entry is re-binned only when its cell changes. A neighbour query reads the 3x3 cells around a pawn. No physics traces at all.
+- **Registry.** `UEGSoftCollisionSubsystem`, a world subsystem, keeps every registered pawn in flat arrays: position, velocity, shape, cached profile values, flags and cell. Components never tick.
+- **Spatial grid.** A uniform 2D hash grid with cells twice the largest push radius. An entry is re-binned only when its cell changes. A neighbour query reads the 3x3 cells around a pawn. No physics traces at all.
 - **Narrow phase.** Plain math: vertical cylinder (capsules) and oriented box, plus a height-overlap test.
-- **One tick.** A single tick function after physics, when positions are final for the frame. Results are applied on the next frame's move.
-- **Parallel narrow phase.** With many scanners the neighbour tests and strength sums run in `ParallelFor` over read-only arrays, writing one result per scanner. Applying pushes stays on the game thread.
 - **Sleeping.** A pawn that is not moving and has no neighbour in its 3x3 cells is skipped. The grid wakes it when a neighbour moves into range.
 - **Scan rate by relevance.** On the server, AI far from every player scans less often or not at all. Distances and rates are in the profile.
 - **Reissue rule.** A new push is sent only when the direction changes more than a set angle, the strength changes more than a set ratio, or the current push is about to end. A per-pawn token bucket also caps requests, which protects the server from a misbehaving client.
 - **Client registry.** A client only needs entries near its own pawn; replication relevancy already limits what exists there, and entries outside the scan area are not re-binned.
-- **Replication cost.** All replicated properties use the push model, so a thousand components cost nothing to compare while idle. Iris compatibility is checked in Phase 0.
+- **Replication cost.** All replicated properties use the push model, so a thousand components cost nothing to compare while idle.
 - **Avoidance.** Profiles can scale pushes down for pawns using RVO or crowd avoidance, so the two systems do not fight.
 
 The CMC itself is the main cost of a thousand moving Characters. Soft Collision must stay a small fraction of it, and the Phase 6 numbers are reported against that baseline.
@@ -134,14 +186,14 @@ A driver decides how a push is applied. `UEGSoftCollisionDriver` is an instanced
 | Driver | Pawns | Network |
 | --- | --- | --- |
 | `_CharacterRootMotion` | Player-controlled Characters | Predicted with the keys above |
-| `_CharacterForce` | Server-controlled Characters (AI) | Authority only, through the CMC's force and impulse API; keeps root motion out of AI replication |
+| `_CharacterForce` | Server-controlled Characters (AI) | Authority only, through `AddImpulse` with velocity change; keeps root motion out of AI replication |
 | `_PawnMovement` | Any other `UPawnMovementComponent`, such as floating pawn movement | Authority only, adds to velocity |
 | `_PhysicsBody` | Pawns whose root primitive simulates physics, such as vehicles | Authority only, adds force to the body |
 | Custom | Anything else, in C++ or Blueprint | Chosen by the driver |
 
 Each driver declares where it runs: predicted, server authority, or owner authority. Owner authority covers pawns whose movement the owning client already controls.
 
-A Mover driver goes in a separate optional module so the main plugin does not depend on the Mover plugin. Mover predicts its own layered moves, so that driver may not need our keys at all; this is investigated in Phase 5.
+A Mover driver is deferred until Mover leaves Experimental and its layered-move rework lands. It will go in a separate optional module so the main plugin never depends on the Mover plugin.
 
 ## Modularity and API
 
@@ -154,7 +206,7 @@ A Mover driver goes in a separate optional module so the main plugin does not de
 ## Debugging
 
 - Console variables: `eg.SoftCollision.Enable`, `eg.SoftCollision.Debug`, `eg.SoftCollision.ShowGrid`, `eg.SoftCollision.ForceServerOnly`.
-- Visual Logger entries for scans, requests, accepts, rejects and late arrivals.
+- Visual Logger entries for scans, requests, accepts, rejects, late arrivals and unanswered pushes.
 - A stat group: registered pawns, active scanners, sleeping pawns, neighbour tests, requests per second, rejects, late arrivals.
 - The engine's `p.NetShowCorrections` shows the corrections that still happen.
 
@@ -172,7 +224,8 @@ Play-in-editor matrix:
 - 2 to 4 clients; lag 0, 100 and 250 ms; packet loss 0 and 5 percent.
 - Walking into an idle player, head-on collision, 30 AI around a player, a doorway choke point, listen-server host against a client.
 - Stress: 1000 AI pawns on a dedicated server with 4 clients.
-- Metrics: corrections per minute against the engine's default blocking collision, frame time, bandwidth per client.
+- Run with Iris both off and on.
+- Metrics: corrections per minute against the engine's default blocking collision, frame time, bandwidth per client, server movement cost per pushing player.
 
 ## File layout
 
@@ -184,7 +237,7 @@ Source/UnrealExtendedGameplay/SoftCollision/
     EGSoftCollisionProfile.h/.cpp
     EGSoftCollisionInterface.h
     EGSoftCollisionComponent.h/.cpp
-    EGSoftCollisionSubsystem.h/.cpp        registry, tick function, parallel scan
+    EGSoftCollisionSubsystem.h/.cpp        registry, snapshot, task launch and apply
     EGRootMotionSource_SoftPush.h/.cpp
     Prediction/EGSoftCollisionPrediction.h/.cpp   client queue, server scheduling, safety lease
     Drivers/EGSoftCollisionDriver.h/.cpp
@@ -197,17 +250,20 @@ Source/UnrealExtendedGameplay/SoftCollision/
 
 ## Phases
 
-- [ ] **0. Engine spike.** The riskiest assumptions, verified in the 5.6 source and in a test map:
-  - Whether the server honours a client-provided start time exactly when it is in the past or the future.
-  - Whether a custom root motion source pairs correctly during corrections.
-  - The cost of `RepRootMotion` with the custom source.
-  - How client timestamp resets behave.
-  - Iris compatibility of the custom source and the component's replicated state.
-  - The results decide the details of Level 0 and are written back into this document.
+- [x] **Documentation pass.** Engine facts above, from Epic's API reference and community sources.
+- [ ] **0. Engine spike.** Needs the 5.6 engine source or a test map:
+  - How `PrepareRootMotion` treats a start time in the past, and therefore how a late request is applied.
+  - The unset start time defaults on autonomous proxy and authority.
+  - That moves are not combined while a source is active, and what that costs on the server.
+  - `Matches` and `UpdateStateFrom` behaviour with the custom source during a correction.
+  - `RepRootMotion` size with the custom source.
+  - That a request sent in `OnWorldPreActorTick` is processed before its move on the server, with and without Iris.
+  - Timestamp reset handling for requests in flight.
+  - The results are written back into the Engine facts table.
 - [ ] **1. Data and math.** Types, profile, narrow phase, strength model, quantization, unit tests.
-- [ ] **2. Registry and scanning.** Subsystem, grid, tick function, parallel narrow phase, sleeping, debug drawing. Authority pushes only (standalone and server AI) through `_CharacterForce`.
+- [ ] **2. Registry and scanning.** Subsystem, grid, snapshot, task pipeline, sleeping, debug drawing. Authority pushes only (standalone and server AI) through `_CharacterForce`.
 - [ ] **3. Predicted push.** The custom root motion source and `_CharacterRootMotion`, local authority first.
-- [ ] **4. Prediction.** Keys, batched redundant requests, server scheduling, validation, ack and reject, safety leases.
-- [ ] **5. Drivers and API.** `_PawnMovement`, `_PhysicsBody`, events, cosmetic bumps, interface, Blueprint API, Mover investigation.
+- [ ] **4. Prediction.** Keys, batched redundant requests, server application in the RPC handler, validation, ack, reject and timeout, safety leases.
+- [ ] **5. Drivers and API.** `_PawnMovement`, `_PhysicsBody`, events, cosmetic bumps, interface, Blueprint API.
 - [ ] **6. Optimization.** Insights captures and bandwidth numbers at 100, 500 and 1000 pawns against the budgets above.
 - [ ] **7. Verification and documentation.** The network test matrix, and header documentation in the plugin's style.
