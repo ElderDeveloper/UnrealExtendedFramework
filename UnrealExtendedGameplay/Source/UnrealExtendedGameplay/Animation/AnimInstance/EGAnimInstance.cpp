@@ -3,6 +3,8 @@
 #include "EGAnimInstance.h"
 
 #include "EGAnimStateProvider.h"
+#include "UnrealExtendedGameplay/Animation/TurnInPlace/EGTurnInPlaceAnimLibrary.h"
+#include "UnrealExtendedGameplay/Animation/TurnInPlace/EGTurnInPlaceComponent.h"
 #include "GameFramework/Character.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/Pawn.h"
@@ -32,6 +34,7 @@ void UEGAnimInstance::RefreshStateProviders()
 	StateProviders.Reset();
 
 	AActor* const Owner = GetOwningActor();
+	TurnInPlaceComponent = UEGTurnInPlaceComponent::FindFor(Owner);
 	if (!Owner)
 	{
 		return;
@@ -96,6 +99,8 @@ void UEGAnimInstance::GatherGameThreadData(float DeltaSeconds)
 		bIsCrouching = false;
 	}
 
+	UEGTurnInPlaceAnimLibrary::GatherTurnInPlace(TurnInPlaceComponent, TurnInPlace);
+
 	StateTags.Reset();
 	for (int32 Index = StateProviders.Num() - 1; Index >= 0; --Index)
 	{
@@ -117,6 +122,8 @@ void UEGAnimInstance::NativeThreadSafeUpdateAnimation(float DeltaSeconds)
 
 void UEGAnimInstance::ComputeThreadSafeData(float DeltaSeconds)
 {
+	UEGTurnInPlaceAnimLibrary::ThreadSafeUpdateTurnInPlace(this, TurnInPlace);
+
 	Speed = static_cast<float>(Velocity.Size());
 	GroundSpeed = static_cast<float>(Velocity.Size2D());
 	bHasAcceleration = Acceleration.SizeSquared2D() > KINDA_SMALL_NUMBER;

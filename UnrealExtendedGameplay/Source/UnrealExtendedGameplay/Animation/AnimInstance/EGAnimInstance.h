@@ -5,12 +5,15 @@
 #include "Animation/AnimInstance.h"
 #include "CoreMinimal.h"
 #include "GameplayTagContainer.h"
+#include "UnrealExtendedGameplay/Animation/TurnInPlace/EGTurnInPlaceAnimSource.h"
+#include "UnrealExtendedGameplay/Animation/TurnInPlace/EGTurnInPlaceTypes.h"
 
 #include "EGAnimInstance.generated.h"
 
 class ACharacter;
 class APawn;
 class UCharacterMovementComponent;
+class UEGTurnInPlaceComponent;
 
 /**
  * UEGAnimInstance
@@ -19,9 +22,12 @@ class UCharacterMovementComponent;
  * acceleration, movement mode, aim, IEGAnimStateProvider tags); everything derived from it is
  * computed in NativeThreadSafeUpdateAnimation, off the game thread, so the AnimBP can use
  * Thread Safe Update Animation and property access without casts in its event graph.
+ *
+ * With a UEGTurnInPlaceComponent on the owner it also runs turn in place's anim side and serves its
+ * curves (IEGTurnInPlaceAnimSource); the graph then only needs the state machine (TurnInPlace.md).
  */
 UCLASS(Abstract, Blueprintable)
-class UNREALEXTENDEDGAMEPLAY_API UEGAnimInstance : public UAnimInstance
+class UNREALEXTENDEDGAMEPLAY_API UEGAnimInstance : public UAnimInstance, public IEGTurnInPlaceAnimSource
 {
 	GENERATED_BODY()
 
@@ -98,6 +104,14 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Extended|Anim State", meta = (BlueprintThreadSafe))
 	bool HasStateTag(FGameplayTag Tag) const { return StateTags.HasTag(Tag); }
 
+	// ----- Turn in place ----------------------------------------------------------------------------
+
+	/** Pass by reference to the UEGTurnInPlaceAnimLibrary node functions; read Output for transitions. */
+	UPROPERTY(Transient, BlueprintReadWrite, Category = "Turn In Place")
+	FEGTurnInPlaceAnimData TurnInPlace;
+
+	virtual FEGTurnInPlaceCurves GetTurnInPlaceCurves_Implementation() const override { return TurnInPlace.Curves; }
+
 	/** Find the owner's IEGAnimStateProvider components again (after adding or removing one at runtime). */
 	UFUNCTION(BlueprintCallable, Category = "Extended|Anim State")
 	void RefreshStateProviders();
@@ -122,6 +136,9 @@ protected:
 
 	UPROPERTY(Transient)
 	TObjectPtr<UCharacterMovementComponent> CharacterMovement;
+
+	UPROPERTY(Transient, BlueprintReadOnly, Category = "Owner")
+	TObjectPtr<UEGTurnInPlaceComponent> TurnInPlaceComponent;
 
 private:
 	TArray<TWeakObjectPtr<UObject>> StateProviders;
