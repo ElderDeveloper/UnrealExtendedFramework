@@ -1,39 +1,35 @@
-﻿// Fill out your copyright notice in the Description page of Project Settings.
+﻿// Copyright Kemal Erdem YILMAZ. All Rights Reserved.
 
 #pragma once
 
+#include "Animation/AnimNotifies/AnimNotify.h"
 #include "CoreMinimal.h"
-#include "Runtime/Launch/Resources/Version.h"
-#include "UObject/Object.h"
+
 #include "EGMoveForwardNotify.generated.h"
 
 /**
- * 
+ * Moves the owner by MoveDistance along its forward (turned by ForwardRotationPlus) in one step.
+ * Runs on the server and the owning client; simulated proxies get the move through replication.
  */
 UCLASS()
 class UNREALEXTENDEDGAMEPLAY_API UEGMoveForwardNotify : public UAnimNotify
 {
 	GENERATED_BODY()
 
-	UPROPERTY(EditAnywhere)
-	FRotator ForwardRotationPlus;
+public:
+	/** Turns the move direction away from the actor's forward, in the actor's frame. Yaw 90 moves right. */
+	UPROPERTY(EditAnywhere, Category = "Move")
+	FRotator ForwardRotationPlus = FRotator::ZeroRotator;
 
-	UPROPERTY(EditAnywhere)
+	UPROPERTY(EditAnywhere, Category = "Move", meta = (Units = "cm"))
 	float MoveDistance = 100;
 
 	/**
-	**	@param bSweep	Whether we sweep to the destination location, triggering overlaps along the way and stopping short of the target if blocked by something.
-	**	Only the root component is swept and checked for blocking collision, child components move without sweeping. If collision is off, this has no effect.
-	**/
-	UPROPERTY(EditAnywhere)
+	 * Whether we sweep to the destination location, triggering overlaps along the way and stopping short of the target if blocked by something.
+	 * Only the root component is swept and checked for blocking collision, child components move without sweeping. If collision is off, this has no effect.
+	 */
+	UPROPERTY(EditAnywhere, Category = "Move")
 	bool bSweep = true;
-	
-	// Begin UAnimNotify interface
-	#if ENGINE_MAJOR_VERSION != 5 
-		virtual void Notify(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation) override;
-	#endif
 
-	#if	ENGINE_MAJOR_VERSION == 5
-		virtual void Notify(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, const FAnimNotifyEventReference& EventReference) override;
-	#endif
+	virtual void Notify(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, const FAnimNotifyEventReference& EventReference) override;
 };

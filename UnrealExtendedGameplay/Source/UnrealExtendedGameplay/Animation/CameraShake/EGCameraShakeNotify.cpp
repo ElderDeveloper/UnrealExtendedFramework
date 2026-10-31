@@ -1,31 +1,22 @@
-﻿// Fill out your copyright notice in the Description page of Project Settings.
-
+﻿// Copyright Kemal Erdem YILMAZ. All Rights Reserved.
 
 #include "EGCameraShakeNotify.h"
 
+#include "Camera/CameraShakeBase.h"
+#include "Components/SkeletalMeshComponent.h"
 #include "Kismet/GameplayStatics.h"
 
 FString UEGCameraShakeNotify::GetNotifyName_Implementation() const
 {
-	if (CameraShake)
-	{
-		return CameraShake->GetName();
-	}
-	else
-	{
-		return Super::GetNotifyName_Implementation();
-	}
+	return CameraShake ? CameraShake->GetName() : Super::GetNotifyName_Implementation();
 }
 
-
-#if	ENGINE_MAJOR_VERSION == 5
-void UEGCameraShakeNotify::Notify(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation,const FAnimNotifyEventReference& EventReference)
+void UEGCameraShakeNotify::Notify(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, const FAnimNotifyEventReference& EventReference)
 {
 	Super::Notify(MeshComp, Animation, EventReference);
-	if (CameraShake)
+
+	if (MeshComp && CameraShake)
 	{
-		UGameplayStatics::PlayWorldCameraShake(MeshComp->GetWorld(),CameraShake,MeshComp->GetComponentLocation(),InnerRadius,OuterRadius,Falloff);
+		UGameplayStatics::PlayWorldCameraShake(MeshComp, CameraShake, MeshComp->GetComponentLocation(), InnerRadius, OuterRadius, Falloff);
 	}
-	
 }
-#endif

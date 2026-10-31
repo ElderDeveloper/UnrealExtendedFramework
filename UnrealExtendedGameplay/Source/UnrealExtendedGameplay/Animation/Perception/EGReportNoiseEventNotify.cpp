@@ -1,29 +1,25 @@
-﻿// Fill out your copyright notice in the Description page of Project Settings.
-
+﻿// Copyright Kemal Erdem YILMAZ. All Rights Reserved.
 
 #include "EGReportNoiseEventNotify.h"
 
+#include "Components/SkeletalMeshComponent.h"
+#include "GameFramework/Actor.h"
 #include "Perception/AISense_Hearing.h"
 
-
-#if	ENGINE_MAJOR_VERSION != 5
-void UEGReportNoiseEventNotify::Notify(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation)
-{
-	Super::Notify(MeshComp, Animation);
-	UAISense_Hearing::ReportNoiseEvent(MeshComp->GetWorld() , MeshComp->GetOwner()->GetActorLocation() , Loudness , MeshComp->GetOwner() , MaxRange , Tag);
-	if (PrintToLog) UE_LOG(LogBlueprint , Log , TEXT("Extended Gameplay Report Noise Event Trigger. Tag: %s") , *Tag.ToString());
-}
-
-#endif
-
-
-
-#if	ENGINE_MAJOR_VERSION == 5
-void UEGReportNoiseEventNotify::Notify(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation,
-	const FAnimNotifyEventReference& EventReference)
+void UEGReportNoiseEventNotify::Notify(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, const FAnimNotifyEventReference& EventReference)
 {
 	Super::Notify(MeshComp, Animation, EventReference);
-	UAISense_Hearing::ReportNoiseEvent(MeshComp->GetWorld() , MeshComp->GetOwner()->GetActorLocation() , Loudness , MeshComp->GetOwner() , MaxRange , Tag);
-	if (PrintToLog) UE_LOG(LogBlueprint , Log , TEXT("Extended Gameplay Report Noise Event Trigger. Tag: %s") , *Tag.ToString());
+
+	AActor* const Owner = MeshComp ? MeshComp->GetOwner() : nullptr;
+	if (!Owner)
+	{
+		return;
+	}
+
+	UAISense_Hearing::ReportNoiseEvent(MeshComp, Owner->GetActorLocation(), Loudness, Owner, MaxRange, Tag);
+
+	if (PrintToLog)
+	{
+		UE_LOG(LogBlueprint, Log, TEXT("Extended Gameplay Report Noise Event Trigger. Tag: %s"), *Tag.ToString());
+	}
 }
-#endif

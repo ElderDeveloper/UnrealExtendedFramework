@@ -248,10 +248,10 @@ private:
 	void PlayMontageBasedOnPose(UAnimMontage* IdleMontage , UAnimMontage* CrouchMontage);
 	void PlayMontageBasedOnDirectionAndPose(UAnimMontage* IdleRightSideMontage , UAnimMontage* IdleLeftSideMontage , UAnimMontage* CrouchRightSideMontage , UAnimMontage* CrouchLeftSideMontage);
 
-	UFUNCTION()
-	void OnMontageBegin(UAnimMontage* MontageToPlay);
-	UFUNCTION()
-	void OnMontageEnded(UAnimMontage* Montage, bool bInterrupted);
+	void OnCoverMontageBlendingOut(UAnimMontage* Montage, bool bInterrupted, uint32 PlayId);
+
+	/** Bumped for every cover montage, so a montage interrupted by the next one does not clear IsInMontage. */
+	uint32 CoverMontagePlayId = 0;
 };
 
 #pragma once

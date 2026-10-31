@@ -5,6 +5,8 @@
 
 
 
+#include "Animation/AnimInstance.h"
+#include "Animation/AnimMontage.h"
 #include "Components/CapsuleComponent.h"
 #include "GameFramework/Character.h"
 #include "GameFramework/SpringArmComponent.h"
@@ -117,8 +119,7 @@ void UEGCoverComponent::TakeCover()
 		bInCover = true;
 		OnCoverStateChanged.Broadcast(true);
 
-		if (GetInCoverMontage)
-			PlayerMesh->GetAnimInstance()->Montage_Play(GetInCoverMontage);
+		PlayMontageIfValid(GetInCoverMontage);
 		
 	}
 }
@@ -482,15 +483,19 @@ void UEGCoverComponent::StorePlayerValues()
 
 void UEGCoverComponent::PlayMontageIfValid(UAnimMontage* MontageToPlay)
 {
-	if (MontageToPlay && PlayerMesh)
+	UAnimInstance* const AnimInstance = (MontageToPlay && PlayerMesh) ? PlayerMesh->GetAnimInstance() : nullptr;
+	if (!AnimInstance || AnimInstance->Montage_Play(MontageToPlay) <= 0.0f)
 	{
-		PlayerMesh->GetAnimInstance()->OnMontageStarted.AddDynamic(this,&UEGCoverComponent::OnMontageBegin);
-		PlayerMesh->GetAnimInstance()->OnMontageBlendingOut.AddDynamic(this,&UEGCoverComponent::OnMontageEnded);
-		PlayerMesh->GetAnimInstance()->Montage_Play(MontageToPlay);
+		return;
 	}
-		
 
-	
+	// Listen to this montage only. The anim instance's OnMontageStarted/OnMontageBlendingOut fire for
+	// every montage on the character, and re-adding to them on each play double-bound the handlers.
+	const uint32 PlayId = ++CoverMontagePlayId;
+	IsInMontage = true;
+
+	FOnMontageBlendingOutStarted BlendingOutDelegate = FOnMontageBlendingOutStarted::CreateUObject(this, &UEGCoverComponent::OnCoverMontageBlendingOut, PlayId);
+	AnimInstance->Montage_SetBlendingOutDelegate(BlendingOutDelegate, MontageToPlay);
 }
 
 void UEGCoverComponent::PlayMontageBasedOnDirection(UAnimMontage* RightSideMontage,UAnimMontage* LeftSideMontage)
@@ -532,17 +537,11 @@ void UEGCoverComponent::PlayMontageBasedOnPose(UAnimMontage* IdleMontage , UAnim
 }
 
 
-void UEGCoverComponent::OnMontageBegin(UAnimMontage* MontageToPlay)
+void UEGCoverComponent::OnCoverMontageBlendingOut(UAnimMontage* Montage, bool bInterrupted, uint32 PlayId)
 {
-	IsInMontage = true;
-}
-
-void UEGCoverComponent::OnMontageEnded(UAnimMontage* Montage, bool bInterrupted)
-{
-	IsInMontage = false;
-	if (PlayerMesh)
+	// A newer cover montage interrupted this one; that montage owns the flag now.
+	if (PlayId == CoverMontagePlayId)
 	{
-		PlayerMesh->GetAnimInstance()->OnMontageStarted.RemoveDynamic(this,&UEGCoverComponent::OnMontageBegin);
-		PlayerMesh->GetAnimInstance()->OnMontageBlendingOut.RemoveDynamic(this,&UEGCoverComponent::OnMontageEnded);
+		IsInMontage = false;
 	}
 }
