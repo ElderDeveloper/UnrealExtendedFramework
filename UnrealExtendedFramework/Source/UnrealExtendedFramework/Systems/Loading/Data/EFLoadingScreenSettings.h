@@ -4,7 +4,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Engine/DeveloperSettings.h"
+#include "Settings/EFDeveloperSettings.h"
 #include "EFLoadingScreenSettings.generated.h"
 
 class UFont;
@@ -18,14 +18,13 @@ class UTexture2D;
  * screen draws or waits on is configured here, so no game code has to hold these values.
  */
 UCLASS(Config = Game, defaultconfig, meta = (DisplayName = "Extended Loading Screen"))
-class UNREALEXTENDEDFRAMEWORK_API UEFLoadingScreenSettings : public UDeveloperSettings
+class UNREALEXTENDEDFRAMEWORK_API UEFLoadingScreenSettings : public UEFDeveloperSettings
 {
 	GENERATED_BODY()
 
 public:
 	UEFLoadingScreenSettings();
 
-	virtual FName GetCategoryName() const override { return TEXT("Extended Framework"); }
 
 	/** Multiple background images — one is chosen at random each time the loading screen appears. Falls back to BackgroundImage if empty. */
 	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Slate")

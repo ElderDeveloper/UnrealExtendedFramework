@@ -69,6 +69,7 @@ public class UnrealExtendedFrameworkEditor : ModuleRules
 
 				// Extended Log window
 				"UnrealExtendedFrameworkLog",
+				"ExtendedFoundation",
 				"DirectoryWatcher",
 				"MainFrame"
 			});

@@ -4,7 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "EFLogTypes.h"
-#include "Engine/DeveloperSettings.h"
+#include "Settings/EFDeveloperSettings.h"
 
 #include "EFLogSettings.generated.h"
 
@@ -15,12 +15,11 @@
  * writes, so they take effect at the next launch.
  */
 UCLASS(config = Engine, defaultconfig, meta = (DisplayName = "Extended Log"))
-class UNREALEXTENDEDFRAMEWORKLOG_API UEFLogSettings : public UDeveloperSettings
+class UNREALEXTENDEDFRAMEWORKLOG_API UEFLogSettings : public UEFDeveloperSettings
 {
 	GENERATED_BODY()
 
 public:
-	virtual FName GetCategoryName() const override { return TEXT("Plugins"); }
 
 	/** Folder under Saved/Logs that EF_LOG writes into. Letters, digits and underscores only. */
 	UPROPERTY(config, EditAnywhere, Category = "Files", meta = (ConfigRestartRequired = true))

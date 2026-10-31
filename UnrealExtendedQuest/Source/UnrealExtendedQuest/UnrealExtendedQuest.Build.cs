@@ -26,7 +26,8 @@ public class UnrealExtendedQuest : ModuleRules
 				"GameplayTags",
 				"Json",
 				"JsonUtilities",
-				"NetCore" // FFastArraySerializer for snapshot replication
+				"NetCore", // FFastArraySerializer for snapshot replication
+				"ExtendedFoundation" // UEFDeveloperSettings base for the plugin settings
 				// ... add other public dependencies that you statically link with here ...
 			});
 

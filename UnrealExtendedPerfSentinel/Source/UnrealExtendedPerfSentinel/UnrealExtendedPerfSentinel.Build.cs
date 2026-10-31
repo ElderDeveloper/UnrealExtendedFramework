@@ -17,6 +17,8 @@ public class UnrealExtendedPerfSentinel : ModuleRules
 			"CoreUObject",
 			"Engine",
 			"DeveloperSettings",
+			// UEFDeveloperSettings base for the plugin settings.
+			"ExtendedFoundation",
 		});
 
 		PrivateDependencyModuleNames.AddRange(new string[]
