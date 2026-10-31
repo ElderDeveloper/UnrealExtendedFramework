@@ -16,7 +16,7 @@
  * A mismatched copy then fails with a readable message instead of a wall of missing symbols.
  */
 #define EF_FOUNDATION_VERSION_MAJOR 1
-#define EF_FOUNDATION_VERSION_MINOR 1
+#define EF_FOUNDATION_VERSION_MINOR 2
 #define EF_FOUNDATION_VERSION_PATCH 0
 
 #define EF_FOUNDATION_VERSION ((EF_FOUNDATION_VERSION_MAJOR * 10000) + (EF_FOUNDATION_VERSION_MINOR * 100) + EF_FOUNDATION_VERSION_PATCH)

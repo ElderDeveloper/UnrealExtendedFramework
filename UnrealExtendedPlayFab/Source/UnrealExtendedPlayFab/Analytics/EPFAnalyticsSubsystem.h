@@ -9,6 +9,22 @@
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnEPFEventLogged, const FEPFResult&, Result);
 
+/** One event for UEPFAnalyticsSubsystem::WriteEvents. */
+struct FEPFTelemetryEventData
+{
+	/** Letters, digits and underscores, at most 64 characters: what PlayFab accepts as an event name. */
+	FString EventName;
+
+	/** Written as the payload's "properties" object. */
+	TMap<FString, FString> Properties;
+
+	/** When the event happened, in UTC. Left at its default, the time of the write is used. */
+	FDateTime TimestampUtc;
+
+	/** Extra top-level payload fields beside schema_version and event_source, e.g. session_id. */
+	TMap<FString, FString> PayloadFields;
+};
+
 /**
  * Logs PlayFab analytics as telemetry events.
  * All events share one namespace and one payload envelope so gameplay and
@@ -49,6 +65,19 @@ public:
 	/** Log device information as telemetry */
 	UFUNCTION(BlueprintCallable, Category = "PlayFab|Analytics")
 	void ReportDeviceInfo();
+
+	using FOnEventsWritten = TFunction<void(const FEFResult& Result)>;
+
+	/** Most events one WriteTelemetryEvents request takes. */
+	static constexpr int32 MaxEventsPerWrite = 200;
+
+	/**
+	 * Writes 1 to MaxEventsPerWrite events in one WriteTelemetryEvents request, in the same payload
+	 * envelope as LogEvent with event_source EventSource, and answers OnDone once with the outcome
+	 * (Source "PlayFab"). Nothing is queued offline: without an entity token OnDone gets the
+	 * MissingAuthentication failure before this returns. OnEventLogged fires once for the request.
+	 */
+	void WriteEvents(const TArray<FEPFTelemetryEventData>& Events, const FString& EventSource, FOnEventsWritten OnDone);
 
 	// ── Auto Tracking ─────────────────────────────────────────────────────────
 
