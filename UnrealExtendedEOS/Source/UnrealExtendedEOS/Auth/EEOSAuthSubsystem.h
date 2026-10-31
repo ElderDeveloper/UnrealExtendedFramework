@@ -248,6 +248,9 @@ public:
 
 private:
 
+	/** Extended.Status reporter for this game instance's EOS state. */
+	int32 EFStatusHandle = 0;
+
 	EEOSLoginStatus CurrentLoginStatus = EEOSLoginStatus::NotLoggedIn;
 	EEOSLoginType UsedLoginType = EEOSLoginType::AccountPortal;
 

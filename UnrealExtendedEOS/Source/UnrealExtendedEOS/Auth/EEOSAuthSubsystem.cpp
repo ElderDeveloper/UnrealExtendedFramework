@@ -11,6 +11,7 @@
 #include "Interfaces/OnlineIdentityInterface.h"
 #include "UnrealExtendedEOS.h"
 #include "Async/EFCallContext.h"
+#include "Status/EFServiceStatus.h"
 #include "Engine/GameInstance.h"
 #include "TimerManager.h"
 
@@ -27,6 +28,42 @@
 void UEEOSAuthSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
 	Super::Initialize(Collection);
+
+	// Extended.Status: login and game-services state for this game instance. No tokens.
+	TWeakObjectPtr<UEEOSAuthSubsystem> WeakThis(this);
+	EFStatusHandle = FEFServiceStatusRegistry::Register(TEXT("EOS"), [WeakThis]
+	{
+		FEFServiceStatus Status;
+		const UEEOSAuthSubsystem* This = WeakThis.Get();
+		if (!This || !This->IsEOSAvailable())
+		{
+			Status.State = EEFServiceState::Unavailable;
+			Status.Summary = TEXT("The EOS online subsystem is not available.");
+			return Status;
+		}
+
+		const bool bLoggedIn = This->IsLoggedIn();
+		const bool bConnected = This->IsConnectedToGameServices();
+		switch (This->CurrentLoginStatus)
+		{
+		case EEOSLoginStatus::LoggingIn: Status.State = EEFServiceState::Starting; break;
+		case EEOSLoginStatus::Failed:    Status.State = bConnected ? EEFServiceState::Degraded : EEFServiceState::Error; break;
+		default:                         Status.State = (bLoggedIn || bConnected) ? EEFServiceState::Ready : EEFServiceState::Starting; break;
+		}
+
+		Status.Summary = bLoggedIn
+			? FString::Printf(TEXT("Logged in as %s"), *This->GetDisplayName())
+			: (bConnected ? FString(TEXT("Connected to game services without an Epic account")) : FString(TEXT("Not logged in")));
+		Status.Details.Add(TEXT("Epic account"), bLoggedIn ? TEXT("logged in") : TEXT("not logged in"));
+		Status.Details.Add(TEXT("Game services (Connect)"), bConnected ? TEXT("connected") : TEXT("not connected"));
+		const FString ProductUserId = This->GetProductUserId();
+		if (!ProductUserId.IsEmpty())
+		{
+			Status.Details.Add(TEXT("Product user id"), ProductUserId);
+		}
+		return Status;
+	});
+
 	TickNativeIdentity(0);
 	IdentityTicker = FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateUObject(this, &UEEOSAuthSubsystem::TickNativeIdentity), 0.5f);
 
@@ -69,6 +106,9 @@ void UEEOSAuthSubsystem::KickOffAutoLogin()
 
 void UEEOSAuthSubsystem::Deinitialize()
 {
+	FEFServiceStatusRegistry::Unregister(EFStatusHandle);
+	EFStatusHandle = 0;
+
 	BeginEOSShutdown(); bShuttingDown = true;
 	if (GetGameInstance()) GetGameInstance()->GetTimerManager().ClearTimer(AutoLoginTimer);
 	if (IdentityTicker.IsValid()) FTSTicker::GetCoreTicker().RemoveTicker(IdentityTicker);
