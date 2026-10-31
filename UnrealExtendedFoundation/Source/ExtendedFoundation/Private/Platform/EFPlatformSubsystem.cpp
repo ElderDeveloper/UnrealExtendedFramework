@@ -2,6 +2,7 @@
 
 #include "Platform/EFPlatformSubsystem.h"
 
+#include "Assets/EFAssetLoading.h"
 #include "ExtendedFoundationModule.h"
 #include "Messages/EFMessageSubsystem.h"
 #include "Platform/EFPlatformCatalog.h"
@@ -71,6 +72,13 @@ void UEFPlatformSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 
 	// Unlock and score messages go out on the bus, so it must outlive this subsystem.
 	Collection.InitializeDependency<UEFMessageSubsystem>();
+
+	// GetCatalog runs when a game first unlocks or submits something; have the catalog ready by then.
+	const TSoftObjectPtr<UEFPlatformCatalog>& ConfiguredCatalog = UEFPlatformSettings::Get()->Catalog;
+	if (!ConfiguredCatalog.IsNull() && !ConfiguredCatalog.Get())
+	{
+		CatalogPreloadHandle = EFAssets::Preload({ ConfiguredCatalog.ToSoftObjectPath() });
+	}
 
 	TWeakObjectPtr<UEFPlatformSubsystem> WeakThis(this);
 	StatusHandle = FEFServiceStatusRegistry::Register(TEXT("Platform"), [WeakThis]
@@ -150,6 +158,7 @@ void UEFPlatformSubsystem::Deinitialize()
 
 	Providers.Reset();
 	OnProvidersChanged.Clear();
+	CatalogPreloadHandle.Reset();
 	Super::Deinitialize();
 }
 
@@ -439,7 +448,7 @@ const UEFPlatformCatalog* UEFPlatformSubsystem::GetCatalog() const
 		const TSoftObjectPtr<UEFPlatformCatalog>& Configured = UEFPlatformSettings::Get()->Catalog;
 		if (!Configured.IsNull())
 		{
-			Mutable->LoadedCatalog = Configured.LoadSynchronous();
+			Mutable->LoadedCatalog = EFAssets::Resolve(Configured, TEXT("UEFPlatformSubsystem::GetCatalog"));
 			if (!LoadedCatalog)
 			{
 				UE_LOG(LogExtendedFoundation, Warning, TEXT("Platform: the catalog %s could not be loaded; ids are sent to providers unchanged."), *Configured.ToString());

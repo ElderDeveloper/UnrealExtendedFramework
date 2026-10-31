@@ -10,6 +10,7 @@
 #include "EFPlatformSubsystem.generated.h"
 
 class UEFPlatformCatalog;
+struct FStreamableHandle;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FEFOnAchievementUnlocked, FName, AchievementId, FName, Provider);
 
@@ -165,6 +166,9 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<UEFPlatformCatalog> CatalogOverride;
+
+	/** Loads the configured catalog in the background from Initialize, so its first use does not hitch. */
+	TSharedPtr<FStreamableHandle> CatalogPreloadHandle;
 
 	bool bCatalogLoadAttempted = false;
 	int32 StatusHandle = 0;

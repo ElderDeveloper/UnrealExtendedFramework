@@ -12,6 +12,7 @@
 #include "ESaveSubsystem.generated.h"
 
 class UESaveableComponent;
+struct FStreamableHandle;
 class UWorld;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FESaveSlotEvent, const FString&, SlotName, bool, bSuccess);
@@ -244,6 +245,8 @@ private:
 	double PlayTimeStartSeconds = 0.0;
 	FTSTicker::FDelegateHandle AutosaveTickerHandle;
 	FDelegateHandle PostLoadMapHandle;
+	/** Keeps the configured migration classes loaded, so migrating an old save does not hitch. */
+	TSharedPtr<FStreamableHandle> MigrationPreloadHandle;
 	int32 StatusHandle = 0;
 	bool bOperationRunning = false;
 	/** Set while a load restores the world, so destroying actors it does not need is not recorded. */
