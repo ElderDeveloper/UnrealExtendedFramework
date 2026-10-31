@@ -163,7 +163,7 @@ Composable components and actors for common action-game needs:
 - Footstep handling and input buffering.
 - Basic and advanced outline components, symbols, and helper library.
 - Feet IK animation support.
-- **Animation systems** — tagged anim events, swept melee hit detection with pluggable damage policies and hit pause, stacked time dilation and movement modifiers, predicted root-motion moves, Motion Warping targets from lock-on, animation sets by gameplay tag, async montage nodes, and a thread-safe anim instance base. See [`UnrealExtendedGameplay/Docs/Animation.md`](UnrealExtendedGameplay/Docs/Animation.md).
+- **Animation systems** — tagged anim events, swept melee hit detection with pluggable damage policies and hit pause, stacked time dilation and movement modifiers, predicted root-motion moves, Motion Warping targets from lock-on, animation sets by gameplay tag, async montage nodes, a thread-safe anim instance base, and component-based actor turn in place. See [`UnrealExtendedGameplay/Docs/Animation.md`](UnrealExtendedGameplay/Docs/Animation.md).
 - Animation notifies for camera shake, particles, perception noise, footsteps, montage control, play rate, slow motion, movement control, and soft lock.
 - Input-image widgets for player-facing control prompts.
 - **Chess minigame** — replicated chess table actor with seats and sit interaction, full rules/move generation and notation, a rule-based AI with data-driven profiles, time controls, board feedback, piece visuals, sound/animation sets, UI base widget, and debug console commands.

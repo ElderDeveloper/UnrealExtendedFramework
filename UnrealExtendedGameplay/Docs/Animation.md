@@ -11,6 +11,7 @@ The animation side of **UnrealExtendedGameplay** is built on one rule: **notifie
 | Root motion & warping | `Animation/RootMotion`, `Animation/MotionWarping` | Predicted dashes and lunges; warp targets from lock-on |
 | Montage playback | `Animation/Montage` | One mesh/set/playback path, animation sets by tag, async montage nodes |
 | Anim instance | `Animation/AnimInstance` | A thread-safe AnimBP base and gameplay state as tags |
+| Turn in place | `Animation/TurnInPlace` | Actor-based turn in place as a component; see [TurnInPlace.md](TurnInPlace.md) |
 | Footsteps | `Footstep` | A footstep notify driving `UEGFootstepComponent` |
 
 ---
@@ -95,6 +96,10 @@ Parent your AnimBP to `UEGAnimInstance`.
 * **Thread-safe update:** it derives speed, ground speed, direction, aim pitch/yaw, lean and "should move".
 * **Reading state:** use `HasStateTag` (thread safe) for gameplay state. For example `ExtendedGameplay.Anim.State.Cover.Crouched` comes from the cover component, and any open anim event window comes from `UEGAnimEventComponent`.
 * **Extending it:** override `GatherGameThreadData` / `ComputeThreadSafeData` in C++ to add your own values.
+
+## Turn in place
+
+Actor-based turn in place as a component: the capsule is held back while standing and the turn animations' curves rotate it. The project forwards `FaceRotation` and `PhysicsRotation` and adds a saved-move mixin; `UEGAnimInstance` runs the anim side. The full guide, including the anim graph recipe and how each known pitfall is prevented, is in [TurnInPlace.md](TurnInPlace.md).
 
 ## Footsteps
 

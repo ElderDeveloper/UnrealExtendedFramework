@@ -9,6 +9,7 @@
 #include "Animation/AnimMontage.h"
 #include "UnrealExtendedGameplay/Animation/EGAnimationTags.h"
 #include "UnrealExtendedGameplay/Animation/Montage/EGMontageLibrary.h"
+#include "UnrealExtendedGameplay/Animation/TurnInPlace/EGTurnInPlaceComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "GameFramework/Character.h"
 #include "GameFramework/SpringArmComponent.h"
@@ -119,6 +120,11 @@ void UEGCoverComponent::TakeCover()
 		Player->GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
 		
 		bInCover = true;
+		if (UEGTurnInPlaceComponent* const TurnInPlace = UEGTurnInPlaceComponent::FindFor(GetOwner()))
+		{
+			ReleaseTurnInPlaceLock();
+			TurnInPlaceLock = TurnInPlace->PushLock(TEXT("Cover"));
+		}
 		OnCoverStateChanged.Broadcast(true);
 
 		PlayCoverMontage(TAG_EGAnim_Cover_GetIn, TAG_EGAnim_Cover_GetIn_Crouched, GetInCoverMontage, CrouchedGetInCoverMontage);
@@ -274,6 +280,7 @@ void UEGCoverComponent::ExitCover()
 	bCameraMoving = true;
 	Player->GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::Type::QueryAndPhysics);
 	bInCover = false;
+	ReleaseTurnInPlaceLock();
 	CoverCameraDirection = CameraCenter;
 	PlayCoverMontage(TAG_EGAnim_Cover_GetOut, TAG_EGAnim_Cover_GetOut_Crouched, GetOutCoverMontage, CrouchedGetOutCoverMontage);
 	OnCoverStateChanged.Broadcast(bInCover);
@@ -598,4 +605,20 @@ FGameplayTagContainer UEGCoverComponent::GetAnimStateTags_Implementation() const
 		Tags.AddTag(TAG_EGAnim_State_Cover_Montage);
 	}
 	return Tags;
+}
+
+void UEGCoverComponent::ReleaseTurnInPlaceLock()
+{
+	if (UEGTurnInPlaceComponent* const TurnInPlace = UEGTurnInPlaceComponent::FindFor(GetOwner()))
+	{
+		TurnInPlace->RemoveRequest(TurnInPlaceLock);
+	}
+	TurnInPlaceLock.Invalidate();
+}
+
+void UEGCoverComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	ReleaseTurnInPlaceLock();
+	StopTrackingOwnerMontage();
+	Super::EndPlay(EndPlayReason);
 }

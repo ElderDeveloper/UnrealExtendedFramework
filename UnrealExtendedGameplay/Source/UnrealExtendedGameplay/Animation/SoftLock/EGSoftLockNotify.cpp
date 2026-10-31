@@ -9,6 +9,7 @@
 #include "UnrealExtendedFramework/Libraries/Trace/EFTraceLibrary.h"
 #include "UnrealExtendedGameplay/Animation/EGAnimNotifyHelpers.h"
 #include "UnrealExtendedGameplay/Animation/EGAnimTargeting.h"
+#include "UnrealExtendedGameplay/Animation/TurnInPlace/EGTurnInPlaceComponent.h"
 
 void UEGSoftLockNotify::NotifyBegin(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, float TotalDuration, const FAnimNotifyEventReference& EventReference)
 {
@@ -16,6 +17,11 @@ void UEGSoftLockNotify::NotifyBegin(USkeletalMeshComponent* MeshComp, UAnimSeque
 	if (EGAnimNotify::CanDriveOwnerTransform(MeshComp))
 	{
 		GetSoftLockActor(MeshComp);
+
+		if (UEGTurnInPlaceComponent* const TurnInPlace = UEGTurnInPlaceComponent::FindFor(MeshComp->GetOwner()))
+		{
+			TurnInPlacePauses.FindOrAdd(TWeakObjectPtr<USkeletalMeshComponent>(MeshComp)).Add(TurnInPlace->PushPause(TEXT("SoftLock")));
+		}
 	}
 }
 
@@ -23,6 +29,24 @@ void UEGSoftLockNotify::NotifyEnd(USkeletalMeshComponent* MeshComp, UAnimSequenc
 {
 	Super::NotifyEnd(MeshComp, Animation, EventReference);
 	ClearSoftLockActor(MeshComp);
+
+	const TWeakObjectPtr<USkeletalMeshComponent> Key(MeshComp);
+	if (TArray<FEGTurnInPlaceRequestHandle>* Pauses = TurnInPlacePauses.Find(Key))
+	{
+		if (Pauses->Num() > 0)
+		{
+			FEGTurnInPlaceRequestHandle Handle = (*Pauses)[0];
+			Pauses->RemoveAt(0);
+			if (UEGTurnInPlaceComponent* const TurnInPlace = MeshComp ? UEGTurnInPlaceComponent::FindFor(MeshComp->GetOwner()) : nullptr)
+			{
+				TurnInPlace->RemoveRequest(Handle);
+			}
+		}
+		if (Pauses->Num() == 0)
+		{
+			TurnInPlacePauses.Remove(Key);
+		}
+	}
 }
 
 void UEGSoftLockNotify::NotifyTick(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, float FrameDeltaTime, const FAnimNotifyEventReference& EventReference)

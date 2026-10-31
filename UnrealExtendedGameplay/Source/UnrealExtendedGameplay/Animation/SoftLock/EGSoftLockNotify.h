@@ -5,6 +5,7 @@
 #include "Animation/AnimNotifies/AnimNotifyState.h"
 #include "CoreMinimal.h"
 #include "UnrealExtendedFramework/Data/EFTraceData.h"
+#include "UnrealExtendedGameplay/Animation/TurnInPlace/EGTurnInPlaceTypes.h"
 
 #include "EGSoftLockNotify.generated.h"
 
@@ -40,4 +41,7 @@ protected:
 	void TickSoftLock(USkeletalMeshComponent* MeshComp, float FrameDeltaTime);
 private:
 	TMap<TWeakObjectPtr<USkeletalMeshComponent>, TWeakObjectPtr<AActor>> SoftLockActors;
+
+	/** Turn in place is paused while this notify turns the actor, so the two do not fight. Oldest first. */
+	TMap<TWeakObjectPtr<USkeletalMeshComponent>, TArray<FEGTurnInPlaceRequestHandle>> TurnInPlacePauses;
 };

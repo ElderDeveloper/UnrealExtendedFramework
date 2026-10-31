@@ -1,12 +1,12 @@
-# Turn In Place — design
-
-> **Status:** design, not implemented yet. This document is the specification the implementation follows.
+# Turn In Place
 
 A component-based turn-in-place system for `UnrealExtendedGameplay`.
 
-* There is no character or movement-component base class to inherit from.
-* A project adds one component and forwards a few engine calls from its own classes, using helpers that make those few lines hard to get wrong.
-* Everything else (the math, networking, anim graph glue and safety checks) lives in the plugin.
+* There is no character or movement-component base class.
+* A project adds one component and forwards a few engine calls from its own classes; helpers make those lines hard to get wrong.
+* The math, networking, anim graph glue and setup checks live in the plugin.
+
+> Code: `Source/UnrealExtendedGameplay/Animation/TurnInPlace`. Curve modifier: `Source/UnrealExtendedGameplayEditor/TurnInPlace`. Tests: `UnrealExtendedGameplay.Animation.TurnInPlace.*`.
 
 ---
 
@@ -14,22 +14,21 @@ A component-based turn-in-place system for `UnrealExtendedGameplay`.
 
 **Goals**
 
-* Turn in place for the three common character setups:
+* Turn in place for the three common character setups (`UEGTurnInPlaceComponent::SetRotationMode` sets the flags):
   * **Strafe Direct:** `bUseControllerRotationYaw`, snaps to the camera.
   * **Strafe Desired:** `bUseControllerDesiredRotation`, interpolated.
   * **Orient To Movement:** `bOrientRotationToMovement`. After input is released, the character keeps turning towards the last input direction.
 * **Actor-based.** The capsule really rotates and the mesh is never counter-rotated. Mesh smoothing on simulated proxies, sockets, aim offsets and every other system see one true rotation.
 * **Multiplayer correct out of the box:** predicted on the owning client, cheap to replicate, and stable on simulated proxies and dedicated servers.
-* **Modular:** one component, a data asset, and a small set of required hooks. Optional hooks add polish.
-* **Per-stance animation sets** (standing, crouched, armed, and so on), selected by gameplay tag.
-* **Pause and lock from anywhere:** gameplay code, montages, anim curves and anim event windows can all pause or lock turn in place, and the result is deterministic.
-* **Self-checking.** A missing hook or a bad setup is reported once, with the fix, instead of failing silently.
+* **Per-stance animation sets,** selected by gameplay tag.
+* **Pause and lock from anywhere:** gameplay code, montages, anim curves and anim event windows can all pause or lock it, and the result is deterministic.
+* **Self-checking.** A missing hook or a bad setup is reported once, with the fix.
 
 **Non-goals**
 
 * Mesh-based turn in place (Rotate Root Bone with a root yaw offset).
-* Shipping animations or an anim blueprint. The plugin provides C++, a curve-generating animation modifier, and a step-by-step anim graph recipe (§9).
-* Pawns without `UCharacterMovementComponent`. The math is reusable, but only the character path is integrated.
+* Shipping animations or an anim blueprint. The plugin provides C++, the curve modifier, and the anim graph recipe (§9).
+* Pawns without `UCharacterMovementComponent`.
 
 ---
 
@@ -43,88 +42,96 @@ TurnOffset   DesiredYaw − ActorYaw, the yaw the character still has to turn
 
 * **Standing still:**
   * the movement hook holds the actor back, so that `ActorYaw = DesiredYaw − TurnOffset`;
-  * `TurnOffset` grows as the camera turns, clamped to `MaxTurnAngle`. Past that angle the actor is dragged along.
+  * the offset grows as the camera turns, clamped to `MaxTurnAngle`. Past that angle the actor is dragged along.
 * **Starting a turn:** once `|TurnOffset| ≥ MinTurnAngle`, the anim graph plays a turn animation.
 * **Each turn animation carries two curves:**
-  * `RemainingTurnYaw`: the yaw the animation still has to turn. The frame-to-frame change in this value is subtracted from `TurnOffset`, so the actor rotates exactly as much as the animation does.
-  * `TurnYawWeight`: 1 while the turn is happening, 0 during the settle (recovery) frames at the end.
-* **Moving:** the offset is cleared and normal character rotation takes over. In Strafe Direct the change is eased out over `MovingInterpOutRate`, so the actor never snaps.
+  * `RemainingTurnYaw`: the yaw the animation still has to turn. Its frame-to-frame change is subtracted from the offset, so the actor rotates exactly as much as the animation does.
+  * `TurnYawWeight`: 1 while turning, 0 during the recovery frames.
+* **Moving:** the offset is cleared and normal character rotation takes over. In Strafe Direct the change is eased out over `MovingInterpOutRate`.
 
-`TurnOffset` is the opposite sign of Lyra's `RootYawOffset`. It is never applied to the mesh, and aim offsets and locomotion should not use it, because the actor's rotation is already true.
+`TurnOffset` is the opposite sign of Lyra's `RootYawOffset`. Do not use it for aim offsets or locomotion: the actor's rotation is already true.
 
 ---
 
 ## 3. Pieces
 
-| Piece | Kind | Location |
-|:--|:--|:--|
-| `UEGTurnInPlaceComponent` | Replicated actor component, the runtime owner | `Animation/TurnInPlace` |
-| `FEGTurnInPlaceSolver` | Plain C++ math, no world needed, unit tested | `Animation/TurnInPlace` |
-| `UEGTurnInPlaceSet` | Data asset: per-stance angles, steps, play rates, left/right sequences | `Animation/TurnInPlace` |
-| `EGTurnInPlace` hooks | Static helpers the project calls from `FaceRotation` / `PhysicsRotation` | `Animation/TurnInPlace` |
-| `TEGTurnInPlaceSavedMove<TBase>` / `TEGTurnInPlacePredictionData<TMove>` | Templates added to the project's saved move | `Animation/TurnInPlace` |
-| `IEGTurnInPlaceAnimSource` | Interface on the anim instance: worker-thread curve cache | `Animation/TurnInPlace` |
-| `UEGTurnInPlaceAnimLibrary` | Thread-safe anim graph functions (setup/update per state) | `Animation/TurnInPlace` |
-| `UEGAnimInstance` support | Built-in gather, worker update and interface implementation | `Animation/AnimInstance` |
-| `UEGTurnInPlaceCurveModifier` | Animation modifier that writes the two curves from root yaw | **new** `UnrealExtendedGameplayEditor` module |
-| Native tags | `ExtendedGameplay.TurnInPlace.*` | `Animation/EGAnimationTags` |
+| Piece | Kind |
+|:--|:--|
+| `UEGTurnInPlaceComponent` | Replicated actor component, the runtime owner. Also an `IEGAnimStateProvider` |
+| `FEGTurnInPlaceSolver` | Every decision as plain functions (no world), unit tested |
+| `UEGTurnInPlaceSet` | Data asset: per-stance entries and curve names |
+| `EGTurnInPlace::HandleFaceRotation` / `HandlePhysicsRotation` / `ComputeOrientToMovementRotation` | What the project calls from its own classes (`EGTurnInPlaceHooks.h`) |
+| `TEGTurnInPlaceSavedMove<TBase>`, `TEGTurnInPlacePredictionData<TMove, TBaseData>`, `FEGTurnInPlaceSavedMove`, `FEGTurnInPlacePredictionData` | Saved-move support (`EGTurnInPlaceHooks.h`) |
+| `IEGTurnInPlaceAnimSource` | On the anim instance: returns the worker-cached curves |
+| `UEGTurnInPlaceAnimLibrary` | Game-thread gather, worker-thread update, anim graph node functions |
+| `UEGAnimInstance` | Runs both halves itself and implements `IEGTurnInPlaceAnimSource` |
+| `UEGTurnInPlaceCurveModifier` | Animation modifier "Turn In Place Curves" (`UnrealExtendedGameplayEditor`, an Editor module) |
 
 ### 3.1 `UEGTurnInPlaceSet`
 
 ```
 UEGTurnInPlaceSet : UPrimaryDataAsset
   Default            FEGTurnInPlaceEntry
-  Stances            TMap<FGameplayTag, FEGTurnInPlaceEntry>   // matched against the owner's anim state tags
-  Settings           curve names (RemainingTurnYaw, TurnYawWeight, PauseTurnInPlace, LockTurnInPlace)
+  Stances            TMap<FGameplayTag, FEGTurnInPlaceEntry>   // the first key found in the owner's anim state tags wins
+  Curves             FEGTurnInPlaceCurveNames (RemainingTurnYaw, TurnYawWeight, PauseTurnInPlace, LockTurnInPlace)
 
 FEGTurnInPlaceEntry
-  State              Enabled | Locked | Paused                 // the entry's own default
-  AnglesByMode       TMap<Tag, FEGTurnAngles>                  // ExtendedGameplay.TurnInPlace.Mode.Movement / .Strafe
-  StepSizes          [60, 90, 180]                             // ascending; one left and one right sequence per step
+  State              Enabled | Locked | Paused
+  MovementAngles     FEGTurnAngles (60, 0)       // ExtendedGameplay.TurnInPlace.Mode.Movement
+  StrafeAngles       FEGTurnAngles (60, 135)     // ExtendedGameplay.TurnInPlace.Mode.Strafe
+  CustomModeAngles   TMap<Tag, FEGTurnAngles>    // modes returned by an overridden GetTurnModeTag
+  StepSizes          [60, 90, 180]               // ascending
   SelectMode         Greater | Nearest
-  SelectOffset       degrees added before selecting a step
-  LeftTurns / RightTurns   TArray<TObjectPtr<UAnimSequence>>   // index = step
-  PlayRateAtMaxAngle, PlayRateOnDirectionChange, bKeepMaxAnglePlayRate
+  SelectOffset
+  LeftTurns / RightTurns   one UAnimSequence per step
+  PlayRateAtMaxAngle (1.3), PlayRateOnDirectionChange (1.7), bKeepMaxAnglePlayRate
   MovingInterpOutRate
-  Montages           FEGTurnInPlaceMontageRules                // overrides, ignored slots/montages, ignore additive
-
-FEGTurnAngles
-  MinTurnAngle       start a turn at this offset
-  MaxTurnAngle       hard clamp; 0 disables
+  Montages           FEGTurnInPlaceMontageRules (Overrides, bIgnoreAdditive, IgnoredSlots, IgnoredMontages)
 ```
 
 * **Stance resolution:**
-  * Happens **once per frame on the game thread**, from the owner's `IEGAnimStateProvider` tags; the first matching key wins, otherwise `Default`.
-  * Projects can override it with `GetStanceTag()` (a BlueprintNativeEvent).
-  * The resolved entry is cached on the component, and the movement hook and the anim graph both read that same cache. They can never disagree about which set is active.
-* **Validation:** `IsDataValid` checks that steps are ascending, that each step has a left and right sequence, that Min ≤ Max, and that the curves exist on each sequence.
+  * Happens **once per frame on the game thread**, from the tags of every other `IEGAnimStateProvider` on the owner.
+  * `GetStanceTag()` overrides it.
+  * The movement hook and the anim graph read the same result. The worker thread reads entries straight from the asset, which is read-only at runtime.
+* **Validation:** `IsDataValid` checks:
+  * steps are positive and ascending;
+  * there is one left and one right sequence per step;
+  * every sequence has both curves;
+  * Min ≤ Max.
 
 ### 3.2 `UEGTurnInPlaceComponent`
-
-* **Replication:** it carries `SimulatedTurnOffset`, a `uint16` sent only to simulated proxies (`COND_SimulatedOnly`), push-model, and marked dirty only when the value changes beyond a tolerance.
-* **Tick:** it ticks itself at `TG_PostPhysics`. There it runs simulated-proxy curve simulation (§7.3), debug drawing and the integration self-check (§11). The project never adds a Tick override.
-* **Anim instance tracking:** it caches the mesh's anim instance through `OnAnimInitialized` and checks that it implements `IEGTurnInPlaceAnimSource`.
-* **Public API (BlueprintCallable unless noted):**
 
 | Call | Purpose |
 |:--|:--|
 | `GetTurnOffset()` | Current offset (degrees) |
-| `IsTurning()`, `IsRecovering()` | From the worker-cached curves |
-| `GetEnabledState()` | Resolved Enabled / Locked / Paused, with the reason (for debug) |
-| `PushPause(Reason)`, `PushLock(Reason)` → handle; `Remove(Handle)` | Handle-based requests, the same pattern as movement modifiers |
-| `SetRotationMode(Mode)` | Sets the character and movement-component flags for one of the three setups |
-| `GetStanceTag()` / `ShouldIgnoreMontage(...)` / `CanAbortTurn()` | BlueprintNativeEvents for project rules |
+| `IsTurningInPlace()` | Weight curve above 0 |
+| `GetEnabledState(OutReason)` | Resolved state and why (§6) |
+| `PushPause(Reason)`, `PushLock(Reason)` → handle; `RemoveRequest(Handle)` | Handle-based requests |
+| `SetRotationMode(Character, Mode)` | Sets the character and movement flags for one of the three setups |
+| `GetLastInputDirection()` | What Orient To Movement turns towards when input stops |
+| `GetStanceTag`, `GetTurnModeTag`, `ShouldIgnoreMontage`, `CanAbortTurn` | BlueprintNativeEvents for project rules |
 
-### 3.3 The solver
+| Setting | Default | Meaning |
+|:--|:--|:--|
+| `TurnSet` | — | Required |
+| `bRotateToLastInputDirection` | true | Orient To Movement keeps turning towards the last input |
+| `DedicatedServerAnimMode` | Animation | `Animation` or `Pseudo` (§7.4) |
+| `bSimulateCurvesOnProxies` | true | §7.3 |
+| `bReportSetupProblems` | true | §11 |
 
-`FEGTurnInPlaceSolver` holds all the decisions as pure functions over plain structs, so they can be tested without a world:
+The component ticks itself (`TG_PostPhysics`) for proxy simulation, pseudo states, self-checks and debug drawing. The project never adds a Tick override.
 
-* `YawDeltaAroundUp(From, To, Up)`: heading difference about the gravity up axis. It uses plain yaw subtraction on flat ground and projected headings when roll or custom gravity is present.
-* `UpdateOffset(Inputs, State&)`: one movement step. It resets the offset, measures desired vs actual, applies the curve delta (with the guards in §10), clamps to the maximum, and returns the yaw the actor should rotate by.
-* `SelectStep(Entry, Offset, bOutRight)`
-* `ComputePlayRate(Entry, Offset, bTurning, bTurningRight, bLatchedMax&)`
-* `ResolveState(EntryState, Requests, Curves, Montage, Cvar)`: the enabled-state priority order (§6).
-* `AdvancePseudoState(...)`: the dedicated-server state machine (§7.4).
+### 3.3 `FEGTurnInPlaceSolver`
+
+| Function | Does |
+|:--|:--|
+| `YawDeltaAroundUp` | Heading difference about the gravity up axis. Plain yaw subtraction on flat ground, projected headings with roll or custom gravity |
+| `UpdateOffset` | One standing step: measure, apply the curve delta with its guards (§10), clamp. Returns the yaw the actor turns by. Locked returns 0 and clears the state; Paused turns all the way with no offset; simulated proxies keep and advance the replicated offset and never rotate |
+| `SelectStep`, `ComputePlayRate` | Which step plays; max-angle rate (latched) and direction-change rate. The direction change compares the offset with the *playing* turn's side |
+| `ResolveState`, `EvaluateRootMotionMontage` | §6 |
+| `ComputeGraphOutput`, `AdvanceAnimTime`, `UpdateNodePlayRate`, `GetTurnAnimation` | Anim graph logic |
+| `AdvancePseudoState` | §7.4 |
+| `UpdateLastInputDirection` | §10 (jumping, root motion, stick bounce) |
 
 ---
 
@@ -132,104 +139,107 @@ FEGTurnAngles
 
 ```
 Movement tick (game thread, inside CharacterMovementComponent)
-  └─ PhysicsRotation / FaceRotation hook → component:
-       resolve state → solver.UpdateOffset (reads curve cache from the last worker pass)
-       → SetActorRotation (yaw only: no sweep) → mark replication dirty if changed
+  └─ HandlePhysicsRotation / HandleFaceRotation → component:
+       state (§6) → solver.UpdateOffset (curves from the last worker pass) → rotate (yaw only: no sweep)
+       → replicate the offset if it changed
 
-Anim update, game thread (UEGAnimInstance::GatherGameThreadData or library call)
-  └─ copy: offset, resolved entry, enabled state, step, turn direction, mode angles
+Anim update, game thread   UEGTurnInPlaceAnimLibrary::GatherTurnInPlace     (component.MakeGraphInput)
+Anim update, worker        UEGTurnInPlaceAnimLibrary::ThreadSafeUpdateTurnInPlace
+  └─ read curves NOW → refresh "is turning" → latch "turned this entry" → outputs
+State machine (worker)     Idle ⇄ Turn → Recovery → Idle, Abort → Idle
 
-Anim update, worker thread (ComputeThreadSafeData or library call)
-  └─ read curves NOW → cache in the anim instance (IEGTurnInPlaceAnimSource)
-  └─ refresh "is turning" from the fresh curves, latch "turned this entry"
-  └─ outputs: bWantsToTurn, bWantsRecovery, bAbortTurn, play rate, sequence, explicit time
-
-State machine (worker): Idle ⇄ Turn → Recovery → Idle, Abort alias → Idle
-
-Next movement tick reads the curve cache written by that worker pass.
+Next movement tick reads that worker pass's curves through IEGTurnInPlaceAnimSource.
 ```
-
-The curve cache is written at exactly one point, after the pose that produced it. Gameplay never calls `GetCurveValue` on its own schedule.
-
----
-
-## 5. Data that crosses threads
 
 | Struct | Written by | Read by |
 |:--|:--|:--|
-| `FEGTurnInPlaceMoveState` (offset, last curve value, interp-out alpha, first-frame flag) | Movement hook | Movement hook, saved move snapshot |
-| `FEGTurnInPlaceGraphInput` (entry, offset, state, step, direction, angles) | Game-thread anim gather | Worker |
-| `FEGTurnInPlaceCurves` (remaining yaw, weight, pause, lock) | Worker | Movement hook (through the anim source interface), sim-proxy simulation |
-| `FEGTurnInPlaceGraphOutput` (transitions, play rate, sequence, time) | Worker | Anim graph |
-| `FEGTurnInPlaceNodeState` (step, time, right/left, recovery side, latches) | Anim graph node functions | Anim graph node functions |
+| `FEGTurnInPlaceMoveState` | Movement hook | Movement hook, saved-move snapshot |
+| `FEGTurnInPlaceGraphInput` | Game-thread gather | Worker |
+| `FEGTurnInPlaceCurves` | Worker | Movement hook, proxy simulation |
+| `FEGTurnInPlaceGraphOutput` | Worker | Anim graph |
+| `FEGTurnInPlaceNodeState` | Node functions | Node functions |
+| `FEGTurnInPlaceAnimData` | All of the above, kept on the anim instance | |
 
-Everything the worker touches lives on the anim instance. The worker never reads the component.
+---
+
+## 5. Gameplay tags
+
+| Tag | Use |
+|:--|:--|
+| `ExtendedGameplay.TurnInPlace.Mode.Movement` / `.Strafe` | Turn mode (which angles) |
+| `ExtendedGameplay.TurnInPlace.Pause` / `.Lock` | Anim event windows (Anim Event Window notify, read through `UEGAnimEventComponent`) |
+| `ExtendedGameplay.TurnInPlace.State.Turning`, `.Locked`, `.Paused`, `.Left`, `.Right` | Published as anim state tags (`UEGAnimInstance::HasStateTag`) |
 
 ---
 
 ## 6. Enabled state
 
-The resolved state is the first match in this list, top to bottom:
+The resolved state is the first match in this list, top to bottom (`FEGTurnInPlaceSolver::ResolveState`):
 
-1. `eg.TurnInPlace.Override` console variable (non-shipping): 1 Enabled, 2 Locked, 3 Paused.
-2. **Paused** if a pause request exists.
-3. **Locked** if a lock request exists.
-4. **Paused** if the `PauseTurnInPlace` curve is ≥ 0.95.
-5. **Locked** if the `LockTurnInPlace` curve is ≥ 0.95.
-6. **Paused** if an anim event window `ExtendedGameplay.TurnInPlace.Pause` is open (through `UEGAnimEventComponent` state tags).
-7. **Locked** if an anim event window `ExtendedGameplay.TurnInPlace.Lock` is open.
-8. **Paused** while a networked root-motion montage plays, unless the montage rules ignore it (ignored montage, ignored slot, or additive). A per-montage override can force Enabled, Locked or Paused.
-9. **Paused** while the movement component has root motion sources (Root Motion Move, motion warping through root motion).
-10. **Locked** while `UEGMovementModifierComponent`'s combined `RotationRateScale` is 0.
-11. Otherwise, the entry's own `State`.
+1. `eg.TurnInPlace.Override` (non-shipping): 1 Enabled, 2 Locked, 3 Paused.
+2. **Paused**: a pause request.
+3. **Locked**: a lock request.
+4. **Paused**: `PauseTurnInPlace` curve ≥ 0.95.
+5. **Locked**: `LockTurnInPlace` curve ≥ 0.95.
+6. **Paused**: an `ExtendedGameplay.TurnInPlace.Pause` window is open.
+7. **Locked**: an `ExtendedGameplay.TurnInPlace.Lock` window is open.
+8. A networked root-motion montage:
+   * a per-montage override, if one is set;
+   * nothing, if the montage is ignored (`ShouldIgnoreMontage`, ignored montages or slots, additive);
+   * otherwise **Paused**.
+9. **Paused**: the movement component has root motion sources (Root Motion Move, root-motion based abilities).
+10. **Locked**: `UEGMovementModifierComponent`'s combined `RotationRateScale` is 0.
+11. Otherwise, the stance entry's `State`.
 
-* **Locked:** no rotation at all; the body stays upright to gravity.
+What each state means:
+
+* **Locked:** no rotation at all, standing or moving; the body stays upright to gravity.
 * **Paused:** no offset builds up, and the character rotates normally, as if turn in place did not exist.
-* **Abort:** if the state leaves Enabled during a turn and `CanAbortTurn()` is true, the graph's Abort alias blends to Idle. The Abort alias is mandatory in the recipe.
+* **Abort:** if the state leaves Enabled during a turn and `CanAbortTurn()` is true, `Output.bAbortTurn` blends the graph to Idle. The Abort alias is mandatory in the recipe.
 
 ---
 
 ## 7. Networking
 
-### 7.1 Owning client (autonomous proxy)
+### 7.1 Owning client
 
-* The offset is computed inside movement. That is predicted with the move, so the rotation is replayed correctly on correction.
-* The project adds `TEGTurnInPlaceSavedMove` to its saved move. It saves `FEGTurnInPlaceMoveState` in `SetInitialPosition`, and **restores the older move's start state in `CombineWith`**.
-* Why that matters: combining two moves rewinds the rotation to the older move's start and then calls `FaceRotation` once with the current control rotation. That call must re-simulate from the matching start state; otherwise the client turns about half as far as the server at high frame rates.
+* The offset is computed inside movement, so it is predicted with the move.
+* `TEGTurnInPlaceSavedMove` saves the move state in `SetInitialPosition` and **restores the older move's start state in `CombineWith`**.
+* Why that matters: combining two moves rewinds the rotation to the older move's start and re-runs the rotation once. Without the restore the client turns only part of the way at high frame rates. The `CombinedMoves` test reproduces this and checks the fix.
 
 ### 7.2 Server
 
-* Runs the same hooks in `ServerMove`.
-* After each hook it compresses the offset and marks `SimulatedTurnOffset` dirty, only when it has changed and only outside standalone.
+* Runs the same hooks inside `ServerMove`.
+* `SimulatedOffset` (16 bits) is marked dirty only when the offset changes. It is push-model, `COND_SimulatedOnly`, and not used in standalone.
 
 ### 7.3 Simulated proxies
 
-* Rotation comes from movement replication; the offset comes from `SimulatedTurnOffset`.
-* **Between updates**, the component's tick subtracts the local curve delta from the offset, so a proxy never sits mid-turn waiting for a slow server tick. This is on by default.
-* **Never discard the replicated offset** because of local lock signals (a local curve, montage or tag). The server only resends when its value changes, so a discarded value would not come back while the player holds still.
+* Rotation comes from movement replication; the offset comes from `SimulatedOffset`.
+* Between updates the component's tick consumes the offset with the local curves.
+* A local lock never discards the replicated value. The server only resends on change, so a discarded value would not come back.
 
-### 7.4 Dedicated server animation
+### 7.4 Dedicated server
 
-The server must produce the same curves the client sees. There are two modes, chosen on the component:
-
-* **Animation** (default): the mesh must use `AlwaysTickPoseAndRefreshBones`. The component checks this at BeginPlay and warns once with the fix. `AlwaysTickPose` does not run the turn states.
-* **Pseudo:** a small state machine (Idle / Turn / Recovery) runs on the game thread and evaluates curves directly from the selected sequences at the tracked time. Bones never need refreshing. It obeys the same transitions as the graph, including Abort.
+* **Animation** (default): the mesh needs `AlwaysTickPoseAndRefreshBones`. Otherwise the component warns once at BeginPlay with the fix.
+* **Pseudo:** the component runs Idle / Turn / Recovery on the game thread (`AdvancePseudoState`, the same transitions as the graph, Abort included) and evaluates the curves from the selected sequence at the tracked time. The anim graph stays idle on that server.
 
 ---
 
 ## 8. Project integration
 
-### Required
-
-**1. Add the component** to the character and assign a `UEGTurnInPlaceSet`.
-
-**2. Forward `FaceRotation`.** Needed for Strafe Direct. Add it anyway; it costs nothing otherwise.
+The project's module needs `UnrealExtendedGameplay` in its Build.cs dependencies. Then:
 
 ```cpp
-// MyCharacter.h
-virtual void FaceRotation(FRotator NewControlRotation, float DeltaTime = 0.f) override;
+#include "UnrealExtendedGameplay/Animation/TurnInPlace/EGTurnInPlaceHooks.h"
+```
 
-// MyCharacter.cpp
+### Required
+
+**1. Add the component** to the character and assign a `UEGTurnInPlaceSet`. Set the rotation setup with `UEGTurnInPlaceComponent::SetRotationMode`, or directly.
+
+**2. Forward `FaceRotation`.** Needed for Strafe Direct; add it anyway.
+
+```cpp
 void AMyCharacter::FaceRotation(FRotator NewControlRotation, float DeltaTime)
 {
 	if (!EGTurnInPlace::HandleFaceRotation(this, NewControlRotation, DeltaTime))
@@ -239,14 +249,9 @@ void AMyCharacter::FaceRotation(FRotator NewControlRotation, float DeltaTime)
 }
 ```
 
-**3. Use a movement component subclass** that forwards `PhysicsRotation` and allocates turn-aware prediction data.
+**3. Use a movement component subclass** that forwards `PhysicsRotation` and allocates turn-aware prediction data. Set it on the character with `ObjectInitializer.SetDefaultSubobjectClass<UMyMovement>(ACharacter::CharacterMovementComponentName)`.
 
 ```cpp
-// MyMovement.h
-virtual void PhysicsRotation(float DeltaTime) override;
-virtual FNetworkPredictionData_Client* GetPredictionData_Client() const override;
-
-// MyMovement.cpp
 void UMyMovement::PhysicsRotation(float DeltaTime)
 {
 	if (!EGTurnInPlace::HandlePhysicsRotation(this, DeltaTime))
@@ -259,143 +264,146 @@ FNetworkPredictionData_Client* UMyMovement::GetPredictionData_Client() const
 {
 	if (!ClientPredictionData)
 	{
-		// No saved move of your own: use the ready-made one.
 		const_cast<UMyMovement*>(this)->ClientPredictionData = new FEGTurnInPlacePredictionData(*this);
 	}
 	return ClientPredictionData;
 }
 ```
 
-If the project already has its own saved move, it inherits through the mixin:
+With a saved move of its own, the project inherits through the mixin. With its own prediction data base, it passes that as the second argument:
 
 ```cpp
-class FMySavedMove : public TEGTurnInPlaceSavedMove<FSavedMove_Character>
-{
-	// existing fields; call Super:: in Clear / SetInitialPosition / CombineWith as usual
-};
-using FMyPredictionData = TEGTurnInPlacePredictionData<FMySavedMove>;
+class FMySavedMove : public TEGTurnInPlaceSavedMove<FSavedMove_Character> { /* call Super:: as usual */ };
+using FMyPredictionData = TEGTurnInPlacePredictionData<FMySavedMove /*, FMyPredictionDataBase */>;
 ```
 
-**4. Anim instance.** Either derive the AnimBP's parent from `UEGAnimInstance`, which has it built in, or, in a custom anim instance:
+**4. Anim instance.** Either parent the AnimBP to `UEGAnimInstance`, which needs nothing more, or, in a custom anim instance that implements `IEGTurnInPlaceAnimSource`:
 
 ```cpp
-// game thread
-void UMyAnimInstance::NativeUpdateAnimation(float Dt)
+UPROPERTY(Transient, BlueprintReadWrite, Category = "Turn In Place")
+FEGTurnInPlaceAnimData TurnInPlace;
+
+void UMyAnimInstance::NativeUpdateAnimation(float DeltaSeconds)
 {
-	Super::NativeUpdateAnimation(Dt);
-	UEGTurnInPlaceAnimLibrary::GatherTurnInPlace(TurnInPlaceComponent, TurnInPlace);
+	Super::NativeUpdateAnimation(DeltaSeconds);
+	UEGTurnInPlaceAnimLibrary::GatherTurnInPlace(UEGTurnInPlaceComponent::FindFor(GetOwningActor()), TurnInPlace);
 }
 
-// worker thread
-void UMyAnimInstance::NativeThreadSafeUpdateAnimation(float Dt)
+void UMyAnimInstance::NativeThreadSafeUpdateAnimation(float DeltaSeconds)
 {
-	Super::NativeThreadSafeUpdateAnimation(Dt);
-	UEGTurnInPlaceAnimLibrary::ThreadSafeUpdateTurnInPlace(this, TurnInPlace, Dt);
+	Super::NativeThreadSafeUpdateAnimation(DeltaSeconds);
+	UEGTurnInPlaceAnimLibrary::ThreadSafeUpdateTurnInPlace(this, TurnInPlace);
 }
 
-// IEGTurnInPlaceAnimSource
 FEGTurnInPlaceCurves UMyAnimInstance::GetTurnInPlaceCurves_Implementation() const
 {
 	return TurnInPlace.Curves;
 }
 ```
 
-**5. Anim graph:** follow the recipe in §9.
+**5. Anim graph:** follow §9.
 
-**6. Turn animations:** run `UEGTurnInPlaceCurveModifier` on every turn sequence. Sequences must have root motion; root lock is ignored while the curves are extracted.
+**6. Turn animations:** apply the **Turn In Place Curves** animation modifier to every turn sequence. They need root motion; root lock is ignored while sampling. The curve names must match the set's `Curves`.
 
 ### Optional
 
-* **Rotate to the last input direction (orient to movement)** while stopping as well as when standing still: forward `ComputeOrientToMovementRotation` to `EGTurnInPlace::ComputeOrientToMovementRotation`.
-* **Separate idle rotation rate:** set `IdleRotationRate` on the component. The hook uses it while stationary, so no `GetDeltaRotation` override is needed.
-* **Project rules:** override `GetStanceTag`, `ShouldIgnoreMontage` or `CanAbortTurn` in a Blueprint or C++ subclass of the component.
+* **Keep turning towards the last input while sliding to a stop** (Orient To Movement):
 
-The last input direction is tracked inside `HandlePhysicsRotation`, which runs on every movement tick including root motion, so projects do not override `CalcVelocity` or `ApplyRootMotionToVelocity`.
+  ```cpp
+  FRotator UMyMovement::ComputeOrientToMovementRotation(const FRotator& Current, float DeltaTime, FRotator& DeltaRotation) const
+  {
+  	FRotator Result;
+  	if (EGTurnInPlace::ComputeOrientToMovementRotation(this, Current, Result))
+  	{
+  		return Result;
+  	}
+  	return Super::ComputeOrientToMovementRotation(Current, DeltaTime, DeltaRotation);
+  }
+  ```
+
+* **Project rules:** override `GetStanceTag`, `GetTurnModeTag`, `ShouldIgnoreMontage` or `CanAbortTurn` in a subclass of the component (Blueprint or C++).
+
+The last input direction is tracked inside `HandlePhysicsRotation` and the component's tick, so projects do not override `CalcVelocity` or `ApplyRootMotionToVelocity`.
 
 ---
 
 ## 9. Anim graph recipe
 
-A `TurnInPlace` state machine, used as the idle pose (or placed inside the locomotion Idle state):
+A `TurnInPlace` state machine, used as the idle pose. `TurnInPlace` below is the anim instance's `FEGTurnInPlaceAnimData`; the functions are in `UEGTurnInPlaceAnimLibrary`.
 
-| State | Node | Functions (from `UEGTurnInPlaceAnimLibrary`) |
+| State | Node | Functions |
 |:--|:--|:--|
-| **Idle** | idle pose | Become relevant: `SetupIdle` |
-| **Turn** | Sequence Evaluator | State: `SetupTurnPose`. Node become relevant: `SetupTurnAnim` → Set Sequence, Explicit Time 0. Node update: `UpdateTurnAnim` → Set Sequence With Inertial Blending (0.2), **Set Explicit Time to the returned time**. |
-| **Recovery** | Sequence Player | State: `SetupRecoveryPose`. Node update: `UpdateRecoveryAnim` → Set Sequence With Inertial Blending (0.2) |
-| **Abort** (state alias over Turn and Recovery) | | Transition to Idle |
+| **Idle** | Idle pose | State On Become Relevant: `SetupIdle(TurnInPlace)` |
+| **Turn** | Sequence Evaluator | State On Become Relevant: `SetupTurnPose(TurnInPlace)`. Evaluator On Become Relevant: Set Sequence to `SetupTurnAnim(TurnInPlace)`, Set Explicit Time 0. Evaluator On Update: `UpdateTurnAnim(TurnInPlace, DeltaTime, OutSequence)` → Set Sequence With Inertial Blending (OutSequence, 0.2), **Set Explicit Time to the returned time** |
+| **Recovery** | Sequence Player | State On Become Relevant: `SetupRecoveryPose(TurnInPlace)`. Player On Update: Set Sequence With Inertial Blending (`GetTurnAnimation(TurnInPlace, true)`, 0.2) |
+| **Abort** | State alias over Turn and Recovery | |
 
 | Transition | Rule | Blend |
 |:--|:--|:--|
-| Idle → Turn | `bWantsToTurn` | Inertialization 0.2 |
-| Turn → Turn (re-entry) | `bWantsToTurn` and the step or side changed | Inertialization 0.2 |
-| Turn → Recovery | `bWantsRecovery` | Inertialization 0.2 |
-| Recovery → Turn | `bWantsToTurn` | Inertialization 0.2 |
+| Idle → Turn | `TurnInPlace.Output.bWantsToTurn` | Inertialization 0.2 |
+| Turn → Recovery | `Output.bWantsRecovery` | Inertialization 0.2 |
+| Recovery → Turn | `Output.bWantsToTurn` | Inertialization 0.2 |
 | Recovery → Idle | automatic rule on remaining time | Inertialization 0.2 |
-| Abort → Idle | `bAbortTurn`, priority −1 | Inertialization 0.15 |
+| Abort → Idle | `Output.bAbortTurn`, priority −1 | Inertialization 0.15 |
 
-Locomotion helpers in the output:
+Locomotion helpers:
 
-* `bStopToIdleForTurn`: leave Stop early to start a turn.
-* `bStartToCycleFromTurn`: strafing only; skip Start when the offset already exceeds the minimum angle.
+* `Output.bStopToIdleForTurn`: leave Stop early.
+* `Output.bStartToCycleFromTurn`: strafing only; skip Start.
 
-**Curve filtering:** add `RemainingTurnYaw` and `TurnYawWeight` to every Inertialization node's *Filtered Curves*. Otherwise blends invent curve values and the offset drifts.
+**Curve filtering:** add `RemainingTurnYaw` and `TurnYawWeight` to every Inertialization node's *Filtered Curves*.
 
 ---
 
-## 10. Pitfalls and how the design prevents them
+## 10. Pitfalls and how they are prevented
 
-| Pitfall | What goes wrong | Prevention |
-|:--|:--|:--|
-| Combined moves | The client turns ~half as far as the server at high frame rates | Saved-move mixin restores the older move's start state in `CombineWith` (§7.1) |
-| Stale curves on entry | Turn → Recovery fires on the first frame and oscillates | Curves are cached on the worker before the state machine; "is turning" is refreshed from them; recovery needs a "turned this entry" latch (§4) |
-| Turn never observed | The weight curve never registers, so the turn sits at its last frame forever | Recovery also fires once the evaluator reaches the end of the sequence; that cannot be true on the entry frame, so it is oscillation-safe |
-| First relevant frame | Delta from a zero or stale previous value jumps the offset | The first frame with weight > 0 only records the curve; deltas apply from the second frame |
-| Direction change | Curve sign flips mid-turn and the actor snaps | A delta is skipped when the sign flips (0 counts as same direction) |
-| Over 180° | The offset wraps and the actor snaps the other way | A delta that would push \|offset\| past 180 is held until the animation removes it |
-| Curve overshoot | Inertialization pushes pause/lock curves past 1 and the state flickers | One-sided threshold ≥ 0.95, plus curve filtering in the recipe |
-| Rotating platforms | The engine calls `FaceRotation` with DeltaTime 0 for based movement; treating it as input fights the base and loops the camera | DeltaTime 0 passes straight through to the engine |
-| Pitch / roll / custom gravity | Euler yaw subtraction picks up cross-talk and starts spurious turns | Yaw is measured as a heading about the gravity up axis; flat ground keeps the cheap path |
-| Proxy loses its offset | A local lock zeroes a replicated value the server will not resend | Simulated proxies never reset the offset on local state (§7.3) |
-| Slow server updates | Proxies stay mid-turn until the next update | Local curve simulation between updates (§7.3) |
-| Server without bones | `AlwaysTickPose` never runs the turn states, so server and client diverge | BeginPlay check with a one-time warning, or Pseudo mode (§7.4) |
-| Pseudo vs graph mismatch | Server state machine ends turns differently from clients | Pseudo mode implements the same transitions, including Abort, and is tested against the same tables |
-| Jumping | Air velocity overwrites the last input direction and the character turns on landing | Only ground velocity (Z removed) and real input acceleration update it |
-| Root motion | Movement does not see input during root motion, so the last direction goes stale | During root motion it is the capsule's forward, with a 0.25 s grace period after root motion ends before velocity counts again |
-| Stick bounce | Releasing a gamepad stick bounces it past centre and flips the character | Acceleration only counts above an analog threshold (0.5) |
-| Mouse at max angle | The offset keeps re-entering the max angle and the play rate jitters | The max-angle play rate is latched for the rest of the current turn |
-| Inverted montage rule | A root-motion montage check gets the condition backwards and pauses when it should not | One named, tested function decides montage handling, with per-montage overrides |
-| Upper-body montages | Additive or upper-body montages pause the system | Ignored slots, ignored montages and "ignore additive" in the montage rules |
-| Start moving | Strafe Direct snaps to the camera on the first step | Interp-out alpha eases the offset away over `MovingInterpOutRate` |
-| Moving with stale state | A stop after a run resumes an old half-turn | Offset, curve value and the first-frame flag reset while moving |
-| Yaw-only sweeps | `SetActorRotation` sweeps every frame for a rotation that cannot collide | Sweep only when pitch or roll changes |
-| Missing setup | No interface or no hook, and nothing happens with no error | Integration self-check (§11) |
-| Replication cost | A float offset sent to everyone every frame | `uint16`, simulated proxies only, push model, only on change |
-| Blueprint events in PostLoad | Calling a BlueprintNativeEvent while loading asserts | Owner and anim instance are cached in OnRegister / BeginPlay / OnAnimInitialized only |
+| Pitfall | Prevention |
+|:--|:--|
+| Combined moves lose part of the turn on the owning client | Saved-move mixin restores the older move's start state (`CombinedMoves` test) |
+| Stale curves fire Recovery on the turn's first frame and it oscillates | Curves read on the worker before the state machine; "is turning" refreshed from them; recovery needs the "turned this entry" latch, which `SetupTurnPose` resets |
+| A turn whose weight never registers parks at its last frame | Recovery also fires once the sequence played to its end (`bReachedAnimEnd`), which cannot be true on the entry frame |
+| First weighted frame jumps the offset | That frame only records the curve |
+| Curve sign flips mid-turn and snaps | Delta skipped on a sign flip (0 counts as same side) |
+| Offset passes 180 and wraps | A delta past 180 is held |
+| Inertialization overshoot flickers pause/lock | One-sided ≥ 0.95 thresholds, plus curve filtering |
+| Rotating platforms call `FaceRotation` with DeltaTime 0 | Passed straight to the engine |
+| Pitch, roll, custom gravity cause spurious turns | Heading measured about the gravity up axis; the body is kept upright to gravity |
+| Proxy loses its replicated offset to a local lock | Proxies never reset the offset |
+| Proxies stuck mid-turn on slow server updates | Local curve simulation |
+| Server without bone refresh diverges | BeginPlay warning, or Pseudo mode |
+| Pseudo vs graph differ | Same transitions incl. Abort, tested |
+| Jumping changes the last input direction | Only ground velocity and real input count; air velocity loses Z |
+| Root motion leaves the last direction stale | Facing during root motion, plus a 0.25 s grace period after it |
+| Gamepad stick bounce flips the character | Input only counts above 0.5 analog |
+| Mouse at the max angle jitters the play rate | Max-angle rate latched for the rest of the turn |
+| Direction-change rate never triggers | Compared with the playing turn's side, not with the offset's own sign |
+| Root-motion montage handling inverted or too broad | One tested function; ignored slots, montages and additive; per-montage overrides |
+| Strafe Direct snaps to the camera on the first step | Interp-out alpha |
+| A stop resumes an old half-turn | State cleared while moving |
+| Yaw-only rotation sweeps every frame | No sweep unless pitch or roll changes |
+| Missing setup fails silently | Self-check (§11) |
+| Replication cost | 16 bits, simulated proxies only, push model, on change |
+| Blueprint events during load assert | Caching happens in OnRegister / BeginPlay / OnAnimInitialized |
 
 ---
 
 ## 11. Validation and debugging
 
-**Integration self-check** (non-shipping builds). Each problem is warned about once per owner class, with the exact fix:
+**Self-check** (development builds). Each problem is warned about once per owner class in `LogEGAnimation`:
 
-* The rotation mode needs `FaceRotation`, but `HandleFaceRotation` was never called while stationary with an offset.
-* The mode needs `PhysicsRotation`, but `HandlePhysicsRotation` was never called.
-* An autonomous proxy saved moves without `TEGTurnInPlaceSavedMove`: the snapshot hook never ran.
-* The anim instance does not implement `IEGTurnInPlaceAnimSource`.
-* A dedicated server is in Animation mode without `AlwaysTickPoseAndRefreshBones`.
-* The resolved entry is missing a sequence for the selected step or side, or a sequence lacks the curves.
-* No angles exist for the current mode tag.
+* the rotation setup needs `FaceRotation` or `PhysicsRotation`, but the hook never ran (counted only while the engine would call it);
+* the owning client predicts moves without `TEGTurnInPlaceSavedMove`;
+* the anim instance lacks `IEGTurnInPlaceAnimSource`;
+* no `TurnSet`, or no character mesh;
+* a dedicated server in Animation mode without `AlwaysTickPoseAndRefreshBones`;
+* no sequence for the chosen step or side;
+* no angles for the turn mode.
 
 **Console variables:**
 
-* `eg.TurnInPlace.Debug 1`: on-screen offset per role, plus arrows from the feet (actor forward, control yaw, offset target).
-* `eg.TurnInPlace.Debug.State 1`: resolved enabled state and its reason (request, curve, window, montage, root motion, modifier, cvar).
-* `eg.TurnInPlace.Override 0..3`: force the enabled state (cheat).
-
-**Profiling:** `TRACE_CPUPROFILER_EVENT_SCOPE` on the hooks, the gather and the worker update.
-
-**Anim state tags** (through `IEGAnimStateProvider`): `ExtendedGameplay.TurnInPlace.State.Turning`, `.Recovering`, `.Locked`, `.Paused`, `.Left`, `.Right`.
+* `eg.TurnInPlace.Debug 1`: on-screen offset per role, and arrows from the feet (pink actor, black control, green turn target).
+* `eg.TurnInPlace.Debug.State 1`: resolved state and its reason.
+* `eg.TurnInPlace.Override 0..3`: force the state.
 
 ---
 
@@ -403,42 +411,14 @@ Locomotion helpers in the output:
 
 | System | Interaction |
 |:--|:--|
-| `UEGAnimInstance` | Built-in gather and worker update; exposes `TurnInPlace` (output, node state, curves) to the AnimBP; implements `IEGTurnInPlaceAnimSource` |
-| Anim state tags | Stance selection reads them; turn in place publishes its own (§11) |
-| Anim events | `ExtendedGameplay.TurnInPlace.Pause` / `.Lock` windows pause or lock for their length, from any animation |
-| `UEGMovementModifierComponent` | A combined rotation scale of 0 locks turn in place |
-| Root Motion Move / Motion Warping | Root motion sources and root-motion montages pause it |
-| Cover | Pushes a lock while in cover (cover owns rotation there) |
-| Chess seat | Pushes a pause while seated (scripted transform) |
-| Soft Lock / Set Warp Target | Push a pause for their window, so the two rotation drivers do not fight |
-| Montage library | Montage rules apply to montages played through `UEGMontageLibrary` and directly |
-| `EGAnimDebug` | Shared once-per-source warnings |
+| `UEGAnimInstance` | Runs the anim side, exposes `TurnInPlace`, publishes turn state tags |
+| Anim state tags | Pick the stance; the component publishes its own |
+| Anim events | `ExtendedGameplay.TurnInPlace.Pause` / `.Lock` windows |
+| `UEGMovementModifierComponent` | A combined rotation scale of 0 locks |
+| Root Motion Move | Root motion sources pause |
+| Set Warp Target / Motion Warping | Root-motion montages pause through the montage rules |
+| Cover | Locks while in cover |
+| Chess seat | Pauses while the seat holds the pawn |
+| Soft Lock | Pauses for its window |
 
-These integrations only use the request API and tags, so turn in place stays optional for every other system.
-
----
-
-## 13. Tests
-
-Automation tests under `UnrealExtendedGameplay.Animation.TurnInPlace.*`, all on the solver (no world):
-
-* Yaw delta: flat ground, wrap at ±180, pitch only, roll present, custom gravity up, near-vertical look.
-* Offset update: clamp to max; first-frame capture; delta application; direction-flip skip; > 180 hold; reset while moving; Paused accumulates nothing; Locked rotates nothing.
-* Step selection: Greater and Nearest at and between steps, with select offset, and an empty step list.
-* Play rate: max-angle latch, direction change, both together.
-* Enabled state: every row of the priority list in §6, and per-montage overrides.
-* Graph outputs: the recovery latch blocks the entry frame; the reached-end escape fires; abort beats recovery.
-* Pseudo state machine: Idle → Turn → Recovery → Idle, abort mid-turn, and a missing sequence.
-* Saved move: combine restores the older start state (solver-level re-simulation of two combined steps equals two separate steps).
-
----
-
-## 14. Implementation order
-
-1. **Solver and data.** Types, `UEGTurnInPlaceSet` with validation, `FEGTurnInPlaceSolver`, and its tests.
-2. **Component and hooks.** `HandleFaceRotation` / `HandlePhysicsRotation`, last input tracking, idle rotation rate, the saved-move mixin and prediction data, the request API, the enabled-state resolution, and the self-check.
-3. **Animation.** `IEGTurnInPlaceAnimSource`, `UEGTurnInPlaceAnimLibrary`, `UEGAnimInstance` support, the new `UnrealExtendedGameplayEditor` module with `UEGTurnInPlaceCurveModifier`, and the recipe verified against the outputs.
-4. **Networking.** Simulated-only compressed replication, proxy curve simulation, and dedicated server Pseudo mode.
-5. **Plugin integration and tooling.** Cover, chess, Soft Lock and Warp Target requests; modifier and root-motion rules; state tags; console variables and debug drawing; final docs.
-
-Each step lands on `merge` as its own commit.
+These only use the request API and tags, so turn in place stays optional for every other system.

@@ -6,6 +6,7 @@
 #include "GameplayTagContainer.h"
 #include "UnrealExtendedGameplay/Animation/AnimInstance/EGAnimStateProvider.h"
 #include "UnrealExtendedGameplay/Animation/Montage/EGAnimationSet.h"
+#include "UnrealExtendedGameplay/Animation/TurnInPlace/EGTurnInPlaceTypes.h"
 #include "EGCoverComponent.generated.h"
 
 
@@ -179,6 +180,7 @@ public:
 protected:
 	
 	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType,FActorComponentTickFunction* ThisTickFunction) override;
 
 	FORCEINLINE FVector GetActorForwardMultiply(const float X = 1 , const float Y = 1,const float Z = 1) const { return FVector(PlayerRotation.Vector().X*X , PlayerRotation.Vector().Y*Y , PlayerRotation.Vector().Z*Z); }
@@ -277,6 +279,10 @@ private:
 
 	TWeakObjectPtr<UAnimMontage> OwnerPlayedMontage;
 	TWeakObjectPtr<UAnimInstance> OwnerPlayedAnimInstance;
+
+	/** Cover owns the character's facing while in cover: turn in place is locked meanwhile. */
+	FEGTurnInPlaceRequestHandle TurnInPlaceLock;
+	void ReleaseTurnInPlaceLock();
 
 	/** Bumped for every cover montage, so a montage interrupted by the next one does not clear IsInMontage. */
 	uint32 CoverMontagePlayId = 0;

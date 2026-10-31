@@ -17,6 +17,7 @@
 #include "UnrealExtendedGameplay/Animation/EGAnimationTags.h"
 #include "UnrealExtendedGameplay/Animation/Montage/EGMontageLibrary.h"
 #include "UnrealExtendedGameplay/Animation/Montage/EGMontagePlayerInterface.h"
+#include "UnrealExtendedGameplay/Animation/TurnInPlace/EGTurnInPlaceComponent.h"
 #include "UnrealExtendedGameplay/Systems/Minigames/Chess/Data/EGChessAnimationSet.h"
 #include "UnrealExtendedGameplay/Systems/Minigames/Chess/Player/EGChessCharacterInterface.h"
 #include "UnrealExtendedGameplay/Systems/Minigames/Chess/Presentation/EGChessEngineAssets.h"
@@ -670,6 +671,12 @@ void UEGChessSeatComponent::PrepareSeatedPawn(APawn* Pawn)
 
 	BindPawnAnimation(Pawn);
 
+	if (UEGTurnInPlaceComponent* const TurnInPlace = UEGTurnInPlaceComponent::FindFor(Pawn))
+	{
+		TurnInPlace->RemoveRequest(TurnInPlacePause);
+		TurnInPlacePause = TurnInPlace->PushPause(TEXT("ChessSeat"));
+	}
+
 	if (Pawn->Implements<UEGChessCharacterInterface>())
 	{
 		IEGChessCharacterInterface::Execute_OnChessSeatChanged(Pawn, SeatId, true);
@@ -682,6 +689,12 @@ void UEGChessSeatComponent::ReleaseSeatedPawn(APawn* Pawn)
 	{
 		return;
 	}
+
+	if (UEGTurnInPlaceComponent* const TurnInPlace = UEGTurnInPlaceComponent::FindFor(Pawn))
+	{
+		TurnInPlace->RemoveRequest(TurnInPlacePause);
+	}
+	TurnInPlacePause.Invalidate();
 
 	if (const UEGChessAnimationSet* Set = GetAnimationSet(Pawn))
 	{
