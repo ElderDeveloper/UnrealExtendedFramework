@@ -353,7 +353,14 @@ void FEFHttpOperation::Finish(FEFHttpResponse Response)
 		UE_LOG(LogEFHttp, Verbose, TEXT("%s %s cancelled."), Verb, *LogUrl);
 		break;
 	default:
-		UE_LOG(LogEFHttp, Warning, TEXT("%s %s failed: %s (attempts: %d, %.2fs)"), Verb, *LogUrl, *Response.ErrorMessage, Response.Attempts, Response.ElapsedSeconds);
+		if (Request.bLogFailuresAsWarnings)
+		{
+			UE_LOG(LogEFHttp, Warning, TEXT("%s %s failed: %s (attempts: %d, %.2fs)"), Verb, *LogUrl, *Response.ErrorMessage, Response.Attempts, Response.ElapsedSeconds);
+		}
+		else
+		{
+			UE_LOG(LogEFHttp, Verbose, TEXT("%s %s failed: %s (attempts: %d, %.2fs)"), Verb, *LogUrl, *Response.ErrorMessage, Response.Attempts, Response.ElapsedSeconds);
+		}
 		break;
 	}
 

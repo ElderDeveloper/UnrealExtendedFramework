@@ -92,6 +92,13 @@ struct EXTENDEDFOUNDATION_API FEFHttpRequest
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Http|Retry")
 	bool bAllowRetryForNonIdempotentVerbs = false;
+
+	/**
+	 * Log a failed request as a warning. Turn off for clients that retry and report failures
+	 * themselves; failures are then logged at Verbose.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Http", AdvancedDisplay)
+	bool bLogFailuresAsWarnings = true;
 };
 
 /** The outcome of a request: the final attempt's response, or why there was none. */

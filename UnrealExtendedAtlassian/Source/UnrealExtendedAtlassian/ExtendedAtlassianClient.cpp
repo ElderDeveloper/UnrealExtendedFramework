@@ -509,6 +509,8 @@ void FExtendedAtlassianClient::SendPending(TSharedRef<FExtendedAtlassianPendingR
 	// Retries stay in this client, not in FEFHttpOperation: they apply to every verb (POST
 	// included), on 429, 5xx and connection failures only, with Atlassian's Retry-After limits.
 	HttpRequest.MaxRetries = 0;
+	// This client logs its own retries and final failures, so the foundation only logs at Verbose.
+	HttpRequest.bLogFailuresAsWarnings = false;
 
 	UE_LOG(LogExtendedAtlassian, Verbose, TEXT("%s %s (attempt %d)"), EFHttp::VerbToString(Pending->Verb), *Pending->Url, Pending->Attempt + 1);
 
