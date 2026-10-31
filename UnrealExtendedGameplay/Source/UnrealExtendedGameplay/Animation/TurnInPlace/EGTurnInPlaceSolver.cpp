@@ -559,6 +559,13 @@ void FEGTurnInPlaceSolver::AdvancePseudoState(EEGTurnPseudoState& State, FEGTurn
 
 	case EEGTurnPseudoState::Recovery:
 	{
+		if (Output.bAbortTurn)
+		{
+			// The graph's Abort alias covers Recovery too.
+			State = EEGTurnPseudoState::Idle;
+			EnterIdle();
+			break;
+		}
 		const bool bFinished = AdvanceTurnTime(Entry, Node, DeltaTime, 1.0f, true);
 		if (Output.bWantsToTurn)
 		{

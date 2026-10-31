@@ -364,6 +364,14 @@ bool FEGTurnInPlaceGraphTest::RunTest(const FString& Parameters)
 	Abort.bAbortTurn = true;
 	FSolver::AdvancePseudoState(State, Node, Input, Abort, 0.1f);
 	TestEqual(TEXT("Abort -> Idle"), State, EEGTurnPseudoState::Idle);
+
+	State = EEGTurnPseudoState::Recovery;
+	Node.bProcedural = true;
+	Node.ProceduralYaw = 90.0f;
+	Node.AnimTime = 0.0;
+	FSolver::AdvancePseudoState(State, Node, Input, Abort, 0.1f);
+	TestEqual(TEXT("Abort from Recovery -> Idle"), State, EEGTurnPseudoState::Idle);
+	TestFalse(TEXT("...and the turn is no longer procedural"), Node.bProcedural);
 	return true;
 }
 

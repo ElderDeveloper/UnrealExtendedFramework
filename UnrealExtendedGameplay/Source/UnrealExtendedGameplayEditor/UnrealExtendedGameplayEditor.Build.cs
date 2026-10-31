@@ -15,9 +15,7 @@ public class UnrealExtendedGameplayEditor : ModuleRules
 				"CoreUObject",
 				"Engine",
 				"AnimationModifiers",
-				// Anim graph nodes: their headers include the runtime nodes and the editor base classes.
-				"AnimGraph",
-				"AnimGraphRuntime",
+				// The curve modifier writes what FEGTurnInPlaceSolver::BuildYawTrack computes.
 				"UnrealExtendedGameplay",
 			}
 		);
@@ -26,8 +24,6 @@ public class UnrealExtendedGameplayEditor : ModuleRules
 			new string[]
 			{
 				"AnimationBlueprintLibrary",
-				"BlueprintGraph",
-				"UnrealEd",
 			}
 		);
 	}

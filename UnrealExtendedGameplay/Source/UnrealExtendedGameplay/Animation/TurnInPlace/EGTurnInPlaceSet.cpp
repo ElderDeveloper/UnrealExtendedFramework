@@ -123,7 +123,7 @@ namespace
 					continue;
 				}
 				// A warning: the Turn In Place node reads the turn from the root track without them.
-				if (!HasTurnCurves(Sequence, Curves))
+				if (!UEGTurnInPlaceSet::HasTurnCurves(Sequence, Curves))
 				{
 					Context.AddWarning(FText::Format(LOCTEXT("MissingCurves", "{0}: {1} lacks the {2} / {3} curves. The Turn In Place node reads its root track instead; the state machine recipe and Pseudo servers need the curves (run the Turn In Place Curves modifier)."),
 						Label, FText::FromString(Sequence->GetName()), FText::FromName(Curves.RemainingTurnYaw), FText::FromName(Curves.TurnYawWeight)));

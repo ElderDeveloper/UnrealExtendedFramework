@@ -16,10 +16,10 @@ class USkeletalMeshComponent;
  * UEGTurnInPlaceMovementSource
  *
  * How UEGTurnInPlaceComponent reads and rotates its owner, picked on the component (Movement
- * Source). The default, Character Movement, covers ACharacter. A pawn on another movement system
- * (Mover, a custom pawn movement) subclasses this in C++ or Blueprint: fill the movement info,
- * and apply rotation the way that system expects. Turn in place then drives rotation from its
- * component (the hooks are character-only).
+ * Source). Character Movement (the default) covers ACharacter; Pawn covers any pawn that only
+ * rotates. A pawn on another movement system (Mover, a custom pawn movement) subclasses this in
+ * C++ or Blueprint: fill the movement info, and apply rotation the way that system expects. Turn
+ * in place then drives rotation from its component (the hooks are character-only).
  *
  * Stateless: one instance may serve every call of a frame, in any order.
  */
@@ -53,6 +53,16 @@ public:
 	virtual UActorComponent* GetMovementComponent_Implementation(const AActor* Owner) const;
 
 	virtual UWorld* GetWorld() const override;
+};
+
+/**
+ * Pawn: any pawn, read from its root component and velocity, facing its control rotation while
+ * standing. No input direction or root motion; subclass a source for more.
+ */
+UCLASS(DisplayName = "Pawn")
+class UNREALEXTENDEDGAMEPLAY_API UEGTurnInPlacePawnSource : public UEGTurnInPlaceMovementSource
+{
+	GENERATED_BODY()
 };
 
 /**

@@ -8,6 +8,7 @@
 
 #include "EGAnimNode_FootLock.generated.h"
 
+class AActor;
 class UEGTurnInPlaceComponent;
 
 /** One leg: the foot bone, with its parent and grandparent as the lower and upper leg the IK bends. */
@@ -46,7 +47,11 @@ struct UNREALEXTENDEDGAMEPLAY_API FAnimNode_EGFootLock : public FAnimNode_Skelet
 	UPROPERTY(EditAnywhere, Category = "Foot Lock")
 	TArray<FEGFootLockFoot> Feet;
 
-	/** Lock only while the owner moves slower than this, and is on the ground. */
+	/**
+	 * Lock only while the owner moves slower than this and is on the ground. The mesh's own world
+	 * motion counts too, so a lift or a moving platform (where the movement's velocity is zero)
+	 * does not lock the feet.
+	 */
 	UPROPERTY(EditAnywhere, Category = "Foot Lock", meta = (PinHiddenByDefault, ClampMin = "0", Units = "CentimetersPerSecond"))
 	float MaxOwnerSpeed = 10.0f;
 
@@ -85,7 +90,7 @@ struct UNREALEXTENDEDGAMEPLAY_API FAnimNode_EGFootLock : public FAnimNode_Skelet
 	UPROPERTY(EditAnywhere, Category = "Foot Lock|IK")
 	bool bAllowStretching = false;
 
-	/** Moving further than this in one frame is a teleport: locks are dropped. */
+	/** Moving further than this in one frame, or turning more than twice StepAngle, is a teleport: locks are dropped. */
 	UPROPERTY(EditAnywhere, Category = "Foot Lock", meta = (ClampMin = "1", Units = "Centimeters"))
 	float TeleportDistance = 100.0f;
 
@@ -140,6 +145,7 @@ private:
 
 	bool bHasLastComponent = false;
 	FVector LastComponentLocation = FVector::ZeroVector;
+	FQuat LastComponentRotation = FQuat::Identity;
 
 	TWeakObjectPtr<const UEGTurnInPlaceComponent> CachedComponent;
 	TWeakObjectPtr<const AActor> CachedOwner;

@@ -10,6 +10,7 @@
 
 #include "EGAnimNode_TurnInPlace.generated.h"
 
+class AActor;
 class UAnimSequenceBase;
 class UEGTurnInPlaceComponent;
 struct FBoneContainer;
@@ -107,8 +108,14 @@ private:
 	void UpdateBlend(float DeltaTime);
 	void SetPlayerTime(int32 Index, double Time);
 
-	/** The turn curves at the node's current time. */
-	FEGTurnInPlaceCurves EvaluateTurnCurves(const FAnimInstanceProxy* Proxy, bool bRecovery);
+	/** The playing turn's clip; null for a procedural turn and while idle. */
+	const UAnimSequenceBase* GetActiveSequence() { return CurrentPlayer != INDEX_NONE ? GetPlayerSequence(CurrentPlayer).Get() : nullptr; }
+
+	/** Advances the playing turn's time; true once it is at the end. */
+	bool AdvanceActiveTurn(float DeltaTime, float PlayRate);
+
+	/** The playing turn's curves at the node's current time. */
+	FEGTurnInPlaceCurves EvaluateTurnCurves(const FAnimInstanceProxy* Proxy);
 	const FClipInfo& FindOrBuildClipInfo(const FAnimInstanceProxy* Proxy, const UAnimSequenceBase* Sequence);
 	bool SampleRootYaw(const UAnimSequenceBase* Sequence, const FBoneContainer& RequiredBones, TArray<double>& OutTimes, TArray<double>& OutYaws) const;
 
@@ -131,6 +138,14 @@ private:
 
 	FEGTurnInPlaceNodeState Node;
 	EPhase Phase = EPhase::Idle;
+
+	/**
+	 * Fixed when a turn starts: a stance or turn set change mid-turn must not read the curves of
+	 * another clip, or another procedural rate, at this turn's time (the capsule would snap).
+	 */
+	FEGTurnInPlaceProcedural ActiveProcedural;
+	FEGTurnInPlaceCurveNames ActiveCurveNames;
+	float ActiveStepYaw = 90.0f;
 	bool bTurnedThisEntry = false;
 
 	/** The player of the playing turn; INDEX_NONE while idle and for a procedural turn. */

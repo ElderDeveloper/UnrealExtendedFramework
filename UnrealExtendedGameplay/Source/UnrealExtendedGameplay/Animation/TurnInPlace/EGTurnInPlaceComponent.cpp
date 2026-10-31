@@ -56,13 +56,21 @@ void FEGTurnInPlaceDriverTickFunction::ExecuteTick(float DeltaTime, ELevelTick T
 {
 	FActorComponentTickFunction::ExecuteTickHelper(Target, /*bTickInEditor=*/ false, DeltaTime, TickType, [this](float DilatedTime)
 	{
-		Target->TickDriver(DilatedTime);
+		if (bSnapshot)
+		{
+			Target->TickSnapshot();
+		}
+		else
+		{
+			Target->TickDriver(DilatedTime);
+		}
 	});
 }
 
 FString FEGTurnInPlaceDriverTickFunction::DiagnosticMessage()
 {
-	return Target ? Target->GetFullName() + TEXT("[TurnInPlaceDriver]") : FString(TEXT("<null>[TurnInPlaceDriver]"));
+	const TCHAR* const Suffix = bSnapshot ? TEXT("[TurnInPlaceSnapshot]") : TEXT("[TurnInPlaceDriver]");
+	return (Target ? Target->GetFullName() : FString(TEXT("<null>"))) + Suffix;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -77,6 +85,11 @@ UEGTurnInPlaceComponent::UEGTurnInPlaceComponent()
 	DriverTick.bCanEverTick = true;
 	DriverTick.bStartWithTickEnabled = true;
 	DriverTick.TickGroup = TG_PrePhysics;
+
+	SnapshotTick.bCanEverTick = true;
+	SnapshotTick.bStartWithTickEnabled = true;
+	SnapshotTick.TickGroup = TG_PrePhysics;
+	SnapshotTick.bSnapshot = true;
 
 	SetIsReplicatedByDefault(true);
 
@@ -131,10 +144,21 @@ void UEGTurnInPlaceComponent::RegisterComponentTickFunctions(bool bRegister)
 		{
 			DriverTick.Target = this;
 		}
+		if (SetupActorComponentTickFunction(&SnapshotTick))
+		{
+			SnapshotTick.Target = this;
+		}
 	}
-	else if (DriverTick.IsTickFunctionRegistered())
+	else
 	{
-		DriverTick.UnRegisterTickFunction();
+		if (DriverTick.IsTickFunctionRegistered())
+		{
+			DriverTick.UnRegisterTickFunction();
+		}
+		if (SnapshotTick.IsTickFunctionRegistered())
+		{
+			SnapshotTick.UnRegisterTickFunction();
+		}
 	}
 }
 
@@ -146,11 +170,15 @@ void UEGTurnInPlaceComponent::BeginPlay()
 	const UEGTurnInPlaceMovementSource* const Source = GetSource();
 	CachedMesh = Source->GetMesh(Owner);
 
-	// The driver runs after the movement and before the mesh, so the animation sees its rotation.
+	// Snapshot, then movement, then driver, then mesh: the driver replaces only the movement's own
+	// turn, and the animation sees the final rotation.
+	DriverTick.AddPrerequisite(this, SnapshotTick);
 	if (UActorComponent* const Movement = Source->GetMovementComponent(Owner))
 	{
+		Movement->PrimaryComponentTick.AddPrerequisite(this, SnapshotTick);
 		DriverTick.AddPrerequisite(Movement, Movement->PrimaryComponentTick);
 	}
+	UpdateSnapshotPrerequisite();
 
 	if (USkeletalMeshComponent* const Mesh = GetMesh())
 	{
@@ -199,6 +227,15 @@ void UEGTurnInPlaceComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 		Mesh->OnAnimInitialized.RemoveDynamic(this, &UEGTurnInPlaceComponent::HandleAnimInitialized);
 		Mesh->PrimaryComponentTick.RemovePrerequisite(this, DriverTick);
 	}
+	if (UActorComponent* const Movement = GetSource()->GetMovementComponent(GetOwner()))
+	{
+		Movement->PrimaryComponentTick.RemovePrerequisite(this, SnapshotTick);
+	}
+	if (AActor* const Controller = SnapshotController.Get())
+	{
+		SnapshotTick.RemovePrerequisite(Controller, Controller->PrimaryActorTick);
+	}
+	SnapshotController.Reset();
 	Requests.Reset();
 	Super::EndPlay(EndPlayReason);
 }
@@ -657,9 +694,10 @@ bool UEGTurnInPlaceComponent::HandleFaceRotation(FRotator NewControlRotation, fl
 	bFaceHookSeen = true;
 	FramesWithoutFaceHook = 0;
 
+	// Deactivated (or its tick turned off): the character rotates as if turn in place did not exist.
 	ACharacter* const Character = Cast<ACharacter>(GetOwner());
 	FEGTurnInPlaceMovementInfo Info;
-	if (!Character || !GatherMovementInfo(Info) || Info.TurnMethod != EEGTurnMethod::FaceRotation
+	if (!IsComponentTickEnabled() || !Character || !GatherMovementInfo(Info) || Info.TurnMethod != EEGTurnMethod::FaceRotation
 		|| ResolveDriver(Info) != EEGTurnRotationDriver::Hooks)
 	{
 		return false;
@@ -730,7 +768,7 @@ bool UEGTurnInPlaceComponent::HandlePhysicsRotation(UCharacterMovementComponent*
 	FramesWithoutPhysicsHook = 0;
 
 	FEGTurnInPlaceMovementInfo Info;
-	if (!Movement || !GatherMovementInfo(Info))
+	if (!IsComponentTickEnabled() || !Movement || !GatherMovementInfo(Info))
 	{
 		return false;
 	}
@@ -823,13 +861,88 @@ void UEGTurnInPlaceComponent::SetDriverRotation(const FRotator& Rotation)
 	bHasDriverRotation = true;
 }
 
+void UEGTurnInPlaceComponent::TickSnapshot()
+{
+	const AActor* const Owner = GetOwner();
+	const USceneComponent* const Root = Owner ? Owner->GetRootComponent() : nullptr;
+	if (Root)
+	{
+		PreMovementRotation = Root->GetComponentRotation();
+		PreMovementFrame = GFrameCounter;
+	}
+}
+
+void UEGTurnInPlaceComponent::UpdateSnapshotPrerequisite()
+{
+	// After the controller, whose tick handles input (where gameplay often turns the character).
+	const APawn* const Pawn = Cast<APawn>(GetOwner());
+	AActor* const Controller = Pawn ? Pawn->GetController() : nullptr;
+	if (Controller == SnapshotController.Get())
+	{
+		return;
+	}
+	if (AActor* const Previous = SnapshotController.Get())
+	{
+		SnapshotTick.RemovePrerequisite(Previous, Previous->PrimaryActorTick);
+	}
+	if (Controller)
+	{
+		SnapshotTick.AddPrerequisite(Controller, Controller->PrimaryActorTick);
+	}
+	SnapshotController = Controller;
+}
+
+FRotator UEGTurnInPlaceComponent::GetDriverStartRotation(const FEGTurnInPlaceMovementInfo& Info) const
+{
+	if (!bHasDriverRotation)
+	{
+		return Info.Rotation;
+	}
+
+	FRotator Start;
+	if (Info.TurnMethod == EEGTurnMethod::FaceRotation)
+	{
+		// FaceRotation runs in the controller's tick and snaps the yaw to the control rotation. That
+		// snap is what turn in place replaces; a facing other than the control rotation came from
+		// gameplay after it, and stays.
+		const bool bControllerSnap = Info.bHasDesiredRotation
+			&& FMath::Abs(FEGTurnInPlaceSolver::YawDeltaAroundUp(Info.Rotation, Info.DesiredRotation, Info.Up)) < 0.1f;
+		if (!bControllerSnap)
+		{
+			return Info.Rotation;
+		}
+		Start = DriverRotation;
+	}
+	else
+	{
+		// The rotation just before the movement turned the owner: what gameplay set (cover, abilities,
+		// teleports) is kept; the movement's own turn towards the desired facing is not.
+		Start = PreMovementFrame == GFrameCounter ? PreMovementRotation : DriverRotation;
+	}
+
+	// The movement applied the rotation of what the owner stands on; carry it over.
+	if (Info.Base && Info.Base.Get() == DriverBase.Get())
+	{
+		const FQuat BaseDelta = Info.BaseRotation.Quaternion() * DriverBaseRotation.Quaternion().Inverse();
+		if (!BaseDelta.IsIdentity(1.e-6))
+		{
+			Start = (BaseDelta * Start.Quaternion()).Rotator();
+		}
+	}
+	return Start;
+}
+
 void UEGTurnInPlaceComponent::TickDriver(float DeltaTime)
 {
 	const AActor* const Owner = GetOwner();
 	FEGTurnInPlaceMovementInfo Info;
 
-	// Simulated proxies follow the replicated rotation; the hooks drive when they are in use.
-	if (!Owner || Owner->GetLocalRole() == ROLE_SimulatedProxy || !GatherMovementInfo(Info) || ResolveDriver(Info) != EEGTurnRotationDriver::Component)
+	UpdateSnapshotPrerequisite();
+
+	// Off with the component (Deactivate, tick disabled); simulated proxies follow the replicated
+	// rotation; the hooks drive when they are in use.
+	if (!Owner || !IsComponentTickEnabled() || Owner->GetLocalRole() == ROLE_SimulatedProxy || !GatherMovementInfo(Info)
+		|| ResolveDriver(Info) != EEGTurnRotationDriver::Component)
 	{
 		bHasDriverRotation = false;
 		return;
@@ -851,18 +964,9 @@ void UEGTurnInPlaceComponent::TickDriver(float DeltaTime)
 		return;
 	}
 
-	// Start from where this left the owner, not from where the movement turned it this frame: the
-	// movement's own rotation towards the desired facing is what turn in place replaces. The
-	// rotation of what the owner stands on is passed on (the movement applied it too).
-	FRotator Current = bHasDriverRotation ? DriverRotation : Info.Rotation;
-	if (bHasDriverRotation && Info.Base && Info.Base.Get() == DriverBase.Get())
-	{
-		const FQuat BaseDelta = Info.BaseRotation.Quaternion() * DriverBaseRotation.Quaternion().Inverse();
-		if (!BaseDelta.IsIdentity(1.e-6))
-		{
-			Current = (BaseDelta * Current.Quaternion()).Rotator();
-		}
-	}
+	// Not from where the movement turned the owner this frame: its turn towards the desired facing
+	// is what turn in place replaces.
+	const FRotator Current = GetDriverStartRotation(Info);
 	DriverBase = Info.Base.Get();
 	DriverBaseRotation = Info.BaseRotation;
 
@@ -1088,6 +1192,14 @@ void UEGTurnInPlaceComponent::TickPseudoStates(float DeltaTime)
 	FEGTurnInPlaceGraphOutput Output;
 	FEGTurnInPlaceSolver::ComputeGraphOutput(Input, bPseudoTurnedThisEntry, PseudoNode.bReachedAnimEnd, Output);
 
+	// As the node: locomotion takes over once the character moves.
+	if (Input.bIsMoving || !Input.bValid)
+	{
+		Output.bAbortTurn = true;
+		Output.bWantsToTurn = false;
+		Output.bWantsRecovery = false;
+	}
+
 	const EEGTurnPseudoState Before = PseudoState;
 	FEGTurnInPlaceSolver::AdvancePseudoState(PseudoState, PseudoNode, Input, Output, DeltaTime);
 	if (PseudoState != Before)
@@ -1135,9 +1247,11 @@ void UEGTurnInPlaceComponent::TickSelfCheck(const FEGTurnInPlaceMovementInfo& In
 	const UCharacterMovementComponent* const Movement = Character ? Character->GetCharacterMovement() : nullptr;
 	const EEGTurnRotationDriver Driver = ResolveDriver(Info);
 
-	// Works without the hooks, but a player's own client is then not predicted.
+	// Works without the hooks, but a remote player's own client is then not predicted (a
+	// listen-server host's own character needs no prediction).
+	const bool bHostOwnCharacter = Character && Character->HasAuthority() && Character->IsLocallyControlled();
 	if (RotationDriver == EEGTurnRotationDriver::Auto && Driver == EEGTurnRotationDriver::Component && Movement
-		&& Info.TurnMethod != EEGTurnMethod::None && GetNetMode() != NM_Standalone && Character->IsPlayerControlled()
+		&& Info.TurnMethod != EEGTurnMethod::None && GetNetMode() != NM_Standalone && Character->IsPlayerControlled() && !bHostOwnCharacter
 		&& ++FramesDrivenUnpredicted > MissingHookFrames)
 	{
 		ReportProblem(TEXT("A player character in multiplayer turns from the component tick, which is not predicted. Forward the hooks and add TEGTurnInPlaceSavedMove (Docs/TurnInPlace.md), or set Rotation Driver to Component to accept it."));
@@ -1166,6 +1280,22 @@ void UEGTurnInPlaceComponent::TickSelfCheck(const FEGTurnInPlaceMovementInfo& In
 			break;
 		default:
 			break;
+		}
+	}
+
+	// The offset asks for a turn but nothing plays one: no Turn In Place node (or recipe) in the
+	// AnimBP, or its curves are scaled away before the output pose.
+	if (HasValidData(Info))
+	{
+		const FEGTurnInPlaceEntry& Entry = GetEntry();
+		const FEGTurnAngles* const Angles = Entry.GetAngles(GetTurnModeTag());
+		EEGTurnStateReason Reason;
+		const bool bWaiting = Angles && Entry.StepSizes.Num() > 0 && IsStationary(Info) && !GetCurves().IsTurning()
+			&& FMath::Abs(MoveState.TurnOffset) >= Angles->MinTurnAngle && ResolveEnabledState(Info, Reason) == EEGTurnInPlaceState::Enabled;
+		FramesWaitingForTurn = bWaiting ? FramesWaitingForTurn + 1 : 0;
+		if (FramesWaitingForTurn > 3 * MissingHookFrames)
+		{
+			ReportProblem(TEXT("The offset has asked for a turn for seconds and no turn played. Add the Turn In Place node to the AnimBP (or the state machine recipe), and make sure nothing after it scales the RemainingTurnYaw / TurnYawWeight curves."));
 		}
 	}
 

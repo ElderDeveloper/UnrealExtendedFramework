@@ -7,7 +7,7 @@ A component-based turn-in-place system for `UnrealExtendedGameplay`.
 * Multiplayer player characters forward a few engine calls for prediction; helpers make those lines hard to get wrong.
 * The math, networking, anim playback, an optional foot-lock IK and setup checks live in the plugin.
 
-> Code: `Source/UnrealExtendedGameplay/Animation/TurnInPlace`, `Source/UnrealExtendedGameplay/Animation/IK`. Editor (anim graph nodes, curve modifier): `Source/UnrealExtendedGameplayEditor`. Tests: `UnrealExtendedGameplay.Animation.TurnInPlace.*`.
+> Code: `Source/UnrealExtendedGameplay/Animation/TurnInPlace`, `Source/UnrealExtendedGameplay/Animation/IK`. Anim graph nodes' editor side: `Source/UnrealExtendedGameplayAnimGraph` (UncookedOnly). Curve modifier: `Source/UnrealExtendedGameplayEditor`. Tests: `UnrealExtendedGameplay.Animation.TurnInPlace.*`.
 
 ---
 
@@ -72,7 +72,7 @@ What applies the rotation is the **rotation driver** (§4):
 |:--|:--|
 | `UEGTurnInPlaceComponent` | Replicated actor component, the runtime owner. Also an `IEGAnimStateProvider` |
 | `UEGTurnInPlaceSet` | Data asset: per-stance entries and curve names |
-| `UEGTurnInPlaceMovementSource` / `UEGTurnInPlaceCharacterSource` | How the owner is read and rotated (instanced on the component) |
+| `UEGTurnInPlaceMovementSource` / `UEGTurnInPlaceCharacterSource` / `UEGTurnInPlacePawnSource` | How the owner is read and rotated (instanced on the component) |
 | **Turn In Place** node (`FAnimNode_EGTurnInPlace`) | The whole anim side in one node, any anim instance |
 | **Foot Lock** node (`FAnimNode_EGFootLock`) | Optional IK: planted feet stay put while the capsule turns; procedural steps |
 | `FEGTurnInPlaceSolver` | Every decision as plain functions (no world), unit tested |
@@ -142,8 +142,9 @@ FEGTurnInPlaceEntry
 | `bSimulateCurvesOnProxies` | true | §7.3 |
 | `bReportSetupProblems` | true | §11 |
 
-The component has two ticks of its own, so the project never adds a Tick override:
+The component has three ticks of its own, so the project never adds a Tick override:
 
+* the **snapshot tick** (after the controller, before the movement component) records the rotation the movement starts from;
 * the **driver tick** (`TG_PrePhysics`, after the movement component, before the mesh) rotates the owner when the driver is Component;
 * the **main tick** (`TG_PostPhysics`, after the mesh) copies the curves, runs settle timing, proxy simulation, pseudo states, self-checks and debug drawing.
 
@@ -164,7 +165,7 @@ The component has two ticks of its own, so the project never adds a Tick overrid
 
 ### 3.4 Movement source
 
-`UEGTurnInPlaceMovementSource` is picked on the component (an instanced object, like a material in a details panel). It has four overridable functions, in C++ or Blueprint:
+`UEGTurnInPlaceMovementSource` is picked on the component (an instanced object, like a material in a details panel): **Character Movement** (default) for `ACharacter`, **Pawn** for any pawn that only rotates (root rotation, velocity, control rotation as the facing), or a subclass. It has four overridable functions, in C++ or Blueprint:
 
 | Function | Default | Character Movement |
 |:--|:--|:--|
@@ -182,8 +183,9 @@ For Mover or a custom pawn, subclass it: fill `FEGTurnInPlaceMovementInfo` from 
 ```
 Controller tick            FaceRotation (Strafe Direct) ─┐ hooks, when forwarded
 Movement tick              PhysicsRotation              ─┘   state (§6) → UpdateOffset (last frame's curves) → rotate
-Driver tick                (Component driver) start from where it left the owner last frame, not where the
-                           movement turned it → state → UpdateOffset → rotate
+Snapshot tick              the rotation before the movement (after the controller's input handling)
+Driver tick                (Component driver) start from that snapshot, so the movement's own turn is
+                           replaced and gameplay rotations are kept → state → UpdateOffset → rotate
 Mesh tick, game thread     Turn In Place node PreUpdate: component.MakeGraphInput
 Mesh tick, worker          node: Idle ⇄ Turn → Recovery → Idle (abort, moving → Idle), crossfades,
                            writes RemainingTurnYaw / TurnYawWeight into the pose
@@ -191,7 +193,7 @@ Main tick                  copy the evaluated curves (IEGTurnInPlaceAnimSource, 
                            → settle timer → proxy simulation, pseudo states, self-check, debug
 ```
 
-Ordering is enforced with tick prerequisites: driver after the movement component, mesh after the driver, main tick after the mesh (whose parallel evaluation it then waits for).
+Ordering is enforced with tick prerequisites: snapshot after the controller, movement after the snapshot, driver after the movement, mesh after the driver, main tick after the mesh (whose parallel evaluation it then waits for).
 
 | Struct | Written by | Read by |
 |:--|:--|:--|
@@ -267,7 +269,7 @@ What each state means:
 ### 7.4 Dedicated server
 
 * **Animation** (default): the mesh needs `AlwaysTickPoseAndRefreshBones`. Otherwise the component warns once at BeginPlay with the fix.
-* **Pseudo:** the component runs Idle / Turn / Recovery on the game thread (`AdvancePseudoState`, the same transitions as the node and the recipe, Abort included, with Recovery continuing the turn clip) and evaluates the curves at the tracked time: the clip's authored curves, or the procedural turn. The anim graph stays idle on that server.
+* **Pseudo:** the component runs Idle / Turn / Recovery on the game thread (`AdvancePseudoState`, the same transitions as the node and the recipe: Abort from Turn or Recovery, a stop once the character moves, Recovery continuing the turn clip) and evaluates the curves at the tracked time: the clip's authored curves, or the procedural turn. The anim graph stays idle on that server.
 
   Limitations, both reported by the self-check where they apply:
   * Pseudo servers read **authored curves only**: clips without them need the curve modifier (procedural turns need nothing).
@@ -371,7 +373,7 @@ The last input direction is tracked inside `HandlePhysicsRotation` and the drive
 `Source` is the pose shown while not turning. Two placements work:
 
 * **After the locomotion:** `Locomotion → Turn In Place → Slot → Output`. While moving it passes the source through; a turn in progress blends back to it when the character starts moving.
-* **Inside the locomotion's Idle state:** `Idle pose → Turn In Place → state output`.
+* **Inside the locomotion's Idle state:** `Idle pose → Turn In Place → state output`. The transitions into Idle must be Inertialization, not crossfades: a crossfade scales the node's curves while it lasts, and a turn starting during it would be consumed short.
 
 | Setting | Default | Meaning |
 |:--|:--|:--|
@@ -382,6 +384,7 @@ The last input direction is tracked inside `HandlePhysicsRotation` and the drive
 | `RootYawFinishedTolerance`, `RootYawRecoveryTime`, `RootYawSampleRate` | 1°, 0.2 s, 30 | Reading clips without curves (the same rules as the curve modifier) |
 
 * Clips play through standalone sequence evaluators, so their notifies (footsteps) fire.
+* A turn keeps the clip, procedural settings and curve names it started with, even if the stance or the turn set changes during it.
 * It reads the component in `PreUpdate` (game thread) and needs no anim instance support: no parent class, no interface, no variables.
 * It writes `RemainingTurnYaw` and `TurnYawWeight` into its output pose **unblended**. Nothing after it may scale them: no blend that fades it out while standing, and add both curves to any downstream Inertialization's *Filtered Curves*.
 * The AnimBP's Root Motion Mode must not be *Root Motion From Everything*: the turn clips would then also rotate the capsule through root motion.
@@ -391,11 +394,11 @@ The last input direction is tracked inside `HandlePhysicsRotation` and the drive
 
 Put it after Turn In Place, in component space (`Turn In Place → Local To Component → Foot Lock → Component To Local`).
 
-* While the owner stands on the ground (slower than `MaxOwnerSpeed`) a foot the animation holds still **relative to the mesh** is locked where it is in the world. A capsule turning under an idle pose (procedural turns, settles, the max-angle drag) leaves the feet planted.
+* While the owner stands on the ground (slower than `MaxOwnerSpeed`, and the mesh itself not moving through the world, so lifts and platforms do not lock) a foot the animation holds still **relative to the mesh** is locked where it is in the world. A capsule turning under an idle pose (procedural turns, settles, the max-angle drag) leaves the feet planted.
 * A foot the animation moves or pivots faster than `ReleaseSpeed` / `ReleaseAngularSpeed` follows the animation, so turn clips, stepping and montages play as authored.
 * A locked foot steps (an arc of `StepHeight` over `StepDuration`) once the animation would put it more than `StepDistance` away or `StepAngle` turned. One foot steps at a time.
 * Two-bone IK on foot → parent → grandparent; the knee bends in the animation's own plane. `bAllowStretching` lets the leg stretch to reach.
-* `bOnlyWhileTurning` limits locking to turns (needs the component). Locks drop on teleports (`TeleportDistance`).
+* `bOnlyWhileTurning` limits locking to turns (needs the component). Locks drop on teleports (`TeleportDistance`) and rotation snaps (more than twice `StepAngle` in a frame).
 * Defaults are the UE5 mannequins' `foot_l` / `foot_r`. It works without a turn in place component.
 
 Large procedural turns with only the idle pose still look like what they are, a character rotating on planted feet with occasional steps. Small angles (settle, drag) look natural; for large ones, author clips for the big steps and let procedural turns cover the rest.
@@ -472,7 +475,11 @@ Locomotion helpers (both paths can use them from `UEGAnimInstance`): `Output.bSt
 | Both feet step at once | One procedural step at a time |
 | Feet stay locked through a teleport | Locks drop past `TeleportDistance` |
 | Rotating platforms call `FaceRotation` with DeltaTime 0 | Passed straight to the engine; the component driver carries the base's rotation over |
-| The component driver fights the movement component | It starts from the rotation it left last frame, so the movement's own turn towards the desired facing is replaced, not added |
+| The component driver fights the movement component | It starts from the rotation just before the movement (snapshot tick), so the movement's own turn towards the desired facing is replaced, not added |
+| The component driver undoes gameplay rotations (cover, abilities facing a target) | The snapshot runs after the controller and before the movement, so rotations made outside the movement are kept; for Strafe Direct, a facing other than the controller's snap is kept |
+| A stance or turn set change mid-turn snaps the capsule | The node keeps the turn's clip and settings until the turn ends |
+| A deactivated component keeps holding the rotation back | Hooks and driver stop when the component's tick is off |
+| A moving base drags or stretches locked feet | Locking needs the mesh itself still in the world; vertical drift triggers a step too |
 | The component driver rotates after the animation used the old rotation | Its tick runs after the movement component and before the mesh (prerequisites) |
 | The character turns back after a teleport | `ResetTurn()` |
 | Root motion turns the capsule twice | Anim root motion pauses turn in place (montage rules) and the driver leaves it alone; the node's clips must not be root motion (no Root Motion From Everything) |
@@ -503,7 +510,8 @@ Locomotion helpers (both paths can use them from `UEGAnimInstance`): `Output.bSt
 
 **Self-check** (development builds). Each problem is warned about once per owner class in `LogEGAnimation`:
 
-* a player character in multiplayer is driven by the component (not predicted) after Auto found no hooks;
+* a remote player's character in multiplayer is driven by the component (not predicted) after Auto found no hooks (a listen-server host's own character is fine);
+* the offset has asked for a turn for seconds and none played: no Turn In Place node or recipe in the AnimBP, or its curves are scaled away;
 * `RotationDriver` is Hooks, but the rotation setup's hook never ran (counted only while the engine would call it);
 * the owning client predicts moves with the hooks but without `TEGTurnInPlaceSavedMove`;
 * no `TurnSet`, no mesh, no anim instance, or a movement source that cannot read the owner;

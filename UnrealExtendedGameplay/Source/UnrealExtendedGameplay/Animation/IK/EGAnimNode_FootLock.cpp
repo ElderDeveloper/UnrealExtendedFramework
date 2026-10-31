@@ -154,12 +154,27 @@ void FAnimNode_EGFootLock::EvaluateSkeletalControl_AnyThread(FComponentSpacePose
 	const float DeltaTime = FMath::Max(FrameDeltaTime, UE_KINDA_SMALL_NUMBER);
 	const float BlendRate = BlendTime > UE_KINDA_SMALL_NUMBER ? 1.0f / BlendTime : 1000.0f;
 
-	if (bHasLastComponent && FVector::DistSquared(ComponentToWorld.GetLocation(), LastComponentLocation) > FMath::Square(TeleportDistance))
+	// A teleport or a rotation snap (respawn, ResetTurn after SetActorRotation) drops the locks; the
+	// mesh moving through the world (a lift, a platform) holds them off.
+	bool bMeshMoving = false;
+	if (bHasLastComponent)
 	{
-		ResetFeet();
+		const double Moved = FVector::Dist(ComponentToWorld.GetLocation(), LastComponentLocation);
+		const FQuat Turn = ComponentToWorld.GetRotation() * LastComponentRotation.Inverse();
+		const float Turned = FMath::Abs(FMath::RadiansToDegrees(static_cast<float>(FMath::UnwindRadians(Turn.GetTwistAngle(Up)))));
+		if (Moved > TeleportDistance || Turned > 2.0f * StepAngle)
+		{
+			ResetFeet();
+		}
+		else
+		{
+			bMeshMoving = Moved / DeltaTime > FMath::Max(MaxOwnerSpeed, 5.0f) * 2.0f;
+		}
 	}
 	bHasLastComponent = true;
 	LastComponentLocation = ComponentToWorld.GetLocation();
+	LastComponentRotation = ComponentToWorld.GetRotation();
+	const bool bAllowed = bLockAllowed && !bMeshMoving;
 
 	// One procedural step at a time, so the character is never on no feet.
 	bool bAnyStepping = FootStates.ContainsByPredicate([](const FFootState& State) { return State.bStepping; });
@@ -190,9 +205,9 @@ void FAnimNode_EGFootLock::EvaluateSkeletalControl_AnyThread(FComponentSpacePose
 		const float SpeedLimit = State.bPlanted ? ReleaseSpeed : ReleaseSpeed * 0.5f;
 		const float AngularLimit = State.bPlanted ? ReleaseAngularSpeed : ReleaseAngularSpeed * 0.5f;
 		const bool bWasPlanted = State.bPlanted;
-		State.bPlanted = bLockAllowed && Speed <= SpeedLimit && AngularSpeed <= AngularLimit;
+		State.bPlanted = bAllowed && Speed <= SpeedLimit && AngularSpeed <= AngularLimit;
 
-		if (!bLockAllowed)
+		if (!bAllowed)
 		{
 			State.bStepping = false;
 		}
@@ -223,7 +238,8 @@ void FAnimNode_EGFootLock::EvaluateSkeletalControl_AnyThread(FComponentSpacePose
 		// Too far from where the animation would put it, or turned too far: step there.
 		if (State.bLocked && State.bPlanted && !State.bStepping && !bAnyStepping && State.LockAlpha >= 1.0f)
 		{
-			const FVector Drift = FVector::VectorPlaneProject(AnimWorld.GetLocation() - State.LockedWorld.GetLocation(), Up);
+			// Vertical drift counts too: the ground under a locked foot can move.
+			const FVector Drift = AnimWorld.GetLocation() - State.LockedWorld.GetLocation();
 			const FQuat Delta = AnimWorld.GetRotation() * State.LockedWorld.GetRotation().Inverse();
 			const float Twist = FMath::Abs(FMath::RadiansToDegrees(static_cast<float>(FMath::UnwindRadians(Delta.GetTwistAngle(Up)))));
 			if (Drift.SizeSquared() > FMath::Square(StepDistance) || Twist > StepAngle)

@@ -21,8 +21,10 @@ class UPrimitiveComponent;
 class USkeletalMeshComponent;
 
 /**
- * Runs the component's own rotation after the movement component and before the mesh, so the
- * animation sees the final rotation the frame it is applied.
+ * The component's extra ticks. The driver tick runs its own rotation after the movement component
+ * and before the mesh, so the animation sees the final rotation the frame it is applied. The
+ * snapshot tick records the rotation just before the movement component, so the driver replaces
+ * only the movement's own turn and keeps rotations other systems made.
  */
 USTRUCT()
 struct FEGTurnInPlaceDriverTickFunction : public FTickFunction
@@ -30,6 +32,9 @@ struct FEGTurnInPlaceDriverTickFunction : public FTickFunction
 	GENERATED_BODY()
 
 	UEGTurnInPlaceComponent* Target = nullptr;
+
+	/** The pre-movement snapshot rather than the driver. */
+	bool bSnapshot = false;
 
 	virtual void ExecuteTick(float DeltaTime, ELevelTick TickType, ENamedThreads::Type CurrentThread, const FGraphEventRef& MyCompletionGraphEvent) override;
 	virtual FString DiagnosticMessage() override;
@@ -247,6 +252,10 @@ protected:
 	UPROPERTY()
 	FEGTurnInPlaceDriverTickFunction DriverTick;
 
+	/** After the controller, before the movement component: the rotation the movement starts from. */
+	UPROPERTY()
+	FEGTurnInPlaceDriverTickFunction SnapshotTick;
+
 private:
 	struct FRequest
 	{
@@ -276,6 +285,10 @@ private:
 	FEGTurnInPlaceRequestHandle PushRequest(bool bLock, FName Reason);
 
 	void TickDriver(float DeltaTime);
+	void TickSnapshot();
+	void UpdateSnapshotPrerequisite();
+	/** Where the driver starts this frame: its own last rotation, or what other systems turned the owner to. */
+	FRotator GetDriverStartRotation(const FEGTurnInPlaceMovementInfo& Info) const;
 	void SetDriverRotation(const FRotator& Rotation);
 	void UpdateSettle(const FEGTurnInPlaceMovementInfo& Info, float DeltaTime);
 	void TickPseudoStates(float DeltaTime);
@@ -308,6 +321,9 @@ private:
 	/** Component driver: the rotation it left the owner at, and what the owner stood on then. */
 	FRotator DriverRotation = FRotator::ZeroRotator;
 	bool bHasDriverRotation = false;
+	FRotator PreMovementRotation = FRotator::ZeroRotator;
+	uint64 PreMovementFrame = MAX_uint64;
+	TWeakObjectPtr<AActor> SnapshotController;
 	TWeakObjectPtr<UPrimitiveComponent> DriverBase;
 	FRotator DriverBaseRotation = FRotator::ZeroRotator;
 
@@ -325,4 +341,5 @@ private:
 	int32 FramesWithoutPhysicsHook = 0;
 	int32 ClientFramesWithoutSavedMove = 0;
 	int32 FramesDrivenUnpredicted = 0;
+	int32 FramesWaitingForTurn = 0;
 };

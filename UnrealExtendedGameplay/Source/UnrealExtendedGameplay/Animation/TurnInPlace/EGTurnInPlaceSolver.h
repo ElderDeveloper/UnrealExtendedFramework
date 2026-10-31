@@ -157,9 +157,9 @@ struct UNREALEXTENDEDGAMEPLAY_API FEGTurnInPlaceSolver
 	static FEGTurnInPlaceCurves EvaluateYawTrack(const FEGTurnYawTrack& Track, double Time);
 
 	/**
-	 * One step of the dedicated server's pseudo states, mirroring the graph recipe: Idle -> Turn on
-	 * bWantsToTurn, Turn -> Idle on bAbortTurn, Turn -> Recovery on bWantsRecovery, Recovery -> Idle
-	 * when the sequence ends (or is missing).
+	 * One step of the dedicated server's pseudo states, mirroring the node and the graph recipe:
+	 * Idle -> Turn on bWantsToTurn, Turn or Recovery -> Idle on bAbortTurn, Turn -> Recovery on
+	 * bWantsRecovery, Recovery -> Turn on bWantsToTurn, Recovery -> Idle when the turn ends.
 	 */
 	static void AdvancePseudoState(EEGTurnPseudoState& State, FEGTurnInPlaceNodeState& Node, const FEGTurnInPlaceGraphInput& Input,
 		const FEGTurnInPlaceGraphOutput& Output, float DeltaTime);

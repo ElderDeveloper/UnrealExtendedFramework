@@ -143,7 +143,12 @@ void FAnimNode_EGTurnInPlace::StartTurn(const FAnimationUpdateContext& Context, 
 	Phase = EPhase::Turn;
 	bTurnedThisEntry = false;
 
-	UAnimSequenceBase* const Sequence = FEGTurnInPlaceSolver::GetTurnAnimation(FrameInput.GetEntry(), Node, false);
+	const FEGTurnInPlaceEntry& Entry = FrameInput.GetEntry();
+	ActiveProcedural = Entry.Procedural;
+	ActiveCurveNames = FrameInput.CurveNames;
+	ActiveStepYaw = Entry.StepSizes.IsValidIndex(Node.StepIndex) ? static_cast<float>(Entry.StepSizes[Node.StepIndex]) : 90.0f;
+
+	UAnimSequenceBase* const Sequence = FEGTurnInPlaceSolver::GetTurnAnimation(Entry, Node, false);
 	if (!Sequence)
 	{
 		// Procedural: the source pose stays, the capsule turns on the computed curves.
@@ -237,7 +242,7 @@ const FAnimNode_EGTurnInPlace::FClipInfo& FAnimNode_EGTurnInPlace::FindOrBuildCl
 	}
 
 	FClipInfo& Info = ClipInfos.Add(Key);
-	Info.bHasCurves = UEGTurnInPlaceSet::HasTurnCurves(Sequence, Input.CurveNames);
+	Info.bHasCurves = UEGTurnInPlaceSet::HasTurnCurves(Sequence, ActiveCurveNames);
 	if (Info.bHasCurves || !Proxy)
 	{
 		return Info;
@@ -253,11 +258,9 @@ const FAnimNode_EGTurnInPlace::FClipInfo& FAnimNode_EGTurnInPlace::FindOrBuildCl
 	}
 
 	// Neither curves nor a turning root: spread the step's yaw over the clip, so the turn still ends.
-	const FEGTurnInPlaceEntry& Entry = Input.GetEntry();
-	const float StepYaw = Entry.StepSizes.IsValidIndex(Node.StepIndex) ? static_cast<float>(Entry.StepSizes[Node.StepIndex]) : 90.0f;
 	const float Length = FMath::Max(Sequence->GetPlayLength(), UE_KINDA_SMALL_NUMBER);
 	const float End = FMath::Clamp(Length - RootYawRecoveryTime, Length * 0.5f, Length);
-	const float Total = Node.bTurningRight ? StepYaw : -StepYaw;
+	const float Total = Node.bTurningRight ? ActiveStepYaw : -ActiveStepYaw;
 
 	Info.bApproximated = true;
 	Info.Track = FEGTurnYawTrack();
@@ -272,30 +275,51 @@ const FAnimNode_EGTurnInPlace::FClipInfo& FAnimNode_EGTurnInPlace::FindOrBuildCl
 	return Info;
 }
 
-FEGTurnInPlaceCurves FAnimNode_EGTurnInPlace::EvaluateTurnCurves(const FAnimInstanceProxy* Proxy, bool bRecovery)
+bool FAnimNode_EGTurnInPlace::AdvanceActiveTurn(float DeltaTime, float PlayRate)
 {
-	const FEGTurnInPlaceEntry& Entry = Input.GetEntry();
-	if (Node.bProcedural)
+	const UAnimSequenceBase* const Sequence = GetActiveSequence();
+	const double Length = Node.bProcedural
+		? static_cast<double>(FEGTurnInPlaceSolver::GetProceduralDuration(Node.ProceduralYaw, ActiveProcedural))
+		: (Sequence ? static_cast<double>(Sequence->GetPlayLength()) : 0.0);
+	if (Length <= 0.0)
 	{
-		return FEGTurnInPlaceSolver::EvaluateProceduralTurn(Node.ProceduralYaw, Node.AnimTime, Entry.Procedural);
+		// Nothing to play: played out.
+		return true;
 	}
 
-	const UAnimSequenceBase* const Sequence = FEGTurnInPlaceSolver::GetTurnAnimation(Entry, Node, bRecovery);
+	const double RateScale = Sequence ? FMath::Max(static_cast<double>(Sequence->RateScale), 0.0) : 1.0;
+	Node.AnimTime = FMath::Clamp(Node.AnimTime + static_cast<double>(DeltaTime) * PlayRate * RateScale, 0.0, Length);
+	return Node.AnimTime >= Length - UE_KINDA_SMALL_NUMBER;
+}
+
+FEGTurnInPlaceCurves FAnimNode_EGTurnInPlace::EvaluateTurnCurves(const FAnimInstanceProxy* Proxy)
+{
+	if (Node.bProcedural)
+	{
+		return FEGTurnInPlaceSolver::EvaluateProceduralTurn(Node.ProceduralYaw, Node.AnimTime, ActiveProcedural);
+	}
+
+	const UAnimSequenceBase* const Sequence = GetActiveSequence();
 	if (!Sequence)
 	{
 		return FEGTurnInPlaceCurves();
 	}
 
+	// Through the base class: UAnimSequence hides the overloads it does not override.
+	const FAnimExtractContext Context(Node.AnimTime);
 	const FClipInfo& Clip = FindOrBuildClipInfo(Proxy, Sequence);
+	FEGTurnInPlaceCurves Curves;
 	if (Clip.bHasCurves)
 	{
-		return FEGTurnInPlaceSolver::EvaluateTurnCurves(Entry, Node, bRecovery, Input.CurveNames);
+		Curves.RemainingTurnYaw = Sequence->EvaluateCurveData(ActiveCurveNames.RemainingTurnYaw, Context, false);
+		Curves.TurnYawWeight = Sequence->EvaluateCurveData(ActiveCurveNames.TurnYawWeight, Context, false);
 	}
-
-	FEGTurnInPlaceCurves Curves = FEGTurnInPlaceSolver::EvaluateYawTrack(Clip.Track, Node.AnimTime);
-	const FAnimExtractContext Context(Node.AnimTime);
-	Curves.PauseTurnInPlace = Sequence->EvaluateCurveData(Input.CurveNames.PauseTurnInPlace, Context, false);
-	Curves.LockTurnInPlace = Sequence->EvaluateCurveData(Input.CurveNames.LockTurnInPlace, Context, false);
+	else
+	{
+		Curves = FEGTurnInPlaceSolver::EvaluateYawTrack(Clip.Track, Node.AnimTime);
+	}
+	Curves.PauseTurnInPlace = Sequence->EvaluateCurveData(ActiveCurveNames.PauseTurnInPlace, Context, false);
+	Curves.LockTurnInPlace = Sequence->EvaluateCurveData(ActiveCurveNames.LockTurnInPlace, Context, false);
 	return Curves;
 }
 
@@ -309,11 +333,10 @@ void FAnimNode_EGTurnInPlace::Update_AnyThread(const FAnimationUpdateContext& Co
 
 	const float DeltaTime = Context.GetDeltaTime();
 	const FAnimInstanceProxy* const Proxy = Context.AnimInstanceProxy;
-	const FEGTurnInPlaceEntry& Entry = Input.GetEntry();
 
 	// Decide on the curves at the time last evaluated: what the component consumed this frame.
 	FEGTurnInPlaceGraphInput FrameInput = Input;
-	FrameInput.bIsTurning = Phase != EPhase::Idle && EvaluateTurnCurves(Proxy, Phase == EPhase::Recovery).IsTurning();
+	FrameInput.bIsTurning = Phase != EPhase::Idle && EvaluateTurnCurves(Proxy).IsTurning();
 	if (Phase == EPhase::Turn && FrameInput.bIsTurning)
 	{
 		bTurnedThisEntry = true;
@@ -350,7 +373,7 @@ void FAnimNode_EGTurnInPlace::Update_AnyThread(const FAnimationUpdateContext& Co
 		}
 		else
 		{
-			Node.bReachedAnimEnd = FEGTurnInPlaceSolver::AdvanceTurnTime(Entry, Node, DeltaTime, Node.PlayRate, false);
+			Node.bReachedAnimEnd = AdvanceActiveTurn(DeltaTime, Node.PlayRate);
 			FEGTurnInPlaceSolver::UpdateNodePlayRate(Node, FrameInput);
 		}
 		break;
@@ -366,7 +389,7 @@ void FAnimNode_EGTurnInPlace::Update_AnyThread(const FAnimationUpdateContext& Co
 		}
 		else
 		{
-			Node.bRecoveryFinished = FEGTurnInPlaceSolver::AdvanceTurnTime(Entry, Node, DeltaTime, 1.0f, true);
+			Node.bRecoveryFinished = AdvanceActiveTurn(DeltaTime, 1.0f);
 			if (Node.bRecoveryFinished)
 			{
 				EndTurn(RecoveryBlendTime);
@@ -378,7 +401,7 @@ void FAnimNode_EGTurnInPlace::Update_AnyThread(const FAnimationUpdateContext& Co
 	UpdateBlend(DeltaTime);
 
 	// The curves at the time about to be evaluated, written into the pose in Evaluate.
-	OutputCurves = Phase == EPhase::Idle ? FEGTurnInPlaceCurves() : EvaluateTurnCurves(Proxy, Phase == EPhase::Recovery);
+	OutputCurves = Phase == EPhase::Idle ? FEGTurnInPlaceCurves() : EvaluateTurnCurves(Proxy);
 
 	if (CurrentPlayer != INDEX_NONE)
 	{
