@@ -1,0 +1,63 @@
+// {{Copyright}}
+
+#include "{{Prefix}}Subsystem.h"
+
+#include "{{Prefix}}Settings.h"
+#include "Containers/Ticker.h"
+#include "Status/EFServiceStatus.h"
+
+void U{{Prefix}}Subsystem::Initialize(FSubsystemCollectionBase& Collection)
+{
+	Super::Initialize(Collection);
+
+	TWeakObjectPtr<U{{Prefix}}Subsystem> WeakThis(this);
+	StatusHandle = FEFServiceStatusRegistry::Register(TEXT("{{ShortName}}"), [WeakThis]
+	{
+		FEFServiceStatus Status;
+		const U{{Prefix}}Subsystem* This = WeakThis.Get();
+		if (!This || !U{{Prefix}}Settings::Get()->bEnabled)
+		{
+			Status.State = EEFServiceState::Unavailable;
+			Status.Summary = TEXT("disabled");
+			return Status;
+		}
+		Status.State = EEFServiceState::Ready;
+		Status.Summary = FString::Printf(TEXT("%d call(s) pending"), This->GetPendingCallCount());
+		return Status;
+	});
+}
+
+void U{{Prefix}}Subsystem::Deinitialize()
+{
+	FEFServiceStatusRegistry::Unregister(StatusHandle);
+	StatusHandle = 0;
+
+	// Callers may be tearing down with the game instance; answer them, but with a clear Cancelled.
+	PendingEchoes.CompleteAll(FEFResult::Cancelled(TEXT("{{ShortName}}")), FString());
+
+	Super::Deinitialize();
+}
+
+void U{{Prefix}}Subsystem::Echo(const FString& Text, FOnEchoed OnDone)
+{
+	if (Text.IsEmpty())
+	{
+		if (OnDone)
+		{
+			OnDone(FEFResult::InvalidArgument(TEXT("{{ShortName}}"), TEXT("Text is empty.")), FString());
+		}
+		return;
+	}
+
+	const int64 CallId = PendingEchoes.Add(MoveTemp(OnDone));
+
+	TWeakObjectPtr<U{{Prefix}}Subsystem> WeakThis(this);
+	FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([WeakThis, CallId, Text](float)
+	{
+		if (U{{Prefix}}Subsystem* This = WeakThis.Get())
+		{
+			This->PendingEchoes.Complete(CallId, FEFResult::Success(TEXT("{{ShortName}}")), Text);
+		}
+		return false;
+	}), U{{Prefix}}Settings::Get()->EchoDelaySeconds);
+}

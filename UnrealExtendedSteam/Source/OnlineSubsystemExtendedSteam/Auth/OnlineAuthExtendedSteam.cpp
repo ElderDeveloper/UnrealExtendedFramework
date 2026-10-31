@@ -58,6 +58,10 @@ public:
 	FOnlineAuthExtendedSteamCallbacks& operator=(const FOnlineAuthExtendedSteamCallbacks&) = delete;
 
 private:
+	// Declared before the callback member: members are initialized in declaration order, so Owner is
+	// set before the callback registers with Steam.
+	FOnlineAuthExtendedSteam* Owner = nullptr;
+
 #if ESTEAM_SDK_AT_LEAST(157)
 	void OnWebApiTicketResponse(GetTicketForWebApiResponse_t* Data)
 	{
@@ -75,8 +79,6 @@ private:
 
 	CCallback<FOnlineAuthExtendedSteamCallbacks, GetTicketForWebApiResponse_t> WebApiTicketCallback;
 #endif
-
-	FOnlineAuthExtendedSteam* Owner = nullptr;
 };
 #endif // WITH_EXTENDEDSTEAM_SDK
 

@@ -1,11 +1,18 @@
-// Copyright Epic Games, Inc. All Rights Reserved.
+// Copyright Moon Punch Games. All Rights Reserved.
 
 #include "UnrealExtendedFramework.h"
+#include "Interfaces/IPluginManager.h"
 #include "Misc/FileHelper.h"
 #include "HAL/PlatformFilemanager.h"
 #include "Misc/Paths.h"
 #include "Engine/Engine.h"
 #include "Internationalization/StringTableRegistry.h"
+#include "EFFoundationVersion.h"
+#include "Json/EFJsonTypes.h"
+#include "Libraries/File/EFFileLibraryPrivate.h"
+
+// 1.1: EFAssets, which the loading screen, subtitles and object pool preload with.
+EF_REQUIRE_FOUNDATION_VERSION(1, 1, "UnrealExtendedFramework");
 
 DEFINE_LOG_CATEGORY(LogExtendedFramework);
 
@@ -30,15 +37,21 @@ namespace
 
 void FUnrealExtendedFrameworkModule::StartupModule()
 {
-	// This code will execute after your module is loaded into memory; the exact timing is specified in the .uplugin file per-module
+	// The foundation's JSON file nodes follow the same Extended File Access rules as the file library.
+	EFJson::SetFileAccessPolicy([](const FString& FullPath, bool bForWrite, const TCHAR* FunctionName)
+	{
+		return bForWrite ? EFFileLibraryAccess::CheckWrite(FunctionName, FullPath) : EFFileLibraryAccess::CheckRead(FunctionName, FullPath);
+	});
+
+#if WITH_EDITOR
 	InitializeGameplayTags();
+#endif
 	RegisterStringTable();
 }
 
 void FUnrealExtendedFrameworkModule::ShutdownModule()
 {
-	// This function may be called during shutdown to clean up your module.  For modules that support dynamic reloading,
-	// we call this function before unloading the module.
+	EFJson::SetFileAccessPolicy(nullptr);
 	FStringTableRegistry::Get().UnregisterStringTable(StringTableId);
 }
 
@@ -62,10 +75,15 @@ void FUnrealExtendedFrameworkModule::RegisterStringTable()
 		TEXT("Localization/ExtendedFramework.csv"), Plugin->GetBaseDir());
 }
 
+#if WITH_EDITOR
 void FUnrealExtendedFrameworkModule::InitializeGameplayTags()
 {
-	// Get the path to the CSV file
-	FString PluginDir = IPluginManager::Get().FindPlugin(TEXT("UnrealExtendedFramework"))->GetBaseDir();
+	const TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(TEXT("UnrealExtendedFramework"));
+	if (!Plugin.IsValid())
+	{
+		return;
+	}
+	const FString PluginDir = Plugin->GetBaseDir();
 	FString CSVPath = FPaths::Combine(PluginDir, TEXT("Source/UnrealExtendedFramework/ModularSettings/Tags/ExtendedSettingTags.csv"));
 
 	// Read the CSV file
@@ -163,6 +181,7 @@ void FUnrealExtendedFrameworkModule::InitializeGameplayTags()
 		UE_LOG(LogExtendedFramework, Log, TEXT("All Extended Settings tags are already present in ExtendedSettingsTags.ini"));
 	}
 }
+#endif // WITH_EDITOR
 
 #undef LOCTEXT_NAMESPACE
 	

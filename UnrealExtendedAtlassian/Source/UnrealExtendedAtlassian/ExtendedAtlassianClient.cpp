@@ -10,9 +10,7 @@
 #include "Containers/Ticker.h"
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
-#include "HttpModule.h"
-#include "Interfaces/IHttpRequest.h"
-#include "Interfaces/IHttpResponse.h"
+#include "Http/EFHttpClient.h"
 #include "Misc/Base64.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
@@ -22,7 +20,7 @@
 /** A request plus the state needed to re-send it after a retryable failure. */
 struct FExtendedAtlassianPendingRequest
 {
-	FString Verb;
+	EEFHttpVerb Verb = EEFHttpVerb::Get;
 	FString Url;
 	TArray<uint8> Body;
 	FString ContentType;
@@ -117,15 +115,17 @@ namespace ExtendedAtlassianClientPrivate
 		return FString::Join(Parts, TEXT("; "));
 	}
 
-	/** Atlassian sends Retry-After in whole seconds. Falls back to exponential backoff. */
-	float ComputeRetryDelay(const FHttpResponsePtr& Response, int32 Attempt)
+	/**
+	 * Atlassian sends Retry-After in whole seconds. Falls back to exponential backoff.
+	 * ResponseHeaders is empty when no response arrived; lookups ignore case.
+	 */
+	float ComputeRetryDelay(const TMap<FString, FString>& ResponseHeaders, int32 Attempt)
 	{
-		if (Response.IsValid())
+		if (const FString* RetryAfter = ResponseHeaders.Find(TEXT("Retry-After")))
 		{
-			const FString RetryAfter = Response->GetHeader(TEXT("Retry-After"));
-			if (!RetryAfter.IsEmpty())
+			if (!RetryAfter->IsEmpty())
 			{
-				const float Seconds = FCString::Atof(*RetryAfter);
+				const float Seconds = FCString::Atof(**RetryAfter);
 				if (Seconds > 0.0f)
 				{
 					return FMath::Clamp(Seconds, 1.0f, 120.0f);
@@ -136,7 +136,7 @@ namespace ExtendedAtlassianClientPrivate
 		return FMath::Clamp(FMath::Pow(2.0f, static_cast<float>(Attempt)), 1.0f, 60.0f);
 	}
 
-	FExtendedAtlassianError ClassifyFailure(int32 Status, const FString& Body, const FHttpResponsePtr& Response)
+	FExtendedAtlassianError ClassifyFailure(int32 Status, const FString& Body, const TMap<FString, FString>& ResponseHeaders)
 	{
 		FExtendedAtlassianError Error;
 		Error.HttpStatus = Status;
@@ -160,9 +160,7 @@ namespace ExtendedAtlassianClientPrivate
 			Error.Code = TEXT("Forbidden");
 			// Repeated failed logins trigger a CAPTCHA that the API cannot satisfy; the user has to
 			// sign in through a browser once to clear it. Say so rather than reporting a bare 403.
-			const FString DeniedReason = Response.IsValid()
-				? Response->GetHeader(TEXT("X-Authentication-Denied-Reason"))
-				: FString();
+			const FString DeniedReason = ResponseHeaders.FindRef(TEXT("X-Authentication-Denied-Reason"));
 
 			if (DeniedReason.Contains(TEXT("CAPTCHA")))
 			{
@@ -226,6 +224,39 @@ namespace ExtendedAtlassianClientPrivate
 
 		const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(Body);
 		FJsonSerializer::Deserialize(Reader, OutResponse.Object);
+	}
+
+	/** Maps an HTTP method name onto the foundation's verbs, ignoring case. An empty name is GET. */
+	bool TryParseVerb(const FString& VerbName, EEFHttpVerb& OutVerb)
+	{
+		static const EEFHttpVerb SupportedVerbs[] =
+		{
+			EEFHttpVerb::Get,
+			EEFHttpVerb::Post,
+			EEFHttpVerb::Put,
+			EEFHttpVerb::Patch,
+			EEFHttpVerb::Delete,
+			EEFHttpVerb::Head,
+			EEFHttpVerb::Options,
+		};
+
+		const FString Trimmed = VerbName.TrimStartAndEnd();
+		if (Trimmed.IsEmpty())
+		{
+			OutVerb = EEFHttpVerb::Get;
+			return true;
+		}
+
+		for (const EEFHttpVerb Candidate : SupportedVerbs)
+		{
+			if (Trimmed.Equals(EFHttp::VerbToString(Candidate), ESearchCase::IgnoreCase))
+			{
+				OutVerb = Candidate;
+				return true;
+			}
+		}
+
+		return false;
 	}
 }
 
@@ -413,18 +444,26 @@ void FExtendedAtlassianClient::RequestRaw(
 	const UExtendedAtlassianSettings* Settings = UExtendedAtlassianSettings::Get();
 	if (!Settings || !Settings->IsConfigured())
 	{
-		FailImmediately(TEXT("NotConfigured"), TEXT("No Atlassian site URL is set. Configure it in Project Settings > Plugins > Extended Atlassian."));
+		FailImmediately(TEXT("NotConfigured"), TEXT("No Atlassian site URL is set. Configure it in Project Settings > Extended Framework > Extended Atlassian."));
 		return;
 	}
 
 	if (!Credentials.IsValid())
 	{
-		FailImmediately(TEXT("NoCredentials"), TEXT("No Atlassian credentials are stored. Enter your e-mail and API token in Project Settings > Plugins > Extended Atlassian."));
+		FailImmediately(TEXT("NoCredentials"), TEXT("No Atlassian credentials are stored. Enter your e-mail and API token in Project Settings > Extended Framework > Extended Atlassian."));
+		return;
+	}
+
+	EEFHttpVerb ParsedVerb = EEFHttpVerb::Get;
+	if (!ExtendedAtlassianClientPrivate::TryParseVerb(Verb, ParsedVerb))
+	{
+		UE_LOG(LogExtendedAtlassian, Warning, TEXT("Refusing to send %s %s: unsupported HTTP method."), *Verb, *Url);
+		FailImmediately(TEXT("InvalidRequest"), TEXT("Unsupported HTTP method. Use GET, POST, PUT, PATCH, DELETE, HEAD or OPTIONS."));
 		return;
 	}
 
 	TSharedRef<FExtendedAtlassianPendingRequest> Pending = MakeShared<FExtendedAtlassianPendingRequest>();
-	Pending->Verb = Verb;
+	Pending->Verb = ParsedVerb;
 	Pending->Url = Url;
 	Pending->Body = MoveTemp(Body);
 	Pending->ContentType = ContentType;
@@ -442,48 +481,55 @@ void FExtendedAtlassianClient::SendPending(TSharedRef<FExtendedAtlassianPendingR
 	const int32 TimeoutSeconds = Settings ? Settings->RequestTimeoutSeconds : 30;
 	const int32 MaxRetries = Settings ? Settings->MaxRetries : 3;
 
-	const FHttpRequestRef HttpRequest = FHttpModule::Get().CreateRequest();
-	HttpRequest->SetURL(Pending->Url);
-	HttpRequest->SetVerb(Pending->Verb);
-	HttpRequest->SetHeader(TEXT("Accept"), TEXT("application/json"));
-	HttpRequest->SetHeader(TEXT("Authorization"), BuildAuthorizationHeader());
-	HttpRequest->SetHeader(TEXT("User-Agent"), TEXT("UnrealExtendedAtlassian"));
-	HttpRequest->SetTimeout(static_cast<float>(TimeoutSeconds));
+	FEFHttpRequest HttpRequest;
+	HttpRequest.Url = Pending->Url;
+	HttpRequest.Verb = Pending->Verb;
+	HttpRequest.Headers.Add(TEXT("Accept"), TEXT("application/json"));
+	HttpRequest.Headers.Add(TEXT("Authorization"), BuildAuthorizationHeader());
+	HttpRequest.Headers.Add(TEXT("User-Agent"), TEXT("UnrealExtendedAtlassian"));
+	HttpRequest.TimeoutSeconds = static_cast<float>(TimeoutSeconds);
 
+	// Content-Type is sent whenever the caller names one, body or not, so it goes in as a header.
+	// Clearing ContentType stops the foundation adding its JSON default to a body that has none.
 	if (!Pending->ContentType.IsEmpty())
 	{
-		HttpRequest->SetHeader(TEXT("Content-Type"), Pending->ContentType);
+		HttpRequest.Headers.Add(TEXT("Content-Type"), Pending->ContentType);
 	}
+	HttpRequest.ContentType.Reset();
 
+	// Header names are case-insensitive keys, so extra headers replace the defaults above.
 	for (const TPair<FString, FString>& Header : Pending->ExtraHeaders)
 	{
-		HttpRequest->SetHeader(Header.Key, Header.Value);
+		HttpRequest.Headers.Add(Header.Key, Header.Value);
 	}
 
-	if (Pending->Body.Num() > 0)
-	{
-		HttpRequest->SetContent(Pending->Body);
-	}
+	// JSON arrives here already UTF-8 encoded; multipart uploads are raw bytes.
+	HttpRequest.BodyBytes = Pending->Body;
 
-	UE_LOG(LogExtendedAtlassian, Verbose, TEXT("%s %s (attempt %d)"), *Pending->Verb, *Pending->Url, Pending->Attempt + 1);
+	// Retries stay in this client, not in FEFHttpOperation: they apply to every verb (POST
+	// included), on 429, 5xx and connection failures only, with Atlassian's Retry-After limits.
+	HttpRequest.MaxRetries = 0;
+	// This client logs its own retries and final failures, so the foundation only logs at Verbose.
+	HttpRequest.bLogFailuresAsWarnings = false;
+
+	UE_LOG(LogExtendedAtlassian, Verbose, TEXT("%s %s (attempt %d)"), EFHttp::VerbToString(Pending->Verb), *Pending->Url, Pending->Attempt + 1);
 
 	TWeakPtr<FExtendedAtlassianClient> WeakClient = AsShared();
 
-	HttpRequest->OnProcessRequestComplete().BindLambda(
-		[WeakClient, Pending, MaxRetries](FHttpRequestPtr, FHttpResponsePtr HttpResponse, bool bConnectedSuccessfully)
+	FEFHttpOperation::Start(HttpRequest,
+		[WeakClient, Pending, MaxRetries](const FEFHttpResponse& HttpResponse)
 		{
 			FExtendedAtlassianResponse Response;
 
-			if (!bConnectedSuccessfully || !HttpResponse.IsValid())
+			// Success and HttpError carry a status; anything else means no response arrived.
+			const bool bReceivedResponse =
+				HttpResponse.Result == EEFHttpResult::Success
+				|| HttpResponse.Result == EEFHttpResult::HttpError;
+
+			if (bReceivedResponse)
 			{
-				Response.Error.Code = TEXT("Network");
-				Response.Error.Message = TEXT("Could not reach the Atlassian site. Check the site URL and your network connection.");
-				Response.Error.bRetryable = true;
-			}
-			else
-			{
-				Response.HttpStatus = HttpResponse->GetResponseCode();
-				Response.Body = HttpResponse->GetContentAsString();
+				Response.HttpStatus = HttpResponse.StatusCode;
+				Response.Body = HttpResponse.Body;
 
 				if (Response.HttpStatus >= 200 && Response.HttpStatus < 300)
 				{
@@ -491,8 +537,26 @@ void FExtendedAtlassianClient::SendPending(TSharedRef<FExtendedAtlassianPendingR
 				}
 				else
 				{
-					Response.Error = ClassifyFailure(Response.HttpStatus, Response.Body, HttpResponse);
+					Response.Error = ClassifyFailure(Response.HttpStatus, Response.Body, HttpResponse.Headers);
 				}
+			}
+			else if (HttpResponse.Result == EEFHttpResult::Cancelled)
+			{
+				// Only the engine cancels these (this client never does), e.g. while shutting down.
+				Response.Error.Code = TEXT("Cancelled");
+				Response.Error.Message = TEXT("The request to Atlassian was cancelled.");
+			}
+			else if (HttpResponse.Result == EEFHttpResult::InvalidRequest)
+			{
+				// Rejected before sending; resending the same URL cannot help.
+				Response.Error.Code = TEXT("InvalidRequest");
+				Response.Error.Message = FString::Printf(TEXT("The request could not be sent: %s Check the Atlassian site URL."), *HttpResponse.ErrorMessage);
+			}
+			else
+			{
+				Response.Error.Code = TEXT("Network");
+				Response.Error.Message = TEXT("Could not reach the Atlassian site. Check the site URL and your network connection.");
+				Response.Error.bRetryable = true;
 			}
 
 			TSharedPtr<FExtendedAtlassianClient> Client = WeakClient.Pin();
@@ -500,11 +564,11 @@ void FExtendedAtlassianClient::SendPending(TSharedRef<FExtendedAtlassianPendingR
 			// Retry transient failures, but only while the client is still alive.
 			if (Client.IsValid() && Response.Error.bRetryable && Pending->Attempt < MaxRetries)
 			{
-				const float Delay = ComputeRetryDelay(HttpResponse, Pending->Attempt);
+				const float Delay = ComputeRetryDelay(HttpResponse.Headers, Pending->Attempt);
 				Pending->Attempt++;
 
 				UE_LOG(LogExtendedAtlassian, Log, TEXT("%s %s failed (%s); retrying in %.0fs (attempt %d of %d)."),
-					*Pending->Verb, *Pending->Url, *Response.Error.Code, Delay, Pending->Attempt + 1, MaxRetries + 1);
+					EFHttp::VerbToString(Pending->Verb), *Pending->Url, *Response.Error.Code, Delay, Pending->Attempt + 1, MaxRetries + 1);
 
 				Client->ScheduleRetry(Pending, Delay);
 				return;
@@ -513,11 +577,11 @@ void FExtendedAtlassianClient::SendPending(TSharedRef<FExtendedAtlassianPendingR
 			if (Response.Error.IsSet())
 			{
 				UE_LOG(LogExtendedAtlassian, Warning, TEXT("%s %s -> %s"),
-					*Pending->Verb, *Pending->Url, *Response.Error.ToString());
+					EFHttp::VerbToString(Pending->Verb), *Pending->Url, *Response.Error.ToString());
 			}
 
-			// HTTP completion can arrive off the game thread depending on engine configuration;
-			// Slate callers must not have to care.
+			// FEFHttpOperation completes on the game thread; keep the guarantee explicit so Slate
+			// callers never have to care, whatever the transport does.
 			if (IsInGameThread())
 			{
 				Pending->OnComplete.ExecuteIfBound(Response);
@@ -530,8 +594,6 @@ void FExtendedAtlassianClient::SendPending(TSharedRef<FExtendedAtlassianPendingR
 				});
 			}
 		});
-
-	HttpRequest->ProcessRequest();
 }
 
 void FExtendedAtlassianClient::ScheduleRetry(TSharedRef<FExtendedAtlassianPendingRequest> Pending, float DelaySeconds)

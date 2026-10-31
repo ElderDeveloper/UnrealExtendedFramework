@@ -6,7 +6,7 @@
 	"Description": "Extended Steam integration: Steamworks client API, Online Subsystem, Steam sockets and Steam Web API.",
 	"Category": "Extended",
 	"CreatedBy": "Kemal Erdem YILMAZ",
-	"CreatedByURL": "moonpunchgames.com",
+	"CreatedByURL": "https://moonpunchgames.com",
 	"DocsURL": "",
 	"MarketplaceURL": "",
 	"SupportURL": "",
@@ -97,6 +97,10 @@
 		}
 	],
 	"Plugins": [
+		{
+			"Name": "UnrealExtendedFoundation",
+			"Enabled": true
+		},
 		{
 			"Name": "OnlineSubsystem",
 			"Enabled": true

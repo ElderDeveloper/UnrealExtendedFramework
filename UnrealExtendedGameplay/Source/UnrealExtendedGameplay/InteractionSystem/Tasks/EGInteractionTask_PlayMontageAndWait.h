@@ -12,8 +12,8 @@ class UAnimMontage;
 class USkeletalMeshComponent;
 
 /**
- * Plays a montage on the interactor and waits for it. Defaults to the first skeletal mesh on
- * the interactor; pass a mesh for first-person arms or a specific body.
+ * Plays a montage on the interactor and waits for it. Defaults to the interactor's body mesh
+ * (FEGInteractionActorInfo::SkeletalMesh); pass a mesh for first-person arms or a specific body.
  */
 UCLASS()
 class UNREALEXTENDEDGAMEPLAY_API UEGInteractionTask_PlayMontageAndWait : public UEGInteractionTask

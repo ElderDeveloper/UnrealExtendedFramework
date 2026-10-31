@@ -6,7 +6,7 @@
 	"Description": "Extended Framework quest system",
 	"Category": "Extended",
 	"CreatedBy": "Kemal Erdem YILMAZ",
-	"CreatedByURL": "moonpunchgames.com",
+	"CreatedByURL": "https://moonpunchgames.com",
 	"DocsURL": "",
 	"MarketplaceURL": "",
 	"SupportURL": "",
@@ -27,6 +27,10 @@
 		}
 	],
 	"Plugins": [
+		{
+			"Name": "UnrealExtendedFoundation",
+			"Enabled": true
+		},
 		{
 			"Name": "GameplayTagsEditor",
 			"Enabled": true,

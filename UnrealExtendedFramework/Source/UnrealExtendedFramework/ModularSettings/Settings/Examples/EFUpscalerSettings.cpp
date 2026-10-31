@@ -1,3 +1,5 @@
+// Copyright Moon Punch Games. All Rights Reserved.
+
 // EFUpscalerSettings.cpp
 // Apply logic for upscaler settings (DLSS, FSR, XeSS, Frame Generation, Resolution Scale).
 // All vendor API calls are behind compile-time guards defined in UnrealExtendedFramework.Build.cs.

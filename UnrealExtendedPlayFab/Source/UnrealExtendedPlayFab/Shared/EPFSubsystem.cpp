@@ -6,10 +6,9 @@
 #include "UnrealExtendedPlayFab.h"
 #include "Auth/EPFAuthSubsystem.h"
 
+#include "Async/EFCallContext.h"
 #include "Containers/Ticker.h"
-#include "HttpModule.h"
-#include "Interfaces/IHttpRequest.h"
-#include "Interfaces/IHttpResponse.h"
+#include "Http/EFHttpClient.h"
 #include "Serialization/JsonSerializer.h"
 #include "Dom/JsonObject.h"
 #include "TimerManager.h"
@@ -71,13 +70,8 @@ void UEPFSubsystem::Deinitialize()
 	bDeinitialized = true;
 	PendingRequestQueue.Empty();
 
-	if (UGameInstance* GI = GetGameInstance())
-	{
-		if (UWorld* World = GI->GetWorld())
-		{
-			World->GetTimerManager().ClearTimer(RateLimitResetHandle);
-		}
-	}
+	FTSTicker::RemoveTicker(RateLimitResetHandle);
+	RateLimitResetHandle.Reset();
 
 	Super::Deinitialize();
 }
@@ -180,8 +174,19 @@ void UEPFSubsystem::SendPlayFabRequestDetailed(
 	const FString& ApiPath,
 	const TSharedRef<FJsonObject>& RequestBody,
 	EEPFAuthMode AuthMode,
-	const FOnPlayFabResponseDetailed& OnComplete)
+	const FOnPlayFabResponseDetailed& InOnComplete)
 {
+	// Carry the caller's call context (EFCallContext) through queueing, retries and re-auth replays
+	// to the completion, so the broadcast it makes is tagged as that caller's. This is what lets two
+	// async nodes running the same call at once each take their own result.
+	const int64 CallContext = EFCallContext::GetActive();
+	const FOnPlayFabResponseDetailed OnComplete = CallContext == 0 ? InOnComplete :
+		FOnPlayFabResponseDetailed::CreateLambda([CallContext, InOnComplete](const FEPFResult& Result, TSharedPtr<FJsonObject> JsonResponse)
+		{
+			EFCallContext::FScope Scope(CallContext);
+			InOnComplete.ExecuteIfBound(Result, JsonResponse);
+		});
+
 	if (!IsConfigured())
 	{
 		LogNotConfigured(TEXT("SendPlayFabRequest"));
@@ -252,35 +257,37 @@ void UEPFSubsystem::ExecuteRequest(
 	const UEPFSettings* Settings = GetSettings();
 	const FString Url = Settings->GetApiBaseUrl() + ApiPath;
 
-	TSharedRef<IHttpRequest, ESPMode::ThreadSafe> HttpRequest = FHttpModule::Get().CreateRequest();
-	HttpRequest->SetDelegateThreadPolicy(EHttpRequestDelegateThreadPolicy::CompleteOnGameThread);
-	HttpRequest->SetURL(Url);
-	HttpRequest->SetVerb(TEXT("POST"));
-	HttpRequest->SetHeader(TEXT("Content-Type"), TEXT("application/json"));
-	HttpRequest->SetHeader(TEXT("X-ReportErrorAsSuccess"), TEXT("true"));
+	FEFHttpRequest HttpRequest;
+	HttpRequest.Url = Url;
+	HttpRequest.Verb = EEFHttpVerb::Post;
+	HttpRequest.ContentType = TEXT("application/json");
+	HttpRequest.Body = RequestBodyString;
+	// Retries stay here, not in FEFHttpOperation: this subsystem also re-authenticates and replays.
+	HttpRequest.MaxRetries = 0;
+	// This subsystem logs its own retries and errors with the PlayFab error details.
+	HttpRequest.bLogFailuresAsWarnings = false;
+	HttpRequest.Headers.Add(TEXT("X-ReportErrorAsSuccess"), TEXT("true"));
 
 	if (Settings->bIncludeSdkHeader && !Settings->SDKHeaderValue.IsEmpty())
 	{
-		HttpRequest->SetHeader(TEXT("X-PlayFabSDK"), Settings->SDKHeaderValue);
+		HttpRequest.Headers.Add(TEXT("X-PlayFabSDK"), Settings->SDKHeaderValue);
 	}
 
 	switch (AuthMode)
 	{
 	case EEPFAuthMode::SessionTicket:
-		HttpRequest->SetHeader(TEXT("X-Authorization"), SharedAuthContext.SessionTicket);
+		HttpRequest.Headers.Add(TEXT("X-Authorization"), SharedAuthContext.SessionTicket);
 		break;
 	case EEPFAuthMode::EntityToken:
-		HttpRequest->SetHeader(TEXT("X-EntityToken"), SharedAuthContext.EntityToken);
+		HttpRequest.Headers.Add(TEXT("X-EntityToken"), SharedAuthContext.EntityToken);
 		break;
 	case EEPFAuthMode::SecretKey:
-		HttpRequest->SetHeader(TEXT("X-SecretKey"), !SharedAuthContext.DeveloperSecretKey.IsEmpty() ? SharedAuthContext.DeveloperSecretKey : Settings->DeveloperSecretKey);
+		HttpRequest.Headers.Add(TEXT("X-SecretKey"), !SharedAuthContext.DeveloperSecretKey.IsEmpty() ? SharedAuthContext.DeveloperSecretKey : Settings->DeveloperSecretKey);
 		break;
 	case EEPFAuthMode::None:
 	default:
 		break;
 	}
-
-	HttpRequest->SetContentAsString(RequestBodyString);
 
 	// One entry per call, body included, credentials redacted. Verbose, so it costs nothing (not even
 	// the redaction) until the category is raised.
@@ -290,31 +297,34 @@ void UEPFSubsystem::ExecuteRequest(
 	RequestsThisSecond++;
 	if (!RateLimitResetHandle.IsValid())
 	{
-		if (UGameInstance* GI = GetGameInstance())
+		// The core ticker, not a world timer: a world timer stops while the game is paused and is lost
+		// with its world on map travel, and a reset that never comes leaves every later request queued.
+		TWeakObjectPtr<UEPFSubsystem> WeakThis(this);
+		RateLimitResetHandle = FTSTicker::GetCoreTicker().AddTicker(TEXT("PlayFab.RateLimitReset"), 1.0f, [WeakThis](float)
 		{
-			if (UWorld* World = GI->GetWorld())
+			UEPFSubsystem* This = WeakThis.Get();
+			if (This && !This->bDeinitialized)
 			{
-				World->GetTimerManager().SetTimer(RateLimitResetHandle, this, &UEPFSubsystem::ResetRateLimitCounter, 1.0f, false);
+				This->ResetRateLimitCounter();
 			}
-		}
+			return false;
+		});
 	}
 
-	// Weak-gated: the HttpManager keeps the request alive past PIE shutdown, so a plain [this]
-	// lambda would call into this subsystem after its GameInstance destroyed it.
-	HttpRequest->OnProcessRequestComplete().BindWeakLambda(this,
-		[this, ApiPath, RequestBodyString, AuthMode, OnComplete, RetryAttempt](FHttpRequestPtr Request, FHttpResponsePtr Response, bool bConnectedSuccessfully)
+	// Weak-gated: a response can arrive after PIE shutdown destroyed this subsystem.
+	TWeakObjectPtr<UEPFSubsystem> WeakThis(this);
+	FEFHttpOperation::Start(HttpRequest,
+		[WeakThis, ApiPath, RequestBodyString, AuthMode, OnComplete, RetryAttempt](const FEFHttpResponse& Response)
 		{
-			HandleHttpResponse(Request, Response, bConnectedSuccessfully, ApiPath, RequestBodyString, AuthMode, OnComplete, RetryAttempt);
-		}
-	);
-
-	HttpRequest->ProcessRequest();
+			if (UEPFSubsystem* This = WeakThis.Get())
+			{
+				This->HandleHttpResponse(Response, ApiPath, RequestBodyString, AuthMode, OnComplete, RetryAttempt);
+			}
+		});
 }
 
 void UEPFSubsystem::HandleHttpResponse(
-	FHttpRequestPtr Request,
-	FHttpResponsePtr Response,
-	bool bConnectedSuccessfully,
+	const FEFHttpResponse& Response,
 	const FString& ApiPath,
 	const FString& RequestBodyString,
 	EEPFAuthMode AuthMode,
@@ -335,7 +345,7 @@ void UEPFSubsystem::HandleHttpResponse(
 	{
 		TWeakObjectPtr<UEPFSubsystem> WeakThis(this);
 		FTSTicker::GetCoreTicker().AddTicker(TEXT("PlayFab.DeferredHttpResponse"), 0.0f,
-			[WeakThis, Request, Response, bConnectedSuccessfully, ApiPath, RequestBodyString, AuthMode, OnComplete, RetryAttempt](float)
+			[WeakThis, Response, ApiPath, RequestBodyString, AuthMode, OnComplete, RetryAttempt](float)
 			{
 				UEPFSubsystem* Subsystem = WeakThis.Get();
 				if (!Subsystem || Subsystem->bDeinitialized)
@@ -346,8 +356,7 @@ void UEPFSubsystem::HandleHttpResponse(
 				{
 					return true;
 				}
-				Subsystem->HandleHttpResponse(Request, Response, bConnectedSuccessfully,
-					ApiPath, RequestBodyString, AuthMode, OnComplete, RetryAttempt);
+				Subsystem->HandleHttpResponse(Response, ApiPath, RequestBodyString, AuthMode, OnComplete, RetryAttempt);
 				return false;
 			});
 		return;
@@ -356,29 +365,15 @@ void UEPFSubsystem::HandleHttpResponse(
 	const UEPFSettings* Settings = GetSettings();
 	FEPFError Error = FEPFError::None();
 
-	if (!bConnectedSuccessfully || !Response.IsValid())
+	const bool bConnectedSuccessfully = Response.Result == EEFHttpResult::Success || Response.Result == EEFHttpResult::HttpError;
+	if (!bConnectedSuccessfully)
 	{
 		if (RetryAttempt < MaxRetries)
 		{
 			const float Delay = BaseRetryDelaySec * FMath::Pow(2.0f, static_cast<float>(RetryAttempt));
 			EF_LOG(ExtendedPlayFab, Warning, TEXT("PlayFab Connection Failed - Retrying %s in %.1fs (attempt %d/%d)"), *ApiPath, Delay, RetryAttempt + 1, MaxRetries);
 
-			if (UGameInstance* GI = GetGameInstance())
-			{
-				if (UWorld* World = GI->GetWorld())
-				{
-					FTimerHandle RetryHandle;
-					World->GetTimerManager().SetTimer(
-						RetryHandle,
-						[this, ApiPath, RequestBodyString, AuthMode, OnComplete, RetryAttempt]()
-						{
-							ExecuteRequest(ApiPath, RequestBodyString, AuthMode, OnComplete, RetryAttempt + 1);
-						},
-						Delay,
-						false
-					);
-				}
-			}
+			ScheduleRetry(ApiPath, RequestBodyString, AuthMode, OnComplete, RetryAttempt, Delay);
 			return;
 		}
 
@@ -394,8 +389,8 @@ void UEPFSubsystem::HandleHttpResponse(
 		return;
 	}
 
-	const FString ResponseBody = Response->GetContentAsString();
-	const int32 ResponseCode = Response->GetResponseCode();
+	const FString& ResponseBody = Response.Body;
+	const int32 ResponseCode = Response.StatusCode;
 
 	EF_LOG(ExtendedPlayFab, Verbose, TEXT("PlayFab Response <- %s [%d]\n%s"),
 		*ApiPath, ResponseCode, *EPFLogFormatting::FormatBodyForLog(ResponseBody, Settings->LoggedBodyMaxChars));
@@ -406,22 +401,7 @@ void UEPFSubsystem::HandleHttpResponse(
 		const TCHAR* Reason = ResponseCode == 429 ? TEXT("Rate Limited") : TEXT("Server Error");
 		EF_LOG(ExtendedPlayFab, Warning, TEXT("PlayFab %s [%d] - Retrying %s in %.1fs (attempt %d/%d)"), Reason, ResponseCode, *ApiPath, Delay, RetryAttempt + 1, MaxRetries);
 
-		if (UGameInstance* GI = GetGameInstance())
-		{
-			if (UWorld* World = GI->GetWorld())
-			{
-				FTimerHandle RetryHandle;
-				World->GetTimerManager().SetTimer(
-					RetryHandle,
-					[this, ApiPath, RequestBodyString, AuthMode, OnComplete, RetryAttempt]()
-					{
-						ExecuteRequest(ApiPath, RequestBodyString, AuthMode, OnComplete, RetryAttempt + 1);
-					},
-					Delay,
-					false
-				);
-			}
-		}
+		ScheduleRetry(ApiPath, RequestBodyString, AuthMode, OnComplete, RetryAttempt, Delay);
 		return;
 	}
 
@@ -629,8 +609,26 @@ bool UEPFSubsystem::TryReauthenticateAndReplay(
 void UEPFSubsystem::ResetRateLimitCounter()
 {
 	RequestsThisSecond = 0;
-	RateLimitResetHandle.Invalidate();
+	RateLimitResetHandle.Reset();
 	ProcessRequestQueue();
+}
+
+void UEPFSubsystem::ScheduleRetry(const FString& ApiPath, const FString& RequestBodyString, EEPFAuthMode AuthMode,
+	const FOnPlayFabResponseDetailed& OnComplete, int32 RetryAttempt, float Delay)
+{
+	// The core ticker, not a world timer: a world timer does not run while the game is paused, and is
+	// lost with its world on map travel (or never set without one), which dropped the request unanswered.
+	TWeakObjectPtr<UEPFSubsystem> WeakThis(this);
+	FTSTicker::GetCoreTicker().AddTicker(TEXT("PlayFab.Retry"), Delay,
+		[WeakThis, ApiPath, RequestBodyString, AuthMode, OnComplete, RetryAttempt](float)
+		{
+			UEPFSubsystem* This = WeakThis.Get();
+			if (This && !This->bDeinitialized)
+			{
+				This->ExecuteRequest(ApiPath, RequestBodyString, AuthMode, OnComplete, RetryAttempt + 1);
+			}
+			return false;
+		});
 }
 
 void UEPFSubsystem::ProcessRequestQueue()

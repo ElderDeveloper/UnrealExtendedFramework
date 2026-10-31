@@ -1,0 +1,21 @@
+// {{Copyright}}
+
+#include "{{ModuleName}}Module.h"
+
+#include "EFFoundationVersion.h"
+#include "Modules/ModuleManager.h"
+
+// Fails the build with a readable message if this copy is paired with an older foundation.
+EF_REQUIRE_FOUNDATION_VERSION({{FoundationMajor}}, {{FoundationMinor}}, "{{PluginName}}");
+
+DEFINE_LOG_CATEGORY({{LogCategory}});
+
+void F{{ModuleName}}Module::StartupModule()
+{
+}
+
+void F{{ModuleName}}Module::ShutdownModule()
+{
+}
+
+IMPLEMENT_MODULE(F{{ModuleName}}Module, {{ModuleName}})

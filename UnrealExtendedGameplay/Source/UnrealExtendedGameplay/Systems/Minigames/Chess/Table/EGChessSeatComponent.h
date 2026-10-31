@@ -5,6 +5,7 @@
 #include "Components/SceneComponent.h"
 #include "CoreMinimal.h"
 #include "EGChessMatchTypes.h"
+#include "UnrealExtendedGameplay/Animation/TurnInPlace/EGTurnInPlaceTypes.h"
 #include "UnrealExtendedGameplay/Systems/Minigames/Chess/Player/EGChessHandTypes.h"
 
 #include "EGChessSeatComponent.generated.h"
@@ -239,4 +240,9 @@ private:
 	TWeakObjectPtr<UAnimMontage> CurrentMoveMontage;
 	uint8 AppliedSequence = 255;
 	bool bNotifiedSeated = false;
+
+	/** The seat scripts the pawn's transform, so turn in place is paused while it is prepared. */
+	FEGTurnInPlaceRequestHandle TurnInPlacePause;
+	TWeakObjectPtr<class UEGTurnInPlaceComponent> PausedTurnInPlace;
+	void ReleaseTurnInPlacePause();
 };

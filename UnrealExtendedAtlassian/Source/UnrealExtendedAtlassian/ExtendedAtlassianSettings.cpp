@@ -94,11 +94,6 @@ UExtendedAtlassianSettings::UExtendedAtlassianSettings()
 	JqlPresets.Add({ TEXT("Updated this week"), TEXT("updated >= -7d ORDER BY updated DESC") });
 }
 
-FName UExtendedAtlassianSettings::GetCategoryName() const
-{
-	return TEXT("Extended Framework");
-}
-
 FName UExtendedAtlassianSettings::GetSectionName() const
 {
 	return TEXT("ExtendedAtlassian");
@@ -141,7 +136,7 @@ void UExtendedAtlassianSettings::PostInitProperties()
 	else
 	{
 		ConnectionStatus = FExtendedAtlassianCredentialStore::HasStoredCredentials()
-			? TEXT("A credential file exists but could not be read. Re-enter your token.")
+			? TEXT("Stored credentials exist but could not be read. Re-enter your token.")
 			: TEXT("No credentials stored on this machine.");
 	}
 #endif
@@ -172,7 +167,7 @@ void UExtendedAtlassianSettings::SaveCredentials()
 
 	if (!Client->SetCredentials(Credentials))
 	{
-		SetStatus(LOCTEXT("SaveFailed", "Could not write the credential file. See the Output Log."), false);
+		SetStatus(LOCTEXT("SaveFailed", "Could not store the credentials. See the Output Log."), false);
 		return;
 	}
 
@@ -522,7 +517,8 @@ void UExtendedAtlassianSettings::ShowCredentialFileLocation()
 	const FString Path = FExtendedAtlassianCredentialStore::GetStorePath();
 	FPlatformProcess::ExploreFolder(*FPaths::GetPath(Path));
 
-	UE_LOG(LogExtendedAtlassian, Log, TEXT("Credentials are stored at %s"), *Path);
+	UE_LOG(LogExtendedAtlassian, Log, TEXT("The Atlassian account e-mail is recorded in %s; the API token is kept in %s."),
+		*Path, *FExtendedAtlassianCredentialStore::GetStorageDescription());
 }
 
 #endif // WITH_EDITOR

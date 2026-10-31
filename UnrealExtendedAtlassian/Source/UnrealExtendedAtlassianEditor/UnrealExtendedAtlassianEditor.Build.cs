@@ -44,6 +44,8 @@ public class UnrealExtendedAtlassianEditor : ModuleRules
 			"ImageWrapper",
 			"DesktopPlatform",
 			"DirectoryWatcher",
+			// ExtendedAtlassianSettings.h (included throughout) derives from UEFDeveloperSettings.
+			"ExtendedFoundation",
 		});
 	}
 }

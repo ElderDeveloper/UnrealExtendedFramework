@@ -36,7 +36,7 @@ struct UNREALEXTENDEDGAMEPLAY_API FEGInteractionActorInfo
 	UPROPERTY(BlueprintReadOnly, Category = "Interaction")
 	TObjectPtr<UEGInteractionSystemComponent> System = nullptr;
 
-	/** First skeletal mesh on the owner. Montage tasks default to it. */
+	/** The owner's body mesh (UEGMontageLibrary::GetMontageMesh, ExtendedGameplay.Anim.Mesh.Body). Montage tasks default to it. */
 	UPROPERTY(BlueprintReadOnly, Category = "Interaction")
 	TObjectPtr<USkeletalMeshComponent> SkeletalMesh = nullptr;
 

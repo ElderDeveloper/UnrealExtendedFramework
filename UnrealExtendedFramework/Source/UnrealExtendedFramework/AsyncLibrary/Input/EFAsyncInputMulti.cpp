@@ -1,48 +1,41 @@
-﻿// Fill out your copyright notice in the Description page of Project Settings.
+﻿// Copyright Moon Punch Games. All Rights Reserved.
 
 
 #include "EFAsyncInputMulti.h"
 
 
+namespace EFAsyncInputMultiPrivate
+{
+	/** The click sequence waiting for its next click, per Action Name. */
+	TMap<FName, TWeakObjectPtr<UEFAsyncInputMulti>> RunningClicks;
+
+	UEFAsyncInputMulti* FindRunning(FName ActionName)
+	{
+		const TWeakObjectPtr<UEFAsyncInputMulti>* Found = RunningClicks.Find(ActionName);
+		UEFAsyncInputMulti* Running = Found ? Found->Get() : nullptr;
+		return Running && !Running->IsFinished() ? Running : nullptr;
+	}
+}
 
 
 UEFAsyncInputMulti* UEFAsyncInputMulti::EFInputMultiClick(const UObject* WorldContextObject,FName ActionName, float clickWaitTime , int32 maxClickCount)
 {
-	if (MultiInputName.Num()>0)
+	// Another click while the sequence waits: count it and wait again.
+	if (UEFAsyncInputMulti* Running = EFAsyncInputMultiPrivate::FindRunning(ActionName))
 	{
-		if (const auto Action = MultiInputName.Find(ActionName) )
-		{
-			Action->Get()->BroadcastClickIndex();
-			return Action->Get();
-		}
-
-		if (const auto ActionObject = NewObject<UEFAsyncInputMulti>())
-		{
-			ActionObject->WorldContext=WorldContextObject;
-			ActionObject->ClickWaitTime=clickWaitTime;
-			ActionObject->ClickIndex = 0;
-			ActionObject->ActionName = ActionName;
-			ActionObject->MaxClickCount = maxClickCount;
-			MultiInputName.Add(ActionName,ActionObject);
-			return ActionObject;
-		}
-	
-	}
-	else
-	{
-		if (const auto ActionObject = NewObject<UEFAsyncInputMulti>())
-		{
-			ActionObject->WorldContext=WorldContextObject;
-			ActionObject->ClickWaitTime=clickWaitTime;
-			ActionObject->ClickIndex = 0;
-			ActionObject->ActionName = ActionName;
-			ActionObject->MaxClickCount = maxClickCount;
-			MultiInputName.Add(ActionName,ActionObject);
-			return ActionObject;
-		}
+		Running->BroadcastClickIndex();
+		Running->StartClickWindow();
+		return Running;
 	}
 
-	return nullptr;
+	UEFAsyncInputMulti* ActionObject = NewObject<UEFAsyncInputMulti>();
+	ActionObject->ClickWaitTime = clickWaitTime;
+	ActionObject->ClickIndex = 0;
+	ActionObject->ActionName = ActionName;
+	ActionObject->MaxClickCount = maxClickCount;
+	ActionObject->InitAsyncAction(const_cast<UObject*>(WorldContextObject));
+	EFAsyncInputMultiPrivate::RunningClicks.Add(ActionName, ActionObject);
+	return ActionObject;
 }
 
 void UEFAsyncInputMulti::BroadcastClickIndex()
@@ -60,26 +53,51 @@ void UEFAsyncInputMulti::BroadcastClickIndex()
 
 void UEFAsyncInputMulti::PassTime()
 {
-	MultiInputName.Remove(ActionName);
-	End.Broadcast(ClickIndex);
-	if (WorldContext)
+	CancelWork();
+	if (FinishAction())
 	{
-		WorldContext->GetWorld()->GetTimerManager().ClearTimer(Handle);
+		End.Broadcast(ClickIndex);
 	}
-	Handle.Invalidate();
-	SetReadyToDestroy();
-	ConditionalBeginDestroy();
-	
 }
 
 
 
 
-void UEFAsyncInputMulti::Activate()
+void UEFAsyncInputMulti::ExecuteAction()
 {
-	Super::Activate();
-	if (WorldContext)
+	StartClickWindow();
+}
+
+
+void UEFAsyncInputMulti::StartClickWindow()
+{
+	if (IsFinished())
 	{
-		WorldContext->GetWorld()->GetTimerManager().SetTimer(Handle,this,&UEFAsyncInputMulti::PassTime,ClickWaitTime,false);
+		return;
 	}
+
+	// A wait of zero or less ends the sequence on the next tick.
+	if (!ClickTimer.Start(GetWorldContextObject(), FTimerDelegate::CreateUObject(this, &UEFAsyncInputMulti::PassTime), ClickWaitTime, false))
+	{
+		CancelWork();
+		FailAction(FEFResult::NotAvailable(GetResultSource(), TEXT("a world for the world context")));
+	}
+}
+
+
+void UEFAsyncInputMulti::CancelWork()
+{
+	ClickTimer.Clear();
+
+	const TWeakObjectPtr<UEFAsyncInputMulti>* Registered = EFAsyncInputMultiPrivate::RunningClicks.Find(ActionName);
+	if (Registered && (!Registered->IsValid() || Registered->Get() == this))
+	{
+		EFAsyncInputMultiPrivate::RunningClicks.Remove(ActionName);
+	}
+}
+
+
+void UEFAsyncInputMulti::BroadcastFailure(const FEFResult& /*Result*/)
+{
+	End.Broadcast(ClickIndex);
 }

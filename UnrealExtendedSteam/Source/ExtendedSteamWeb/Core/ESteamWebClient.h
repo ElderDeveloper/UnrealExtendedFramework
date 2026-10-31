@@ -67,14 +67,21 @@ private:
 /**
  * The single HTTP core every Steam Web interface subsystem sends through.
  * Pure HTTPS + JSON — no Steamworks SDK, no Steam client dependency.
+ *
+ * Requests go out through UnrealExtendedFoundation's FEFHttpOperation, so they can be answered
+ * offline by FEFScopedHttpMock in tests. The Web API key travels in the query string (GET) or the
+ * form body (POST) and never reaches the log: this client logs only the interface/method, and
+ * FEFHttpOperation strips query strings from every URL it logs.
  */
 class EXTENDEDSTEAMWEB_API FESteamWebClient
 {
 public:
 	/**
-	 * Sends the request via FHttpModule and invokes Callback on completion (game thread).
-	 * bSuccess = connected && HTTP 2xx. In dev mode (UESteamWebSettings::bUseDevMode) nothing is
-	 * sent and the callback fires immediately with bSuccess=false, code 0 and a {"devmode":true} body.
+	 * Sends the request (one attempt, UESteamWebSettings::RequestTimeoutSeconds) and invokes
+	 * Callback once on completion, on the game thread after Send() has returned.
+	 * bSuccess = connected && HTTP 2xx; HttpCode is 0 when no response arrived. In dev mode
+	 * (UESteamWebSettings::bUseDevMode) nothing is sent and the callback fires immediately, inside
+	 * Send(), with bSuccess=false, code 0 and a {"devmode":true} body.
 	 */
 	static void Send(const FESteamWebRequest& Request, FOnSteamWebResponseNative Callback);
 };

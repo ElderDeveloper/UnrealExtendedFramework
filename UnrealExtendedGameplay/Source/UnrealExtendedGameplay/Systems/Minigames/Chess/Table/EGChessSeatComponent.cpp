@@ -14,6 +14,10 @@
 #include "GameFramework/Controller.h"
 #include "GameFramework/GameStateBase.h"
 #include "Net/UnrealNetwork.h"
+#include "UnrealExtendedGameplay/Animation/EGAnimationTags.h"
+#include "UnrealExtendedGameplay/Animation/Montage/EGMontageLibrary.h"
+#include "UnrealExtendedGameplay/Animation/Montage/EGMontagePlayerInterface.h"
+#include "UnrealExtendedGameplay/Animation/TurnInPlace/EGTurnInPlaceComponent.h"
 #include "UnrealExtendedGameplay/Systems/Minigames/Chess/Data/EGChessAnimationSet.h"
 #include "UnrealExtendedGameplay/Systems/Minigames/Chess/Player/EGChessCharacterInterface.h"
 #include "UnrealExtendedGameplay/Systems/Minigames/Chess/Presentation/EGChessEngineAssets.h"
@@ -90,11 +94,8 @@ USkeletalMeshComponent* UEGChessSeatComponent::GetPawnMesh(const APawn* Pawn) co
 			return Mesh;
 		}
 	}
-	if (const ACharacter* Character = Cast<ACharacter>(Pawn))
-	{
-		return Character->GetMesh();
-	}
-	return Pawn->FindComponentByClass<USkeletalMeshComponent>();
+	// IEGMontagePlayerInterface, then ACharacter::GetMesh, then the first skeletal mesh.
+	return UEGMontageLibrary::GetMontageMesh(Pawn, TAG_EGAnim_Mesh_Body);
 }
 
 UAnimInstance* UEGChessSeatComponent::GetPawnAnimInstance(const APawn* Pawn) const
@@ -675,6 +676,13 @@ void UEGChessSeatComponent::PrepareSeatedPawn(APawn* Pawn)
 
 	BindPawnAnimation(Pawn);
 
+	ReleaseTurnInPlacePause();
+	if (UEGTurnInPlaceComponent* const TurnInPlace = UEGTurnInPlaceComponent::FindFor(Pawn))
+	{
+		TurnInPlacePause = TurnInPlace->PushPause(TEXT("ChessSeat"));
+		PausedTurnInPlace = TurnInPlace;
+	}
+
 	if (Pawn->Implements<UEGChessCharacterInterface>())
 	{
 		IEGChessCharacterInterface::Execute_OnChessSeatChanged(Pawn, SeatId, true);
@@ -687,6 +695,9 @@ void UEGChessSeatComponent::ReleaseSeatedPawn(APawn* Pawn)
 	{
 		return;
 	}
+
+	// Only the prepared pawn holds the pause, and only the prepared pawn gets this far.
+	ReleaseTurnInPlacePause();
 
 	if (UAnimMontage* Montage = Sequence.Montage.Get())
 	{
@@ -745,6 +756,8 @@ void UEGChessSeatComponent::CancelSequenceAndReleasePawn()
 	{
 		ReleaseSeatedPawn(Pawn);
 	}
+	// The prepared pawn may already be gone, which skips ReleaseSeatedPawn above.
+	ReleaseTurnInPlacePause();
 	UnbindPawnAnimation();
 	Sequence = FSequenceState();
 }
@@ -783,6 +796,10 @@ bool UEGChessSeatComponent::PlayMontage(UAnimMontage* Montage, float PlayRate, f
 	{
 		return true;
 	}
+	if (Pawn->Implements<UEGMontagePlayerInterface>() && IEGMontagePlayerInterface::Execute_PlayMontageOverride(Pawn, Montage, PlayRate, NAME_None, StartTime, TAG_EGAnim_Mesh_Body))
+	{
+		return true;
+	}
 	UAnimInstance* AnimInstance = GetPawnAnimInstance(Pawn);
 	if (!AnimInstance)
 	{
@@ -814,6 +831,10 @@ void UEGChessSeatComponent::StopMontage(UAnimMontage* Montage)
 		return;
 	}
 	if (Pawn->Implements<UEGChessCharacterInterface>() && IEGChessCharacterInterface::Execute_StopChessMontage(Pawn, Montage))
+	{
+		return;
+	}
+	if (Pawn->Implements<UEGMontagePlayerInterface>() && IEGMontagePlayerInterface::Execute_StopMontageOverride(Pawn, Montage, 0.25f, TAG_EGAnim_Mesh_Body))
 	{
 		return;
 	}
@@ -948,4 +969,17 @@ void UEGChessSeatComponent::HandleMontageNotifyBegin(FName NotifyName, const FBr
 	{
 		Table->HandleCharacterNotify(SeatId, NotifyName);
 	}
+}
+
+void UEGChessSeatComponent::ReleaseTurnInPlacePause()
+{
+	if (UEGTurnInPlaceComponent* const TurnInPlace = PausedTurnInPlace.Get())
+	{
+		TurnInPlace->RemoveRequest(TurnInPlacePause);
+		// The seat set the pawn's facing; keep it, or Orient To Movement turns back to where the
+		// pawn was walking before it sat down.
+		TurnInPlace->ResetTurn();
+	}
+	TurnInPlacePause.Invalidate();
+	PausedTurnInPlace.Reset();
 }

@@ -1,3 +1,5 @@
+// Copyright Kemal Erdem YILMAZ. All Rights Reserved.
+
 #if WITH_DEV_AUTOMATION_TESTS && WITH_EDITOR
 
 #include "Misc/AutomationTest.h"
@@ -1745,7 +1747,7 @@ bool FEGQuestRunActorAutomationTest::RunTest(const FString& Parameters)
 	Component->RegisterComponent();
 
 	// A graph that names no run actor spawns nothing: the null default has to stay free.
-	AEGQuestTestRunActor::Reset();
+	AEGQuestTestRunActor::ResetRecording();
 	const FGuid BareRun = Component->StartSharedQuest(Graph);
 	TestTrue(TEXT("Quest without a run actor class still starts"), BareRun.IsValid());
 	TestNull(TEXT("No run actor is spawned when the graph names none"), Component->GetRunActor(BareRun));
@@ -1753,7 +1755,7 @@ bool FEGQuestRunActorAutomationTest::RunTest(const FString& Parameters)
 	Component->AbandonQuest(BareRun);
 
 	Graph->SetQuestRunActorClass(AEGQuestTestRunActor::StaticClass());
-	AEGQuestTestRunActor::Reset();
+	AEGQuestTestRunActor::ResetRecording();
 
 	const FGuid RunId = Component->StartSharedQuest(Graph);
 	TestTrue(TEXT("Quest with a run actor class starts"), RunId.IsValid());

@@ -1,4 +1,6 @@
-﻿// EFSubtitleQueuePolicy.cpp
+﻿// Copyright Moon Punch Games. All Rights Reserved.
+
+// EFSubtitleQueuePolicy.cpp
 #include "EFSubtitleQueuePolicy.h"
 
 FEFActiveSubtitle UEFSubtitleQueuePolicy::InvalidSubtitle = FEFActiveSubtitle();

@@ -1,9 +1,10 @@
-﻿// Fill out your copyright notice in the Description page of Project Settings.
+﻿// Copyright Moon Punch Games. All Rights Reserved.
 
 
 #include "EFDataTableLibrary.h"
 
 #include "Engine/DataTable.h"
+#include "Libraries/File/EFFileLibraryPrivate.h"
 #include "Misc/FileHelper.h"
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
@@ -59,6 +60,10 @@ void UEFDataTableLibrary::GetDataTableAsCSVString(UDataTable* DataTable, FString
 
 bool UEFDataTableLibrary::GetDataTableAsCSVFile(UDataTable* DataTable, const FString& CSVFilePath)
 {
+	if (!EFFileLibraryAccess::CheckWrite(TEXT("UEFDataTableLibrary::GetDataTableAsCSVFile"), CSVFilePath))
+	{
+		return false;
+	}
 	FString CSVString;
 	UEFDataTableLibrary::GetDataTableAsCSVString(DataTable, CSVString);
 	if (CSVString.Len() == 0)
@@ -132,6 +137,12 @@ bool UEFDataTableLibrary::ImportCSVToDataTable(UDataTable* DataTable, const FStr
 	if (DataTable->RowStruct == nullptr)
 	{
 		ErrorMessages.Add(TEXT("DataTable has no RowStruct assigned."));
+		return false;
+	}
+
+	if (!EFFileLibraryAccess::CheckRead(TEXT("UEFDataTableLibrary::ImportCSVToDataTable"), CSVFilePath))
+	{
+		ErrorMessages.Add(TEXT("The path is not allowed by the Extended File Access settings."));
 		return false;
 	}
 

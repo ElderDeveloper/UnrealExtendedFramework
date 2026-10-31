@@ -3,6 +3,7 @@
 #include "MatchmakingServers/ESteamMatchmakingServersSubsystem.h"
 #include "Shared/ESteamLog.h"
 #include "Shared/ESteamSDK.h"
+#include "Async/EFCallContext.h"
 
 #if WITH_EXTENDEDSTEAM_SDK
 THIRD_PARTY_INCLUDES_START
@@ -177,6 +178,7 @@ public:
 		}
 
 		CancelPing();
+		ActivePingContext = EFCallContext::GetActive();
 		ActivePingQuery = Servers->PingServer(HostOrderIp, Port, &PingResponse);
 		return ActivePingQuery != HSERVERQUERY_INVALID;
 	}
@@ -192,6 +194,7 @@ public:
 		CancelRules();
 		RuleKeys.Reset();
 		RuleValues.Reset();
+		ActiveRulesContext = EFCallContext::GetActive();
 		ActiveRulesQuery = Servers->ServerRules(HostOrderIp, Port, &RulesResponse);
 		return ActiveRulesQuery != HSERVERQUERY_INVALID;
 	}
@@ -294,6 +297,7 @@ private:
 	void HandlePingResponded(gameserveritem_t& Server)
 	{
 		ActivePingQuery = HSERVERQUERY_INVALID;
+		EFCallContext::FScope Scope(ActivePingContext);
 		if (UESteamMatchmakingServersSubsystem* Subsystem = Owner.Get())
 		{
 			Subsystem->OnServerPingResponded.Broadcast(true, ToServerInfo(Server));
@@ -303,6 +307,7 @@ private:
 	void HandlePingFailed()
 	{
 		ActivePingQuery = HSERVERQUERY_INVALID;
+		EFCallContext::FScope Scope(ActivePingContext);
 		if (UESteamMatchmakingServersSubsystem* Subsystem = Owner.Get())
 		{
 			Subsystem->OnServerPingResponded.Broadcast(false, FESteamServerInfo());
@@ -320,6 +325,7 @@ private:
 	void HandleRulesComplete(bool bSuccess)
 	{
 		ActiveRulesQuery = HSERVERQUERY_INVALID;
+		EFCallContext::FScope Scope(ActiveRulesContext);
 		if (UESteamMatchmakingServersSubsystem* Subsystem = Owner.Get())
 		{
 			Subsystem->OnServerRulesReceived.Broadcast(bSuccess, RuleKeys, RuleValues);
@@ -454,6 +460,11 @@ private:
 	HServerQuery ActivePlayersQuery = HSERVERQUERY_INVALID;
 	TArray<FString> RuleKeys;
 	TArray<FString> RuleValues;
+
+	// EFCallContext active when the in-flight ping / rules query was started, made active again while
+	// its response is broadcast so async nodes can tell their own query from a newer one.
+	int64 ActivePingContext = 0;
+	int64 ActiveRulesContext = 0;
 };
 #else
 class FESteamServerBrowserQueries

@@ -1,13 +1,15 @@
-﻿// Fill out your copyright notice in the Description page of Project Settings.
+﻿// Copyright Kemal Erdem YILMAZ. All Rights Reserved.
 
 #pragma once
 
+#include "Animation/AnimNotifies/AnimNotify.h"
 #include "CoreMinimal.h"
-#include "UObject/Object.h"
+
 #include "EGReportNoiseEventNotify.generated.h"
 
 /**
- * 
+ * Reports an AI hearing noise at the owner's location. AI perception only exists on the server, so
+ * on clients this does nothing.
  */
 UCLASS()
 class UNREALEXTENDEDGAMEPLAY_API UEGReportNoiseEventNotify : public UAnimNotify
@@ -15,39 +17,21 @@ class UNREALEXTENDEDGAMEPLAY_API UEGReportNoiseEventNotify : public UAnimNotify
 	GENERATED_BODY()
 
 public:
-
-	/**
-	 * @param Loudness Loudness of the noise. If MaxRange is non-zero, modifies MaxRange, otherwise modifies the squared distance of the sensor's range.
-	 */
-	UPROPERTY(EditAnywhere)
+	/** Loudness of the noise. If MaxRange is non-zero, modifies MaxRange, otherwise modifies the squared distance of the sensor's range. */
+	UPROPERTY(EditAnywhere, Category = "Noise")
 	float Loudness = 1;
 
-
-	/**
-	 * @param MaxRange Max range at which the sound can be heard, multiplied by Loudness. Values <= 0 mean no limit (still limited by listener's range however).
-	 */
-	UPROPERTY(EditAnywhere)
+	/** Max range at which the sound can be heard, multiplied by Loudness. Values <= 0 mean no limit (still limited by listener's range however). */
+	UPROPERTY(EditAnywhere, Category = "Noise")
 	float MaxRange = 200;
 
-	
-	/**
-	 * @param Tag Identifier for the event.
-	 */
-	UPROPERTY(EditAnywhere)
+	/** Identifier for the event. */
+	UPROPERTY(EditAnywhere, Category = "Noise")
 	FName Tag;
 
-		
-	/**
-	 * @param PrintToLog Track For Activation In Log
-	 */
+	/** Log every report, to track activation. */
+	UPROPERTY(EditAnywhere, Category = "Noise")
 	bool PrintToLog = false;
-	
-	// Begin UAnimNotify interface
-	#if ENGINE_MAJOR_VERSION != 5
-		virtual void Notify(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation) override;
-	#endif
 
-	#if	ENGINE_MAJOR_VERSION == 5
-		virtual void Notify(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, const FAnimNotifyEventReference& EventReference) override;
-	#endif
+	virtual void Notify(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, const FAnimNotifyEventReference& EventReference) override;
 };

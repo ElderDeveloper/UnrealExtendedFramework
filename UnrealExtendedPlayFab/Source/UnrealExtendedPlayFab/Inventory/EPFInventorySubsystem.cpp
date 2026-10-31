@@ -7,7 +7,7 @@
 
 namespace
 {
-	TSharedRef<FJsonObject> MakeEntityKeyObject(const FString& EntityId, const FString& EntityType)
+	TSharedRef<FJsonObject> MakeInventoryEntityKeyObject(const FString& EntityId, const FString& EntityType)
 	{
 		TSharedRef<FJsonObject> Entity = MakeShared<FJsonObject>();
 		Entity->SetStringField(TEXT("Id"), EntityId);
@@ -193,7 +193,7 @@ void UEPFInventorySubsystem::GetInventory()
 void UEPFInventorySubsystem::FetchInventoryPage(const FString& ContinuationToken, int32 PageIndex, TSharedRef<TArray<FEPFInventoryItem>> StagedInventory)
 {
 	TSharedRef<FJsonObject> Body = MakeShared<FJsonObject>();
-	Body->SetObjectField(TEXT("Entity"), MakeEntityKeyObject(GetEntityId(), GetEntityType()));
+	Body->SetObjectField(TEXT("Entity"), MakeInventoryEntityKeyObject(GetEntityId(), GetEntityType()));
 	Body->SetNumberField(TEXT("Count"), 50);
 	if (!ContinuationToken.IsEmpty())
 	{
@@ -313,7 +313,7 @@ void UEPFInventorySubsystem::GetCatalog(const FString& StoreId)
 void UEPFInventorySubsystem::FetchCatalogPage(const FString& StoreId, const FString& ContinuationToken, int32 PageIndex)
 {
 	TSharedRef<FJsonObject> Body = MakeShared<FJsonObject>();
-	Body->SetObjectField(TEXT("Entity"), MakeEntityKeyObject(GetEntityId(), GetEntityType()));
+	Body->SetObjectField(TEXT("Entity"), MakeInventoryEntityKeyObject(GetEntityId(), GetEntityType()));
 	Body->SetNumberField(TEXT("Count"), 50);
 	if (!ContinuationToken.IsEmpty())
 	{
@@ -409,7 +409,7 @@ void UEPFInventorySubsystem::PurchaseItem(const FString& ItemId, const FString& 
 	}
 
 	TSharedRef<FJsonObject> Body = MakeShared<FJsonObject>();
-	Body->SetObjectField(TEXT("Entity"), MakeEntityKeyObject(GetEntityId(), GetEntityType()));
+	Body->SetObjectField(TEXT("Entity"), MakeInventoryEntityKeyObject(GetEntityId(), GetEntityType()));
 	Body->SetNumberField(TEXT("Amount"), 1);
 
 	TSharedRef<FJsonObject> Item = MakeShared<FJsonObject>();
@@ -466,7 +466,7 @@ void UEPFInventorySubsystem::ConsumeItem(const FString& ItemInstanceId, int32 Co
 	}
 
 	TSharedRef<FJsonObject> Body = MakeShared<FJsonObject>();
-	Body->SetObjectField(TEXT("Entity"), MakeEntityKeyObject(GetEntityId(), GetEntityType()));
+	Body->SetObjectField(TEXT("Entity"), MakeInventoryEntityKeyObject(GetEntityId(), GetEntityType()));
 	Body->SetNumberField(TEXT("Amount"), ConsumeCount);
 	Body->SetBoolField(TEXT("DeleteEmptyStacks"), true);
 

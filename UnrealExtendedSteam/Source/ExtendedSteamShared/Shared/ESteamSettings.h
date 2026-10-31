@@ -3,7 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Engine/DeveloperSettings.h"
+#include "Settings/EFDeveloperSettings.h"
 #include "ESteamSettings.generated.h"
 
 /**
@@ -11,14 +11,11 @@
  * Settings for the Steam Web API live separately in UESteamWebSettings.
  */
 UCLASS(Config = Game, DefaultConfig, meta = (DisplayName = "Extended Steam"))
-class EXTENDEDSTEAMSHARED_API UESteamSettings : public UDeveloperSettings
+class EXTENDEDSTEAMSHARED_API UESteamSettings : public UEFDeveloperSettings
 {
 	GENERATED_BODY()
 
 public:
-	//~ UDeveloperSettings
-	virtual FName GetCategoryName() const override;
-
 	static const UESteamSettings* Get() { return GetDefault<UESteamSettings>(); }
 
 	/**

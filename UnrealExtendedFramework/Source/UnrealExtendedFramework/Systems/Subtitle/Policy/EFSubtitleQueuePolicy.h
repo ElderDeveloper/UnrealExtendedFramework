@@ -1,4 +1,6 @@
-﻿// EFSubtitleQueuePolicy.h - Swappable subtitle scheduling policy
+﻿// Copyright Moon Punch Games. All Rights Reserved.
+
+// EFSubtitleQueuePolicy.h - Swappable subtitle scheduling policy
 #pragma once
 
 #include "CoreMinimal.h"

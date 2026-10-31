@@ -115,6 +115,8 @@ private:
 	FDelegateHandle LeaderboardReadCompleteHandle;
 	IOnlineLeaderboardsPtr PendingLeaderboardInterface;
 	FEEOSRequestContext LeaderboardContext;
+	/** EFCallContext active when the pending read was started; active again while its result is broadcast. */
+	int64 LeaderboardCallContext = 0;
 
 	/** Inclusive 1-based rank window the current query asked for (-1 = no trimming).
 	 *  Rank-based reads over-fetch by up to one record because the engine's AroundRank

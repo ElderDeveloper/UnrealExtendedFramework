@@ -1,6 +1,9 @@
+// Copyright Moon Punch Games. All Rights Reserved.
+
 // SEFLoadingScreenWidget.cpp
 #include "SEFLoadingScreenWidget.h"
 
+#include "Assets/EFAssetLoading.h"
 #include "Engine/Font.h"
 #include "Engine/Texture2D.h"
 #include "Materials/MaterialInterface.h"
@@ -119,7 +122,8 @@ void SEFLoadingScreenWidget::Construct(const FArguments& InArgs)
 		const FLinearColor ShadowColor = Settings ? Settings->LoadingTipShadowColor : FLinearColor(0.0f, 0.0f, 0.0f, 0.75f);
 
 		// Held strongly because the loading screen outlives the settings CDO soft reference resolve.
-		TextFont.Reset(Settings ? Settings->LoadingTipFont.LoadSynchronous() : nullptr);
+		// UEFLoadingScreenSubsystem preloads the font at Initialize, so this does not touch the disk.
+		TextFont.Reset(Settings ? EFAssets::Resolve(Settings->LoadingTipFont, TEXT("SEFLoadingScreenWidget")) : nullptr);
 
 		if (!TextFont.IsValid() && Settings && !Settings->LoadingTipFont.IsNull())
 		{

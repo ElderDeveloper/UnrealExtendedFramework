@@ -1,4 +1,4 @@
-// Fill out your copyright notice in the Description page of Project Settings.
+// Copyright Moon Punch Games. All Rights Reserved.
 
 #pragma once
 
@@ -8,6 +8,7 @@
 #include "GameplayTagContainer.h"
 #include "Engine/DataAsset.h"
 #include "Engine/DeveloperSettings.h"
+#include "Settings/EFDeveloperSettings.h"
 #include "Subsystems/GameInstanceSubsystem.h"
 #include "Settings/EFModularSettingsBase.h"
 #include "UnrealExtendedFramework/ModularSettings/Device/EFModularSettingsDeviceRules.h"
@@ -33,7 +34,7 @@ public:
 };
 
 UCLASS(Config=Game, DefaultConfig, meta=(DisplayName="Extended Settings"))
-class UNREALEXTENDEDFRAMEWORK_API UEFModularProjectSettings : public UDeveloperSettings
+class UNREALEXTENDEDFRAMEWORK_API UEFModularProjectSettings : public UEFDeveloperSettings
 {
 	GENERATED_BODY()
 
@@ -64,8 +65,6 @@ public:
 	 */
 	UPROPERTY(EditDefaultsOnly, Config, Category = "Device Rules")
 	bool bApplyDeviceRules = true;
-
-	virtual FName GetCategoryName() const override { return FName(TEXT("Extended Framework")); }
 };
 
 

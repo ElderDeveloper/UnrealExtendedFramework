@@ -8,6 +8,7 @@ Capture without embedding a browser.
 - **Atlassian:** Cloud (`https://<site>.atlassian.net`) only
 - **UI:** native Slate; the HTML parity reference is test input, never shipped UI
 - **Scope:** editor targets only
+- **Requires:** the UnrealExtendedFoundation plugin (HTTP transport, credential store, settings base)
 
 ## Backlot workflow
 
@@ -45,18 +46,31 @@ project configuration.
 
 ### Credentials
 
-Per-user credentials are stored at:
+The API token is kept in the UnrealExtendedFoundation credential store (service
+`UnrealExtendedAtlassian`, account = your e-mail address):
+
+| Platform | Token storage |
+|---|---|
+| Windows | DPAPI-encrypted file under `%LOCALAPPDATA%\UnrealExtended\Credentials\`, bound to the current Windows user |
+| macOS | The login Keychain |
+| Other | An owner-only file (mode 0600), not encrypted; the settings page warns about this |
+
+The e-mail address is not secret. It is recorded in a small per-user account file so the token can
+be found again:
 
 ```text
-%LOCALAPPDATA%\UnrealExtendedAtlassian\credentials.ini
+%LOCALAPPDATA%\UnrealExtendedAtlassian\account.ini
 ```
 
-On Windows the token is protected with DPAPI and bound to the current Windows user. Copying that
-file to another user or machine does not make the token usable. Treat the API token like a password:
-software running as the same user can ask Windows to decrypt it.
+Copying the encrypted token to another user or machine does not make it usable. Treat the API token
+like a password: software running as the same user can ask the OS to decrypt it.
 
-Use **Clear Stored Credentials** to delete the local credential file. No token, e-mail, or site
-credential is stored in the repository, fixture, screenshot baseline, or shared Backlot metadata.
+Credentials saved by earlier versions in `%LOCALAPPDATA%\UnrealExtendedAtlassian\credentials.ini`
+are moved into the store the first time the plugin loads them, and that file is then deleted.
+
+Use **Clear Stored Credentials** to delete the stored token and the account file. No token, e-mail,
+or site credential is stored in the repository, fixture, screenshot baseline, or shared Backlot
+metadata.
 
 ## Data ownership and permissions
 
@@ -68,7 +82,7 @@ credential is stored in the repository, fixture, screenshot baseline, or shared 
 | Page ordering/review metadata, Pins, thread metadata, shared event cursors | Versioned Confluence content properties on the configured metadata page |
 | Inbox read/archive state, route, rail, and compact preferences | Per-user Local App Data |
 | Working Markdown | Existing project `Saved/Documents` working-copy store |
-| API token and account e-mail | Per-user DPAPI credential store |
+| API token and account e-mail | Per-user OS credential store (token) and account file (e-mail) |
 
 Backlot discovers capabilities and operation permissions from Atlassian. A missing permission
 disables only the affected action and explains why; it does not hide cached readable content.

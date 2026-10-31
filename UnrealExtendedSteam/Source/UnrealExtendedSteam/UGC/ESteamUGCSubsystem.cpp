@@ -4,6 +4,7 @@
 #include "Shared/ESteamLog.h"
 #include "Shared/ESteamSDK.h"
 #include "Containers/Queue.h"
+#include "Async/EFCallContext.h"
 
 #if WITH_EXTENDEDSTEAM_SDK
 THIRD_PARTY_INCLUDES_START
@@ -342,10 +343,15 @@ namespace
 	}
 }
 
+// Each pending struct used by a node-facing operation carries CallContext: the EFCallContext active
+// when the request was made (stamped by Enqueue*). It is made active again while the request's
+// result is broadcast, so async nodes waiting on the shared delegates can tell concurrent calls apart.
+
 /** Parameters captured to (re-)issue a queued CreateItem call. */
 struct FESteamPendingUGCCreate
 {
 	EWorkshopFileType FileType = k_EWorkshopFileTypeCommunity;
+	int64 CallContext = 0;
 };
 
 /** Parameters captured to (re-)issue a queued SubmitItemUpdate call. */
@@ -353,12 +359,14 @@ struct FESteamPendingUGCSubmit
 {
 	UGCUpdateHandle_t Handle = k_UGCUpdateHandleInvalid;
 	FString ChangeNote;
+	int64 CallContext = 0;
 };
 
 /** Parameters captured to (re-)issue a queued SubscribeItem / UnsubscribeItem call. */
 struct FESteamPendingUGCSubscription
 {
 	PublishedFileId_t FileId = 0;
+	int64 CallContext = 0;
 };
 
 /** Which create call a queued query uses; a query handle is only allocated when the query is issued. */
@@ -386,6 +394,7 @@ struct FESteamPendingUGCQuery
 	// Optional customization applied before the query is sent.
 	bool bHasConfig = false;
 	FESteamUGCQueryConfig Config;
+	int64 CallContext = 0;
 };
 
 /** Parameters captured to (re-)issue a queued AddItemToFavorites / RemoveItemFromFavorites call. */
@@ -394,6 +403,7 @@ struct FESteamPendingUGCFavorite
 	AppId_t AppId = 0;
 	PublishedFileId_t FileId = 0;
 	bool bAdd = true;
+	int64 CallContext = 0;
 };
 
 /** Parameters captured to (re-)issue a queued SetUserItemVote call. */
@@ -401,12 +411,14 @@ struct FESteamPendingUGCVote
 {
 	PublishedFileId_t FileId = 0;
 	bool bVoteUp = true;
+	int64 CallContext = 0;
 };
 
 /** Parameters captured to (re-)issue a queued single-id call (GetUserItemVote / DeleteItem / GetAppDependencies). */
 struct FESteamPendingUGCFileId
 {
 	PublishedFileId_t FileId = 0;
+	int64 CallContext = 0;
 };
 
 /** Parameters captured to (re-)issue a queued AddDependency / RemoveDependency call. */
@@ -414,6 +426,7 @@ struct FESteamPendingUGCDependency
 {
 	PublishedFileId_t Parent = 0;
 	PublishedFileId_t Child = 0;
+	int64 CallContext = 0;
 };
 
 /** Parameters captured to (re-)issue a queued AddAppDependency / RemoveAppDependency call. */
@@ -421,12 +434,14 @@ struct FESteamPendingUGCAppDependency
 {
 	PublishedFileId_t FileId = 0;
 	AppId_t AppId = 0;
+	int64 CallContext = 0;
 };
 
 /** Parameters captured to (re-)issue a queued StartPlaytimeTracking call. */
 struct FESteamPendingUGCPlaytime
 {
 	TArray<PublishedFileId_t> FileIds;
+	int64 CallContext = 0;
 };
 
 /** Parameters captured to (re-)issue a queued StopPlaytimeTracking / StopPlaytimeTrackingForAllItems call. */
@@ -434,6 +449,7 @@ struct FESteamPendingUGCPlaytimeStop
 {
 	TArray<PublishedFileId_t> FileIds;
 	bool bAllItems = false;
+	int64 CallContext = 0;
 };
 
 /** Marker captured to (re-)issue a queued GetWorkshopEULAStatus call (no parameters). */
@@ -472,8 +488,9 @@ public:
 	// immediate path when the Steam call could not be issued (preserves the public methods'
 	// historical "return false when the request could not be issued" contract).
 
-	bool EnqueueCreateItem(const FESteamPendingUGCCreate& Request)
+	bool EnqueueCreateItem(FESteamPendingUGCCreate Request)
 	{
+		Request.CallContext = EFCallContext::GetActive();
 		if (bCreateItemBusy)
 		{
 			CreateItemQueue.Enqueue(Request);
@@ -482,8 +499,9 @@ public:
 		return IssueCreateItem(Request);
 	}
 
-	bool EnqueueSubmitItemUpdate(const FESteamPendingUGCSubmit& Request)
+	bool EnqueueSubmitItemUpdate(FESteamPendingUGCSubmit Request)
 	{
+		Request.CallContext = EFCallContext::GetActive();
 		if (bSubmitBusy)
 		{
 			SubmitQueue.Enqueue(Request);
@@ -492,8 +510,9 @@ public:
 		return IssueSubmitItemUpdate(Request);
 	}
 
-	bool EnqueueSubscribe(const FESteamPendingUGCSubscription& Request)
+	bool EnqueueSubscribe(FESteamPendingUGCSubscription Request)
 	{
+		Request.CallContext = EFCallContext::GetActive();
 		if (bSubscribeBusy)
 		{
 			SubscribeQueue.Enqueue(Request);
@@ -502,8 +521,9 @@ public:
 		return IssueSubscribe(Request);
 	}
 
-	bool EnqueueUnsubscribe(const FESteamPendingUGCSubscription& Request)
+	bool EnqueueUnsubscribe(FESteamPendingUGCSubscription Request)
 	{
+		Request.CallContext = EFCallContext::GetActive();
 		if (bUnsubscribeBusy)
 		{
 			UnsubscribeQueue.Enqueue(Request);
@@ -513,8 +533,9 @@ public:
 	}
 
 	// QueryAllItems, QueryItemsByIds and QueryUserItems share QueryCompletedResult, so they share one queue.
-	bool EnqueueQuery(const FESteamPendingUGCQuery& Request)
+	bool EnqueueQuery(FESteamPendingUGCQuery Request)
 	{
+		Request.CallContext = EFCallContext::GetActive();
 		if (bQueryBusy)
 		{
 			QueryQueue.Enqueue(Request);
@@ -523,8 +544,9 @@ public:
 		return IssueQuery(Request);
 	}
 
-	bool EnqueueFavorite(const FESteamPendingUGCFavorite& Request)
+	bool EnqueueFavorite(FESteamPendingUGCFavorite Request)
 	{
+		Request.CallContext = EFCallContext::GetActive();
 		if (bFavoriteBusy)
 		{
 			FavoriteQueue.Enqueue(Request);
@@ -533,8 +555,9 @@ public:
 		return IssueFavorite(Request);
 	}
 
-	bool EnqueueVoteSet(const FESteamPendingUGCVote& Request)
+	bool EnqueueVoteSet(FESteamPendingUGCVote Request)
 	{
+		Request.CallContext = EFCallContext::GetActive();
 		if (bVoteSetBusy)
 		{
 			VoteSetQueue.Enqueue(Request);
@@ -543,8 +566,9 @@ public:
 		return IssueVoteSet(Request);
 	}
 
-	bool EnqueueVoteGet(const FESteamPendingUGCFileId& Request)
+	bool EnqueueVoteGet(FESteamPendingUGCFileId Request)
 	{
+		Request.CallContext = EFCallContext::GetActive();
 		if (bVoteGetBusy)
 		{
 			VoteGetQueue.Enqueue(Request);
@@ -553,8 +577,9 @@ public:
 		return IssueVoteGet(Request);
 	}
 
-	bool EnqueueDelete(const FESteamPendingUGCFileId& Request)
+	bool EnqueueDelete(FESteamPendingUGCFileId Request)
 	{
+		Request.CallContext = EFCallContext::GetActive();
 		if (bDeleteBusy)
 		{
 			DeleteQueue.Enqueue(Request);
@@ -563,8 +588,9 @@ public:
 		return IssueDelete(Request);
 	}
 
-	bool EnqueueAddDependency(const FESteamPendingUGCDependency& Request)
+	bool EnqueueAddDependency(FESteamPendingUGCDependency Request)
 	{
+		Request.CallContext = EFCallContext::GetActive();
 		if (bAddDependencyBusy)
 		{
 			AddDependencyQueue.Enqueue(Request);
@@ -573,8 +599,9 @@ public:
 		return IssueAddDependency(Request);
 	}
 
-	bool EnqueueRemoveDependency(const FESteamPendingUGCDependency& Request)
+	bool EnqueueRemoveDependency(FESteamPendingUGCDependency Request)
 	{
+		Request.CallContext = EFCallContext::GetActive();
 		if (bRemoveDependencyBusy)
 		{
 			RemoveDependencyQueue.Enqueue(Request);
@@ -583,8 +610,9 @@ public:
 		return IssueRemoveDependency(Request);
 	}
 
-	bool EnqueueAddAppDependency(const FESteamPendingUGCAppDependency& Request)
+	bool EnqueueAddAppDependency(FESteamPendingUGCAppDependency Request)
 	{
+		Request.CallContext = EFCallContext::GetActive();
 		if (bAddAppDependencyBusy)
 		{
 			AddAppDependencyQueue.Enqueue(Request);
@@ -593,8 +621,9 @@ public:
 		return IssueAddAppDependency(Request);
 	}
 
-	bool EnqueueRemoveAppDependency(const FESteamPendingUGCAppDependency& Request)
+	bool EnqueueRemoveAppDependency(FESteamPendingUGCAppDependency Request)
 	{
+		Request.CallContext = EFCallContext::GetActive();
 		if (bRemoveAppDependencyBusy)
 		{
 			RemoveAppDependencyQueue.Enqueue(Request);
@@ -603,8 +632,9 @@ public:
 		return IssueRemoveAppDependency(Request);
 	}
 
-	bool EnqueueGetAppDependencies(const FESteamPendingUGCFileId& Request)
+	bool EnqueueGetAppDependencies(FESteamPendingUGCFileId Request)
 	{
+		Request.CallContext = EFCallContext::GetActive();
 		if (bGetAppDependenciesBusy)
 		{
 			GetAppDependenciesQueue.Enqueue(Request);
@@ -613,8 +643,9 @@ public:
 		return IssueGetAppDependencies(Request);
 	}
 
-	bool EnqueueStartPlaytime(const FESteamPendingUGCPlaytime& Request)
+	bool EnqueueStartPlaytime(FESteamPendingUGCPlaytime Request)
 	{
+		Request.CallContext = EFCallContext::GetActive();
 		if (bStartPlaytimeBusy)
 		{
 			StartPlaytimeQueue.Enqueue(Request);
@@ -624,8 +655,9 @@ public:
 	}
 
 	// StopPlaytimeTracking and StopPlaytimeTrackingForAllItems share StopPlaytimeResult, so they share one queue.
-	bool EnqueueStopPlaytime(const FESteamPendingUGCPlaytimeStop& Request)
+	bool EnqueueStopPlaytime(FESteamPendingUGCPlaytimeStop Request)
 	{
+		Request.CallContext = EFCallContext::GetActive();
 		if (bStopPlaytimeBusy)
 		{
 			StopPlaytimeQueue.Enqueue(Request);
@@ -668,6 +700,7 @@ private:
 			return false;
 		}
 		CreateItemResult.Set(Call, this, &FESteamUGCCallbacks::HandleCreateItemResult);
+		CreateItemContext = Request.CallContext;
 		bCreateItemBusy = true;
 		return true;
 	}
@@ -683,6 +716,7 @@ private:
 			}
 			if (!IssueCreateItem(Request))
 			{
+				EFCallContext::FScope RequestScope(Request.CallContext);
 				// Steam went away while draining: fail this queued request instead of dropping it.
 				if (UESteamUGCSubsystem* Subsystem = Owner.Get())
 				{
@@ -709,6 +743,7 @@ private:
 			return false;
 		}
 		SubmitItemUpdateResult.Set(Call, this, &FESteamUGCCallbacks::HandleSubmitItemUpdateResult);
+		SubmitContext = Request.CallContext;
 		bSubmitBusy = true;
 		return true;
 	}
@@ -724,6 +759,7 @@ private:
 			}
 			if (!IssueSubmitItemUpdate(Request))
 			{
+				EFCallContext::FScope RequestScope(Request.CallContext);
 				if (UESteamUGCSubsystem* Subsystem = Owner.Get())
 				{
 					Subsystem->OnItemSubmitted.Broadcast(false, false);
@@ -748,6 +784,7 @@ private:
 			return false;
 		}
 		SubscribeResult.Set(Call, this, &FESteamUGCCallbacks::HandleSubscribeResult);
+		SubscribeContext = Request.CallContext;
 		bSubscribeBusy = true;
 		return true;
 	}
@@ -763,6 +800,7 @@ private:
 			}
 			if (!IssueSubscribe(Request))
 			{
+				EFCallContext::FScope RequestScope(Request.CallContext);
 				if (UESteamUGCSubsystem* Subsystem = Owner.Get())
 				{
 					Subsystem->OnSubscribed.Broadcast(false, static_cast<int64>(Request.FileId));
@@ -787,6 +825,7 @@ private:
 			return false;
 		}
 		UnsubscribeResult.Set(Call, this, &FESteamUGCCallbacks::HandleUnsubscribeResult);
+		UnsubscribeContext = Request.CallContext;
 		bUnsubscribeBusy = true;
 		return true;
 	}
@@ -802,6 +841,7 @@ private:
 			}
 			if (!IssueUnsubscribe(Request))
 			{
+				EFCallContext::FScope RequestScope(Request.CallContext);
 				if (UESteamUGCSubsystem* Subsystem = Owner.Get())
 				{
 					Subsystem->OnUnsubscribed.Broadcast(false, static_cast<int64>(Request.FileId));
@@ -879,6 +919,7 @@ private:
 			return false;
 		}
 		QueryCompletedResult.Set(Call, this, &FESteamUGCCallbacks::HandleQueryCompleted);
+		QueryContext = Request.CallContext;
 		bQueryBusy = true;
 		return true;
 	}
@@ -894,6 +935,7 @@ private:
 			}
 			if (!IssueQuery(Request))
 			{
+				EFCallContext::FScope RequestScope(Request.CallContext);
 				if (UESteamUGCSubsystem* Subsystem = Owner.Get())
 				{
 					const TArray<FESteamUGCDetails> EmptyResults;
@@ -921,6 +963,7 @@ private:
 			return false;
 		}
 		FavoriteResult.Set(Call, this, &FESteamUGCCallbacks::HandleFavoriteResult);
+		FavoriteContext = Request.CallContext;
 		bFavoriteBusy = true;
 		return true;
 	}
@@ -936,6 +979,7 @@ private:
 			}
 			if (!IssueFavorite(Request))
 			{
+				EFCallContext::FScope RequestScope(Request.CallContext);
 				if (UESteamUGCSubsystem* Subsystem = Owner.Get())
 				{
 					Subsystem->OnItemFavoriteChanged.Broadcast(false, static_cast<int64>(Request.FileId), Request.bAdd);
@@ -960,6 +1004,7 @@ private:
 			return false;
 		}
 		VoteSetResult.Set(Call, this, &FESteamUGCCallbacks::HandleVoteSetResult);
+		VoteSetContext = Request.CallContext;
 		bVoteSetBusy = true;
 		return true;
 	}
@@ -975,6 +1020,7 @@ private:
 			}
 			if (!IssueVoteSet(Request))
 			{
+				EFCallContext::FScope RequestScope(Request.CallContext);
 				if (UESteamUGCSubsystem* Subsystem = Owner.Get())
 				{
 					Subsystem->OnUserItemVoteSet.Broadcast(false, static_cast<int64>(Request.FileId), Request.bVoteUp);
@@ -999,6 +1045,7 @@ private:
 			return false;
 		}
 		VoteGetResult.Set(Call, this, &FESteamUGCCallbacks::HandleVoteGetResult);
+		VoteGetContext = Request.CallContext;
 		bVoteGetBusy = true;
 		return true;
 	}
@@ -1014,6 +1061,7 @@ private:
 			}
 			if (!IssueVoteGet(Request))
 			{
+				EFCallContext::FScope RequestScope(Request.CallContext);
 				if (UESteamUGCSubsystem* Subsystem = Owner.Get())
 				{
 					Subsystem->OnUserItemVote.Broadcast(false, static_cast<int64>(Request.FileId), false, false, false);
@@ -1038,6 +1086,7 @@ private:
 			return false;
 		}
 		DeleteResult.Set(Call, this, &FESteamUGCCallbacks::HandleDeleteResult);
+		DeleteContext = Request.CallContext;
 		bDeleteBusy = true;
 		return true;
 	}
@@ -1053,6 +1102,7 @@ private:
 			}
 			if (!IssueDelete(Request))
 			{
+				EFCallContext::FScope RequestScope(Request.CallContext);
 				if (UESteamUGCSubsystem* Subsystem = Owner.Get())
 				{
 					Subsystem->OnItemDeleted.Broadcast(false, static_cast<int64>(Request.FileId));
@@ -1077,6 +1127,7 @@ private:
 			return false;
 		}
 		AddDependencyResult.Set(Call, this, &FESteamUGCCallbacks::HandleAddDependencyResult);
+		AddDependencyContext = Request.CallContext;
 		bAddDependencyBusy = true;
 		return true;
 	}
@@ -1092,6 +1143,7 @@ private:
 			}
 			if (!IssueAddDependency(Request))
 			{
+				EFCallContext::FScope RequestScope(Request.CallContext);
 				if (UESteamUGCSubsystem* Subsystem = Owner.Get())
 				{
 					Subsystem->OnDependencyAdded.Broadcast(false, static_cast<int64>(Request.Parent), static_cast<int64>(Request.Child));
@@ -1116,6 +1168,7 @@ private:
 			return false;
 		}
 		RemoveDependencyResult.Set(Call, this, &FESteamUGCCallbacks::HandleRemoveDependencyResult);
+		RemoveDependencyContext = Request.CallContext;
 		bRemoveDependencyBusy = true;
 		return true;
 	}
@@ -1131,6 +1184,7 @@ private:
 			}
 			if (!IssueRemoveDependency(Request))
 			{
+				EFCallContext::FScope RequestScope(Request.CallContext);
 				if (UESteamUGCSubsystem* Subsystem = Owner.Get())
 				{
 					Subsystem->OnDependencyRemoved.Broadcast(false, static_cast<int64>(Request.Parent), static_cast<int64>(Request.Child));
@@ -1155,6 +1209,7 @@ private:
 			return false;
 		}
 		AddAppDependencyResult.Set(Call, this, &FESteamUGCCallbacks::HandleAddAppDependencyResult);
+		AddAppDependencyContext = Request.CallContext;
 		bAddAppDependencyBusy = true;
 		return true;
 	}
@@ -1170,6 +1225,7 @@ private:
 			}
 			if (!IssueAddAppDependency(Request))
 			{
+				EFCallContext::FScope RequestScope(Request.CallContext);
 				if (UESteamUGCSubsystem* Subsystem = Owner.Get())
 				{
 					Subsystem->OnAppDependencyAdded.Broadcast(false, static_cast<int64>(Request.FileId), static_cast<int32>(Request.AppId));
@@ -1194,6 +1250,7 @@ private:
 			return false;
 		}
 		RemoveAppDependencyResult.Set(Call, this, &FESteamUGCCallbacks::HandleRemoveAppDependencyResult);
+		RemoveAppDependencyContext = Request.CallContext;
 		bRemoveAppDependencyBusy = true;
 		return true;
 	}
@@ -1209,6 +1266,7 @@ private:
 			}
 			if (!IssueRemoveAppDependency(Request))
 			{
+				EFCallContext::FScope RequestScope(Request.CallContext);
 				if (UESteamUGCSubsystem* Subsystem = Owner.Get())
 				{
 					Subsystem->OnAppDependencyRemoved.Broadcast(false, static_cast<int64>(Request.FileId), static_cast<int32>(Request.AppId));
@@ -1233,6 +1291,7 @@ private:
 			return false;
 		}
 		GetAppDependenciesResult.Set(Call, this, &FESteamUGCCallbacks::HandleGetAppDependenciesResult);
+		GetAppDependenciesContext = Request.CallContext;
 		bGetAppDependenciesBusy = true;
 		return true;
 	}
@@ -1248,6 +1307,7 @@ private:
 			}
 			if (!IssueGetAppDependencies(Request))
 			{
+				EFCallContext::FScope RequestScope(Request.CallContext);
 				if (UESteamUGCSubsystem* Subsystem = Owner.Get())
 				{
 					const TArray<int32> EmptyAppIds;
@@ -1274,6 +1334,7 @@ private:
 			return false;
 		}
 		StartPlaytimeResult.Set(Call, this, &FESteamUGCCallbacks::HandleStartPlaytimeResult);
+		StartPlaytimeContext = Request.CallContext;
 		bStartPlaytimeBusy = true;
 		return true;
 	}
@@ -1289,6 +1350,7 @@ private:
 			}
 			if (!IssueStartPlaytime(Request))
 			{
+				EFCallContext::FScope RequestScope(Request.CallContext);
 				if (UESteamUGCSubsystem* Subsystem = Owner.Get())
 				{
 					Subsystem->OnPlaytimeTrackingStarted.Broadcast(false);
@@ -1326,6 +1388,7 @@ private:
 			return false;
 		}
 		StopPlaytimeResult.Set(Call, this, &FESteamUGCCallbacks::HandleStopPlaytimeResult);
+		StopPlaytimeContext = Request.CallContext;
 		bStopPlaytimeBusy = true;
 		return true;
 	}
@@ -1341,6 +1404,7 @@ private:
 			}
 			if (!IssueStopPlaytime(Request))
 			{
+				EFCallContext::FScope RequestScope(Request.CallContext);
 				if (UESteamUGCSubsystem* Subsystem = Owner.Get())
 				{
 					Subsystem->OnPlaytimeTrackingStopped.Broadcast(false);
@@ -1394,6 +1458,7 @@ private:
 
 	void HandleCreateItemResult(CreateItemResult_t* Data, bool bIOFailure)
 	{
+		EFCallContext::FScope Scope(CreateItemContext);
 		if (UESteamUGCSubsystem* Subsystem = Owner.Get())
 		{
 			const bool bSuccess = !bIOFailure && Data->m_eResult == k_EResultOK;
@@ -1408,6 +1473,7 @@ private:
 
 	void HandleSubmitItemUpdateResult(SubmitItemUpdateResult_t* Data, bool bIOFailure)
 	{
+		EFCallContext::FScope Scope(SubmitContext);
 		if (UESteamUGCSubsystem* Subsystem = Owner.Get())
 		{
 			const bool bSuccess = !bIOFailure && Data->m_eResult == k_EResultOK;
@@ -1419,6 +1485,7 @@ private:
 
 	void HandleSubscribeResult(RemoteStorageSubscribePublishedFileResult_t* Data, bool bIOFailure)
 	{
+		EFCallContext::FScope Scope(SubscribeContext);
 		if (UESteamUGCSubsystem* Subsystem = Owner.Get())
 		{
 			const bool bSuccess = !bIOFailure && Data->m_eResult == k_EResultOK;
@@ -1430,6 +1497,7 @@ private:
 
 	void HandleUnsubscribeResult(RemoteStorageUnsubscribePublishedFileResult_t* Data, bool bIOFailure)
 	{
+		EFCallContext::FScope Scope(UnsubscribeContext);
 		if (UESteamUGCSubsystem* Subsystem = Owner.Get())
 		{
 			const bool bSuccess = !bIOFailure && Data->m_eResult == k_EResultOK;
@@ -1441,6 +1509,7 @@ private:
 
 	void HandleQueryCompleted(SteamUGCQueryCompleted_t* Data, bool bIOFailure)
 	{
+		EFCallContext::FScope Scope(QueryContext);
 		UESteamUGCSubsystem* Subsystem = Owner.Get();
 		if (!Subsystem)
 		{
@@ -1485,6 +1554,7 @@ private:
 
 	void HandleFavoriteResult(UserFavoriteItemsListChanged_t* Data, bool bIOFailure)
 	{
+		EFCallContext::FScope Scope(FavoriteContext);
 		if (UESteamUGCSubsystem* Subsystem = Owner.Get())
 		{
 			const bool bSuccess = !bIOFailure && Data->m_eResult == k_EResultOK;
@@ -1497,6 +1567,7 @@ private:
 
 	void HandleVoteSetResult(SetUserItemVoteResult_t* Data, bool bIOFailure)
 	{
+		EFCallContext::FScope Scope(VoteSetContext);
 		if (UESteamUGCSubsystem* Subsystem = Owner.Get())
 		{
 			const bool bSuccess = !bIOFailure && Data->m_eResult == k_EResultOK;
@@ -1508,6 +1579,7 @@ private:
 
 	void HandleVoteGetResult(GetUserItemVoteResult_t* Data, bool bIOFailure)
 	{
+		EFCallContext::FScope Scope(VoteGetContext);
 		if (UESteamUGCSubsystem* Subsystem = Owner.Get())
 		{
 			const bool bSuccess = !bIOFailure && Data->m_eResult == k_EResultOK;
@@ -1520,6 +1592,7 @@ private:
 
 	void HandleDeleteResult(DeleteItemResult_t* Data, bool bIOFailure)
 	{
+		EFCallContext::FScope Scope(DeleteContext);
 		if (UESteamUGCSubsystem* Subsystem = Owner.Get())
 		{
 			const bool bSuccess = !bIOFailure && Data->m_eResult == k_EResultOK;
@@ -1531,6 +1604,7 @@ private:
 
 	void HandleAddDependencyResult(AddUGCDependencyResult_t* Data, bool bIOFailure)
 	{
+		EFCallContext::FScope Scope(AddDependencyContext);
 		if (UESteamUGCSubsystem* Subsystem = Owner.Get())
 		{
 			const bool bSuccess = !bIOFailure && Data->m_eResult == k_EResultOK;
@@ -1543,6 +1617,7 @@ private:
 
 	void HandleRemoveDependencyResult(RemoveUGCDependencyResult_t* Data, bool bIOFailure)
 	{
+		EFCallContext::FScope Scope(RemoveDependencyContext);
 		if (UESteamUGCSubsystem* Subsystem = Owner.Get())
 		{
 			const bool bSuccess = !bIOFailure && Data->m_eResult == k_EResultOK;
@@ -1555,6 +1630,7 @@ private:
 
 	void HandleAddAppDependencyResult(AddAppDependencyResult_t* Data, bool bIOFailure)
 	{
+		EFCallContext::FScope Scope(AddAppDependencyContext);
 		if (UESteamUGCSubsystem* Subsystem = Owner.Get())
 		{
 			const bool bSuccess = !bIOFailure && Data->m_eResult == k_EResultOK;
@@ -1567,6 +1643,7 @@ private:
 
 	void HandleRemoveAppDependencyResult(RemoveAppDependencyResult_t* Data, bool bIOFailure)
 	{
+		EFCallContext::FScope Scope(RemoveAppDependencyContext);
 		if (UESteamUGCSubsystem* Subsystem = Owner.Get())
 		{
 			const bool bSuccess = !bIOFailure && Data->m_eResult == k_EResultOK;
@@ -1579,6 +1656,7 @@ private:
 
 	void HandleGetAppDependenciesResult(GetAppDependenciesResult_t* Data, bool bIOFailure)
 	{
+		EFCallContext::FScope Scope(GetAppDependenciesContext);
 		if (UESteamUGCSubsystem* Subsystem = Owner.Get())
 		{
 			const bool bSuccess = !bIOFailure && Data->m_eResult == k_EResultOK;
@@ -1600,6 +1678,7 @@ private:
 
 	void HandleStartPlaytimeResult(StartPlaytimeTrackingResult_t* Data, bool bIOFailure)
 	{
+		EFCallContext::FScope Scope(StartPlaytimeContext);
 		if (UESteamUGCSubsystem* Subsystem = Owner.Get())
 		{
 			const bool bSuccess = !bIOFailure && Data->m_eResult == k_EResultOK;
@@ -1611,6 +1690,7 @@ private:
 
 	void HandleStopPlaytimeResult(StopPlaytimeTrackingResult_t* Data, bool bIOFailure)
 	{
+		EFCallContext::FScope Scope(StopPlaytimeContext);
 		if (UESteamUGCSubsystem* Subsystem = Owner.Get())
 		{
 			const bool bSuccess = !bIOFailure && Data->m_eResult == k_EResultOK;
@@ -1741,6 +1821,24 @@ private:
 #if ESTEAM_SDK_AT_LEAST(153)
 	TQueue<FESteamPendingUGCEula> EulaQueue;
 #endif
+
+	// EFCallContext of the request each node-facing operation has in flight (see the pending structs).
+	int64 CreateItemContext = 0;
+	int64 SubmitContext = 0;
+	int64 SubscribeContext = 0;
+	int64 UnsubscribeContext = 0;
+	int64 QueryContext = 0;
+	int64 FavoriteContext = 0;
+	int64 VoteSetContext = 0;
+	int64 VoteGetContext = 0;
+	int64 DeleteContext = 0;
+	int64 AddDependencyContext = 0;
+	int64 RemoveDependencyContext = 0;
+	int64 AddAppDependencyContext = 0;
+	int64 RemoveAppDependencyContext = 0;
+	int64 GetAppDependenciesContext = 0;
+	int64 StartPlaytimeContext = 0;
+	int64 StopPlaytimeContext = 0;
 };
 #else
 class FESteamUGCCallbacks

@@ -30,6 +30,9 @@
 #include "GameplayDebugger/SEGQuestDataDisplay.h"
 #include "Logging/EGQuestLogger.h"
 #include "EGQuestHelper.h"
+#include "EFFoundationVersion.h"
+
+EF_REQUIRE_FOUNDATION_VERSION(1, 0, "UnrealExtendedQuest");
 
 #define LOCTEXT_NAMESPACE "FEGQuestPluginModule"
 
@@ -115,7 +118,7 @@ void FEGQuestPluginModule::ShutdownModule()
 	// we call this function before unloading the module.
 	const FModuleManager& ModuleManger = FModuleManager::Get();
 
-	// Unregister the the asset registry delete listeners
+	// Unregister the asset registry delete listeners
 	if (ModuleManger.IsModuleLoaded(NAME_MODULE_AssetRegistry))
 	{
 		IAssetRegistry& AssetRegistry = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(NAME_MODULE_AssetRegistry).Get();

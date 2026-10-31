@@ -1,3 +1,5 @@
+// Copyright Moon Punch Games. All Rights Reserved.
+
 // EFSubtitleReceiverComponent.h — RPC bridge on PlayerController for multiplayer subtitle delivery
 #pragma once
 

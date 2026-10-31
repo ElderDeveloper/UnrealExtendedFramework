@@ -1,44 +1,53 @@
 // Copyright Kemal Erdem YILMAZ. All Rights Reserved.
 
 #include "EPFAsyncEntityFiles.h"
-#include "Engine/GameInstance.h"
 
 // ── Get Objects ──────────────────────────────────────────────────────────────
 UEPFAsyncGetEntityObjects* UEPFAsyncGetEntityObjects::GetObjects(UObject* WorldContext, const FString& EntityId, const FString& EntityType)
 {
-	auto* A = NewObject<UEPFAsyncGetEntityObjects>(); A->EntityId = EntityId; A->EntityType = EntityType; A->WorldContext = WorldContext; A->RegisterWithGameInstance(WorldContext); return A;
+	auto* A = NewObject<UEPFAsyncGetEntityObjects>(); A->TargetEntityId = EntityId; A->TargetEntityType = EntityType; A->InitAsyncAction(WorldContext); return A;
 }
-void UEPFAsyncGetEntityObjects::Activate()
+void UEPFAsyncGetEntityObjects::ExecuteAction()
 {
-	if (EntityId.IsEmpty()) { BroadcastEPFFailure(OnFailure, TEXT("EntityId cannot be empty")); SetReadyToDestroy(); return; }
-	auto* S = GetEPFSubsystemFromContext<UEPFEntityFilesSubsystem>(WorldContext.Get());
-	if (!S) { BroadcastEPFFailure(OnFailure, TEXT("EntityFiles subsystem not available")); SetReadyToDestroy(); return; }
+	if (TargetEntityId.IsEmpty()) { FailInvalidArgument(TEXT("EntityId cannot be empty")); return; }
+	auto* S = RequireGameInstanceSubsystem<UEPFEntityFilesSubsystem>();
+	if (!S) return;
 	S->OnObjectsReceived.AddDynamic(this, &UEPFAsyncGetEntityObjects::HandleComplete);
-	S->GetObjects(EntityId, EntityType);
+	CallWithContext([&] { S->GetObjects(TargetEntityId, TargetEntityType); });
+}
+void UEPFAsyncGetEntityObjects::CancelWork()
+{
+	if (auto* S = GetGameInstanceSubsystem<UEPFEntityFilesSubsystem>()) S->OnObjectsReceived.RemoveDynamic(this, &UEPFAsyncGetEntityObjects::HandleComplete);
 }
 void UEPFAsyncGetEntityObjects::HandleComplete(const FEPFResult& Result, const TArray<FEPFEntityObject>& Objects)
 {
-	if (auto* S = GetEPFSubsystemFromContext<UEPFEntityFilesSubsystem>(WorldContext.Get())) S->OnObjectsReceived.RemoveDynamic(this, &UEPFAsyncGetEntityObjects::HandleComplete);
+	if (!IsResultForThisCall()) return;
+	CancelWork();
+	if (!FinishAction()) return;
 	Result.bSuccess ? OnSuccess.Broadcast(Objects) : BroadcastEPFFailure(OnFailure, MakeEPFAsyncError(Result, TEXT("Failed to get entity objects")));
-	SetReadyToDestroy();
 }
 
 // ── Set Objects ──────────────────────────────────────────────────────────────
 UEPFAsyncSetEntityObjects* UEPFAsyncSetEntityObjects::SetObjects(UObject* WorldContext, const FString& EntityId, const TMap<FString, FString>& Objects, const FString& EntityType)
 {
-	auto* A = NewObject<UEPFAsyncSetEntityObjects>(); A->EntityId = EntityId; A->EntityType = EntityType; A->Objects = Objects; A->WorldContext = WorldContext; A->RegisterWithGameInstance(WorldContext); return A;
+	auto* A = NewObject<UEPFAsyncSetEntityObjects>(); A->TargetEntityId = EntityId; A->TargetEntityType = EntityType; A->ObjectsToSet = Objects; A->InitAsyncAction(WorldContext); return A;
 }
-void UEPFAsyncSetEntityObjects::Activate()
+void UEPFAsyncSetEntityObjects::ExecuteAction()
 {
-	if (EntityId.IsEmpty() || Objects.Num() == 0) { BroadcastEPFFailure(OnFailure, TEXT("EntityId and Objects required")); SetReadyToDestroy(); return; }
-	auto* S = GetEPFSubsystemFromContext<UEPFEntityFilesSubsystem>(WorldContext.Get());
-	if (!S) { BroadcastEPFFailure(OnFailure, TEXT("EntityFiles subsystem not available")); SetReadyToDestroy(); return; }
+	if (TargetEntityId.IsEmpty() || ObjectsToSet.Num() == 0) { FailInvalidArgument(TEXT("EntityId and Objects required")); return; }
+	auto* S = RequireGameInstanceSubsystem<UEPFEntityFilesSubsystem>();
+	if (!S) return;
 	S->OnObjectsUpdated.AddDynamic(this, &UEPFAsyncSetEntityObjects::HandleComplete);
-	S->SetObjects(EntityId, Objects, EntityType);
+	CallWithContext([&] { S->SetObjects(TargetEntityId, ObjectsToSet, TargetEntityType); });
+}
+void UEPFAsyncSetEntityObjects::CancelWork()
+{
+	if (auto* S = GetGameInstanceSubsystem<UEPFEntityFilesSubsystem>()) S->OnObjectsUpdated.RemoveDynamic(this, &UEPFAsyncSetEntityObjects::HandleComplete);
 }
 void UEPFAsyncSetEntityObjects::HandleComplete(const FEPFResult& Result)
 {
-	if (auto* S = GetEPFSubsystemFromContext<UEPFEntityFilesSubsystem>(WorldContext.Get())) S->OnObjectsUpdated.RemoveDynamic(this, &UEPFAsyncSetEntityObjects::HandleComplete);
+	if (!IsResultForThisCall()) return;
+	CancelWork();
+	if (!FinishAction()) return;
 	Result.bSuccess ? OnSuccess.Broadcast() : BroadcastEPFFailure(OnFailure, MakeEPFAsyncError(Result, TEXT("Failed to set entity objects")));
-	SetReadyToDestroy();
 }

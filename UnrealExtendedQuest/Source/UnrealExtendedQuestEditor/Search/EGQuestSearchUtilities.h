@@ -1,3 +1,5 @@
+// Copyright Csaba Molnar, Daniel Butum. All Rights Reserved.
+
 #pragma once
 
 #include "CoreMinimal.h"

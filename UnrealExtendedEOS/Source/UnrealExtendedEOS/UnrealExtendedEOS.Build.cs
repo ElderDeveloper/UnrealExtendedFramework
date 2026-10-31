@@ -44,7 +44,10 @@ public class UnrealExtendedEOS : ModuleRules
 				// those headers must see WITH_EOS_SDK=1 and the SDK include path consistently, or
 				// they hit C4668 / an ODR mismatch on the class layout.
 				"EOSShared",
-				"EOSSDK"
+				"EOSSDK",
+				// Public: the Blueprint library exposes FEFResult, and the subsystems propagate
+				// EFCallContext so async nodes can tell their own results apart.
+				"ExtendedFoundation"
 			}
 			);
 

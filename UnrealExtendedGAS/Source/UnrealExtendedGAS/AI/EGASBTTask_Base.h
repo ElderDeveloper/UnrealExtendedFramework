@@ -1,3 +1,5 @@
+// Copyright Kemal Erdem YILMAZ. All Rights Reserved.
+
 #pragma once
 
 #include "BehaviorTree/BTTaskNode.h"

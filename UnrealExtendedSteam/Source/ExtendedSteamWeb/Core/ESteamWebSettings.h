@@ -3,7 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Engine/DeveloperSettings.h"
+#include "Settings/EFDeveloperSettings.h"
 #include "ESteamWebSettings.generated.h"
 
 /**
@@ -11,25 +11,23 @@
  * This module is pure HTTPS + JSON — it never touches the Steamworks SDK or the Steam client.
  */
 UCLASS(Config = Game, DefaultConfig, meta = (DisplayName = "Extended Steam Web"))
-class EXTENDEDSTEAMWEB_API UESteamWebSettings : public UDeveloperSettings
+class EXTENDEDSTEAMWEB_API UESteamWebSettings : public UEFDeveloperSettings
 {
 	GENERATED_BODY()
 
 public:
-	//~ UDeveloperSettings
-	virtual FName GetCategoryName() const override;
-
 	static const UESteamWebSettings* Get() { return GetDefault<UESteamWebSettings>(); }
 
 	/**
 	 * Steam Web API key, auto-injected as the "key" query parameter for endpoints that require one.
 	 *
 	 * WARNING: publisher Web API keys must NEVER ship in client builds. Anything stored here ends up
-	 * in DefaultGame.ini and therefore in packaged builds, where it can be extracted trivially.
-	 * This field is a development convenience only — production calls that need a publisher key
-	 * belong on a trusted server, never in the game client.
+	 * in DefaultGame.ini and therefore in packaged builds, where it can be extracted trivially (the
+	 * editor warns while it holds a value). This field is a development convenience only — production
+	 * calls that need a publisher key belong on a trusted server, never in the game client. The key is
+	 * never written to the log.
 	 */
-	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Steam Web|Auth")
+	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Steam Web|Auth", meta = (EFSecret))
 	FString ApiKey;
 
 	/**
@@ -57,7 +55,7 @@ public:
 	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Steam Web|Debug")
 	bool bUseDevMode = false;
 
-	/** Verbose logging for the LogExtendedSteamWeb category (logs full request URLs — may include the API key). */
+	/** Verbose logging for the LogExtendedSteamWeb category: each call's interface, method and outcome (never the URL or the API key). */
 	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Steam Web|Debug")
 	bool bVerboseLogging = false;
 

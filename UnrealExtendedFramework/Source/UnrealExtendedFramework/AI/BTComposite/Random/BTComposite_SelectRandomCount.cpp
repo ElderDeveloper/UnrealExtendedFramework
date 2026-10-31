@@ -1,3 +1,5 @@
+// Copyright Moon Punch Games. All Rights Reserved.
+
 #include "BTComposite_SelectRandomCount.h"
 #include "BehaviorTree/BlackboardComponent.h"
 

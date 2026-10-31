@@ -160,7 +160,10 @@ void FExtendedAtlassianSettingsCustomization::CustomizeDetails(IDetailLayoutBuil
 				.Padding(0.0f, 0.0f, 0.0f, 4.0f)
 				[
 					SNew(SButton)
-					.Text(LOCTEXT("ShowFile", "Show Credential File"))
+					.Text(LOCTEXT("ShowFile", "Show Credential Folder"))
+					.ToolTipText(FText::Format(
+						LOCTEXT("ShowFileTip", "Open the folder holding the account file, which records your e-mail address. The API token itself is kept in {0}."),
+						FText::FromString(FExtendedAtlassianCredentialStore::GetStorageDescription())))
 					.OnClicked(this, &FExtendedAtlassianSettingsCustomization::OnShowFileClicked)
 				]
 			]
@@ -173,8 +176,9 @@ void FExtendedAtlassianSettingsCustomization::CustomizeDetails(IDetailLayoutBuil
 			SNew(STextBlock)
 			.Text(FText::Format(
 				FExtendedAtlassianCredentialStore::IsEncryptionAvailable()
-					? LOCTEXT("StorageEncrypted", "Stored DPAPI-encrypted at {0}, bound to this Windows account. Never written to project config.")
-					: LOCTEXT("StoragePlain", "Warning: no encryption on this platform. The token is stored as plain text at {0}."),
+					? LOCTEXT("StorageEncrypted", "The API token is stored in {0}, bound to your user account; the e-mail address is recorded in {1}. Neither is written to project config.")
+					: LOCTEXT("StoragePlain", "Warning: no encryption on this platform. The API token is stored unencrypted in {0}; the e-mail address is recorded in {1}."),
+				FText::FromString(FExtendedAtlassianCredentialStore::GetStorageDescription()),
 				FText::FromString(FExtendedAtlassianCredentialStore::GetStorePath())))
 			.ColorAndOpacity(FSlateColor(FExtendedAtlassianCredentialStore::IsEncryptionAvailable()
 				? ExtendedAtlassianSettingsCustomizationPrivate::NeutralColor

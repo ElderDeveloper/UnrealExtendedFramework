@@ -6,7 +6,7 @@
 	"Description": "Extended gameplay systems",
 	"Category": "Extended",
 	"CreatedBy": "Kemal Erdem YILMAZ",
-	"CreatedByURL": "moonpunchgames.com",
+	"CreatedByURL": "https://moonpunchgames.com",
 	"DocsURL": "",
 	"MarketplaceURL": "",
 	"SupportURL": "",
@@ -19,9 +19,23 @@
 			"Name": "UnrealExtendedGameplay",
 			"Type": "Runtime",
 			"LoadingPhase": "Default"
+		},
+		{
+			"Name": "UnrealExtendedGameplayEditor",
+			"Type": "Editor",
+			"LoadingPhase": "Default"
+		},
+		{
+			"Name": "UnrealExtendedGameplayAnimGraph",
+			"Type": "UncookedOnly",
+			"LoadingPhase": "Default"
 		}
 	],
 	"Plugins": [
+		{
+			"Name": "UnrealExtendedFoundation",
+			"Enabled": true
+		},
 		{
 			"Name": "UnrealExtendedFramework",
 			"Enabled": true
@@ -31,15 +45,7 @@
 			"Enabled": true
 		},
 		{
-			"Name": "OnlineSubsystem",
-			"Enabled": true
-		},
-		{
-			"Name": "OnlineSubsystemUtils",
-			"Enabled": true
-		},
-		{
-			"Name": "OnlineSubsystemNull",
+			"Name": "MotionWarping",
 			"Enabled": true
 		},
 		{

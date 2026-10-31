@@ -1,96 +1,143 @@
-﻿// Fill out your copyright notice in the Description page of Project Settings.
-
+﻿// Copyright Kemal Erdem YILMAZ. All Rights Reserved.
 
 #include "EGSpawnScaledParticle.h"
-#include "Particles/ParticleSystem.h"
-#include "Components/SkeletalMeshComponent.h"
-#include "ParticleHelper.h"
-#include "Kismet/GameplayStatics.h"
-#include "Particles/ParticleSystemComponent.h"
-#include "Curves/CurveVector.h"
-#include "Kismet/KismetMathLibrary.h"
 
-UEGSpawnScaledParticle::UEGSpawnScaledParticle() : Super()
+#include "Components/SkeletalMeshComponent.h"
+#include "Curves/CurveVector.h"
+#include "Kismet/GameplayStatics.h"
+#include "NiagaraComponent.h"
+#include "NiagaraFunctionLibrary.h"
+#include "NiagaraSystem.h"
+#include "Particles/ParticleSystem.h"
+#include "Particles/ParticleSystemComponent.h"
+
+UEGSpawnScaledParticle::UEGSpawnScaledParticle()
 {
 	Attached = true;
+	NiagaraSystem = nullptr;
 	PSTemplate = nullptr;
 	LocationOffset = FVector::ZeroVector;
 	RotationOffset = FRotator::ZeroRotator;
 	SocketName = NAME_None;
-	StartingScale = FVector(1,1,1);
-	EndScale = FVector(1,1,1);
+	StartingScale = FVector(1, 1, 1);
+	EndScale = FVector(1, 1, 1);
 	ScaleInterpSpeed = 4;
 	ScaleCurve = nullptr;
-	ParticleSystem = nullptr;
 
 #if WITH_EDITORONLY_DATA
 	NotifyColor = FColor(192, 255, 99, 255);
-
 #endif // WITH_EDITORONLY_DATA
 }
 
-#if ENGINE_MAJOR_VERSION == 5
+UFXSystemComponent* UEGSpawnScaledParticle::SpawnEffect(USkeletalMeshComponent* MeshComp) const
+{
+	if (Attached)
+	{
+		if (NiagaraSystem)
+		{
+			UNiagaraComponent* Component = UNiagaraFunctionLibrary::SpawnSystemAttached(NiagaraSystem, MeshComp, SocketName, LocationOffset, RotationOffset, EAttachLocation::KeepRelativeOffset, true);
+			if (Component)
+			{
+				Component->SetRelativeScale3D(StartingScale);
+			}
+			return Component;
+		}
+		return UGameplayStatics::SpawnEmitterAttached(PSTemplate, MeshComp, SocketName, LocationOffset, RotationOffset, StartingScale);
+	}
+
+	const FTransform SocketTransform = MeshComp->GetSocketTransform(SocketName);
+	const FVector Location = SocketTransform.TransformPosition(LocationOffset);
+	const FRotator Rotation = (SocketTransform.GetRotation() * FQuat(RotationOffset)).Rotator();
+
+	if (NiagaraSystem)
+	{
+		return UNiagaraFunctionLibrary::SpawnSystemAtLocation(MeshComp, NiagaraSystem, Location, Rotation, StartingScale, true);
+	}
+	return UGameplayStatics::SpawnEmitterAtLocation(MeshComp->GetWorld(), PSTemplate, FTransform(Rotation, Location, StartingScale));
+}
+
 void UEGSpawnScaledParticle::NotifyBegin(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, float TotalDuration, const FAnimNotifyEventReference& EventReference)
 {
 	Super::NotifyBegin(MeshComp, Animation, TotalDuration, EventReference);
 
-	RotationOffsetQuat = FQuat(RotationOffset);
-	CurrentTime = 0;
-	
-	if (PSTemplate)
+	if (!MeshComp)
 	{
-		if (Attached)
-			ParticleSystem = UGameplayStatics::SpawnEmitterAttached(PSTemplate, MeshComp, SocketName, LocationOffset, RotationOffset, StartingScale);
-		else
+		return;
+	}
+
+	if (!NiagaraSystem && !PSTemplate)
+	{
+		UE_LOG(LogBlueprint, Warning, TEXT("Particle Notify: No Niagara or Cascade system set for particle notify '%s' in anim: '%s'"), *GetNotifyName(), *GetPathNameSafe(Animation));
+		return;
+	}
+
+	// Drop entries for meshes destroyed mid-window, and any effect left from an unfinished window.
+	for (auto It = ActiveEffects.CreateIterator(); It; ++It)
+	{
+		if (!It->Key.IsValid())
 		{
-			const FTransform MeshTransform = MeshComp->GetSocketTransform(SocketName);
-			FTransform SpawnTransform;
-			SpawnTransform.SetLocation(MeshTransform.TransformPosition(LocationOffset));
-			SpawnTransform.SetRotation(MeshTransform.GetRotation() * RotationOffsetQuat);
-			SpawnTransform.SetScale3D(StartingScale);
-			ParticleSystem = UGameplayStatics::SpawnEmitterAtLocation(MeshComp->GetWorld(), PSTemplate, SpawnTransform);
+			It.RemoveCurrent();
 		}
 	}
-	else
+	const TWeakObjectPtr<USkeletalMeshComponent> MeshKey(MeshComp);
+	DestroyEffect(MeshKey);
+
+	if (UFXSystemComponent* Component = SpawnEffect(MeshComp))
 	{
-		UE_LOG(LogBlueprint, Warning, TEXT("Particle Notify: Particle system is null for particle notify '%s' in anim: '%s'"), *GetNotifyName(), *GetPathNameSafe(Animation));
+		FActiveEffect& Effect = ActiveEffects.Add(MeshKey);
+		Effect.Component = Component;
+		Effect.ElapsedTime = 0.0f;
 	}
 }
 
-void UEGSpawnScaledParticle::NotifyTick(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation,float FrameDeltaTime, const FAnimNotifyEventReference& EventReference)
+void UEGSpawnScaledParticle::NotifyTick(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, float FrameDeltaTime, const FAnimNotifyEventReference& EventReference)
 {
 	Super::NotifyTick(MeshComp, Animation, FrameDeltaTime, EventReference);
 
-	if (ParticleSystem)
+	FActiveEffect* Effect = ActiveEffects.Find(TWeakObjectPtr<USkeletalMeshComponent>(MeshComp));
+	UFXSystemComponent* Component = Effect ? Effect->Component.Get() : nullptr;
+	if (!Component)
 	{
-		CurrentTime += FrameDeltaTime;
-		FVector TargetSale;
-
-		if (ScaleCurve)
-			TargetSale = ScaleCurve->GetVectorValue(CurrentTime);
-		else
-			TargetSale = UKismetMathLibrary::VInterpTo(ParticleSystem->GetComponentScale() , EndScale ,FrameDeltaTime,ScaleInterpSpeed);
-		
-		ParticleSystem->SetRelativeScale3D(TargetSale);
-		
+		return;
 	}
-	
+
+	Effect->ElapsedTime += FrameDeltaTime;
+
+	// Relative scale on both sides: reading the world scale here compounded the parent's scale.
+	const FVector TargetScale = ScaleCurve
+		? ScaleCurve->GetVectorValue(Effect->ElapsedTime)
+		: FMath::VInterpTo(Component->GetRelativeScale3D(), EndScale, FrameDeltaTime, ScaleInterpSpeed);
+
+	Component->SetRelativeScale3D(TargetScale);
 }
 
-void UEGSpawnScaledParticle::NotifyEnd(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation,const FAnimNotifyEventReference& EventReference)
+void UEGSpawnScaledParticle::NotifyEnd(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, const FAnimNotifyEventReference& EventReference)
 {
 	Super::NotifyEnd(MeshComp, Animation, EventReference);
-	if (ParticleSystem)
-		ParticleSystem->DestroyComponent();
+	DestroyEffect(TWeakObjectPtr<USkeletalMeshComponent>(MeshComp));
 }
 
-#endif
-
-
-inline FString UEGSpawnScaledParticle::GetNotifyName_Implementation() const
+void UEGSpawnScaledParticle::DestroyEffect(const TWeakObjectPtr<USkeletalMeshComponent>& MeshKey)
 {
+	if (FActiveEffect* Effect = ActiveEffects.Find(MeshKey))
+	{
+		if (UFXSystemComponent* Component = Effect->Component.Get())
+		{
+			Component->DestroyComponent();
+		}
+		ActiveEffects.Remove(MeshKey);
+	}
+}
+
+FString UEGSpawnScaledParticle::GetNotifyName_Implementation() const
+{
+	if (NiagaraSystem)
+	{
+		return NiagaraSystem->GetName();
+	}
 	if (PSTemplate)
+	{
 		return PSTemplate->GetName();
-	else
-		return Super::GetNotifyName_Implementation();
+	}
+	return Super::GetNotifyName_Implementation();
 }

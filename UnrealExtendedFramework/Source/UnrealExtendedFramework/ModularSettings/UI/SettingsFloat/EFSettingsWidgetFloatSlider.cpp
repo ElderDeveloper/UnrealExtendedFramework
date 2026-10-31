@@ -1,3 +1,5 @@
+// Copyright Moon Punch Games. All Rights Reserved.
+
 #include "EFSettingsWidgetFloatSlider.h"
 #include "Components/Slider.h"
 #include "Components/TextBlock.h"

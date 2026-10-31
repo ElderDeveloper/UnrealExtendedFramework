@@ -1,187 +1,309 @@
-﻿// Fill out your copyright notice in the Description page of Project Settings.
-
+﻿// Copyright Kemal Erdem YILMAZ. All Rights Reserved.
 
 #include "EGDamageTrace_Notify.h"
 
+#include "Components/SkeletalMeshComponent.h"
 #include "EGDamageTrace_DamageObject.h"
+#include "Engine/World.h"
 #include "GameFramework/Character.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Kismet/GameplayStatics.h"
-#include "Components/SkeletalMeshComponent.h"
 #include "UnrealExtendedFramework/Libraries/Math/EFMathLibrary.h"
 #include "UnrealExtendedFramework/Libraries/Trace/EFTraceLibrary.h"
-
-
-
+#include "UnrealExtendedGameplay/Animation/EGAnimNotifyHelpers.h"
 
 UEGDamageTrace_Notify::UEGDamageTrace_Notify()
 {
 	PSTemplate = nullptr;
-	OwnerMesh = nullptr;
 }
 
-void UEGDamageTrace_Notify::Tick(USkeletalMeshComponent* MeshComp, float FrameDeltaTime)
+bool UEGDamageTrace_Notify::ShouldTrace(const USkeletalMeshComponent* MeshComp) const
 {
-	OwnerMesh = MeshComp;
-	if (UseEngineTickForCollisionCalculation)
-		DamageTick();
+	if (!MeshComp || !MeshComp->GetOwner())
+	{
+		return false;
+	}
+	return !bAuthorityOnly || EGAnimNotify::HasAuthority(MeshComp);
 }
 
-void UEGDamageTrace_Notify::DamageTick()
-{
-	if (!OwnerMesh) return;
-	if (!OwnerMesh->GetOwner()) return;
-	
-	TArray<FHitResult> HitResults;
-	bool bHit = false;
-	switch (NotifyTraceStruct.TraceShape)
-	{
-	case Sphere : bHit = DrawSphereTrace(OwnerMesh , HitResults ); break;
-	case Box : bHit = DrawBoxTrace(OwnerMesh , HitResults ); break;
-	case Line : bHit = DrawLineTrace(OwnerMesh , HitResults ); break;
-	default: break;
-	}
-	
-	if (bHit)
-	{
-		for (const auto Hit : HitResults)
-		{
-			if (!Hit.GetActor()) continue;
-	
-			if (Hit.GetActor() != OwnerMesh->GetOwner()  && !HitActorArray.Contains(Hit.GetActor())) 
-			{
-				HitActorArray.Add(Hit.GetActor());
-				HandleDamage(OwnerMesh , Hit);
-				if (bShouldPush)
-				{
-					if (const auto character = Cast<ACharacter>(Hit.GetActor()))
-						character->GetCharacterMovement()->AddForce(UEFMathLibrary::GetDirectionBetweenActors(OwnerMesh->GetOwner(),character,PushStrength));
-				}
-			}
-		}
-	}
-}
-
-
-
-void UEGDamageTrace_Notify::NotifyBegin(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation,float TotalDuration, const FAnimNotifyEventReference& EventReference)
+void UEGDamageTrace_Notify::NotifyBegin(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, float TotalDuration, const FAnimNotifyEventReference& EventReference)
 {
 	Super::NotifyBegin(MeshComp, Animation, TotalDuration, EventReference);
-	HitActorArray.Empty();
-	OwnerMesh = MeshComp;
+
+	if (!ShouldTrace(MeshComp))
+	{
+		return;
+	}
+
+	// Drop entries for meshes destroyed mid-window.
+	for (auto It = ActiveTraces.CreateIterator(); It; ++It)
+	{
+		if (!It->Key.IsValid())
+		{
+			ClearTraceTimer(It->Value);
+			It.RemoveCurrent();
+		}
+	}
+
+	// A window restarting on the same mesh starts with a clean hit list.
+	const TWeakObjectPtr<USkeletalMeshComponent> MeshKey(MeshComp);
+	StopTrace(MeshKey);
+	ActiveTraces.Add(MeshKey).World = MeshComp->GetWorld();
 
 	if (!UseEngineTickForCollisionCalculation)
 	{
-		if (MeshComp)
+		TraceAndApply(MeshComp);
+
+		// Re-find: damage applied by the first trace may already have ended the window.
+		FActiveTrace* Trace = ActiveTraces.Find(MeshKey);
+		UWorld* World = Trace ? Trace->World.Get() : nullptr;
+		if (World)
 		{
-			DamageTick();
-			if (MeshComp->GetWorld())
-				MeshComp->GetWorld()->GetTimerManager().SetTimer(Handle,this,&UEGDamageTrace_Notify::DamageTick,CollisionCalculationTickSpeed,true);
+			const FTimerDelegate Delegate = FTimerDelegate::CreateUObject(this, &UEGDamageTrace_Notify::HandleTraceTimer, MeshKey);
+			World->GetTimerManager().SetTimer(Trace->TimerHandle, Delegate, FMath::Max(CollisionCalculationTickSpeed, 0.001f), true);
 		}
 	}
 }
 
-void UEGDamageTrace_Notify::NotifyEnd(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation,const FAnimNotifyEventReference& EventReference)
+void UEGDamageTrace_Notify::NotifyTick(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, float FrameDeltaTime, const FAnimNotifyEventReference& EventReference)
 {
-	Super::NotifyEnd(MeshComp, Animation, EventReference); HitActorArray.Empty();
-	
-	if(MeshComp && MeshComp->GetWorld())
+	Super::NotifyTick(MeshComp, Animation, FrameDeltaTime, EventReference);
+
+	if (UseEngineTickForCollisionCalculation)
 	{
-		MeshComp->GetWorld()->GetTimerManager().ClearTimer(Handle);
+		TraceAndApply(MeshComp);
 	}
 }
 
-void UEGDamageTrace_Notify::NotifyTick(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation,float FrameDeltaTime, const FAnimNotifyEventReference& EventReference)
+void UEGDamageTrace_Notify::NotifyEnd(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, const FAnimNotifyEventReference& EventReference)
 {
-	Super::NotifyTick(MeshComp, Animation, FrameDeltaTime, EventReference); Tick(MeshComp,FrameDeltaTime);
+	Super::NotifyEnd(MeshComp, Animation, EventReference);
+	StopTrace(TWeakObjectPtr<USkeletalMeshComponent>(MeshComp));
 }
 
-void UEGDamageTrace_Notify::HandleDamage(USkeletalMeshComponent* MeshComp , FHitResult HitResult)
+void UEGDamageTrace_Notify::ClearTraceTimer(FActiveTrace& Trace)
 {
-	
+	if (UWorld* World = Trace.World.Get())
+	{
+		World->GetTimerManager().ClearTimer(Trace.TimerHandle);
+	}
+	Trace.TimerHandle.Invalidate();
+}
+
+void UEGDamageTrace_Notify::StopTrace(const TWeakObjectPtr<USkeletalMeshComponent>& MeshKey)
+{
+	if (FActiveTrace* Trace = ActiveTraces.Find(MeshKey))
+	{
+		ClearTraceTimer(*Trace);
+		ActiveTraces.Remove(MeshKey);
+	}
+}
+
+void UEGDamageTrace_Notify::HandleTraceTimer(TWeakObjectPtr<USkeletalMeshComponent> WeakMesh)
+{
+	USkeletalMeshComponent* MeshComp = WeakMesh.Get();
+	if (!IsValid(MeshComp))
+	{
+		// The mesh went away without ending the window; stop the timer instead of looping forever.
+		// A stale weak key still hashes and compares equal, so the entry is found.
+		StopTrace(WeakMesh);
+		return;
+	}
+
+	TraceAndApply(MeshComp);
+}
+
+void UEGDamageTrace_Notify::TraceAndApply(USkeletalMeshComponent* MeshComp)
+{
+	if (!IsValid(MeshComp))
+	{
+		return;
+	}
+
+	AActor* const Owner = MeshComp->GetOwner();
+	const TWeakObjectPtr<USkeletalMeshComponent> MeshKey(MeshComp);
+	if (!IsValid(Owner) || !ActiveTraces.Contains(MeshKey))
+	{
+		// No entry: NotifyBegin skipped this mesh (no authority), so do not trace for nothing.
+		return;
+	}
+
+	TArray<FHitResult> Hits;
+	if (!RunTrace(MeshComp, Hits))
+	{
+		return;
+	}
+
+	// Record the new hits first and apply damage afterwards: damage can end this window (the
+	// attacker dies, a montage is stopped), which removes the map entry under us.
+	TArray<FHitResult, TInlineAllocator<4>> NewHits;
+	{
+		FActiveTrace* Trace = ActiveTraces.Find(MeshKey);
+		if (!Trace)
+		{
+			return;
+		}
+
+		for (const FHitResult& Hit : Hits)
+		{
+			AActor* const HitActor = Hit.GetActor();
+			const TWeakObjectPtr<AActor> HitKey(HitActor);
+			if (!IsValid(HitActor) || HitActor == Owner || Trace->HitActors.Contains(HitKey))
+			{
+				continue;
+			}
+
+			Trace->HitActors.Add(HitKey);
+			NewHits.Add(Hit);
+		}
+	}
+
+	for (const FHitResult& Hit : NewHits)
+	{
+		if (!IsValid(MeshComp) || !IsValid(Hit.GetActor()))
+		{
+			continue;
+		}
+
+		HandleDamage(MeshComp, Hit);
+		if (bShouldPush)
+		{
+			ApplyPush(MeshComp, Hit.GetActor());
+		}
+	}
+}
+
+bool UEGDamageTrace_Notify::RunTrace(USkeletalMeshComponent* MeshComp, TArray<FHitResult>& OutHits) const
+{
+	const FVector Start = MeshComp->GetSocketLocation(FirstSocketName);
+	const FVector End = MeshComp->GetSocketLocation(SecondSocketName);
+
+	// Trace on a copy: the settings belong to the animation asset and are shared by every mesh.
+	// The mesh is the world context so bIgnoreSelf ignores the attacker.
+	switch (NotifyTraceStruct.TraceShape)
+	{
+	case ETraceShapes::Sphere:
+	{
+		FSphereTraceStruct Settings = NotifyTraceStruct.SphereTraceSettings;
+		Settings.Start = Start;
+		Settings.End = End;
+		if (UEFTraceLibrary::ExtendedSphereTraceMulti(MeshComp, Settings))
+		{
+			OutHits = MoveTemp(Settings.HitResults);
+			return true;
+		}
+		return false;
+	}
+	case ETraceShapes::Box:
+	{
+		FBoxTraceStruct Settings = NotifyTraceStruct.BoxTraceSettings;
+		Settings.Start = Start;
+		Settings.End = End;
+		if (UEFTraceLibrary::ExtendedBoxTraceMulti(MeshComp, Settings))
+		{
+			OutHits = MoveTemp(Settings.HitResults);
+			return true;
+		}
+		return false;
+	}
+	case ETraceShapes::Line:
+	{
+		FLineTraceStruct Settings = NotifyTraceStruct.LineTraceSettings;
+		Settings.Start = Start;
+		Settings.End = End;
+		if (UEFTraceLibrary::ExtendedLineTraceMulti(MeshComp, Settings))
+		{
+			OutHits = MoveTemp(Settings.HitResults);
+			return true;
+		}
+		return false;
+	}
+	default:
+		return false;
+	}
+}
+
+void UEGDamageTrace_Notify::ApplyPush(USkeletalMeshComponent* MeshComp, AActor* HitActor) const
+{
+	const ACharacter* const Character = Cast<ACharacter>(HitActor);
+	UCharacterMovementComponent* const Movement = Character ? Character->GetCharacterMovement() : nullptr;
+	if (Movement && MeshComp->GetOwner())
+	{
+		Movement->AddForce(UEFMathLibrary::GetDirectionBetweenActors(MeshComp->GetOwner(), Character, PushStrength));
+	}
+}
+
+void UEGDamageTrace_Notify::HandleDamage(USkeletalMeshComponent* MeshComp, const FHitResult& HitResult)
+{
+	AActor* const Owner = MeshComp ? MeshComp->GetOwner() : nullptr;
+	AActor* const HitActor = HitResult.GetActor();
+	UWorld* const World = MeshComp ? MeshComp->GetWorld() : nullptr;
+	if (!Owner || !HitActor || !World)
+	{
+		return;
+	}
+
 	if (NotifyDamageStruct.bApplyAnimNotifyDamage)
 	{
-		const auto instigator =  MeshComp->GetOwner()->GetInstigatorController();
-		const auto owner = MeshComp->GetOwner();
-		TArray<AActor*> IgnoreActors;
-		IgnoreActors.Add(MeshComp->GetOwner());
-		
-		
+		AController* const Instigator = Owner->GetInstigatorController();
+		const TArray<AActor*> IgnoreActors = { Owner };
+
 		switch (NotifyDamageStruct.ApplyDamageType)
 		{
-			case UEF_ApplyDamage: 	UGameplayStatics::ApplyDamage(HitResult.GetActor() , NotifyDamageStruct.AnimNotifyDamage ,instigator,owner,NotifyDamageStruct.DamageType); break;
-			
-			case UEF_ApplyPointDamage: UGameplayStatics::ApplyPointDamage(HitResult.GetActor() ,  NotifyDamageStruct.AnimNotifyDamage , HitResult.Location , HitResult , instigator,owner,NotifyDamageStruct.DamageType); break;
-			
-			case UEF_ApplyRadialDamage:
-				UGameplayStatics::ApplyRadialDamage(GetWorld() ,  NotifyDamageStruct.AnimNotifyDamage , HitResult.Location ,  NotifyDamageStruct.RadialDamageStruct.AreaDamageRadius , NotifyDamageStruct.DamageType , IgnoreActors , owner , instigator, true , NotifyDamageStruct.AreaDamageBlockChannel);
+		case UEF_ApplyDamage:
+			UGameplayStatics::ApplyDamage(HitActor, NotifyDamageStruct.AnimNotifyDamage, Instigator, Owner, NotifyDamageStruct.DamageType);
 			break;
-			
-			case UEF_ApplyRadialDamageFalloff:
-				UGameplayStatics::ApplyRadialDamageWithFalloff(GetWorld(),
-					 NotifyDamageStruct.RadialDamageStruct.AreaDamageMaximum,
-					 NotifyDamageStruct.RadialDamageStruct.AreaDamageMinimum ,
-					 HitResult.Location ,
-					 NotifyDamageStruct.RadialDamageStruct.AreaDamageInnerRadius ,
-					 NotifyDamageStruct.RadialDamageStruct.AreaDamageOuterRadius ,
-					 NotifyDamageStruct.RadialDamageStruct.AreaDamageFalloff ,
-					 NotifyDamageStruct.DamageType,
-					 IgnoreActors ,
-					 owner ,
-					 instigator ,
-					 NotifyDamageStruct.AreaDamageBlockChannel );
-			break;
-			default:break;
-		}
-	}
-	
-	else if (NotifyDamageStruct.CustomApplyDamageObject)
-	{
-		if(const auto CustomDamageObject = NewObject<UEGDamageTrace_DamageObject>(NotifyDamageStruct.CustomApplyDamageObject))
+
+		case UEF_ApplyPointDamage:
 		{
-			CustomDamageObject->ReceiveApplyDamageInformation(MeshComp , HitResult);
+			// HitFromDirection is a direction, not the hit location that was passed here before.
+			const FVector HitFromDirection = (HitResult.ImpactPoint - Owner->GetActorLocation()).GetSafeNormal();
+			UGameplayStatics::ApplyPointDamage(HitActor, NotifyDamageStruct.AnimNotifyDamage, HitFromDirection, HitResult, Instigator, Owner, NotifyDamageStruct.DamageType);
+			break;
+		}
+
+		case UEF_ApplyRadialDamage:
+			UGameplayStatics::ApplyRadialDamage(World,
+				NotifyDamageStruct.AnimNotifyDamage,
+				HitResult.Location,
+				NotifyDamageStruct.RadialDamageStruct.AreaDamageRadius,
+				NotifyDamageStruct.DamageType,
+				IgnoreActors,
+				Owner,
+				Instigator,
+				true,
+				NotifyDamageStruct.AreaDamageBlockChannel);
+			break;
+
+		case UEF_ApplyRadialDamageFalloff:
+			UGameplayStatics::ApplyRadialDamageWithFalloff(World,
+				NotifyDamageStruct.RadialDamageStruct.AreaDamageMaximum,
+				NotifyDamageStruct.RadialDamageStruct.AreaDamageMinimum,
+				HitResult.Location,
+				NotifyDamageStruct.RadialDamageStruct.AreaDamageInnerRadius,
+				NotifyDamageStruct.RadialDamageStruct.AreaDamageOuterRadius,
+				NotifyDamageStruct.RadialDamageStruct.AreaDamageFalloff,
+				NotifyDamageStruct.DamageType,
+				IgnoreActors,
+				Owner,
+				Instigator,
+				NotifyDamageStruct.AreaDamageBlockChannel);
+			break;
+
+		default:
+			break;
+		}
+	}
+
+	if (NotifyDamageStruct.CustomApplyDamageObject)
+	{
+		// Instantiate the chosen subclass; passing the class as the outer (as before) built the
+		// base class, so Blueprint overrides never ran.
+		UEGDamageTrace_DamageObject* const DamageObject = NewObject<UEGDamageTrace_DamageObject>(Owner, NotifyDamageStruct.CustomApplyDamageObject.Get(), NAME_None, RF_Transient);
+		if (DamageObject)
+		{
+			DamageObject->DamageTag = NotifyDamageStruct.DamageCustomTag;
+			DamageObject->ReceiveApplyDamageInformation(MeshComp, HitResult);
 		}
 	}
 }
-
-bool UEGDamageTrace_Notify::DrawSphereTrace(USkeletalMeshComponent* MeshComp, TArray<FHitResult>& HitResults)
-{
-	NotifyTraceStruct.SphereTraceSettings.Start = MeshComp->GetSocketLocation(FirstSocketName);
-	NotifyTraceStruct.SphereTraceSettings.End = MeshComp->GetSocketLocation(SecondSocketName);
-	if(UEFTraceLibrary::ExtendedSphereTraceMulti(MeshComp->GetWorld(),NotifyTraceStruct.SphereTraceSettings))
-	{
-		HitResults = NotifyTraceStruct.SphereTraceSettings.HitResults;
-		return true;
-	}
-	return false;
-}
-
-bool UEGDamageTrace_Notify::DrawBoxTrace(USkeletalMeshComponent* MeshComp, TArray<FHitResult>& HitResults)
-{
-	NotifyTraceStruct.BoxTraceSettings.Start = MeshComp->GetSocketLocation(FirstSocketName);
-	NotifyTraceStruct.BoxTraceSettings.End = MeshComp->GetSocketLocation(SecondSocketName);
-	if(UEFTraceLibrary::ExtendedBoxTraceMulti(MeshComp->GetWorld(),NotifyTraceStruct.BoxTraceSettings))
-	{
-		HitResults = NotifyTraceStruct.BoxTraceSettings.HitResults;
-		return true;
-	}
-	return false;
-}
-
-bool UEGDamageTrace_Notify::DrawLineTrace(USkeletalMeshComponent* MeshComp, TArray<FHitResult>& HitResults)
-{
-	NotifyTraceStruct.LineTraceSettings.Start = MeshComp->GetSocketLocation(FirstSocketName);
-	NotifyTraceStruct.LineTraceSettings.End = MeshComp->GetSocketLocation(SecondSocketName);
-	if(UEFTraceLibrary::ExtendedLineTraceMulti(MeshComp->GetWorld(),NotifyTraceStruct.LineTraceSettings))
-	{
-		HitResults = NotifyTraceStruct.LineTraceSettings.HitResults;
-		return true;
-	}
-	return false;
-}
-
-
-
-
-
-

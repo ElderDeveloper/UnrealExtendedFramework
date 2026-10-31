@@ -179,6 +179,13 @@ UEdGraph* FEGQuestEditorUtilities::CreateNewGraph(
 	UEdGraph* NewGraph;
 	bool bRename = false;
 
+	// UE 5.8 no longer resets loaders in Rename and deprecated the flag that skipped it.
+#if NY_ENGINE_VERSION >= 508
+	constexpr ERenameFlags GraphRenameFlags = REN_DoNotDirty;
+#else
+	constexpr ERenameFlags GraphRenameFlags = REN_DoNotDirty | REN_ForceNoResetLoaders;
+#endif
+
 	// Ensure this name isn't already being used for a graph
 	if (GraphName != NAME_None)
 	{
@@ -188,7 +195,7 @@ UEdGraph* FEGQuestEditorUtilities::CreateNewGraph(
 		// Rename the old graph out of the way; but we have already failed at this point
 		if (ExistingGraph)
 		{
-			ExistingGraph->Rename(nullptr, ExistingGraph->GetOuter(), REN_DoNotDirty | REN_ForceNoResetLoaders);
+			ExistingGraph->Rename(nullptr, ExistingGraph->GetOuter(), GraphRenameFlags);
 		}
 
 		// Construct new graph with the supplied name
@@ -206,7 +213,7 @@ UEdGraph* FEGQuestEditorUtilities::CreateNewGraph(
 	// Now move to where we want it to. Workaround to ensure transaction buffer is correctly utilized
 	if (bRename)
 	{
-		NewGraph->Rename(*GraphName.ToString(), ParentScope, REN_DoNotDirty | REN_ForceNoResetLoaders);
+		NewGraph->Rename(*GraphName.ToString(), ParentScope, GraphRenameFlags);
 	}
 
 	return NewGraph;
@@ -331,7 +338,7 @@ void FEGQuestEditorUtilities::TryToCreateDefaultGraph(UEGQuestGraph* Quest, bool
 			FString::Printf(TEXT("%s%s"), *Message, TEXT("\nWould you like to autogenerate the graph nodes from the quest nodes?\n WARNING: Graph nodes will be lost")),
 			TEXT("Autogenerate graph nodes from quest nodes?"));
 
-		// This will trigger the CreateDefaultNodesForGraph in the the GraphSchema
+		// This will trigger the CreateDefaultNodesForGraph in the GraphSchema
 		if (Response == EAppReturnType::Yes)
 		{
 			Quest->ClearGraph();

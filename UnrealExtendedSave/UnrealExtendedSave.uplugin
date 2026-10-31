@@ -1,0 +1,30 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "0.1.0",
+	"FriendlyName": "Unreal Extended Save",
+	"Description": "Save games: slots with metadata, crash-safe backups, versioned migrations, saveable actors and objects, autosave and cloud sync through the platform layer.",
+	"Category": "Extended",
+	"CreatedBy": "Kemal Erdem YILMAZ",
+	"CreatedByURL": "https://moonpunchgames.com",
+	"DocsURL": "",
+	"MarketplaceURL": "",
+	"SupportURL": "",
+	"CanContainContent": false,
+	"IsBetaVersion": true,
+	"IsExperimentalVersion": false,
+	"Installed": false,
+	"Modules": [
+		{
+			"Name": "ExtendedSave",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		}
+	],
+	"Plugins": [
+		{
+			"Name": "UnrealExtendedFoundation",
+			"Enabled": true
+		}
+	]
+}

@@ -3,9 +3,9 @@
 #include "EPFContentDeliverySubsystem.h"
 #include "UnrealExtendedPlayFab.h"
 #include "Dom/JsonObject.h"
-#include "HttpModule.h"
-#include "Interfaces/IHttpRequest.h"
-#include "Interfaces/IHttpResponse.h"
+#include "Async/EFCallContext.h"
+#include "Containers/Ticker.h"
+#include "Http/EFHttpClient.h"
 
 void UEPFContentDeliverySubsystem::Initialize(FSubsystemCollectionBase& Collection) { Super::Initialize(Collection); }
 void UEPFContentDeliverySubsystem::Deinitialize() { Super::Deinitialize(); }
@@ -61,22 +61,50 @@ void UEPFContentDeliverySubsystem::DownloadContentAsString(const FString& Key)
 				return;
 			}
 
-			// Now download the actual content
-			TSharedRef<IHttpRequest, ESPMode::ThreadSafe> HttpRequest = FHttpModule::Get().CreateRequest();
-			HttpRequest->SetVerb(TEXT("GET"));
-			HttpRequest->SetURL(Url);
-			HttpRequest->OnProcessRequestComplete().BindWeakLambda(this,
-				[this](FHttpRequestPtr Request, FHttpResponsePtr HttpResponse, bool bConnectedSuccessfully)
+			// Now download the actual content. The callback keeps the caller's call context, so the
+			// broadcast is tagged as theirs (see EFCallContext).
+			FEFHttpRequest Download;
+			Download.Url = Url;
+			Download.Verb = EEFHttpVerb::Get;
+			Download.MaxRetries = 2;
+			TWeakObjectPtr<UEPFContentDeliverySubsystem> WeakThis(this);
+			TFunction<void(const FEFHttpResponse&)> Deliver = EFCallContext::Bind<const FEFHttpResponse&>([WeakThis](const FEFHttpResponse& HttpResponse)
+			{
+				UEPFContentDeliverySubsystem* This = WeakThis.Get();
+				if (!This)
 				{
-					if (bConnectedSuccessfully && HttpResponse.IsValid() && EHttpResponseCodes::IsOk(HttpResponse->GetResponseCode()))
+					return;
+				}
+				if (HttpResponse.IsSuccess())
+				{
+					This->OnContentDownloaded.Broadcast(FEPFResult::Success(), HttpResponse.Body);
+				}
+				else
+				{
+					This->OnContentDownloaded.Broadcast(FEPFResult::Failure(TEXT("Failed to download content")), TEXT(""));
+				}
+			});
+
+			// This response does not pass through UEPFSubsystem::HandleHttpResponse, so it needs the
+			// same wait: MoviePlayer pumps HTTP from inside package loading, where listeners must not
+			// run. The core ticker is not pumped there, so a deferred delivery waits for a normal tick.
+			FEFHttpOperation::Start(Download, [Deliver](const FEFHttpResponse& HttpResponse)
+			{
+				if (!IsInAsyncLoadingThread())
+				{
+					Deliver(HttpResponse);
+					return;
+				}
+				FTSTicker::GetCoreTicker().AddTicker(TEXT("PlayFab.DeferredContentDownload"), 0.0f,
+					[Deliver, HttpResponse](float)
 					{
-						OnContentDownloaded.Broadcast(FEPFResult::Success(), HttpResponse->GetContentAsString());
-					}
-					else
-					{
-						OnContentDownloaded.Broadcast(FEPFResult::Failure(TEXT("Failed to download content")), TEXT(""));
-					}
-				});
-			HttpRequest->ProcessRequest();
+						if (IsInAsyncLoadingThread())
+						{
+							return true;
+						}
+						Deliver(HttpResponse);
+						return false;
+					});
+			});
 		}));
 }

@@ -1,3 +1,5 @@
+// Copyright Kemal Erdem YILMAZ. All Rights Reserved.
+
 using UnrealBuildTool;
 
 public class UnrealExtendedGAS : ModuleRules
@@ -23,7 +25,9 @@ public class UnrealExtendedGAS : ModuleRules
 			"GameplayAbilities",
 			"GameplayTags",
 			"GameplayTasks",
-			"UMG"
+			"UMG",
+			// Async node base and asset loading helpers.
+			"ExtendedFoundation"
 		});
 	}
 }

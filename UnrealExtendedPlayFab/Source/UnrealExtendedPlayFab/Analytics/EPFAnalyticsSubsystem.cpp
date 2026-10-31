@@ -27,6 +27,48 @@ namespace
 	constexpr const TCHAR* TelemetryScopePlayer = TEXT("player");
 	constexpr const TCHAR* TelemetryScopeCharacter = TEXT("character");
 	constexpr const TCHAR* TelemetryScopeTitle = TEXT("title");
+
+	/** One event in the plugin's telemetry envelope, as WriteTelemetryEvents takes it. */
+	TSharedRef<FJsonObject> MakeTelemetryEventJson(
+		const FString& EventName,
+		const TMap<FString, FString>& Body,
+		const FString& EventSource,
+		const FString& EventScope,
+		const FString& TargetId,
+		const FString& ClientTimestamp,
+		bool bWasQueuedOffline,
+		const TMap<FString, FString>& ExtraPayloadFields)
+	{
+		TSharedRef<FJsonObject> EventObj = MakeShared<FJsonObject>();
+		EventObj->SetStringField(TEXT("EventNamespace"), TelemetryNamespace);
+		EventObj->SetStringField(TEXT("Name"), EventName);
+		EventObj->SetStringField(TEXT("OriginalTimestamp"), ClientTimestamp);
+
+		TSharedRef<FJsonObject> PayloadObj = MakeShared<FJsonObject>();
+		// Extra fields go in first, so the envelope's own fields win a name clash.
+		for (const TPair<FString, FString>& Field : ExtraPayloadFields)
+		{
+			PayloadObj->SetStringField(Field.Key, Field.Value);
+		}
+		PayloadObj->SetStringField(TEXT("schema_version"), TelemetrySchemaVersion);
+		PayloadObj->SetStringField(TEXT("event_source"), EventSource);
+		PayloadObj->SetStringField(TEXT("event_scope"), EventScope);
+		PayloadObj->SetStringField(TEXT("client_timestamp"), ClientTimestamp);
+		PayloadObj->SetBoolField(TEXT("was_queued_offline"), bWasQueuedOffline);
+		if (!TargetId.IsEmpty())
+		{
+			PayloadObj->SetStringField(TEXT("target_id"), TargetId);
+		}
+
+		TSharedRef<FJsonObject> PropertiesObj = MakeShared<FJsonObject>();
+		for (const TPair<FString, FString>& Pair : Body)
+		{
+			PropertiesObj->SetStringField(Pair.Key, Pair.Value);
+		}
+		PayloadObj->SetObjectField(TEXT("properties"), PropertiesObj);
+		EventObj->SetObjectField(TEXT("Payload"), PayloadObj);
+		return EventObj;
+	}
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -439,32 +481,8 @@ void UEPFAnalyticsSubsystem::WriteTelemetryEvent(
 
 	TSharedRef<FJsonObject> RequestBody = MakeShared<FJsonObject>();
 	TArray<TSharedPtr<FJsonValue>> Events;
-
-	TSharedRef<FJsonObject> EventObj = MakeShared<FJsonObject>();
-	EventObj->SetStringField(TEXT("EventNamespace"), TelemetryNamespace);
-	EventObj->SetStringField(TEXT("Name"), EventName);
-	EventObj->SetStringField(TEXT("OriginalTimestamp"), ClientTimestamp);
-
-	TSharedRef<FJsonObject> PayloadObj = MakeShared<FJsonObject>();
-	PayloadObj->SetStringField(TEXT("schema_version"), TelemetrySchemaVersion);
-	PayloadObj->SetStringField(TEXT("event_source"), EventSource);
-	PayloadObj->SetStringField(TEXT("event_scope"), EventScope);
-	PayloadObj->SetStringField(TEXT("client_timestamp"), ClientTimestamp);
-	PayloadObj->SetBoolField(TEXT("was_queued_offline"), !OriginalTimestamp.IsEmpty());
-	if (!TargetId.IsEmpty())
-	{
-		PayloadObj->SetStringField(TEXT("target_id"), TargetId);
-	}
-
-	TSharedRef<FJsonObject> PropertiesObj = MakeShared<FJsonObject>();
-	for (const auto& Pair : Body)
-	{
-		PropertiesObj->SetStringField(Pair.Key, Pair.Value);
-	}
-	PayloadObj->SetObjectField(TEXT("properties"), PropertiesObj);
-	EventObj->SetObjectField(TEXT("Payload"), PayloadObj);
-	Events.Add(MakeShared<FJsonValueObject>(EventObj));
-
+	Events.Add(MakeShared<FJsonValueObject>(MakeTelemetryEventJson(
+		EventName, Body, EventSource, EventScope, TargetId, ClientTimestamp, !OriginalTimestamp.IsEmpty(), TMap<FString, FString>())));
 	RequestBody->SetArrayField(TEXT("Events"), Events);
 
 	SendPlayFabRequestDetailed(
@@ -689,6 +707,67 @@ void UEPFAnalyticsSubsystem::ReportDeviceInfo()
 	Body.Add(TEXT("OS"), FPlatformMisc::GetOSVersion());
 	Body.Add(TEXT("Device"), FString(FPlatformProperties::PlatformName()));
 	WriteTelemetryEvent(TEXT("device_info"), Body, TelemetrySourceManual, TelemetryScopePlayer);
+}
+
+// ── Batch Write ───────────────────────────────────────────────────────────────
+
+void UEPFAnalyticsSubsystem::WriteEvents(const TArray<FEPFTelemetryEventData>& Events, const FString& EventSource, FOnEventsWritten OnDone)
+{
+	if (Events.IsEmpty() || Events.Num() > MaxEventsPerWrite)
+	{
+		if (OnDone)
+		{
+			OnDone(FEFResult::InvalidArgument(TEXT("PlayFab"),
+				FString::Printf(TEXT("WriteEvents takes 1 to %d events, got %d"), MaxEventsPerWrite, Events.Num())));
+		}
+		return;
+	}
+
+	TArray<TSharedPtr<FJsonValue>> EventValues;
+	EventValues.Reserve(Events.Num());
+	for (const FEPFTelemetryEventData& Event : Events)
+	{
+		if (Event.EventName.IsEmpty())
+		{
+			if (OnDone)
+			{
+				OnDone(FEFResult::InvalidArgument(TEXT("PlayFab"), TEXT("WriteEvents got an event with no name")));
+			}
+			return;
+		}
+
+		const FDateTime Timestamp = Event.TimestampUtc.GetTicks() > 0 ? Event.TimestampUtc : FDateTime::UtcNow();
+		EventValues.Add(MakeShared<FJsonValueObject>(MakeTelemetryEventJson(
+			Event.EventName, Event.Properties, EventSource, TelemetryScopePlayer, FString(), Timestamp.ToIso8601(), false, Event.PayloadFields)));
+	}
+
+	TSharedRef<FJsonObject> RequestBody = MakeShared<FJsonObject>();
+	RequestBody->SetArrayField(TEXT("Events"), EventValues);
+
+	const int32 EventCount = Events.Num();
+	SendPlayFabRequestDetailed(
+		TEXT("/Event/WriteTelemetryEvents"),
+		RequestBody,
+		EEPFAuthMode::EntityToken,
+		FOnPlayFabResponseDetailed::CreateLambda([this, EventCount, OnDone](const FEPFResult& Result, TSharedPtr<FJsonObject>)
+		{
+			if (Result.bSuccess)
+			{
+				EventsLoggedCount += EventCount;
+				EF_LOG(ExtendedPlayFab, Verbose, TEXT("EPFAnalyticsSubsystem — %d telemetry events written"), EventCount);
+			}
+			else
+			{
+				EF_LOG(ExtendedPlayFab, Warning, TEXT("EPFAnalyticsSubsystem — Failed to write %d telemetry events: %s"), EventCount, *Result.ErrorMessage);
+			}
+
+			OnEventLogged.Broadcast(Result);
+			if (OnDone)
+			{
+				OnDone(Result.ToEFResult());
+			}
+		})
+	);
 }
 
 // ── Queries ───────────────────────────────────────────────────────────────────

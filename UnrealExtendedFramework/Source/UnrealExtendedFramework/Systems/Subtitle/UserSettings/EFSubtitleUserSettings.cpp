@@ -1,7 +1,10 @@
+// Copyright Moon Punch Games. All Rights Reserved.
+
 // EFSubtitleUserSettings.cpp
 #include "EFSubtitleUserSettings.h"
 #include "Internationalization/StringTableRegistry.h"
 
+#include "Assets/EFAssetLoading.h"
 #include "GameplayTagsManager.h"
 
 #include "UnrealExtendedFramework/Systems/Subtitle/Data/EFSubtitleProjectSettings.h"
@@ -96,6 +99,18 @@ UEFSubtitleStyleProfileSetting::UEFSubtitleStyleProfileSetting()
 	SelectedIndex = 0;
 }
 
+void UEFSubtitleStyleProfileSetting::OnRegistered()
+{
+	Super::OnRegistered();
+
+	// UEFSubtitleSubsystem starts the same load when the game instance starts, so the profiles are
+	// usually in memory already when this setting builds its options.
+	if (!StyleProfilesHandle.IsValid())
+	{
+		StyleProfilesHandle = EFSubtitleSettingsHelpers::PreloadStyleProfiles();
+	}
+}
+
 void UEFSubtitleStyleProfileSetting::RefreshValues_Implementation()
 {
 	Values.Reset();
@@ -108,7 +123,7 @@ void UEFSubtitleStyleProfileSetting::RefreshValues_Implementation()
 	{
 		for (const TSoftObjectPtr<UEFSubtitleStyleProfile>& SoftProfile : Settings->AvailableStyleProfiles)
 		{
-			if (const UEFSubtitleStyleProfile* Profile = SoftProfile.LoadSynchronous())
+			if (const UEFSubtitleStyleProfile* Profile = EFAssets::Resolve(SoftProfile, TEXT("UEFSubtitleStyleProfileSetting")))
 			{
 				if (Profile->ProfileId.IsNone())
 				{

@@ -1,42 +1,43 @@
-﻿// Fill out your copyright notice in the Description page of Project Settings.
+﻿// Copyright Moon Punch Games. All Rights Reserved.
 
 
 #include "EFAsyncInputHoldName.h"
 
 
+namespace EFAsyncInputHoldNamePrivate
+{
+	/** The running hold of each Action Name. */
+	TMap<FName, TWeakObjectPtr<UEFAsyncInputHoldName>> RunningHolds;
+
+	UEFAsyncInputHoldName* FindRunning(FName ActionName)
+	{
+		const TWeakObjectPtr<UEFAsyncInputHoldName>* Found = RunningHolds.Find(ActionName);
+		UEFAsyncInputHoldName* Running = Found ? Found->Get() : nullptr;
+		return Running && !Running->IsFinished() ? Running : nullptr;
+	}
+}
 
 
 UEFAsyncInputHoldName* UEFAsyncInputHoldName::EFStartInputActionName(const UObject* WorldContextObject,FName ActionName, float holdTime)
 {
-	if (InputHoldsName.Num()>0)
+	// Already running for this name: the same node measures a new hold. One whose starter is gone
+	// (destroyed while the button was held) ends silently instead, so it cannot swallow this press.
+	if (UEFAsyncInputHoldName* Running = EFAsyncInputHoldNamePrivate::FindRunning(ActionName))
 	{
-		if (const auto Action = InputHoldsName.Find(ActionName) )
+		if (Running->GetWorldContextObject())
 		{
-			return Action->Get();
+			Running->StartHold();
+			return Running;
 		}
-		else
-		{
-			if (const auto ActionObject = NewObject<UEFAsyncInputHoldName>())
-			{
-				ActionObject->WorldContext=WorldContextObject;
-				ActionObject->HoldTime=holdTime;
-				InputHoldsName.Add(ActionName,ActionObject);
-				return ActionObject;
-			}
-		}
-	}
-	else
-	{
-		if (const auto ActionObject = NewObject<UEFAsyncInputHoldName>())
-		{
-			ActionObject->WorldContext=WorldContextObject;
-			ActionObject->HoldTime=holdTime;
-			InputHoldsName.Add(ActionName,ActionObject);
-			return ActionObject;
-		}
+		Running->Cancel();
 	}
 
-	return nullptr;
+	UEFAsyncInputHoldName* ActionObject = NewObject<UEFAsyncInputHoldName>();
+	ActionObject->HoldTime = holdTime;
+	ActionObject->MappedActionName = ActionName;
+	ActionObject->InitAsyncAction(const_cast<UObject*>(WorldContextObject));
+	EFAsyncInputHoldNamePrivate::RunningHolds.Add(ActionName, ActionObject);
+	return ActionObject;
 }
 
 
@@ -44,41 +45,36 @@ UEFAsyncInputHoldName* UEFAsyncInputHoldName::EFStartInputActionName(const UObje
 
 void UEFAsyncInputHoldName::EFEndInputActionName(const UObject* WorldContextObject, FName ActionName)
 {
-	if(InputHoldsName.Num()>0)
+	if (UEFAsyncInputHoldName* Running = EFAsyncInputHoldNamePrivate::FindRunning(ActionName))
 	{
-		if(const auto Action = InputHoldsName.Find(ActionName))
-		{
-			if (!Action->Get())
-			{
-				InputHoldsName.Remove(ActionName);
-				return;
-			}
-			if (Action->Get()->isHold)
-			{
-				Action->Get()->BroadcastHold();
-			}
-			else
-			{
-				Action->Get()->BroadcastPress();
-			}
-			Action->Get()->StopAction();
-			InputHoldsName.Remove(ActionName);
-		}
+		Running->ReleaseInput();
+	}
+	else
+	{
+		EFAsyncInputHoldNamePrivate::RunningHolds.Remove(ActionName);
 	}
 }
 
 
 
 
-void UEFAsyncInputHoldName::StopAction()
+void UEFAsyncInputHoldName::ReleaseInput()
 {
-	if (WorldContext)
+	const bool bWasHeld = isHold;
+	CancelWork();
+	if (!FinishAction())
 	{
-		WorldContext->GetWorld()->GetTimerManager().ClearTimer(Handle);
+		return;
 	}
-	Handle.Invalidate();
-	SetReadyToDestroy();
-	ConditionalBeginDestroy();
+
+	if (bWasHeld)
+	{
+		Hold.Broadcast();
+	}
+	else
+	{
+		Press.Broadcast();
+	}
 }
 
 
@@ -86,28 +82,61 @@ void UEFAsyncInputHoldName::StopAction()
 
 void UEFAsyncInputHoldName::PassTime()
 {
-	TimePassed +=0.02;
+	if (IsFinished())
+	{
+		return;
+	}
+
+	// Whoever started the hold is gone: stop without firing anything.
+	if (!GetWorldContextObject())
+	{
+		CancelWork();
+		FinishAction();
+		return;
+	}
+
+	TimePassed += 0.02f;
 	if (TimePassed >= HoldTime)
 	{
-		HoldExceeded.Broadcast();
 		isHold = true;
-		if (WorldContext)
-		{
-			WorldContext->GetWorld()->GetTimerManager().ClearTimer(Handle);
-		}
+		HoldTimer.Clear();
+		HoldExceeded.Broadcast();
 	}
 }
 
 
 
 
-void UEFAsyncInputHoldName::Activate()
+void UEFAsyncInputHoldName::ExecuteAction()
 {
-	Super::Activate();
+	StartHold();
+}
+
+
+void UEFAsyncInputHoldName::StartHold()
+{
+	if (IsFinished())
+	{
+		return;
+	}
+
 	TimePassed = 0;
 	isHold = false;
-	if (WorldContext)
+	if (!HoldTimer.Start(GetWorldContextObject(), FTimerDelegate::CreateUObject(this, &UEFAsyncInputHoldName::PassTime), 0.02f, true))
 	{
-		WorldContext->GetWorld()->GetTimerManager().SetTimer(Handle,this,&UEFAsyncInputHoldName::PassTime,0.02,true);
+		CancelWork();
+		FailAction(FEFResult::NotAvailable(GetResultSource(), TEXT("a world for the world context")));
+	}
+}
+
+
+void UEFAsyncInputHoldName::CancelWork()
+{
+	HoldTimer.Clear();
+
+	const TWeakObjectPtr<UEFAsyncInputHoldName>* Registered = EFAsyncInputHoldNamePrivate::RunningHolds.Find(MappedActionName);
+	if (Registered && (!Registered->IsValid() || Registered->Get() == this))
+	{
+		EFAsyncInputHoldNamePrivate::RunningHolds.Remove(MappedActionName);
 	}
 }

@@ -7,11 +7,6 @@
 #include "Publish/ESteamPublishManager.h"
 #include "Misc/Paths.h"
 
-FName UESteamPublishSettings::GetCategoryName() const
-{
-	return TEXT("Extended Framework");
-}
-
 void UESteamPublishSettings::PostInitProperties()
 {
 	Super::PostInitProperties();
@@ -24,7 +19,9 @@ void UESteamPublishSettings::PostInitProperties()
 			ContentBuilderDirectory.Path = FESteamPublishManager::GetDefaultContentBuilderDirectory();
 		}
 
-		// Mirror the ignored credentials file into the transient UI fields so they survive editor restarts.
+		// Mirror the stored credentials (user name file + OS credential store) into the transient UI
+		// fields so they survive editor restarts. Load also migrates a password left in the file by
+		// older versions of the plugin into the credential store.
 		FESteamPublishCredentials Creds;
 		if (FESteamPublishCredentials::Load(Creds))
 		{
@@ -53,8 +50,13 @@ void UESteamPublishSettings::SaveCredentials()
 	FString Error;
 	if (FESteamPublishCredentials::Save(Creds, Error))
 	{
-		FESteamPublishManager::Notify(FString::Printf(TEXT("Credentials saved to %s"), *FESteamPublishCredentials::GetCredentialsFilePath()), true);
-		FESteamPublishManager::Notify(TEXT("Reminder: run 'Secure Credentials for Version Control' so this file is never committed."), true);
+		FESteamPublishManager::Notify(FString::Printf(TEXT("Steam user name saved to %s; password saved to %s."),
+			*FESteamPublishCredentials::GetCredentialsFilePath(), *FESteamPublishCredentials::GetPasswordStorageDescription()), true);
+		if (!FESteamPublishCredentials::IsPasswordProtectedAtRest())
+		{
+			FESteamPublishManager::Notify(TEXT("On this platform the password file is readable only by your user account but is not encrypted."), true);
+		}
+		FESteamPublishManager::Notify(TEXT("Reminder: run 'Secure Credentials for Version Control' so the Config/SteamPublish folder is never committed."), true);
 	}
 	else
 	{

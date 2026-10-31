@@ -6,7 +6,7 @@
 #include "Templates/SubclassOf.h"
 #include "GameplayTagContainer.h"
 
-#include "Engine/DeveloperSettings.h"
+#include "Settings/EFDeveloperSettings.h"
 #include "Layout/Margin.h"
 #include "NYEngineVersionHelpers.h"
 
@@ -51,7 +51,7 @@ enum class EEGQuestTextInputKeyForNewLine : uint8
 	ShiftPlusEnter		UMETA(DisplayName = "Shift + Enter"),
 };
 
-// Defines how the overriden namespace will be set
+// Defines how the overridden namespace will be set
 UENUM()
 enum class EEGQuestTextNamespaceLocalization : uint8
 {
@@ -84,20 +84,14 @@ enum class EEGQuestClassPickerDisplayMode : uint8
 
 // UDeveloperSettings classes are auto discovered https://wiki.unrealengine.com/CustomSettings
 UCLASS(Config = Engine, DefaultConfig, meta = (DisplayName = "Extended Quest"))
-class UNREALEXTENDEDQUEST_API UEGQuestPluginSettings : public UDeveloperSettings
+class UNREALEXTENDEDQUEST_API UEGQuestPluginSettings : public UEFDeveloperSettings
 {
 	GENERATED_BODY()
 
 public:
 	UEGQuestPluginSettings();
 
-	// UDeveloperSettings interface
-	// Gets the settings container name for the settings, either Project or Editor
-	FName GetContainerName() const override { return TEXT("Project"); }
-	// Gets the category for the settings, some high level grouping like, Editor, Engine, Game...etc.
-	FName GetCategoryName() const override { return TEXT("Extended Framework"); };
-	// The unique name for your section of settings, uses the class's FName.
-	FName GetSectionName() const override { return Super::GetSectionName(); };
+	// Container ("Project") and category ("Extended Framework") come from UEFDeveloperSettings.
 
 #if WITH_EDITOR
 	// Gets the section text, uses the classes DisplayName by default.

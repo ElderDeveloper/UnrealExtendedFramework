@@ -3,8 +3,10 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Async/EFAsyncActionBase.h"
 #include "Kismet/BlueprintAsyncActionBase.h"
 #include "Shared/EPFTypes.h"
+#include "Subsystems/EFSubsystems.h"
 #include "EPFAsyncTypes.generated.h"
 
 /** Fired when any PlayFab async action fails. Provides both the full error struct and a plain message string for easy Blueprint wiring. */
@@ -37,6 +39,14 @@ inline FEPFError MakeEPFAsyncError(const FEPFResult& Result, const FString& Fall
 	{
 		Error.ErrorName = Error.ErrorCode;
 	}
+	return Error;
+}
+
+/** Build an FEPFError from a foundation result: a node's own cancellation, timeout or missing subsystem. */
+inline FEPFError MakeEPFAsyncError(const FEFResult& Result)
+{
+	FEPFError Error = FEPFError::Failure(Result.Message.IsEmpty() ? Result.ToString() : Result.Message, Result.Code, Result.HttpStatus);
+	Error.ErrorName = Result.Code;
 	return Error;
 }
 
@@ -86,9 +96,40 @@ inline void BroadcastEPFFailure(FOnEPFAsyncFailed& Delegate, const FString& Mess
 template<typename T>
 T* GetEPFSubsystemFromContext(UObject* WorldContext)
 {
-	if (!WorldContext) return nullptr;
-	UWorld* World = GEngine->GetWorldFromContextObject(WorldContext, EGetWorldErrorMode::LogAndReturnNull);
-	if (!World) return nullptr;
-	UGameInstance* GI = World->GetGameInstance();
-	return GI ? GI->GetSubsystem<T>() : nullptr;
+	return EF::GetGameInstanceSubsystem<T>(WorldContext);
 }
+
+/**
+ * Base for PlayFab async nodes: UEFAsyncActionBase plus the PlayFab failure pin.
+ *
+ * Nodes start their call inside CallWithContext() and return early from their delegate handler
+ * unless IsResultForThisCall(). UEPFSubsystem carries the call context to the response, so two
+ * nodes making the same call at once each finish on their own result. Cancellation (the node's
+ * Async Task pin), timeouts and a missing subsystem arrive on OnFailure as an FEPFError.
+ */
+UCLASS(Abstract)
+class UNREALEXTENDEDPLAYFAB_API UEPFAsyncActionBase : public UEFAsyncActionBase
+{
+	GENERATED_BODY()
+
+public:
+	UPROPERTY(BlueprintAssignable)
+	FOnEPFAsyncFailed OnFailure;
+
+protected:
+	virtual FName GetResultSource() const override { return TEXT("PlayFab"); }
+
+	virtual void BroadcastFailure(const FEFResult& Result) override
+	{
+		BroadcastEPFFailure(OnFailure, MakeEPFAsyncError(Result));
+	}
+
+	/** Finishes the node and fires OnFailure with Error. */
+	void FailWithError(const FEPFError& Error)
+	{
+		if (FinishAction())
+		{
+			BroadcastEPFFailure(OnFailure, Error);
+		}
+	}
+};

@@ -15,50 +15,54 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnEPFAsyncMatchCanceled);
 // ── Create Ticket ────────────────────────────────────────────────────────────
 
 UCLASS(meta = (DisplayName = "PlayFab: Create Matchmaking Ticket"))
-class UNREALEXTENDEDPLAYFAB_API UEPFAsyncCreateTicket : public UBlueprintAsyncActionBase
+class UNREALEXTENDEDPLAYFAB_API UEPFAsyncCreateTicket : public UEPFAsyncActionBase
 {
 	GENERATED_BODY()
 public:
 	UFUNCTION(BlueprintCallable, meta = (BlueprintInternalUseOnly = "true", WorldContext = "WorldContext", DisplayName = "PlayFab: Create Matchmaking Ticket"), Category = "PlayFab|Async|Matchmaking")
 	static UEPFAsyncCreateTicket* CreateTicket(UObject* WorldContext, const FString& QueueName, const TMap<FString, FString>& Attributes, int32 GiveUpAfterSeconds = 120);
 	UPROPERTY(BlueprintAssignable) FOnEPFAsyncTicketCreatedSuccess OnSuccess;
-	UPROPERTY(BlueprintAssignable) FOnEPFAsyncFailed OnFailure;
-	virtual void Activate() override;
+protected:
+	virtual void ExecuteAction() override;
+	virtual void CancelWork() override;
 private:
-	FString QueueName; TMap<FString, FString> Attributes; int32 Timeout; TWeakObjectPtr<UObject> WorldContext;
+	// GiveUpAfterSeconds is PlayFab's ticket lifetime, not a node timeout: the node finishes as soon as the ticket exists.
+	FString TicketQueueName; TMap<FString, FString> TicketAttributes; int32 Timeout = 120;
 	UFUNCTION() void HandleComplete(const FEPFResult& Result, const FString& TicketId);
 };
 
 // ── Get Ticket Status ────────────────────────────────────────────────────────
 
 UCLASS(meta = (DisplayName = "PlayFab: Get Matchmaking Status"))
-class UNREALEXTENDEDPLAYFAB_API UEPFAsyncGetTicketStatus : public UBlueprintAsyncActionBase
+class UNREALEXTENDEDPLAYFAB_API UEPFAsyncGetTicketStatus : public UEPFAsyncActionBase
 {
 	GENERATED_BODY()
 public:
 	UFUNCTION(BlueprintCallable, meta = (BlueprintInternalUseOnly = "true", WorldContext = "WorldContext", DisplayName = "PlayFab: Get Matchmaking Status"), Category = "PlayFab|Async|Matchmaking")
 	static UEPFAsyncGetTicketStatus* GetTicketStatus(UObject* WorldContext, const FString& QueueName, const FString& TicketId);
 	UPROPERTY(BlueprintAssignable) FOnEPFAsyncTicketStatusSuccess OnSuccess;
-	UPROPERTY(BlueprintAssignable) FOnEPFAsyncFailed OnFailure;
-	virtual void Activate() override;
+protected:
+	virtual void ExecuteAction() override;
+	virtual void CancelWork() override;
 private:
-	FString QueueName; FString TicketId; TWeakObjectPtr<UObject> WorldContext;
+	FString TicketQueueName; FString TargetTicketId;
 	UFUNCTION() void HandleComplete(const FEPFResult& Result, const FEPFMatchmakingResult& MatchmakingResult);
 };
 
 // ── Cancel Matchmaking ───────────────────────────────────────────────────────
 
 UCLASS(meta = (DisplayName = "PlayFab: Cancel Matchmaking"))
-class UNREALEXTENDEDPLAYFAB_API UEPFAsyncCancelMatchmaking : public UBlueprintAsyncActionBase
+class UNREALEXTENDEDPLAYFAB_API UEPFAsyncCancelMatchmaking : public UEPFAsyncActionBase
 {
 	GENERATED_BODY()
 public:
 	UFUNCTION(BlueprintCallable, meta = (BlueprintInternalUseOnly = "true", WorldContext = "WorldContext", DisplayName = "PlayFab: Cancel Matchmaking"), Category = "PlayFab|Async|Matchmaking")
 	static UEPFAsyncCancelMatchmaking* CancelMatchmaking(UObject* WorldContext, const FString& QueueName, const FString& TicketId);
 	UPROPERTY(BlueprintAssignable) FOnEPFAsyncMatchCanceled OnSuccess;
-	UPROPERTY(BlueprintAssignable) FOnEPFAsyncFailed OnFailure;
-	virtual void Activate() override;
+protected:
+	virtual void ExecuteAction() override;
+	virtual void CancelWork() override;
 private:
-	FString QueueName; FString TicketId; TWeakObjectPtr<UObject> WorldContext;
+	FString TicketQueueName; FString TargetTicketId;
 	UFUNCTION() void HandleComplete(const FEPFResult& Result);
 };

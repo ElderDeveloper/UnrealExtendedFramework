@@ -7,6 +7,7 @@
 #include "Interfaces/OnlinePurchaseInterface.h"
 #include "Interfaces/OnlineEntitlementsInterface.h"
 #include "UnrealExtendedEOS.h"
+#include "Async/EFCallContext.h"
 
 void UEEOSEcomSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
@@ -55,11 +56,14 @@ bool UEEOSEcomSubsystem::QueryOffers()
 	}
 
 	// FOnQueryOnlineStoreOffersComplete is a regular delegate — weak-bind so the callback
-	// is skipped if this subsystem is destroyed while the query is in flight
+	// is skipped if this subsystem is destroyed while the query is in flight. The completion
+	// reports under the caller's call context (see EFCallContext).
+	const int64 CallContext = EFCallContext::GetActive();
 	StoreInterface->QueryOffersById(*UserId, TArray<FUniqueOfferId>(),
 		FOnQueryOnlineStoreOffersComplete::CreateWeakLambda(this,
-			[this, StoreInterface, RequestContext = CaptureEOSContext()](bool bWasSuccessful, const TArray<FUniqueOfferId>& OfferIds, const FString& Error)
+			[this, StoreInterface, RequestContext = CaptureEOSContext(), CallContext](bool bWasSuccessful, const TArray<FUniqueOfferId>& OfferIds, const FString& Error)
 			{
+				EFCallContext::FScope CallScope(CallContext);
 				if (!IsEOSContextCurrent(RequestContext)) { OnOffersQueried.Broadcast(false, TArray<FEEOSCatalogOffer>()); return; }
 				CachedOffers.Empty();
 
@@ -413,11 +417,14 @@ bool UEEOSEcomSubsystem::Checkout(const FString& OfferId)
 	Request.AddPurchaseOffer(TEXT(""), OfferId, 1);
 
 	// FOnPurchaseCheckoutComplete is a regular delegate — weak-bind so the callback
-	// is skipped if this subsystem is destroyed while checkout is in flight
+	// is skipped if this subsystem is destroyed while checkout is in flight. The completion
+	// reports under the caller's call context (see EFCallContext).
+	const int64 CallContext = EFCallContext::GetActive();
 	PurchaseInterface->Checkout(*UserId, Request,
 		FOnPurchaseCheckoutComplete::CreateWeakLambda(this,
-			[this, OfferId, RequestContext = CaptureEOSContext()](const FOnlineError& Result, const TSharedRef<FPurchaseReceipt>& Receipt)
+			[this, OfferId, RequestContext = CaptureEOSContext(), CallContext](const FOnlineError& Result, const TSharedRef<FPurchaseReceipt>& Receipt)
 			{
+				EFCallContext::FScope CallScope(CallContext);
 				if (IsEOSContextCurrent(RequestContext) && Result.bSucceeded)
 				{
 					FString TransactionId = Receipt->TransactionId;

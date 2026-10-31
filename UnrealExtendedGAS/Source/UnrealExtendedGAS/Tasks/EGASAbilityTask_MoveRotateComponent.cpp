@@ -1,3 +1,5 @@
+// Copyright Kemal Erdem YILMAZ. All Rights Reserved.
+
 #include "Tasks/EGASAbilityTask_MoveRotateComponent.h"
 
 UEGASAbilityTask_MoveRotateComponent::UEGASAbilityTask_MoveRotateComponent()

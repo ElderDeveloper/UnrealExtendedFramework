@@ -1,7 +1,10 @@
+// Copyright Moon Punch Games. All Rights Reserved.
+
 // EFSubtitleLocalSubsystem.h - Per-player subtitle subsystem (orchestrator)
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Engine/StreamableManager.h"
 #include "Subsystems/LocalPlayerSubsystem.h"
 #include "UnrealExtendedFramework/Systems/Subtitle/Data/EFSubtitleData.h"
 #include "EFSubtitleLocalSubsystem.generated.h"
@@ -113,4 +116,11 @@ private:
 	FEFSubtitlePresentationState PresentationState;
 
 	FTimerHandle QueueTickHandle;
+
+	/**
+	 * Voice sounds started loading when their entry was queued, by request id. Released when the
+	 * entry expires or is cancelled, and all at once whenever the queue runs empty (entries a
+	 * Replace drops never report expiry).
+	 */
+	TMap<int32, TSharedPtr<FStreamableHandle>> QueuedVoiceHandles;
 };

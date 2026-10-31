@@ -1,82 +1,67 @@
 // Copyright Kemal Erdem YILMAZ. All Rights Reserved.
 
 #include "BlueprintActions/Matchmaking/ESteamMatchmakingAsyncActions.h"
-#include "Engine/Engine.h"
-#include "Engine/GameInstance.h"
-#include "Engine/World.h"
-
-namespace
-{
-	UESteamMatchmakingSubsystem* GetMatchmakingSubsystem(const UObject* WorldContextObject)
-	{
-		if (const UWorld* World = GEngine ? GEngine->GetWorldFromContextObject(WorldContextObject, EGetWorldErrorMode::LogAndReturnNull) : nullptr)
-		{
-			if (const UGameInstance* GameInstance = World->GetGameInstance())
-			{
-				return GameInstance->GetSubsystem<UESteamMatchmakingSubsystem>();
-			}
-		}
-		return nullptr;
-	}
-}
 
 // ---- USteamAsyncCreateLobby ----
 
 USteamAsyncCreateLobby* USteamAsyncCreateLobby::CreateLobby(UObject* WorldContext, EESteamLobbyType LobbyType, int32 MaxMembers, float Timeout)
 {
 	USteamAsyncCreateLobby* Action = NewObject<USteamAsyncCreateLobby>();
-	Action->WorldContextObject = WorldContext;
 	Action->LobbyType = LobbyType;
 	Action->MaxMembers = MaxMembers;
-	Action->Timeout = Timeout;
-	Action->RegisterWithGameInstance(WorldContext);
+	Action->InitAsyncAction(WorldContext, Timeout);
 	return Action;
 }
 
-void USteamAsyncCreateLobby::Activate()
+void USteamAsyncCreateLobby::ExecuteAction()
 {
-	UESteamMatchmakingSubsystem* Subsystem = GetMatchmakingSubsystem(WorldContextObject);
+	UESteamMatchmakingSubsystem* Subsystem = RequireGameInstanceSubsystem<UESteamMatchmakingSubsystem>();
 	if (!Subsystem)
 	{
-		Complete(false, FESteamId());
 		return;
 	}
 
 	MatchmakingSubsystem = Subsystem;
 	Subsystem->OnLobbyCreated.AddDynamic(this, &USteamAsyncCreateLobby::HandleLobbyCreated);
 
-	if (!Subsystem->CreateLobby(LobbyType, MaxMembers))
+	bool bStarted = false;
+	CallWithContext([&] { bStarted = Subsystem->CreateLobby(LobbyType, MaxMembers); });
+	if (!bStarted)
 	{
 		Complete(false, FESteamId());
-		return;
 	}
-
-	// Fail the node if the subsystem delegate never fires.
-	ArmTimeout(Timeout);
 }
 
 void USteamAsyncCreateLobby::HandleLobbyCreated(bool bSuccess, FESteamId LobbyId)
 {
-	// NOTE: FOnSteamLobbyCreated's LobbyId is the result (unknown before the call), so it cannot
-	// correlate concurrent creates. Relies on Timeout + one-in-flight subsystem limit.
+	// FOnSteamLobbyCreated's LobbyId is the result (unknown before the call), so it cannot correlate
+	// concurrent creates; the subsystem tags each result with the call context of its request instead.
+	if (!IsResultForThisCall())
+	{
+		return;
+	}
 	Complete(bSuccess, LobbyId);
 }
 
-void USteamAsyncCreateLobby::OnTimeoutFailure()
+void USteamAsyncCreateLobby::BroadcastFailure(const FEFResult& /*Result*/)
 {
-	Complete(false, FESteamId());
+	OnFailure.Broadcast(FESteamId());
+}
+
+void USteamAsyncCreateLobby::CancelWork()
+{
+	if (UESteamMatchmakingSubsystem* Subsystem = MatchmakingSubsystem.Get())
+	{
+		Subsystem->OnLobbyCreated.RemoveDynamic(this, &USteamAsyncCreateLobby::HandleLobbyCreated);
+	}
 }
 
 void USteamAsyncCreateLobby::Complete(bool bSuccess, FESteamId LobbyId)
 {
-	if (!BeginComplete())
+	CancelWork();
+	if (!FinishAction())
 	{
 		return;
-	}
-
-	if (UESteamMatchmakingSubsystem* Subsystem = MatchmakingSubsystem.Get())
-	{
-		Subsystem->OnLobbyCreated.RemoveDynamic(this, &USteamAsyncCreateLobby::HandleLobbyCreated);
 	}
 
 	if (bSuccess)
@@ -87,8 +72,6 @@ void USteamAsyncCreateLobby::Complete(bool bSuccess, FESteamId LobbyId)
 	{
 		OnFailure.Broadcast(LobbyId);
 	}
-
-	SetReadyToDestroy();
 }
 
 // ---- USteamAsyncJoinLobby ----
@@ -96,61 +79,60 @@ void USteamAsyncCreateLobby::Complete(bool bSuccess, FESteamId LobbyId)
 USteamAsyncJoinLobby* USteamAsyncJoinLobby::JoinLobby(UObject* WorldContext, FESteamId LobbyId, float Timeout)
 {
 	USteamAsyncJoinLobby* Action = NewObject<USteamAsyncJoinLobby>();
-	Action->WorldContextObject = WorldContext;
 	Action->LobbyId = LobbyId;
-	Action->Timeout = Timeout;
-	Action->RegisterWithGameInstance(WorldContext);
+	Action->InitAsyncAction(WorldContext, Timeout);
 	return Action;
 }
 
-void USteamAsyncJoinLobby::Activate()
+void USteamAsyncJoinLobby::ExecuteAction()
 {
-	UESteamMatchmakingSubsystem* Subsystem = GetMatchmakingSubsystem(WorldContextObject);
+	UESteamMatchmakingSubsystem* Subsystem = RequireGameInstanceSubsystem<UESteamMatchmakingSubsystem>();
 	if (!Subsystem)
 	{
-		Complete(false, LobbyId);
 		return;
 	}
 
 	MatchmakingSubsystem = Subsystem;
 	Subsystem->OnLobbyEntered.AddDynamic(this, &USteamAsyncJoinLobby::HandleLobbyEntered);
 
-	if (!Subsystem->JoinLobby(LobbyId))
+	bool bStarted = false;
+	CallWithContext([&] { bStarted = Subsystem->JoinLobby(LobbyId); });
+	if (!bStarted)
 	{
 		Complete(false, LobbyId);
-		return;
 	}
-
-	// Fail the node if the subsystem delegate never fires.
-	ArmTimeout(Timeout);
 }
 
 void USteamAsyncJoinLobby::HandleLobbyEntered(bool bSuccess, FESteamId EnteredLobbyId)
 {
 	// Defensive: only react to the lobby this node requested, in case another
 	// join was issued on the shared subsystem delegate in the meantime.
-	if (EnteredLobbyId != LobbyId)
+	if (!IsResultForThisCall() || EnteredLobbyId != LobbyId)
 	{
 		return;
 	}
 	Complete(bSuccess, EnteredLobbyId);
 }
 
-void USteamAsyncJoinLobby::OnTimeoutFailure()
+void USteamAsyncJoinLobby::BroadcastFailure(const FEFResult& /*Result*/)
 {
-	Complete(false, LobbyId);
+	OnFailure.Broadcast(LobbyId);
+}
+
+void USteamAsyncJoinLobby::CancelWork()
+{
+	if (UESteamMatchmakingSubsystem* Subsystem = MatchmakingSubsystem.Get())
+	{
+		Subsystem->OnLobbyEntered.RemoveDynamic(this, &USteamAsyncJoinLobby::HandleLobbyEntered);
+	}
 }
 
 void USteamAsyncJoinLobby::Complete(bool bSuccess, FESteamId EnteredLobbyId)
 {
-	if (!BeginComplete())
+	CancelWork();
+	if (!FinishAction())
 	{
 		return;
-	}
-
-	if (UESteamMatchmakingSubsystem* Subsystem = MatchmakingSubsystem.Get())
-	{
-		Subsystem->OnLobbyEntered.RemoveDynamic(this, &USteamAsyncJoinLobby::HandleLobbyEntered);
 	}
 
 	if (bSuccess)
@@ -161,8 +143,6 @@ void USteamAsyncJoinLobby::Complete(bool bSuccess, FESteamId EnteredLobbyId)
 	{
 		OnFailure.Broadcast(EnteredLobbyId);
 	}
-
-	SetReadyToDestroy();
 }
 
 // ---- USteamAsyncRequestLobbyList ----
@@ -170,20 +150,17 @@ void USteamAsyncJoinLobby::Complete(bool bSuccess, FESteamId EnteredLobbyId)
 USteamAsyncRequestLobbyList* USteamAsyncRequestLobbyList::RequestLobbyList(UObject* WorldContext, EESteamLobbyDistanceFilter DistanceFilter, int32 MaxResults, float Timeout)
 {
 	USteamAsyncRequestLobbyList* Action = NewObject<USteamAsyncRequestLobbyList>();
-	Action->WorldContextObject = WorldContext;
 	Action->DistanceFilter = DistanceFilter;
 	Action->MaxResults = MaxResults;
-	Action->Timeout = Timeout;
-	Action->RegisterWithGameInstance(WorldContext);
+	Action->InitAsyncAction(WorldContext, Timeout);
 	return Action;
 }
 
-void USteamAsyncRequestLobbyList::Activate()
+void USteamAsyncRequestLobbyList::ExecuteAction()
 {
-	UESteamMatchmakingSubsystem* Subsystem = GetMatchmakingSubsystem(WorldContextObject);
+	UESteamMatchmakingSubsystem* Subsystem = RequireGameInstanceSubsystem<UESteamMatchmakingSubsystem>();
 	if (!Subsystem)
 	{
-		Complete(false, TArray<FESteamId>());
 		return;
 	}
 
@@ -196,37 +173,44 @@ void USteamAsyncRequestLobbyList::Activate()
 		Subsystem->AddRequestLobbyListResultCountFilter(MaxResults);
 	}
 
-	if (!Subsystem->RequestLobbyList())
+	bool bStarted = false;
+	CallWithContext([&] { bStarted = Subsystem->RequestLobbyList(); });
+	if (!bStarted)
 	{
 		Complete(false, TArray<FESteamId>());
-		return;
 	}
-
-	// Fail the node if the subsystem delegate never fires.
-	ArmTimeout(Timeout);
 }
 
 void USteamAsyncRequestLobbyList::HandleLobbyListReceived(bool bSuccess, const TArray<FESteamId>& Lobbies)
 {
-	// NOTE: FOnSteamLobbyListReceived carries no request id; cannot discriminate. Relies on Timeout + one-in-flight subsystem limit.
+	// FOnSteamLobbyListReceived carries no request id; the subsystem tags each result with the call
+	// context of its request, so concurrent searches are told apart here.
+	if (!IsResultForThisCall())
+	{
+		return;
+	}
 	Complete(bSuccess, Lobbies);
 }
 
-void USteamAsyncRequestLobbyList::OnTimeoutFailure()
+void USteamAsyncRequestLobbyList::BroadcastFailure(const FEFResult& /*Result*/)
 {
-	Complete(false, TArray<FESteamId>());
+	OnFailure.Broadcast(TArray<FESteamId>());
+}
+
+void USteamAsyncRequestLobbyList::CancelWork()
+{
+	if (UESteamMatchmakingSubsystem* Subsystem = MatchmakingSubsystem.Get())
+	{
+		Subsystem->OnLobbyListReceived.RemoveDynamic(this, &USteamAsyncRequestLobbyList::HandleLobbyListReceived);
+	}
 }
 
 void USteamAsyncRequestLobbyList::Complete(bool bSuccess, const TArray<FESteamId>& Lobbies)
 {
-	if (!BeginComplete())
+	CancelWork();
+	if (!FinishAction())
 	{
 		return;
-	}
-
-	if (UESteamMatchmakingSubsystem* Subsystem = MatchmakingSubsystem.Get())
-	{
-		Subsystem->OnLobbyListReceived.RemoveDynamic(this, &USteamAsyncRequestLobbyList::HandleLobbyListReceived);
 	}
 
 	if (bSuccess)
@@ -237,6 +221,4 @@ void USteamAsyncRequestLobbyList::Complete(bool bSuccess, const TArray<FESteamId
 	{
 		OnFailure.Broadcast(Lobbies);
 	}
-
-	SetReadyToDestroy();
 }

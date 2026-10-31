@@ -1,0 +1,35 @@
+name: Lint
+
+# Structural checks that need no Unreal install: plugin descriptors, cross-plugin and cross-module
+# dependencies, copyright headers, CoreRedirects syntax, and the new-plugin template.
+# Building and running the automation tests needs a machine with Unreal Engine; see ARCHITECTURE.md.
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Repository lint
+        run: python3 Scripts/lint_repository.py
+
+      - name: Plugin template generates cleanly
+        run: |
+          out="$(mktemp -d)"
+          python3 Scripts/new_extended_plugin.py CiSample --prefix ECi --output "$out"
+          if grep -rn "{{" "$out"; then
+            echo "Template placeholders were left unreplaced" >&2
+            exit 1
+          fi
+          python3 -c "import json, sys; json.load(open(sys.argv[1]))" "$out/UnrealExtendedCiSample/UnrealExtendedCiSample.uplugin"

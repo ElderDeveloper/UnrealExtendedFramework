@@ -3,6 +3,7 @@
 using System;
 using System.IO;
 using EpicGames.Core;
+using Microsoft.Extensions.Logging;
 using UnrealBuildTool;
 
 /// <summary>
@@ -86,12 +87,13 @@ public class ExtendedSteamLibrary : ModuleRules
 			if (SdkVersion == 0 && !bWarnedNoSteamworksSDK)
 			{
 				bWarnedNoSteamworksSDK = true;
-				Log.TraceWarning(
-					"UnrealExtendedSteam: no Steamworks SDK found for platform " + Target.Platform.ToString() + ". " +
+				Target.Logger.LogWarning(
+					"UnrealExtendedSteam: no Steamworks SDK found for platform {Platform}. " +
 					"The plugin will compile with WITH_EXTENDEDSTEAM_SDK=0, which makes every Steam client/server " +
 					"call a silent no-op. Drop an official Steamworks SDK into " +
 					"Source/ThirdParty/ExtendedSteamLibrary/SDK (so that SDK/public/steam/steam_api.h exists), " +
-					"or use an engine build that ships the Steamworks third-party module.");
+					"or use an engine build that ships the Steamworks third-party module.",
+					Target.Platform);
 			}
 		}
 

@@ -4,15 +4,21 @@
 #include "Shared/ESteamLog.h"
 #include "Shared/ESteamSDK.h"
 #include "Containers/Queue.h"
+#include "Async/EFCallContext.h"
 
 #if WITH_EXTENDEDSTEAM_SDK
 THIRD_PARTY_INCLUDES_START
 #include "steam/steam_api.h"
 THIRD_PARTY_INCLUDES_END
 
+// Each pending struct carries CallContext: the EFCallContext active when the request was made
+// (stamped by Enqueue*). It is made active again while the request's result is broadcast, so async
+// nodes waiting on the shared delegates can tell concurrent calls apart.
+
 /** Marks a queued RequestPrices call (the call takes no parameters). */
 struct FESteamPendingPricesRequest
 {
+	int64 CallContext = 0;
 };
 
 /** Parameters captured to (re-)issue a queued StartPurchase call. */
@@ -20,21 +26,23 @@ struct FESteamPendingInventoryPurchase
 {
 	TArray<SteamItemDef_t> Definitions;
 	TArray<uint32> Quantities;
+	int64 CallContext = 0;
 };
 
 /** Parameters captured to (re-)issue a queued RequestEligiblePromoItemDefinitionsIDs call. */
 struct FESteamPendingEligiblePromoRequest
 {
 	CSteamID SteamID;
+	int64 CallContext = 0;
 };
 
 /**
  * Native Steam callback listeners; alive only while the Steam client API is initialized.
  *
- * Result handles issued by the subsystem are tracked in PendingResults until their
- * SteamInventoryResultReady_t arrives. Every ResultReady is consumed here: the result is
- * parsed, broadcast on OnInventoryItemsReceived and ALWAYS DestroyResult'd — including
- * Steam-internal results (purchase completion, web-store purchases, out-of-band grants/trades)
+ * Result handles issued by the subsystem are tracked in PendingResults (with the EFCallContext that
+ * was active when the call was made) until their SteamInventoryResultReady_t arrives. Every
+ * ResultReady is consumed here: the result is parsed, broadcast on OnInventoryItemsReceived (with
+ * that context active) and ALWAYS DestroyResult'd — including Steam-internal results (purchase completion, web-store purchases, out-of-band grants/trades)
  * which Steam spawns itself and are therefore never in PendingResults. Destroying every result
  * honors the SDK's mandatory contract and avoids leaking result handles. Handles still pending
  * when the holder dies are dropped without DestroyResult — the SDK may already be shut down at
@@ -59,7 +67,7 @@ public:
 
 	void TrackResultHandle(SteamInventoryResult_t Handle)
 	{
-		PendingResults.Add(Handle);
+		PendingResults.Add(Handle, EFCallContext::GetActive());
 	}
 
 	// Each Enqueue* issues the Steam call immediately when its operation is idle, otherwise it
@@ -67,8 +75,9 @@ public:
 	// immediate path when the Steam call could not be issued (preserves the public methods'
 	// historical "return false when the request could not be issued" contract).
 
-	bool EnqueuePricesRequest(const FESteamPendingPricesRequest& Request)
+	bool EnqueuePricesRequest(FESteamPendingPricesRequest Request)
 	{
+		Request.CallContext = EFCallContext::GetActive();
 		if (bPricesBusy)
 		{
 			PricesRequestQueue.Enqueue(Request);
@@ -77,8 +86,9 @@ public:
 		return IssuePricesRequest(Request);
 	}
 
-	bool EnqueuePurchase(const FESteamPendingInventoryPurchase& Request)
+	bool EnqueuePurchase(FESteamPendingInventoryPurchase Request)
 	{
+		Request.CallContext = EFCallContext::GetActive();
 		if (bPurchaseBusy)
 		{
 			PurchaseQueue.Enqueue(Request);
@@ -87,8 +97,9 @@ public:
 		return IssuePurchase(Request);
 	}
 
-	bool EnqueueEligiblePromoRequest(const FESteamPendingEligiblePromoRequest& Request)
+	bool EnqueueEligiblePromoRequest(FESteamPendingEligiblePromoRequest Request)
 	{
+		Request.CallContext = EFCallContext::GetActive();
 		if (bEligiblePromoBusy)
 		{
 			EligiblePromoQueue.Enqueue(Request);
@@ -162,7 +173,7 @@ public:
 private:
 	// ---- RequestPrices (serialized) ----
 
-	bool IssuePricesRequest(const FESteamPendingPricesRequest& /*Request*/)
+	bool IssuePricesRequest(const FESteamPendingPricesRequest& Request)
 	{
 		UESteamInventorySubsystem* Subsystem = Owner.Get();
 		if (!Subsystem || !Subsystem->IsSteamAvailable() || !SteamInventory())
@@ -176,6 +187,7 @@ private:
 			return false;
 		}
 		PricesResult.Set(Call, this, &FESteamInventoryCallbacks::HandlePricesResult);
+		PricesContext = Request.CallContext;
 		bPricesBusy = true;
 		return true;
 	}
@@ -191,6 +203,7 @@ private:
 			}
 			if (!IssuePricesRequest(Request))
 			{
+				EFCallContext::FScope RequestScope(Request.CallContext);
 				// Steam went away while draining: fail this queued request instead of dropping it.
 				if (UESteamInventorySubsystem* Subsystem = Owner.Get())
 				{
@@ -217,6 +230,7 @@ private:
 			return false;
 		}
 		PurchaseResult.Set(Call, this, &FESteamInventoryCallbacks::HandlePurchaseResult);
+		PurchaseContext = Request.CallContext;
 		bPurchaseBusy = true;
 		return true;
 	}
@@ -232,6 +246,7 @@ private:
 			}
 			if (!IssuePurchase(Request))
 			{
+				EFCallContext::FScope RequestScope(Request.CallContext);
 				if (UESteamInventorySubsystem* Subsystem = Owner.Get())
 				{
 					Subsystem->OnPurchaseStarted.Broadcast(false, 0, 0);
@@ -256,6 +271,7 @@ private:
 			return false;
 		}
 		EligiblePromoResult.Set(Call, this, &FESteamInventoryCallbacks::HandleEligiblePromoResult);
+		EligiblePromoContext = Request.CallContext;
 		bEligiblePromoBusy = true;
 		return true;
 	}
@@ -271,6 +287,7 @@ private:
 			}
 			if (!IssueEligiblePromoRequest(Request))
 			{
+				EFCallContext::FScope RequestScope(Request.CallContext);
 				if (UESteamInventorySubsystem* Subsystem = Owner.Get())
 				{
 					Subsystem->OnEligiblePromoItemDefsReceived.Broadcast(false, TArray<int32>());
@@ -385,13 +402,14 @@ private:
 		}
 
 		// A handle this subsystem issued (GetAllItems, GetItemsById, TriggerItemDrop, ConsumeItem)
-		// is tracked here; drop it from the set. A handle we did NOT issue is a Steam-internal
+		// is tracked here; drop it from the map. A handle we did NOT issue is a Steam-internal
 		// result — purchase completion (StartPurchase), web-store purchase, or an out-of-band
 		// grant/trade — which Steam spawns itself and never puts in PendingResults. These arrive
 		// untracked and are now consumed too: previously they were early-returned, so they were
 		// never parsed, never broadcast, and never DestroyResult'd, leaking the handle and
 		// violating the SDK's mandatory destroy contract (isteaminventory.h).
-		const bool bTracked = PendingResults.Remove(Data->m_handle) > 0;
+		int64 ResultContext = 0;
+		const bool bTracked = PendingResults.RemoveAndCopyValue(Data->m_handle, ResultContext);
 
 		ISteamInventory* Inventory = SteamInventory();
 
@@ -424,6 +442,9 @@ private:
 
 		if (UESteamInventorySubsystem* Subsystem = Owner.Get())
 		{
+			// Tracked results report with the context of the call that issued them; Steam-internal
+			// results carry none (0), so every listener accepts them as before.
+			EFCallContext::FScope Scope(ResultContext);
 			Subsystem->OnInventoryItemsReceived.Broadcast(bSuccess, Items);
 		}
 	}
@@ -449,6 +470,7 @@ private:
 
 	void HandlePricesResult(SteamInventoryRequestPricesResult_t* Data, bool bIOFailure)
 	{
+		EFCallContext::FScope Scope(PricesContext);
 		if (UESteamInventorySubsystem* Subsystem = Owner.Get())
 		{
 			const bool bSuccess = !bIOFailure && Data->m_result == k_EResultOK;
@@ -462,6 +484,7 @@ private:
 
 	void HandlePurchaseResult(SteamInventoryStartPurchaseResult_t* Data, bool bIOFailure)
 	{
+		EFCallContext::FScope Scope(PurchaseContext);
 		if (UESteamInventorySubsystem* Subsystem = Owner.Get())
 		{
 			const bool bSuccess = !bIOFailure && Data->m_result == k_EResultOK;
@@ -474,6 +497,7 @@ private:
 
 	void HandleEligiblePromoResult(SteamInventoryEligiblePromoItemDefIDs_t* Data, bool bIOFailure)
 	{
+		EFCallContext::FScope Scope(EligiblePromoContext);
 		if (UESteamInventorySubsystem* Subsystem = Owner.Get())
 		{
 			TArray<int32> DefIds;
@@ -500,7 +524,8 @@ private:
 	}
 
 	TWeakObjectPtr<UESteamInventorySubsystem> Owner;
-	TSet<SteamInventoryResult_t> PendingResults;
+	// Issued result handle -> EFCallContext active when it was issued.
+	TMap<SteamInventoryResult_t, int64> PendingResults;
 
 	// Throwaway handles created by CheckLastResultSteamID; their ResultReady is consumed silently.
 	TSet<SteamInventoryResult_t> InternalResults;
@@ -524,6 +549,11 @@ private:
 	TQueue<FESteamPendingPricesRequest> PricesRequestQueue;
 	TQueue<FESteamPendingInventoryPurchase> PurchaseQueue;
 	TQueue<FESteamPendingEligiblePromoRequest> EligiblePromoQueue;
+
+	// EFCallContext of the request each call-result operation has in flight (see the pending structs).
+	int64 PricesContext = 0;
+	int64 PurchaseContext = 0;
+	int64 EligiblePromoContext = 0;
 };
 #else
 class FESteamInventoryCallbacks

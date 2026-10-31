@@ -11,32 +11,34 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnEPFAsyncContentUrlSuccess, const 
 
 // ── Get Content URL ──────────────────────────────────────────────────────────
 UCLASS(meta = (DisplayName = "PlayFab: Get Content Download URL"))
-class UNREALEXTENDEDPLAYFAB_API UEPFAsyncGetContentUrl : public UBlueprintAsyncActionBase
+class UNREALEXTENDEDPLAYFAB_API UEPFAsyncGetContentUrl : public UEPFAsyncActionBase
 {
 	GENERATED_BODY()
 public:
 	UFUNCTION(BlueprintCallable, meta = (BlueprintInternalUseOnly = "true", WorldContext = "WorldContext", DisplayName = "PlayFab: Get Content Download URL"), Category = "PlayFab|Async|Content")
 	static UEPFAsyncGetContentUrl* GetContentDownloadUrl(UObject* WorldContext, const FString& Key, bool bThruCDN = true);
 	UPROPERTY(BlueprintAssignable) FOnEPFAsyncContentUrlSuccess OnSuccess;
-	UPROPERTY(BlueprintAssignable) FOnEPFAsyncFailed OnFailure;
-	virtual void Activate() override;
+protected:
+	virtual void ExecuteAction() override;
+	virtual void CancelWork() override;
 private:
-	FString Key; bool bCDN; TWeakObjectPtr<UObject> WorldContext;
+	FString ContentKey; bool bCDN = true;
 	UFUNCTION() void HandleComplete(const FEPFResult& Result, const FString& Url);
 };
 
 // ── Download Content ─────────────────────────────────────────────────────────
 UCLASS(meta = (DisplayName = "PlayFab: Download Content"))
-class UNREALEXTENDEDPLAYFAB_API UEPFAsyncDownloadContent : public UBlueprintAsyncActionBase
+class UNREALEXTENDEDPLAYFAB_API UEPFAsyncDownloadContent : public UEPFAsyncActionBase
 {
 	GENERATED_BODY()
 public:
 	UFUNCTION(BlueprintCallable, meta = (BlueprintInternalUseOnly = "true", WorldContext = "WorldContext", DisplayName = "PlayFab: Download Content As String"), Category = "PlayFab|Async|Content")
 	static UEPFAsyncDownloadContent* DownloadContentAsString(UObject* WorldContext, const FString& Key);
 	UPROPERTY(BlueprintAssignable) FOnEPFAsyncContentUrlSuccess OnSuccess;
-	UPROPERTY(BlueprintAssignable) FOnEPFAsyncFailed OnFailure;
-	virtual void Activate() override;
+protected:
+	virtual void ExecuteAction() override;
+	virtual void CancelWork() override;
 private:
-	FString Key; TWeakObjectPtr<UObject> WorldContext;
+	FString ContentKey;
 	UFUNCTION() void HandleComplete(const FEPFResult& Result, const FString& Content);
 };

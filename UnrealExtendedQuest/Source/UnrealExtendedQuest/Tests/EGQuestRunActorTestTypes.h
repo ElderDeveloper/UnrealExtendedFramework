@@ -17,12 +17,13 @@ class UNREALEXTENDEDQUEST_API AEGQuestTestRunActor : public AEGQuestRunActor
 	GENERATED_BODY()
 
 public:
-	/** Hook names in arrival order, across every instance. Reset() before each test. */
+	/** Hook names in arrival order, across every instance. ResetRecording() before each test. */
 	static TArray<FName> Recorded;
 	static int32 SpawnCount;
 	static EEGQuestResult LastResult;
 
-	static void Reset()
+	/** Not named Reset: that would hide AActor::Reset(). */
+	static void ResetRecording()
 	{
 		Recorded.Reset();
 		SpawnCount = 0;

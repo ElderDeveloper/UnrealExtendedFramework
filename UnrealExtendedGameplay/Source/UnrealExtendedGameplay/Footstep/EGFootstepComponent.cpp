@@ -1,4 +1,4 @@
-﻿// Fill out your copyright notice in the Description page of Project Settings.
+﻿// Copyright Kemal Erdem YILMAZ. All Rights Reserved.
 
 
 #include "EGFootstepComponent.h"
@@ -18,7 +18,8 @@ void UEGFootstepComponent::SpawnFootStepEvents(const FVector LegPosition)
 	if(UEFTraceLibrary::ExtendedLineTraceSingle(GetWorld(),LineTraceInformation))
 	{
 		FFootStepStruct* FoundStruct;
-		if(GetSurfaceEffects(LineTraceInformation.HitResult.PhysMaterial->SurfaceType,FoundStruct))
+		// A hit can carry no physical material; DetermineSurfaceType falls back to the default one.
+		if(GetSurfaceEffects(UPhysicalMaterial::DetermineSurfaceType(LineTraceInformation.HitResult.PhysMaterial.Get()),FoundStruct))
 		{
 			SpawnEffects(FoundStruct,&LineTraceInformation);
 		}
