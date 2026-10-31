@@ -4,6 +4,7 @@
 
 #include "Json/EFJsonLibrary.h"
 #include "Libraries/File/EFFileLibrary.h"
+#include "Libraries/File/EFFileLibraryPrivate.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
 #include "UnrealExtendedFramework.h"
@@ -17,6 +18,11 @@ FEFJsonObject UEFLegacyJsonLibrary::ReadJsonFile(EFProjectDirectory DirectoryTyp
 	}
 
 	FEFJsonObject Result;
+	if (!EFFileLibraryAccess::CheckRead(TEXT("UEFLegacyJsonLibrary::ReadJsonFile"), Source))
+	{
+		Success = false;
+		return Result;
+	}
 	Success = UEFJsonLibrary::LoadJsonObjectFromFile(FPaths::ConvertRelativePathToFull(Source), Result);
 	return Result;
 }
@@ -24,7 +30,13 @@ FEFJsonObject UEFLegacyJsonLibrary::ReadJsonFile(EFProjectDirectory DirectoryTyp
 FString UEFLegacyJsonLibrary::ReadExtendedJsonAsString(EFProjectDirectory DirectoryType, FString FileDirectory, bool& Success)
 {
 	FString Text;
-	Success = FFileHelper::LoadFileToString(Text, *(UEFFileLibrary::GetProjectDirectory(DirectoryType) + FileDirectory));
+	const FString Source = UEFFileLibrary::GetProjectDirectory(DirectoryType) + FileDirectory;
+	if (!EFFileLibraryAccess::CheckRead(TEXT("UEFLegacyJsonLibrary::ReadExtendedJsonAsString"), Source))
+	{
+		Success = false;
+		return Text;
+	}
+	Success = FFileHelper::LoadFileToString(Text, *Source);
 	return Text;
 }
 
