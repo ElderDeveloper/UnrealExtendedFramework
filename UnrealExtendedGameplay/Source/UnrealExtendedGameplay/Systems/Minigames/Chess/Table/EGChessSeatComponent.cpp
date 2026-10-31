@@ -14,6 +14,9 @@
 #include "GameFramework/Controller.h"
 #include "GameFramework/GameStateBase.h"
 #include "Net/UnrealNetwork.h"
+#include "UnrealExtendedGameplay/Animation/EGAnimationTags.h"
+#include "UnrealExtendedGameplay/Animation/Montage/EGMontageLibrary.h"
+#include "UnrealExtendedGameplay/Animation/Montage/EGMontagePlayerInterface.h"
 #include "UnrealExtendedGameplay/Systems/Minigames/Chess/Data/EGChessAnimationSet.h"
 #include "UnrealExtendedGameplay/Systems/Minigames/Chess/Player/EGChessCharacterInterface.h"
 #include "UnrealExtendedGameplay/Systems/Minigames/Chess/Presentation/EGChessEngineAssets.h"
@@ -87,11 +90,8 @@ USkeletalMeshComponent* UEGChessSeatComponent::GetPawnMesh(const APawn* Pawn) co
 			return Mesh;
 		}
 	}
-	if (const ACharacter* Character = Cast<ACharacter>(Pawn))
-	{
-		return Character->GetMesh();
-	}
-	return Pawn->FindComponentByClass<USkeletalMeshComponent>();
+	// IEGMontagePlayerInterface, then ACharacter::GetMesh, then the first skeletal mesh.
+	return UEGMontageLibrary::GetMontageMesh(Pawn, TAG_EGAnim_Mesh_Body);
 }
 
 UAnimInstance* UEGChessSeatComponent::GetPawnAnimInstance(const APawn* Pawn) const
@@ -758,6 +758,10 @@ bool UEGChessSeatComponent::PlayMontage(UAnimMontage* Montage, float PlayRate, f
 	{
 		return true;
 	}
+	if (Pawn->Implements<UEGMontagePlayerInterface>() && IEGMontagePlayerInterface::Execute_PlayMontageOverride(Pawn, Montage, PlayRate, NAME_None, StartTime, TAG_EGAnim_Mesh_Body))
+	{
+		return true;
+	}
 	UAnimInstance* AnimInstance = GetPawnAnimInstance(Pawn);
 	if (!AnimInstance)
 	{
@@ -789,6 +793,10 @@ void UEGChessSeatComponent::StopMontage(UAnimMontage* Montage)
 		return;
 	}
 	if (Pawn->Implements<UEGChessCharacterInterface>() && IEGChessCharacterInterface::Execute_StopChessMontage(Pawn, Montage))
+	{
+		return;
+	}
+	if (Pawn->Implements<UEGMontagePlayerInterface>() && IEGMontagePlayerInterface::Execute_StopMontageOverride(Pawn, Montage, 0.25f, TAG_EGAnim_Mesh_Body))
 	{
 		return;
 	}

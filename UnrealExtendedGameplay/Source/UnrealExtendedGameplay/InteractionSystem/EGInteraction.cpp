@@ -9,6 +9,8 @@
 #include "GameFramework/Pawn.h"
 #include "GameFramework/PlayerController.h"
 #include "GameplayTask.h"
+#include "UnrealExtendedGameplay/Animation/EGAnimationTags.h"
+#include "UnrealExtendedGameplay/Animation/Montage/EGMontageLibrary.h"
 
 // =====================================================================
 // FEGInteractionActorInfo
@@ -19,7 +21,9 @@ void FEGInteractionActorInfo::Init(UEGInteractionSystemComponent* InSystem)
 	System = InSystem;
 	OwnerActor = InSystem ? InSystem->GetOwner() : nullptr;
 	Pawn = Cast<APawn>(OwnerActor);
-	SkeletalMesh = OwnerActor ? OwnerActor->FindComponentByClass<USkeletalMeshComponent>() : nullptr;
+	// The character's body mesh (or the owner's choice through IEGMontagePlayerInterface), not
+	// whichever skeletal mesh happens to be found first: arms or a weapon would otherwise win.
+	SkeletalMesh = UEGMontageLibrary::GetMontageMesh(OwnerActor, TAG_EGAnim_Mesh_Body);
 }
 
 AController* FEGInteractionActorInfo::GetController() const

@@ -1,6 +1,8 @@
 ﻿#include "Components/ActorComponent.h"
 #include "UnrealExtendedFramework/Data/EFTraceData.h"
 #include "UnrealExtendedFramework/Data/EFEnums.h"
+#include "GameplayTagContainer.h"
+#include "UnrealExtendedGameplay/Animation/Montage/EGAnimationSet.h"
 #include "EGCoverComponent.generated.h"
 
 
@@ -76,6 +78,14 @@ public:
 
 	
 	//<<<<<<<<<<<<<<<<<<<<< MONTAGES >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+	/**
+	 * Cover montages by ExtendedGameplay.Anim.Cover.* tag, used when the character's own set
+	 * (IEGMontagePlayerInterface::GetAnimationSet) has none. The slots below are the last fallback.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category="Cover|Montages")
+	TObjectPtr<UEGAnimationSet> AnimationSet = nullptr;
+
 	UPROPERTY(EditDefaultsOnly,BlueprintReadWrite , Category="Cover|Montages|GetInOut")
 	UAnimMontage* GetInCoverMontage = nullptr;
 	
@@ -243,10 +253,9 @@ private:
 	void StorePlayerValues();
 
 	//<<<<<<<<<<<<<<<<<<<<<< Animation >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-	void PlayMontageIfValid(UAnimMontage* MontageToPlay);
-	void PlayMontageBasedOnDirection(UAnimMontage* RightSideMontage , UAnimMontage* LeftSideMontage);
-	void PlayMontageBasedOnPose(UAnimMontage* IdleMontage , UAnimMontage* CrouchMontage);
-	void PlayMontageBasedOnDirectionAndPose(UAnimMontage* IdleRightSideMontage , UAnimMontage* IdleLeftSideMontage , UAnimMontage* CrouchRightSideMontage , UAnimMontage* CrouchLeftSideMontage);
+	FEGResolvedAnimation ResolveCoverAnimation(FGameplayTag Tag, UAnimMontage* Fallback) const;
+	void PlayCoverMontage(FGameplayTag StandingTag, FGameplayTag CrouchedTag, UAnimMontage* StandingMontage, UAnimMontage* CrouchedMontage);
+	void PlayResolvedAnimation(const FEGResolvedAnimation& Animation);
 
 	void OnCoverMontageBlendingOut(UAnimMontage* Montage, bool bInterrupted, uint32 PlayId);
 

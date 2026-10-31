@@ -7,6 +7,8 @@
 
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
+#include "UnrealExtendedGameplay/Animation/EGAnimationTags.h"
+#include "UnrealExtendedGameplay/Animation/Montage/EGMontageLibrary.h"
 #include "Components/CapsuleComponent.h"
 #include "GameFramework/Character.h"
 #include "GameFramework/SpringArmComponent.h"
@@ -119,7 +121,7 @@ void UEGCoverComponent::TakeCover()
 		bInCover = true;
 		OnCoverStateChanged.Broadcast(true);
 
-		PlayMontageIfValid(GetInCoverMontage);
+		PlayCoverMontage(TAG_EGAnim_Cover_GetIn, TAG_EGAnim_Cover_GetIn_Crouched, GetInCoverMontage, CrouchedGetInCoverMontage);
 		
 	}
 }
@@ -137,13 +139,13 @@ void UEGCoverComponent::ProcessRightMovement(const float rightInput)
 		if (RightInputValue > 0)
 		{
 			if (CoverDirection != RightSide)
-				PlayMontageBasedOnPose(CoverTurnRight,CrouchedCoverTurnRight);
+				PlayCoverMontage(TAG_EGAnim_Cover_TurnRight, TAG_EGAnim_Cover_TurnRight_Crouched, CoverTurnRight, CrouchedCoverTurnRight);
 			CoverDirection = RightSide;
 		}
 		else
 		{
 			if (CoverDirection != LeftSide)
-				PlayMontageBasedOnPose(CoverTurnLeft,CrouchedCoverTurnLeft);
+				PlayCoverMontage(TAG_EGAnim_Cover_TurnLeft, TAG_EGAnim_Cover_TurnLeft_Crouched, CoverTurnLeft, CrouchedCoverTurnLeft);
 			CoverDirection = LeftSide;
 		}
 	}
@@ -273,7 +275,7 @@ void UEGCoverComponent::ExitCover()
 	Player->GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::Type::QueryAndPhysics);
 	bInCover = false;
 	CoverCameraDirection = CameraCenter;
-	PlayMontageIfValid(GetOutCoverMontage);
+	PlayCoverMontage(TAG_EGAnim_Cover_GetOut, TAG_EGAnim_Cover_GetOut_Crouched, GetOutCoverMontage, CrouchedGetOutCoverMontage);
 	OnCoverStateChanged.Broadcast(bInCover);
 }
 
@@ -481,10 +483,36 @@ void UEGCoverComponent::StorePlayerValues()
 
 
 
-void UEGCoverComponent::PlayMontageIfValid(UAnimMontage* MontageToPlay)
+FEGResolvedAnimation UEGCoverComponent::ResolveCoverAnimation(FGameplayTag Tag, UAnimMontage* Fallback) const
 {
-	UAnimInstance* const AnimInstance = (MontageToPlay && PlayerMesh) ? PlayerMesh->GetAnimInstance() : nullptr;
-	if (!AnimInstance || AnimInstance->Montage_Play(MontageToPlay) <= 0.0f)
+	// The character's animation set, then this component's, then the montage slot.
+	FEGResolvedAnimation Resolved = UEGMontageLibrary::ResolveAnimation(GetOwner(), Tag, -1, AnimationSet);
+	if (!Resolved.IsValid())
+	{
+		Resolved.Montage = Fallback;
+	}
+	return Resolved;
+}
+
+void UEGCoverComponent::PlayCoverMontage(FGameplayTag StandingTag, FGameplayTag CrouchedTag, UAnimMontage* StandingMontage, UAnimMontage* CrouchedMontage)
+{
+	// Crouched tags fall back to their standing parent in a set; the slots do the same here.
+	UAnimMontage* const Fallback = (bInCoverCrouched && CrouchedMontage) ? CrouchedMontage : StandingMontage;
+	PlayResolvedAnimation(ResolveCoverAnimation(bInCoverCrouched ? CrouchedTag : StandingTag, Fallback));
+}
+
+void UEGCoverComponent::PlayResolvedAnimation(const FEGResolvedAnimation& Animation)
+{
+	if (!Animation.IsValid())
+	{
+		return;
+	}
+
+	UAnimInstance* AnimInstance = nullptr;
+	const EEGMontagePlayResult Result = UEGMontageLibrary::PlayMontage(GetOwner(), Animation.Montage, Animation.PlayRate, Animation.StartSection, Animation.StartTime, TAG_EGAnim_Mesh_Body, AnimInstance);
+
+	// Played by the owner somewhere we cannot see: nothing to track.
+	if (Result == EEGMontagePlayResult::Failed || !AnimInstance || !AnimInstance->Montage_IsPlaying(Animation.Montage))
 	{
 		return;
 	}
@@ -495,47 +523,8 @@ void UEGCoverComponent::PlayMontageIfValid(UAnimMontage* MontageToPlay)
 	IsInMontage = true;
 
 	FOnMontageBlendingOutStarted BlendingOutDelegate = FOnMontageBlendingOutStarted::CreateUObject(this, &UEGCoverComponent::OnCoverMontageBlendingOut, PlayId);
-	AnimInstance->Montage_SetBlendingOutDelegate(BlendingOutDelegate, MontageToPlay);
+	AnimInstance->Montage_SetBlendingOutDelegate(BlendingOutDelegate, Animation.Montage);
 }
-
-void UEGCoverComponent::PlayMontageBasedOnDirection(UAnimMontage* RightSideMontage,UAnimMontage* LeftSideMontage)
-{
-	if (CoverDirection == RightSide)
-		PlayMontageIfValid(RightSideMontage);
-	else
-		PlayMontageIfValid(LeftSideMontage);
-}
-
-void UEGCoverComponent::PlayMontageBasedOnDirectionAndPose(UAnimMontage* IdleRightSideMontage,UAnimMontage* IdleLeftSideMontage, UAnimMontage* CrouchRightSideMontage, UAnimMontage* CrouchLeftSideMontage)
-{
-	if (bInCoverCrouched)
-	{
-		if (CoverDirection == RightSide)
-			PlayMontageIfValid(CrouchRightSideMontage);
-		else
-			PlayMontageIfValid(CrouchLeftSideMontage);
-	}
-	else
-	{
-		if (CoverDirection == RightSide)
-			PlayMontageIfValid(IdleRightSideMontage);
-		else
-			PlayMontageIfValid(IdleLeftSideMontage);
-	}
-	
-	
-
-	
-}
-
-void UEGCoverComponent::PlayMontageBasedOnPose(UAnimMontage* IdleMontage , UAnimMontage* CrouchMontage)
-{
-	if (bInCoverCrouched)
-		PlayMontageIfValid(CrouchMontage);
-	else
-		PlayMontageIfValid(IdleMontage);
-}
-
 
 void UEGCoverComponent::OnCoverMontageBlendingOut(UAnimMontage* Montage, bool bInterrupted, uint32 PlayId)
 {
