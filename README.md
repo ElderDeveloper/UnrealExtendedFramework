@@ -122,7 +122,7 @@ The small shared base every plugin builds on. It uses only engine modules that e
 - **Async nodes**: `UEFAsyncActionBase` for Blueprint async nodes: finishes exactly once, optional timeout, cancellation through the Async Task pin. `TEFPendingCalls` and `EFCallContext` make sure two identical calls in flight each get their own result.
 - **Settings**: `UEFDeveloperSettings` puts every plugin under **Project Settings → Extended Framework** and warns when a property marked `EFSecret` would ship in a `Default*.ini`.
 - **Credentials**: `FEFCredentialStore` keeps developer tokens and passwords per user, encrypted with DPAPI on Windows and in the Keychain on macOS.
-- **Status**: the `Extended.Status` console command reports every registered service (EOS, PlayFab, Steam, Http, ...).
+- **Status**: the `Extended.Status` console command reports every registered service: EOS login, PlayFab session, Steam client and game server, and HTTP requests in flight (`Extended.Status brief` for one line each).
 - **Logging**: the `UnrealExtendedFrameworkLog` module (`EF_LOG` category log files and the Extended Log settings).
 - **Testing**: a test game instance with initialized subsystems, a wait-until latent command, and plugin fixture loading.
 
@@ -231,7 +231,7 @@ A desktop-focused Steam integration split into small runtime and editor modules:
 - Steam Networking Sockets subsystem, socket implementation, and net driver.
 - Async Blueprint actions for major Steam interfaces.
 - HTTP/JSON Steam Web API clients covering apps, economy, inventory, leaderboards, lobbies, microtransactions, news, published files, remote storage, users, and user stats.
-- Editor publishing workflow for Steam content builds.
+- Editor publishing workflow for Steam content builds; the Steam login password is kept in the OS credential store, never in project config.
 
 > [!WARNING]
 > Steam modules are restricted to **Win64, Linux, and macOS** by the plugin descriptor. Access to and redistribution of the Steamworks SDK are governed by Valve's terms.
