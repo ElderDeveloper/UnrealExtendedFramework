@@ -62,6 +62,24 @@ void UEFAsyncActionBase::Cancel()
 	FailAction(FEFResult::Cancelled(GetResultSource()));
 }
 
+void UEFAsyncActionBase::BeginDestroy()
+{
+	// Never call into Blueprint from destruction. Marking the node finished first also keeps the
+	// engine's own cancel-on-destroy from broadcasting the failure pin.
+	if (!bEFFinished)
+	{
+		bEFFinished = true;
+		EFPendingFailure.Reset();
+		if (EFTimeoutHandle.IsValid())
+		{
+			FTSTicker::GetCoreTicker().RemoveTicker(EFTimeoutHandle);
+			EFTimeoutHandle.Reset();
+		}
+	}
+
+	Super::BeginDestroy();
+}
+
 bool UEFAsyncActionBase::IsActive() const
 {
 	return bEFActivated && !bEFFinished;
