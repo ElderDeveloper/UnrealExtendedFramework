@@ -25,19 +25,21 @@ public:
 		meta = (BlueprintInternalUseOnly = "true", WorldContext = "WorldContext", DisplayName = "Steam: Create Workshop Item"))
 	static USteamAsyncCreateWorkshopItem* CreateWorkshopItem(UObject* WorldContext, EESteamWorkshopFileType FileType, float Timeout = 10.0f);
 
-	virtual void Activate() override;
-
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncCreateWorkshopItemPin OnSuccess;
 
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncCreateWorkshopItemPin OnFailure;
 
+protected:
+	//~ UEFAsyncActionBase
+	virtual void ExecuteAction() override;
+	virtual void BroadcastFailure(const FEFResult& Result) override;
+	virtual void CancelWork() override;
+
 private:
 	UFUNCTION()
 	void HandleItemCreated(bool bSuccess, int64 PublishedFileId, bool bNeedsLegalAgreement);
-
-	virtual void OnTimeoutFailure() override;
 
 	void Complete(bool bSuccess, int64 PublishedFileId, bool bNeedsLegalAgreement);
 
@@ -59,19 +61,21 @@ public:
 		meta = (BlueprintInternalUseOnly = "true", WorldContext = "WorldContext", DisplayName = "Steam: Submit Workshop Item"))
 	static USteamAsyncSubmitWorkshopItem* SubmitWorkshopItem(UObject* WorldContext, int64 UpdateHandle, const FString& ChangeNote, float Timeout = 10.0f);
 
-	virtual void Activate() override;
-
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncSubmitWorkshopItemPin OnSuccess;
 
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncSubmitWorkshopItemPin OnFailure;
 
+protected:
+	//~ UEFAsyncActionBase
+	virtual void ExecuteAction() override;
+	virtual void BroadcastFailure(const FEFResult& Result) override;
+	virtual void CancelWork() override;
+
 private:
 	UFUNCTION()
 	void HandleItemSubmitted(bool bSuccess, bool bNeedsLegalAgreement);
-
-	virtual void OnTimeoutFailure() override;
 
 	void Complete(bool bSuccess, bool bNeedsLegalAgreement);
 
@@ -97,19 +101,21 @@ public:
 		meta = (BlueprintInternalUseOnly = "true", WorldContext = "WorldContext", DisplayName = "Steam: Query Workshop Items"))
 	static USteamAsyncQueryWorkshopItems* QueryWorkshopItems(UObject* WorldContext, EESteamUGCQueryType QueryType, EESteamUGCMatchingType MatchingType, int32 Page = 1, float Timeout = 10.0f);
 
-	virtual void Activate() override;
-
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncQueryWorkshopItemsPin OnSuccess;
 
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncQueryWorkshopItemsPin OnFailure;
 
+protected:
+	//~ UEFAsyncActionBase
+	virtual void ExecuteAction() override;
+	virtual void BroadcastFailure(const FEFResult& Result) override;
+	virtual void CancelWork() override;
+
 private:
 	UFUNCTION()
 	void HandleQueryCompleted(bool bSuccess, const TArray<FESteamUGCDetails>& Results, int32 TotalMatchingResults);
-
-	virtual void OnTimeoutFailure() override;
 
 	void Complete(bool bSuccess, const TArray<FESteamUGCDetails>& Results, int32 TotalResults);
 
@@ -133,19 +139,21 @@ public:
 		meta = (BlueprintInternalUseOnly = "true", WorldContext = "WorldContext", DisplayName = "Steam: Subscribe Workshop Item"))
 	static USteamAsyncSubscribeWorkshopItem* SubscribeWorkshopItem(UObject* WorldContext, int64 PublishedFileId, float Timeout = 10.0f);
 
-	virtual void Activate() override;
-
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncWorkshopSubscriptionPin OnSuccess;
 
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncWorkshopSubscriptionPin OnFailure;
 
+protected:
+	//~ UEFAsyncActionBase
+	virtual void ExecuteAction() override;
+	virtual void BroadcastFailure(const FEFResult& Result) override;
+	virtual void CancelWork() override;
+
 private:
 	UFUNCTION()
 	void HandleSubscribed(bool bSuccess, int64 InPublishedFileId);
-
-	virtual void OnTimeoutFailure() override;
 
 	void Complete(bool bSuccess);
 
@@ -165,19 +173,21 @@ public:
 		meta = (BlueprintInternalUseOnly = "true", WorldContext = "WorldContext", DisplayName = "Steam: Unsubscribe Workshop Item"))
 	static USteamAsyncUnsubscribeWorkshopItem* UnsubscribeWorkshopItem(UObject* WorldContext, int64 PublishedFileId, float Timeout = 10.0f);
 
-	virtual void Activate() override;
-
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncWorkshopSubscriptionPin OnSuccess;
 
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncWorkshopSubscriptionPin OnFailure;
 
+protected:
+	//~ UEFAsyncActionBase
+	virtual void ExecuteAction() override;
+	virtual void BroadcastFailure(const FEFResult& Result) override;
+	virtual void CancelWork() override;
+
 private:
 	UFUNCTION()
 	void HandleUnsubscribed(bool bSuccess, int64 InPublishedFileId);
-
-	virtual void OnTimeoutFailure() override;
 
 	void Complete(bool bSuccess);
 
@@ -200,19 +210,21 @@ public:
 		meta = (BlueprintInternalUseOnly = "true", WorldContext = "WorldContext", DisplayName = "Steam: Download Workshop Item"))
 	static USteamAsyncDownloadWorkshopItem* DownloadWorkshopItem(UObject* WorldContext, int64 PublishedFileId, bool bHighPriority, float Timeout = 10.0f);
 
-	virtual void Activate() override;
-
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncWorkshopSubscriptionPin OnSuccess;
 
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncWorkshopSubscriptionPin OnFailure;
 
+protected:
+	//~ UEFAsyncActionBase
+	virtual void ExecuteAction() override;
+	virtual void BroadcastFailure(const FEFResult& Result) override;
+	virtual void CancelWork() override;
+
 private:
 	UFUNCTION()
 	void HandleItemDownloaded(bool bSuccess, int64 InPublishedFileId);
-
-	virtual void OnTimeoutFailure() override;
 
 	void Complete(bool bSuccess);
 
@@ -239,19 +251,21 @@ public:
 		meta = (BlueprintInternalUseOnly = "true", WorldContext = "WorldContext", DisplayName = "Steam: Set Workshop Favorite"))
 	static USteamAsyncSetWorkshopFavorite* SetWorkshopFavorite(UObject* WorldContext, int32 AppId, int64 PublishedFileId, bool bAddToFavorites, float Timeout = 10.0f);
 
-	virtual void Activate() override;
-
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncFavoritePin OnSuccess;
 
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncFavoritePin OnFailure;
 
+protected:
+	//~ UEFAsyncActionBase
+	virtual void ExecuteAction() override;
+	virtual void BroadcastFailure(const FEFResult& Result) override;
+	virtual void CancelWork() override;
+
 private:
 	UFUNCTION()
 	void HandleFavoriteChanged(bool bSuccess, int64 InPublishedFileId, bool bWasAddRequest);
-
-	virtual void OnTimeoutFailure() override;
 
 	void Complete(bool bSuccess);
 
@@ -275,19 +289,21 @@ public:
 		meta = (BlueprintInternalUseOnly = "true", WorldContext = "WorldContext", DisplayName = "Steam: Set Workshop Item Vote"))
 	static USteamAsyncSetWorkshopItemVote* SetWorkshopItemVote(UObject* WorldContext, int64 PublishedFileId, bool bVoteUp, float Timeout = 10.0f);
 
-	virtual void Activate() override;
-
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncVoteSetPin OnSuccess;
 
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncVoteSetPin OnFailure;
 
+protected:
+	//~ UEFAsyncActionBase
+	virtual void ExecuteAction() override;
+	virtual void BroadcastFailure(const FEFResult& Result) override;
+	virtual void CancelWork() override;
+
 private:
 	UFUNCTION()
 	void HandleVoteSet(bool bSuccess, int64 InPublishedFileId, bool bInVoteUp);
-
-	virtual void OnTimeoutFailure() override;
 
 	void Complete(bool bSuccess);
 
@@ -310,19 +326,21 @@ public:
 		meta = (BlueprintInternalUseOnly = "true", WorldContext = "WorldContext", DisplayName = "Steam: Get Workshop Item Vote"))
 	static USteamAsyncGetWorkshopItemVote* GetWorkshopItemVote(UObject* WorldContext, int64 PublishedFileId, float Timeout = 10.0f);
 
-	virtual void Activate() override;
-
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncVoteGetPin OnSuccess;
 
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncVoteGetPin OnFailure;
 
+protected:
+	//~ UEFAsyncActionBase
+	virtual void ExecuteAction() override;
+	virtual void BroadcastFailure(const FEFResult& Result) override;
+	virtual void CancelWork() override;
+
 private:
 	UFUNCTION()
 	void HandleVote(bool bSuccess, int64 InPublishedFileId, bool bVotedUp, bool bVotedDown, bool bVoteSkipped);
-
-	virtual void OnTimeoutFailure() override;
 
 	void Complete(bool bSuccess, bool bVotedUp, bool bVotedDown, bool bVoteSkipped);
 
@@ -344,19 +362,21 @@ public:
 		meta = (BlueprintInternalUseOnly = "true", WorldContext = "WorldContext", DisplayName = "Steam: Delete Workshop Item"))
 	static USteamAsyncDeleteWorkshopItem* DeleteWorkshopItem(UObject* WorldContext, int64 PublishedFileId, float Timeout = 10.0f);
 
-	virtual void Activate() override;
-
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncDeleteItemPin OnSuccess;
 
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncDeleteItemPin OnFailure;
 
+protected:
+	//~ UEFAsyncActionBase
+	virtual void ExecuteAction() override;
+	virtual void BroadcastFailure(const FEFResult& Result) override;
+	virtual void CancelWork() override;
+
 private:
 	UFUNCTION()
 	void HandleItemDeleted(bool bSuccess, int64 InPublishedFileId);
-
-	virtual void OnTimeoutFailure() override;
 
 	void Complete(bool bSuccess);
 
@@ -381,19 +401,21 @@ public:
 		meta = (BlueprintInternalUseOnly = "true", WorldContext = "WorldContext", DisplayName = "Steam: Set Workshop Dependency"))
 	static USteamAsyncSetWorkshopDependency* SetWorkshopDependency(UObject* WorldContext, int64 ParentPublishedFileId, int64 ChildPublishedFileId, bool bAdd, float Timeout = 10.0f);
 
-	virtual void Activate() override;
-
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncDependencyPin OnSuccess;
 
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncDependencyPin OnFailure;
 
+protected:
+	//~ UEFAsyncActionBase
+	virtual void ExecuteAction() override;
+	virtual void BroadcastFailure(const FEFResult& Result) override;
+	virtual void CancelWork() override;
+
 private:
 	UFUNCTION()
 	void HandleDependencyResult(bool bSuccess, int64 InParentPublishedFileId, int64 InChildPublishedFileId);
-
-	virtual void OnTimeoutFailure() override;
 
 	void Complete(bool bSuccess);
 
@@ -420,19 +442,21 @@ public:
 		meta = (BlueprintInternalUseOnly = "true", WorldContext = "WorldContext", DisplayName = "Steam: Set Workshop App Dependency"))
 	static USteamAsyncSetWorkshopAppDependency* SetWorkshopAppDependency(UObject* WorldContext, int64 PublishedFileId, int32 AppId, bool bAdd, float Timeout = 10.0f);
 
-	virtual void Activate() override;
-
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncAppDependencyPin OnSuccess;
 
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncAppDependencyPin OnFailure;
 
+protected:
+	//~ UEFAsyncActionBase
+	virtual void ExecuteAction() override;
+	virtual void BroadcastFailure(const FEFResult& Result) override;
+	virtual void CancelWork() override;
+
 private:
 	UFUNCTION()
 	void HandleAppDependencyResult(bool bSuccess, int64 InPublishedFileId, int32 InAppId);
-
-	virtual void OnTimeoutFailure() override;
 
 	void Complete(bool bSuccess);
 
@@ -456,19 +480,21 @@ public:
 		meta = (BlueprintInternalUseOnly = "true", WorldContext = "WorldContext", DisplayName = "Steam: Get Workshop App Dependencies"))
 	static USteamAsyncGetWorkshopAppDependencies* GetWorkshopAppDependencies(UObject* WorldContext, int64 PublishedFileId, float Timeout = 10.0f);
 
-	virtual void Activate() override;
-
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncAppDependenciesPin OnSuccess;
 
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncAppDependenciesPin OnFailure;
 
+protected:
+	//~ UEFAsyncActionBase
+	virtual void ExecuteAction() override;
+	virtual void BroadcastFailure(const FEFResult& Result) override;
+	virtual void CancelWork() override;
+
 private:
 	UFUNCTION()
 	void HandleAppDependencies(bool bSuccess, int64 InPublishedFileId, const TArray<int32>& AppIds);
-
-	virtual void OnTimeoutFailure() override;
 
 	void Complete(bool bSuccess, const TArray<int32>& AppIds);
 
@@ -490,19 +516,21 @@ public:
 		meta = (BlueprintInternalUseOnly = "true", WorldContext = "WorldContext", DisplayName = "Steam: Start Playtime Tracking"))
 	static USteamAsyncStartPlaytimeTracking* StartPlaytimeTracking(UObject* WorldContext, const TArray<int64>& PublishedFileIds, float Timeout = 10.0f);
 
-	virtual void Activate() override;
-
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncPlaytimePin OnSuccess;
 
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncPlaytimePin OnFailure;
 
+protected:
+	//~ UEFAsyncActionBase
+	virtual void ExecuteAction() override;
+	virtual void BroadcastFailure(const FEFResult& Result) override;
+	virtual void CancelWork() override;
+
 private:
 	UFUNCTION()
 	void HandleTrackingResult(bool bSuccess);
-
-	virtual void OnTimeoutFailure() override;
 
 	void Complete(bool bSuccess);
 
@@ -522,19 +550,21 @@ public:
 		meta = (BlueprintInternalUseOnly = "true", WorldContext = "WorldContext", DisplayName = "Steam: Stop Playtime Tracking"))
 	static USteamAsyncStopPlaytimeTracking* StopPlaytimeTracking(UObject* WorldContext, const TArray<int64>& PublishedFileIds, float Timeout = 10.0f);
 
-	virtual void Activate() override;
-
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncPlaytimePin OnSuccess;
 
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncPlaytimePin OnFailure;
 
+protected:
+	//~ UEFAsyncActionBase
+	virtual void ExecuteAction() override;
+	virtual void BroadcastFailure(const FEFResult& Result) override;
+	virtual void CancelWork() override;
+
 private:
 	UFUNCTION()
 	void HandleTrackingResult(bool bSuccess);
-
-	virtual void OnTimeoutFailure() override;
 
 	void Complete(bool bSuccess);
 
@@ -554,19 +584,21 @@ public:
 		meta = (BlueprintInternalUseOnly = "true", WorldContext = "WorldContext", DisplayName = "Steam: Stop Playtime Tracking For All Items"))
 	static USteamAsyncStopPlaytimeTrackingForAllItems* StopPlaytimeTrackingForAllItems(UObject* WorldContext, float Timeout = 10.0f);
 
-	virtual void Activate() override;
-
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncPlaytimePin OnSuccess;
 
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncPlaytimePin OnFailure;
 
+protected:
+	//~ UEFAsyncActionBase
+	virtual void ExecuteAction() override;
+	virtual void BroadcastFailure(const FEFResult& Result) override;
+	virtual void CancelWork() override;
+
 private:
 	UFUNCTION()
 	void HandleTrackingResult(bool bSuccess);
-
-	virtual void OnTimeoutFailure() override;
 
 	void Complete(bool bSuccess);
 
@@ -588,19 +620,21 @@ public:
 		meta = (BlueprintInternalUseOnly = "true", WorldContext = "WorldContext", DisplayName = "Steam: Query User Workshop Items"))
 	static USteamAsyncQueryUserWorkshopItems* QueryUserWorkshopItems(UObject* WorldContext, FESteamId User, EESteamUserUGCList ListType, EESteamUserUGCListSortOrder SortOrder, EESteamUGCMatchingType MatchingType, int32 Page, const FESteamUGCQueryConfig& Config, float Timeout = 10.0f);
 
-	virtual void Activate() override;
-
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncQueryWorkshopItemsPin OnSuccess;
 
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncQueryWorkshopItemsPin OnFailure;
 
+protected:
+	//~ UEFAsyncActionBase
+	virtual void ExecuteAction() override;
+	virtual void BroadcastFailure(const FEFResult& Result) override;
+	virtual void CancelWork() override;
+
 private:
 	UFUNCTION()
 	void HandleQueryCompleted(bool bSuccess, const TArray<FESteamUGCDetails>& Results, int32 TotalMatchingResults);
-
-	virtual void OnTimeoutFailure() override;
 
 	void Complete(bool bSuccess, const TArray<FESteamUGCDetails>& Results, int32 TotalResults);
 
@@ -625,19 +659,21 @@ public:
 		meta = (BlueprintInternalUseOnly = "true", WorldContext = "WorldContext", DisplayName = "Steam: Query Workshop Items By Ids"))
 	static USteamAsyncQueryWorkshopItemsByIds* QueryWorkshopItemsByIds(UObject* WorldContext, const TArray<int64>& PublishedFileIds, float Timeout = 10.0f);
 
-	virtual void Activate() override;
-
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncQueryWorkshopItemsPin OnSuccess;
 
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncQueryWorkshopItemsPin OnFailure;
 
+protected:
+	//~ UEFAsyncActionBase
+	virtual void ExecuteAction() override;
+	virtual void BroadcastFailure(const FEFResult& Result) override;
+	virtual void CancelWork() override;
+
 private:
 	UFUNCTION()
 	void HandleQueryCompleted(bool bSuccess, const TArray<FESteamUGCDetails>& Results, int32 TotalMatchingResults);
-
-	virtual void OnTimeoutFailure() override;
 
 	void Complete(bool bSuccess, const TArray<FESteamUGCDetails>& Results, int32 TotalResults);
 

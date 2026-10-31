@@ -1,81 +1,68 @@
 // Copyright Kemal Erdem YILMAZ. All Rights Reserved.
 
 #include "BlueprintActions/UGC/ESteamUGCAsyncActions.h"
-#include "Engine/Engine.h"
-#include "Engine/GameInstance.h"
-#include "Engine/World.h"
 
-namespace
-{
-	UESteamUGCSubsystem* GetUGCSubsystem(const UObject* WorldContext)
-	{
-		if (const UWorld* World = GEngine ? GEngine->GetWorldFromContextObject(WorldContext, EGetWorldErrorMode::LogAndReturnNull) : nullptr)
-		{
-			if (const UGameInstance* GameInstance = World->GetGameInstance())
-			{
-				return GameInstance->GetSubsystem<UESteamUGCSubsystem>();
-			}
-		}
-		return nullptr;
-	}
-}
+// Every node below keeps its subsystem in a member named Subsystem, so locals use UGCSubsystem.
 
 // ---- USteamAsyncCreateWorkshopItem ----
 
 USteamAsyncCreateWorkshopItem* USteamAsyncCreateWorkshopItem::CreateWorkshopItem(UObject* WorldContext, EESteamWorkshopFileType FileType, float Timeout)
 {
 	USteamAsyncCreateWorkshopItem* Action = NewObject<USteamAsyncCreateWorkshopItem>();
-	Action->WorldContextObject = WorldContext;
-	Action->Subsystem = GetUGCSubsystem(WorldContext);
 	Action->FileType = FileType;
-	Action->Timeout = Timeout;
-	Action->RegisterWithGameInstance(WorldContext);
+	Action->InitAsyncAction(WorldContext, Timeout);
 	return Action;
 }
 
-void USteamAsyncCreateWorkshopItem::Activate()
+void USteamAsyncCreateWorkshopItem::ExecuteAction()
 {
-	UESteamUGCSubsystem* UGCSubsystem = Subsystem.Get();
+	UESteamUGCSubsystem* UGCSubsystem = RequireGameInstanceSubsystem<UESteamUGCSubsystem>();
 	if (!UGCSubsystem)
 	{
-		Complete(false, 0, false);
 		return;
 	}
 
+	Subsystem = UGCSubsystem;
 	UGCSubsystem->OnItemCreated.AddDynamic(this, &USteamAsyncCreateWorkshopItem::HandleItemCreated);
 
-	if (!UGCSubsystem->CreateItem(FileType))
+	bool bStarted = false;
+	CallWithContext([&] { bStarted = UGCSubsystem->CreateItem(FileType); });
+	if (!bStarted)
 	{
 		Complete(false, 0, false);
-		return;
 	}
-
-	// Fail the node if the subsystem delegate never fires.
-	ArmTimeout(Timeout);
 }
 
 void USteamAsyncCreateWorkshopItem::HandleItemCreated(bool bSuccess, int64 PublishedFileId, bool bNeedsLegalAgreement)
 {
-	// NOTE: FOnSteamUGCItemCreated's PublishedFileId is the result (unknown before the call), so it
-	// cannot correlate concurrent creates. Relies on Timeout + one-in-flight subsystem limit.
+	// FOnSteamUGCItemCreated's PublishedFileId is the result (unknown before the call), so it cannot
+	// correlate concurrent creates; the subsystem tags each result with the call context of its request.
+	if (!IsResultForThisCall())
+	{
+		return;
+	}
 	Complete(bSuccess, PublishedFileId, bNeedsLegalAgreement);
 }
 
-void USteamAsyncCreateWorkshopItem::OnTimeoutFailure()
+void USteamAsyncCreateWorkshopItem::BroadcastFailure(const FEFResult& /*Result*/)
 {
-	Complete(false, 0, false);
+	OnFailure.Broadcast(0, false);
+}
+
+void USteamAsyncCreateWorkshopItem::CancelWork()
+{
+	if (UESteamUGCSubsystem* UGCSubsystem = Subsystem.Get())
+	{
+		UGCSubsystem->OnItemCreated.RemoveDynamic(this, &USteamAsyncCreateWorkshopItem::HandleItemCreated);
+	}
 }
 
 void USteamAsyncCreateWorkshopItem::Complete(bool bSuccess, int64 PublishedFileId, bool bNeedsLegalAgreement)
 {
-	if (!BeginComplete())
+	CancelWork();
+	if (!FinishAction())
 	{
 		return;
-	}
-
-	if (UESteamUGCSubsystem* UGCSubsystem = Subsystem.Get())
-	{
-		UGCSubsystem->OnItemCreated.RemoveDynamic(this, &USteamAsyncCreateWorkshopItem::HandleItemCreated);
 	}
 
 	if (bSuccess)
@@ -86,7 +73,6 @@ void USteamAsyncCreateWorkshopItem::Complete(bool bSuccess, int64 PublishedFileI
 	{
 		OnFailure.Broadcast(PublishedFileId, bNeedsLegalAgreement);
 	}
-	SetReadyToDestroy();
 }
 
 // ---- USteamAsyncSubmitWorkshopItem ----
@@ -94,58 +80,61 @@ void USteamAsyncCreateWorkshopItem::Complete(bool bSuccess, int64 PublishedFileI
 USteamAsyncSubmitWorkshopItem* USteamAsyncSubmitWorkshopItem::SubmitWorkshopItem(UObject* WorldContext, int64 UpdateHandle, const FString& ChangeNote, float Timeout)
 {
 	USteamAsyncSubmitWorkshopItem* Action = NewObject<USteamAsyncSubmitWorkshopItem>();
-	Action->WorldContextObject = WorldContext;
-	Action->Subsystem = GetUGCSubsystem(WorldContext);
 	Action->UpdateHandle = UpdateHandle;
 	Action->ChangeNote = ChangeNote;
-	Action->Timeout = Timeout;
-	Action->RegisterWithGameInstance(WorldContext);
+	Action->InitAsyncAction(WorldContext, Timeout);
 	return Action;
 }
 
-void USteamAsyncSubmitWorkshopItem::Activate()
+void USteamAsyncSubmitWorkshopItem::ExecuteAction()
 {
-	UESteamUGCSubsystem* UGCSubsystem = Subsystem.Get();
+	UESteamUGCSubsystem* UGCSubsystem = RequireGameInstanceSubsystem<UESteamUGCSubsystem>();
 	if (!UGCSubsystem)
 	{
-		Complete(false, false);
 		return;
 	}
 
+	Subsystem = UGCSubsystem;
 	UGCSubsystem->OnItemSubmitted.AddDynamic(this, &USteamAsyncSubmitWorkshopItem::HandleItemSubmitted);
 
-	if (!UGCSubsystem->SubmitItemUpdate(UpdateHandle, ChangeNote))
+	bool bStarted = false;
+	CallWithContext([&] { bStarted = UGCSubsystem->SubmitItemUpdate(UpdateHandle, ChangeNote); });
+	if (!bStarted)
 	{
 		Complete(false, false);
-		return;
 	}
-
-	// Fail the node if the subsystem delegate never fires.
-	ArmTimeout(Timeout);
 }
 
 void USteamAsyncSubmitWorkshopItem::HandleItemSubmitted(bool bSuccess, bool bNeedsLegalAgreement)
 {
-	// NOTE: FOnSteamUGCItemSubmitted carries no update handle; cannot discriminate.
-	// Relies on Timeout + one-in-flight subsystem limit.
+	// FOnSteamUGCItemSubmitted carries no update handle; the subsystem tags each result with the
+	// call context of its request.
+	if (!IsResultForThisCall())
+	{
+		return;
+	}
 	Complete(bSuccess, bNeedsLegalAgreement);
 }
 
-void USteamAsyncSubmitWorkshopItem::OnTimeoutFailure()
+void USteamAsyncSubmitWorkshopItem::BroadcastFailure(const FEFResult& /*Result*/)
 {
-	Complete(false, false);
+	OnFailure.Broadcast(false);
+}
+
+void USteamAsyncSubmitWorkshopItem::CancelWork()
+{
+	if (UESteamUGCSubsystem* UGCSubsystem = Subsystem.Get())
+	{
+		UGCSubsystem->OnItemSubmitted.RemoveDynamic(this, &USteamAsyncSubmitWorkshopItem::HandleItemSubmitted);
+	}
 }
 
 void USteamAsyncSubmitWorkshopItem::Complete(bool bSuccess, bool bNeedsLegalAgreement)
 {
-	if (!BeginComplete())
+	CancelWork();
+	if (!FinishAction())
 	{
 		return;
-	}
-
-	if (UESteamUGCSubsystem* UGCSubsystem = Subsystem.Get())
-	{
-		UGCSubsystem->OnItemSubmitted.RemoveDynamic(this, &USteamAsyncSubmitWorkshopItem::HandleItemSubmitted);
 	}
 
 	if (bSuccess)
@@ -156,7 +145,6 @@ void USteamAsyncSubmitWorkshopItem::Complete(bool bSuccess, bool bNeedsLegalAgre
 	{
 		OnFailure.Broadcast(bNeedsLegalAgreement);
 	}
-	SetReadyToDestroy();
 }
 
 // ---- USteamAsyncQueryWorkshopItems ----
@@ -164,59 +152,62 @@ void USteamAsyncSubmitWorkshopItem::Complete(bool bSuccess, bool bNeedsLegalAgre
 USteamAsyncQueryWorkshopItems* USteamAsyncQueryWorkshopItems::QueryWorkshopItems(UObject* WorldContext, EESteamUGCQueryType QueryType, EESteamUGCMatchingType MatchingType, int32 Page, float Timeout)
 {
 	USteamAsyncQueryWorkshopItems* Action = NewObject<USteamAsyncQueryWorkshopItems>();
-	Action->WorldContextObject = WorldContext;
-	Action->Subsystem = GetUGCSubsystem(WorldContext);
 	Action->QueryType = QueryType;
 	Action->MatchingType = MatchingType;
 	Action->Page = Page;
-	Action->Timeout = Timeout;
-	Action->RegisterWithGameInstance(WorldContext);
+	Action->InitAsyncAction(WorldContext, Timeout);
 	return Action;
 }
 
-void USteamAsyncQueryWorkshopItems::Activate()
+void USteamAsyncQueryWorkshopItems::ExecuteAction()
 {
-	UESteamUGCSubsystem* UGCSubsystem = Subsystem.Get();
+	UESteamUGCSubsystem* UGCSubsystem = RequireGameInstanceSubsystem<UESteamUGCSubsystem>();
 	if (!UGCSubsystem)
 	{
-		Complete(false, TArray<FESteamUGCDetails>(), 0);
 		return;
 	}
 
+	Subsystem = UGCSubsystem;
 	UGCSubsystem->OnQueryCompleted.AddDynamic(this, &USteamAsyncQueryWorkshopItems::HandleQueryCompleted);
 
-	if (!UGCSubsystem->QueryAllItems(QueryType, MatchingType, Page))
+	bool bStarted = false;
+	CallWithContext([&] { bStarted = UGCSubsystem->QueryAllItems(QueryType, MatchingType, Page); });
+	if (!bStarted)
 	{
 		Complete(false, TArray<FESteamUGCDetails>(), 0);
-		return;
 	}
-
-	// Fail the node if the subsystem delegate never fires.
-	ArmTimeout(Timeout);
 }
 
 void USteamAsyncQueryWorkshopItems::HandleQueryCompleted(bool bSuccess, const TArray<FESteamUGCDetails>& Results, int32 TotalMatchingResults)
 {
-	// NOTE: FOnSteamUGCQueryCompleted carries no query handle; cannot discriminate.
-	// Relies on Timeout + one-in-flight subsystem limit.
+	// FOnSteamUGCQueryCompleted carries no query handle; the subsystem tags each result with the
+	// call context of its request.
+	if (!IsResultForThisCall())
+	{
+		return;
+	}
 	Complete(bSuccess, Results, TotalMatchingResults);
 }
 
-void USteamAsyncQueryWorkshopItems::OnTimeoutFailure()
+void USteamAsyncQueryWorkshopItems::BroadcastFailure(const FEFResult& /*Result*/)
 {
-	Complete(false, TArray<FESteamUGCDetails>(), 0);
+	OnFailure.Broadcast(TArray<FESteamUGCDetails>(), 0);
+}
+
+void USteamAsyncQueryWorkshopItems::CancelWork()
+{
+	if (UESteamUGCSubsystem* UGCSubsystem = Subsystem.Get())
+	{
+		UGCSubsystem->OnQueryCompleted.RemoveDynamic(this, &USteamAsyncQueryWorkshopItems::HandleQueryCompleted);
+	}
 }
 
 void USteamAsyncQueryWorkshopItems::Complete(bool bSuccess, const TArray<FESteamUGCDetails>& Results, int32 TotalResults)
 {
-	if (!BeginComplete())
+	CancelWork();
+	if (!FinishAction())
 	{
 		return;
-	}
-
-	if (UESteamUGCSubsystem* UGCSubsystem = Subsystem.Get())
-	{
-		UGCSubsystem->OnQueryCompleted.RemoveDynamic(this, &USteamAsyncQueryWorkshopItems::HandleQueryCompleted);
 	}
 
 	if (bSuccess)
@@ -227,7 +218,6 @@ void USteamAsyncQueryWorkshopItems::Complete(bool bSuccess, const TArray<FESteam
 	{
 		OnFailure.Broadcast(Results, TotalResults);
 	}
-	SetReadyToDestroy();
 }
 
 // ---- USteamAsyncSubscribeWorkshopItem ----
@@ -235,60 +225,59 @@ void USteamAsyncQueryWorkshopItems::Complete(bool bSuccess, const TArray<FESteam
 USteamAsyncSubscribeWorkshopItem* USteamAsyncSubscribeWorkshopItem::SubscribeWorkshopItem(UObject* WorldContext, int64 PublishedFileId, float Timeout)
 {
 	USteamAsyncSubscribeWorkshopItem* Action = NewObject<USteamAsyncSubscribeWorkshopItem>();
-	Action->WorldContextObject = WorldContext;
-	Action->Subsystem = GetUGCSubsystem(WorldContext);
 	Action->PublishedFileId = PublishedFileId;
-	Action->Timeout = Timeout;
-	Action->RegisterWithGameInstance(WorldContext);
+	Action->InitAsyncAction(WorldContext, Timeout);
 	return Action;
 }
 
-void USteamAsyncSubscribeWorkshopItem::Activate()
+void USteamAsyncSubscribeWorkshopItem::ExecuteAction()
 {
-	UESteamUGCSubsystem* UGCSubsystem = Subsystem.Get();
+	UESteamUGCSubsystem* UGCSubsystem = RequireGameInstanceSubsystem<UESteamUGCSubsystem>();
 	if (!UGCSubsystem)
 	{
-		Complete(false);
 		return;
 	}
 
+	Subsystem = UGCSubsystem;
 	UGCSubsystem->OnSubscribed.AddDynamic(this, &USteamAsyncSubscribeWorkshopItem::HandleSubscribed);
 
-	if (!UGCSubsystem->SubscribeItem(PublishedFileId))
+	bool bStarted = false;
+	CallWithContext([&] { bStarted = UGCSubsystem->SubscribeItem(PublishedFileId); });
+	if (!bStarted)
 	{
 		Complete(false);
-		return;
 	}
-
-	// Fail the node if the subsystem delegate never fires.
-	ArmTimeout(Timeout);
 }
 
 void USteamAsyncSubscribeWorkshopItem::HandleSubscribed(bool bSuccess, int64 InPublishedFileId)
 {
 	// Other requests may be in flight on the shared subsystem delegate; only react to ours.
-	if (InPublishedFileId != PublishedFileId)
+	if (!IsResultForThisCall() || InPublishedFileId != PublishedFileId)
 	{
 		return;
 	}
 	Complete(bSuccess);
 }
 
-void USteamAsyncSubscribeWorkshopItem::OnTimeoutFailure()
+void USteamAsyncSubscribeWorkshopItem::BroadcastFailure(const FEFResult& /*Result*/)
 {
-	Complete(false);
+	OnFailure.Broadcast(PublishedFileId);
+}
+
+void USteamAsyncSubscribeWorkshopItem::CancelWork()
+{
+	if (UESteamUGCSubsystem* UGCSubsystem = Subsystem.Get())
+	{
+		UGCSubsystem->OnSubscribed.RemoveDynamic(this, &USteamAsyncSubscribeWorkshopItem::HandleSubscribed);
+	}
 }
 
 void USteamAsyncSubscribeWorkshopItem::Complete(bool bSuccess)
 {
-	if (!BeginComplete())
+	CancelWork();
+	if (!FinishAction())
 	{
 		return;
-	}
-
-	if (UESteamUGCSubsystem* UGCSubsystem = Subsystem.Get())
-	{
-		UGCSubsystem->OnSubscribed.RemoveDynamic(this, &USteamAsyncSubscribeWorkshopItem::HandleSubscribed);
 	}
 
 	if (bSuccess)
@@ -299,7 +288,6 @@ void USteamAsyncSubscribeWorkshopItem::Complete(bool bSuccess)
 	{
 		OnFailure.Broadcast(PublishedFileId);
 	}
-	SetReadyToDestroy();
 }
 
 // ---- USteamAsyncUnsubscribeWorkshopItem ----
@@ -307,59 +295,58 @@ void USteamAsyncSubscribeWorkshopItem::Complete(bool bSuccess)
 USteamAsyncUnsubscribeWorkshopItem* USteamAsyncUnsubscribeWorkshopItem::UnsubscribeWorkshopItem(UObject* WorldContext, int64 PublishedFileId, float Timeout)
 {
 	USteamAsyncUnsubscribeWorkshopItem* Action = NewObject<USteamAsyncUnsubscribeWorkshopItem>();
-	Action->WorldContextObject = WorldContext;
-	Action->Subsystem = GetUGCSubsystem(WorldContext);
 	Action->PublishedFileId = PublishedFileId;
-	Action->Timeout = Timeout;
-	Action->RegisterWithGameInstance(WorldContext);
+	Action->InitAsyncAction(WorldContext, Timeout);
 	return Action;
 }
 
-void USteamAsyncUnsubscribeWorkshopItem::Activate()
+void USteamAsyncUnsubscribeWorkshopItem::ExecuteAction()
 {
-	UESteamUGCSubsystem* UGCSubsystem = Subsystem.Get();
+	UESteamUGCSubsystem* UGCSubsystem = RequireGameInstanceSubsystem<UESteamUGCSubsystem>();
 	if (!UGCSubsystem)
 	{
-		Complete(false);
 		return;
 	}
 
+	Subsystem = UGCSubsystem;
 	UGCSubsystem->OnUnsubscribed.AddDynamic(this, &USteamAsyncUnsubscribeWorkshopItem::HandleUnsubscribed);
 
-	if (!UGCSubsystem->UnsubscribeItem(PublishedFileId))
+	bool bStarted = false;
+	CallWithContext([&] { bStarted = UGCSubsystem->UnsubscribeItem(PublishedFileId); });
+	if (!bStarted)
 	{
 		Complete(false);
-		return;
 	}
-
-	// Fail the node if the subsystem delegate never fires.
-	ArmTimeout(Timeout);
 }
 
 void USteamAsyncUnsubscribeWorkshopItem::HandleUnsubscribed(bool bSuccess, int64 InPublishedFileId)
 {
-	if (InPublishedFileId != PublishedFileId)
+	if (!IsResultForThisCall() || InPublishedFileId != PublishedFileId)
 	{
 		return;
 	}
 	Complete(bSuccess);
 }
 
-void USteamAsyncUnsubscribeWorkshopItem::OnTimeoutFailure()
+void USteamAsyncUnsubscribeWorkshopItem::BroadcastFailure(const FEFResult& /*Result*/)
 {
-	Complete(false);
+	OnFailure.Broadcast(PublishedFileId);
+}
+
+void USteamAsyncUnsubscribeWorkshopItem::CancelWork()
+{
+	if (UESteamUGCSubsystem* UGCSubsystem = Subsystem.Get())
+	{
+		UGCSubsystem->OnUnsubscribed.RemoveDynamic(this, &USteamAsyncUnsubscribeWorkshopItem::HandleUnsubscribed);
+	}
 }
 
 void USteamAsyncUnsubscribeWorkshopItem::Complete(bool bSuccess)
 {
-	if (!BeginComplete())
+	CancelWork();
+	if (!FinishAction())
 	{
 		return;
-	}
-
-	if (UESteamUGCSubsystem* UGCSubsystem = Subsystem.Get())
-	{
-		UGCSubsystem->OnUnsubscribed.RemoveDynamic(this, &USteamAsyncUnsubscribeWorkshopItem::HandleUnsubscribed);
 	}
 
 	if (bSuccess)
@@ -370,7 +357,6 @@ void USteamAsyncUnsubscribeWorkshopItem::Complete(bool bSuccess)
 	{
 		OnFailure.Broadcast(PublishedFileId);
 	}
-	SetReadyToDestroy();
 }
 
 // ---- USteamAsyncDownloadWorkshopItem ----
@@ -378,61 +364,60 @@ void USteamAsyncUnsubscribeWorkshopItem::Complete(bool bSuccess)
 USteamAsyncDownloadWorkshopItem* USteamAsyncDownloadWorkshopItem::DownloadWorkshopItem(UObject* WorldContext, int64 PublishedFileId, bool bHighPriority, float Timeout)
 {
 	USteamAsyncDownloadWorkshopItem* Action = NewObject<USteamAsyncDownloadWorkshopItem>();
-	Action->WorldContextObject = WorldContext;
-	Action->Subsystem = GetUGCSubsystem(WorldContext);
 	Action->PublishedFileId = PublishedFileId;
 	Action->bHighPriority = bHighPriority;
-	Action->Timeout = Timeout;
-	Action->RegisterWithGameInstance(WorldContext);
+	Action->InitAsyncAction(WorldContext, Timeout);
 	return Action;
 }
 
-void USteamAsyncDownloadWorkshopItem::Activate()
+void USteamAsyncDownloadWorkshopItem::ExecuteAction()
 {
-	UESteamUGCSubsystem* UGCSubsystem = Subsystem.Get();
+	UESteamUGCSubsystem* UGCSubsystem = RequireGameInstanceSubsystem<UESteamUGCSubsystem>();
 	if (!UGCSubsystem)
 	{
-		Complete(false);
 		return;
 	}
 
+	Subsystem = UGCSubsystem;
 	UGCSubsystem->OnItemDownloaded.AddDynamic(this, &USteamAsyncDownloadWorkshopItem::HandleItemDownloaded);
 
-	if (!UGCSubsystem->DownloadItem(PublishedFileId, bHighPriority))
+	bool bStarted = false;
+	CallWithContext([&] { bStarted = UGCSubsystem->DownloadItem(PublishedFileId, bHighPriority); });
+	if (!bStarted)
 	{
 		Complete(false);
-		return;
 	}
-
-	// Fail the node if the subsystem delegate never fires.
-	ArmTimeout(Timeout);
 }
 
 void USteamAsyncDownloadWorkshopItem::HandleItemDownloaded(bool bSuccess, int64 InPublishedFileId)
 {
 	// The download callback fires for every item this client downloads; only react to ours.
-	if (InPublishedFileId != PublishedFileId)
+	if (!IsResultForThisCall() || InPublishedFileId != PublishedFileId)
 	{
 		return;
 	}
 	Complete(bSuccess);
 }
 
-void USteamAsyncDownloadWorkshopItem::OnTimeoutFailure()
+void USteamAsyncDownloadWorkshopItem::BroadcastFailure(const FEFResult& /*Result*/)
 {
-	Complete(false);
+	OnFailure.Broadcast(PublishedFileId);
+}
+
+void USteamAsyncDownloadWorkshopItem::CancelWork()
+{
+	if (UESteamUGCSubsystem* UGCSubsystem = Subsystem.Get())
+	{
+		UGCSubsystem->OnItemDownloaded.RemoveDynamic(this, &USteamAsyncDownloadWorkshopItem::HandleItemDownloaded);
+	}
 }
 
 void USteamAsyncDownloadWorkshopItem::Complete(bool bSuccess)
 {
-	if (!BeginComplete())
+	CancelWork();
+	if (!FinishAction())
 	{
 		return;
-	}
-
-	if (UESteamUGCSubsystem* UGCSubsystem = Subsystem.Get())
-	{
-		UGCSubsystem->OnItemDownloaded.RemoveDynamic(this, &USteamAsyncDownloadWorkshopItem::HandleItemDownloaded);
 	}
 
 	if (bSuccess)
@@ -443,7 +428,6 @@ void USteamAsyncDownloadWorkshopItem::Complete(bool bSuccess)
 	{
 		OnFailure.Broadcast(PublishedFileId);
 	}
-	SetReadyToDestroy();
 }
 
 // ---- USteamAsyncSetWorkshopFavorite ----
@@ -451,65 +435,66 @@ void USteamAsyncDownloadWorkshopItem::Complete(bool bSuccess)
 USteamAsyncSetWorkshopFavorite* USteamAsyncSetWorkshopFavorite::SetWorkshopFavorite(UObject* WorldContext, int32 AppId, int64 PublishedFileId, bool bAddToFavorites, float Timeout)
 {
 	USteamAsyncSetWorkshopFavorite* Action = NewObject<USteamAsyncSetWorkshopFavorite>();
-	Action->WorldContextObject = WorldContext;
-	Action->Subsystem = GetUGCSubsystem(WorldContext);
 	Action->AppId = AppId;
 	Action->PublishedFileId = PublishedFileId;
 	Action->bAddToFavorites = bAddToFavorites;
-	Action->Timeout = Timeout;
-	Action->RegisterWithGameInstance(WorldContext);
+	Action->InitAsyncAction(WorldContext, Timeout);
 	return Action;
 }
 
-void USteamAsyncSetWorkshopFavorite::Activate()
+void USteamAsyncSetWorkshopFavorite::ExecuteAction()
 {
-	UESteamUGCSubsystem* UGCSubsystem = Subsystem.Get();
+	UESteamUGCSubsystem* UGCSubsystem = RequireGameInstanceSubsystem<UESteamUGCSubsystem>();
 	if (!UGCSubsystem)
 	{
-		Complete(false);
 		return;
 	}
 
+	Subsystem = UGCSubsystem;
 	UGCSubsystem->OnItemFavoriteChanged.AddDynamic(this, &USteamAsyncSetWorkshopFavorite::HandleFavoriteChanged);
 
-	const bool bIssued = bAddToFavorites
-		? UGCSubsystem->AddItemToFavorites(AppId, PublishedFileId)
-		: UGCSubsystem->RemoveItemFromFavorites(AppId, PublishedFileId);
+	bool bIssued = false;
+	CallWithContext([&]
+	{
+		bIssued = bAddToFavorites
+			? UGCSubsystem->AddItemToFavorites(AppId, PublishedFileId)
+			: UGCSubsystem->RemoveItemFromFavorites(AppId, PublishedFileId);
+	});
 	if (!bIssued)
 	{
 		Complete(false);
-		return;
 	}
-
-	// Fail the node if the subsystem delegate never fires.
-	ArmTimeout(Timeout);
 }
 
 void USteamAsyncSetWorkshopFavorite::HandleFavoriteChanged(bool bSuccess, int64 InPublishedFileId, bool bWasAddRequest)
 {
 	// Favorites add/remove share one subsystem delegate; only react to our item and our direction.
-	if (InPublishedFileId != PublishedFileId || bWasAddRequest != bAddToFavorites)
+	if (!IsResultForThisCall() || InPublishedFileId != PublishedFileId || bWasAddRequest != bAddToFavorites)
 	{
 		return;
 	}
 	Complete(bSuccess);
 }
 
-void USteamAsyncSetWorkshopFavorite::OnTimeoutFailure()
+void USteamAsyncSetWorkshopFavorite::BroadcastFailure(const FEFResult& /*Result*/)
 {
-	Complete(false);
+	OnFailure.Broadcast(PublishedFileId, bAddToFavorites);
+}
+
+void USteamAsyncSetWorkshopFavorite::CancelWork()
+{
+	if (UESteamUGCSubsystem* UGCSubsystem = Subsystem.Get())
+	{
+		UGCSubsystem->OnItemFavoriteChanged.RemoveDynamic(this, &USteamAsyncSetWorkshopFavorite::HandleFavoriteChanged);
+	}
 }
 
 void USteamAsyncSetWorkshopFavorite::Complete(bool bSuccess)
 {
-	if (!BeginComplete())
+	CancelWork();
+	if (!FinishAction())
 	{
 		return;
-	}
-
-	if (UESteamUGCSubsystem* UGCSubsystem = Subsystem.Get())
-	{
-		UGCSubsystem->OnItemFavoriteChanged.RemoveDynamic(this, &USteamAsyncSetWorkshopFavorite::HandleFavoriteChanged);
 	}
 
 	if (bSuccess)
@@ -520,7 +505,6 @@ void USteamAsyncSetWorkshopFavorite::Complete(bool bSuccess)
 	{
 		OnFailure.Broadcast(PublishedFileId, bAddToFavorites);
 	}
-	SetReadyToDestroy();
 }
 
 // ---- USteamAsyncSetWorkshopItemVote ----
@@ -528,60 +512,59 @@ void USteamAsyncSetWorkshopFavorite::Complete(bool bSuccess)
 USteamAsyncSetWorkshopItemVote* USteamAsyncSetWorkshopItemVote::SetWorkshopItemVote(UObject* WorldContext, int64 PublishedFileId, bool bVoteUp, float Timeout)
 {
 	USteamAsyncSetWorkshopItemVote* Action = NewObject<USteamAsyncSetWorkshopItemVote>();
-	Action->WorldContextObject = WorldContext;
-	Action->Subsystem = GetUGCSubsystem(WorldContext);
 	Action->PublishedFileId = PublishedFileId;
 	Action->bVoteUp = bVoteUp;
-	Action->Timeout = Timeout;
-	Action->RegisterWithGameInstance(WorldContext);
+	Action->InitAsyncAction(WorldContext, Timeout);
 	return Action;
 }
 
-void USteamAsyncSetWorkshopItemVote::Activate()
+void USteamAsyncSetWorkshopItemVote::ExecuteAction()
 {
-	UESteamUGCSubsystem* UGCSubsystem = Subsystem.Get();
+	UESteamUGCSubsystem* UGCSubsystem = RequireGameInstanceSubsystem<UESteamUGCSubsystem>();
 	if (!UGCSubsystem)
 	{
-		Complete(false);
 		return;
 	}
 
+	Subsystem = UGCSubsystem;
 	UGCSubsystem->OnUserItemVoteSet.AddDynamic(this, &USteamAsyncSetWorkshopItemVote::HandleVoteSet);
 
-	if (!UGCSubsystem->SetUserItemVote(PublishedFileId, bVoteUp))
+	bool bStarted = false;
+	CallWithContext([&] { bStarted = UGCSubsystem->SetUserItemVote(PublishedFileId, bVoteUp); });
+	if (!bStarted)
 	{
 		Complete(false);
-		return;
 	}
-
-	// Fail the node if the subsystem delegate never fires.
-	ArmTimeout(Timeout);
 }
 
 void USteamAsyncSetWorkshopItemVote::HandleVoteSet(bool bSuccess, int64 InPublishedFileId, bool bInVoteUp)
 {
-	if (InPublishedFileId != PublishedFileId)
+	if (!IsResultForThisCall() || InPublishedFileId != PublishedFileId)
 	{
 		return;
 	}
 	Complete(bSuccess);
 }
 
-void USteamAsyncSetWorkshopItemVote::OnTimeoutFailure()
+void USteamAsyncSetWorkshopItemVote::BroadcastFailure(const FEFResult& /*Result*/)
 {
-	Complete(false);
+	OnFailure.Broadcast(PublishedFileId, bVoteUp);
+}
+
+void USteamAsyncSetWorkshopItemVote::CancelWork()
+{
+	if (UESteamUGCSubsystem* UGCSubsystem = Subsystem.Get())
+	{
+		UGCSubsystem->OnUserItemVoteSet.RemoveDynamic(this, &USteamAsyncSetWorkshopItemVote::HandleVoteSet);
+	}
 }
 
 void USteamAsyncSetWorkshopItemVote::Complete(bool bSuccess)
 {
-	if (!BeginComplete())
+	CancelWork();
+	if (!FinishAction())
 	{
 		return;
-	}
-
-	if (UESteamUGCSubsystem* UGCSubsystem = Subsystem.Get())
-	{
-		UGCSubsystem->OnUserItemVoteSet.RemoveDynamic(this, &USteamAsyncSetWorkshopItemVote::HandleVoteSet);
 	}
 
 	if (bSuccess)
@@ -592,7 +575,6 @@ void USteamAsyncSetWorkshopItemVote::Complete(bool bSuccess)
 	{
 		OnFailure.Broadcast(PublishedFileId, bVoteUp);
 	}
-	SetReadyToDestroy();
 }
 
 // ---- USteamAsyncGetWorkshopItemVote ----
@@ -600,59 +582,58 @@ void USteamAsyncSetWorkshopItemVote::Complete(bool bSuccess)
 USteamAsyncGetWorkshopItemVote* USteamAsyncGetWorkshopItemVote::GetWorkshopItemVote(UObject* WorldContext, int64 PublishedFileId, float Timeout)
 {
 	USteamAsyncGetWorkshopItemVote* Action = NewObject<USteamAsyncGetWorkshopItemVote>();
-	Action->WorldContextObject = WorldContext;
-	Action->Subsystem = GetUGCSubsystem(WorldContext);
 	Action->PublishedFileId = PublishedFileId;
-	Action->Timeout = Timeout;
-	Action->RegisterWithGameInstance(WorldContext);
+	Action->InitAsyncAction(WorldContext, Timeout);
 	return Action;
 }
 
-void USteamAsyncGetWorkshopItemVote::Activate()
+void USteamAsyncGetWorkshopItemVote::ExecuteAction()
 {
-	UESteamUGCSubsystem* UGCSubsystem = Subsystem.Get();
+	UESteamUGCSubsystem* UGCSubsystem = RequireGameInstanceSubsystem<UESteamUGCSubsystem>();
 	if (!UGCSubsystem)
 	{
-		Complete(false, false, false, false);
 		return;
 	}
 
+	Subsystem = UGCSubsystem;
 	UGCSubsystem->OnUserItemVote.AddDynamic(this, &USteamAsyncGetWorkshopItemVote::HandleVote);
 
-	if (!UGCSubsystem->GetUserItemVote(PublishedFileId))
+	bool bStarted = false;
+	CallWithContext([&] { bStarted = UGCSubsystem->GetUserItemVote(PublishedFileId); });
+	if (!bStarted)
 	{
 		Complete(false, false, false, false);
-		return;
 	}
-
-	// Fail the node if the subsystem delegate never fires.
-	ArmTimeout(Timeout);
 }
 
 void USteamAsyncGetWorkshopItemVote::HandleVote(bool bSuccess, int64 InPublishedFileId, bool bVotedUp, bool bVotedDown, bool bVoteSkipped)
 {
-	if (InPublishedFileId != PublishedFileId)
+	if (!IsResultForThisCall() || InPublishedFileId != PublishedFileId)
 	{
 		return;
 	}
 	Complete(bSuccess, bVotedUp, bVotedDown, bVoteSkipped);
 }
 
-void USteamAsyncGetWorkshopItemVote::OnTimeoutFailure()
+void USteamAsyncGetWorkshopItemVote::BroadcastFailure(const FEFResult& /*Result*/)
 {
-	Complete(false, false, false, false);
+	OnFailure.Broadcast(PublishedFileId, false, false, false);
+}
+
+void USteamAsyncGetWorkshopItemVote::CancelWork()
+{
+	if (UESteamUGCSubsystem* UGCSubsystem = Subsystem.Get())
+	{
+		UGCSubsystem->OnUserItemVote.RemoveDynamic(this, &USteamAsyncGetWorkshopItemVote::HandleVote);
+	}
 }
 
 void USteamAsyncGetWorkshopItemVote::Complete(bool bSuccess, bool bVotedUp, bool bVotedDown, bool bVoteSkipped)
 {
-	if (!BeginComplete())
+	CancelWork();
+	if (!FinishAction())
 	{
 		return;
-	}
-
-	if (UESteamUGCSubsystem* UGCSubsystem = Subsystem.Get())
-	{
-		UGCSubsystem->OnUserItemVote.RemoveDynamic(this, &USteamAsyncGetWorkshopItemVote::HandleVote);
 	}
 
 	if (bSuccess)
@@ -663,7 +644,6 @@ void USteamAsyncGetWorkshopItemVote::Complete(bool bSuccess, bool bVotedUp, bool
 	{
 		OnFailure.Broadcast(PublishedFileId, bVotedUp, bVotedDown, bVoteSkipped);
 	}
-	SetReadyToDestroy();
 }
 
 // ---- USteamAsyncDeleteWorkshopItem ----
@@ -671,59 +651,58 @@ void USteamAsyncGetWorkshopItemVote::Complete(bool bSuccess, bool bVotedUp, bool
 USteamAsyncDeleteWorkshopItem* USteamAsyncDeleteWorkshopItem::DeleteWorkshopItem(UObject* WorldContext, int64 PublishedFileId, float Timeout)
 {
 	USteamAsyncDeleteWorkshopItem* Action = NewObject<USteamAsyncDeleteWorkshopItem>();
-	Action->WorldContextObject = WorldContext;
-	Action->Subsystem = GetUGCSubsystem(WorldContext);
 	Action->PublishedFileId = PublishedFileId;
-	Action->Timeout = Timeout;
-	Action->RegisterWithGameInstance(WorldContext);
+	Action->InitAsyncAction(WorldContext, Timeout);
 	return Action;
 }
 
-void USteamAsyncDeleteWorkshopItem::Activate()
+void USteamAsyncDeleteWorkshopItem::ExecuteAction()
 {
-	UESteamUGCSubsystem* UGCSubsystem = Subsystem.Get();
+	UESteamUGCSubsystem* UGCSubsystem = RequireGameInstanceSubsystem<UESteamUGCSubsystem>();
 	if (!UGCSubsystem)
 	{
-		Complete(false);
 		return;
 	}
 
+	Subsystem = UGCSubsystem;
 	UGCSubsystem->OnItemDeleted.AddDynamic(this, &USteamAsyncDeleteWorkshopItem::HandleItemDeleted);
 
-	if (!UGCSubsystem->DeleteItem(PublishedFileId))
+	bool bStarted = false;
+	CallWithContext([&] { bStarted = UGCSubsystem->DeleteItem(PublishedFileId); });
+	if (!bStarted)
 	{
 		Complete(false);
-		return;
 	}
-
-	// Fail the node if the subsystem delegate never fires.
-	ArmTimeout(Timeout);
 }
 
 void USteamAsyncDeleteWorkshopItem::HandleItemDeleted(bool bSuccess, int64 InPublishedFileId)
 {
-	if (InPublishedFileId != PublishedFileId)
+	if (!IsResultForThisCall() || InPublishedFileId != PublishedFileId)
 	{
 		return;
 	}
 	Complete(bSuccess);
 }
 
-void USteamAsyncDeleteWorkshopItem::OnTimeoutFailure()
+void USteamAsyncDeleteWorkshopItem::BroadcastFailure(const FEFResult& /*Result*/)
 {
-	Complete(false);
+	OnFailure.Broadcast(PublishedFileId);
+}
+
+void USteamAsyncDeleteWorkshopItem::CancelWork()
+{
+	if (UESteamUGCSubsystem* UGCSubsystem = Subsystem.Get())
+	{
+		UGCSubsystem->OnItemDeleted.RemoveDynamic(this, &USteamAsyncDeleteWorkshopItem::HandleItemDeleted);
+	}
 }
 
 void USteamAsyncDeleteWorkshopItem::Complete(bool bSuccess)
 {
-	if (!BeginComplete())
+	CancelWork();
+	if (!FinishAction())
 	{
 		return;
-	}
-
-	if (UESteamUGCSubsystem* UGCSubsystem = Subsystem.Get())
-	{
-		UGCSubsystem->OnItemDeleted.RemoveDynamic(this, &USteamAsyncDeleteWorkshopItem::HandleItemDeleted);
 	}
 
 	if (bSuccess)
@@ -734,7 +713,6 @@ void USteamAsyncDeleteWorkshopItem::Complete(bool bSuccess)
 	{
 		OnFailure.Broadcast(PublishedFileId);
 	}
-	SetReadyToDestroy();
 }
 
 // ---- USteamAsyncSetWorkshopDependency ----
@@ -742,25 +720,22 @@ void USteamAsyncDeleteWorkshopItem::Complete(bool bSuccess)
 USteamAsyncSetWorkshopDependency* USteamAsyncSetWorkshopDependency::SetWorkshopDependency(UObject* WorldContext, int64 ParentPublishedFileId, int64 ChildPublishedFileId, bool bAdd, float Timeout)
 {
 	USteamAsyncSetWorkshopDependency* Action = NewObject<USteamAsyncSetWorkshopDependency>();
-	Action->WorldContextObject = WorldContext;
-	Action->Subsystem = GetUGCSubsystem(WorldContext);
 	Action->ParentPublishedFileId = ParentPublishedFileId;
 	Action->ChildPublishedFileId = ChildPublishedFileId;
 	Action->bAdd = bAdd;
-	Action->Timeout = Timeout;
-	Action->RegisterWithGameInstance(WorldContext);
+	Action->InitAsyncAction(WorldContext, Timeout);
 	return Action;
 }
 
-void USteamAsyncSetWorkshopDependency::Activate()
+void USteamAsyncSetWorkshopDependency::ExecuteAction()
 {
-	UESteamUGCSubsystem* UGCSubsystem = Subsystem.Get();
+	UESteamUGCSubsystem* UGCSubsystem = RequireGameInstanceSubsystem<UESteamUGCSubsystem>();
 	if (!UGCSubsystem)
 	{
-		Complete(false);
 		return;
 	}
 
+	Subsystem = UGCSubsystem;
 	if (bAdd)
 	{
 		UGCSubsystem->OnDependencyAdded.AddDynamic(this, &USteamAsyncSetWorkshopDependency::HandleDependencyResult);
@@ -770,40 +745,35 @@ void USteamAsyncSetWorkshopDependency::Activate()
 		UGCSubsystem->OnDependencyRemoved.AddDynamic(this, &USteamAsyncSetWorkshopDependency::HandleDependencyResult);
 	}
 
-	const bool bIssued = bAdd
-		? UGCSubsystem->AddDependency(ParentPublishedFileId, ChildPublishedFileId)
-		: UGCSubsystem->RemoveDependency(ParentPublishedFileId, ChildPublishedFileId);
+	bool bIssued = false;
+	CallWithContext([&]
+	{
+		bIssued = bAdd
+			? UGCSubsystem->AddDependency(ParentPublishedFileId, ChildPublishedFileId)
+			: UGCSubsystem->RemoveDependency(ParentPublishedFileId, ChildPublishedFileId);
+	});
 	if (!bIssued)
 	{
 		Complete(false);
-		return;
 	}
-
-	// Fail the node if the subsystem delegate never fires.
-	ArmTimeout(Timeout);
 }
 
 void USteamAsyncSetWorkshopDependency::HandleDependencyResult(bool bSuccess, int64 InParentPublishedFileId, int64 InChildPublishedFileId)
 {
-	if (InParentPublishedFileId != ParentPublishedFileId || InChildPublishedFileId != ChildPublishedFileId)
+	if (!IsResultForThisCall() || InParentPublishedFileId != ParentPublishedFileId || InChildPublishedFileId != ChildPublishedFileId)
 	{
 		return;
 	}
 	Complete(bSuccess);
 }
 
-void USteamAsyncSetWorkshopDependency::OnTimeoutFailure()
+void USteamAsyncSetWorkshopDependency::BroadcastFailure(const FEFResult& /*Result*/)
 {
-	Complete(false);
+	OnFailure.Broadcast(ParentPublishedFileId, ChildPublishedFileId);
 }
 
-void USteamAsyncSetWorkshopDependency::Complete(bool bSuccess)
+void USteamAsyncSetWorkshopDependency::CancelWork()
 {
-	if (!BeginComplete())
-	{
-		return;
-	}
-
 	if (UESteamUGCSubsystem* UGCSubsystem = Subsystem.Get())
 	{
 		if (bAdd)
@@ -815,6 +785,15 @@ void USteamAsyncSetWorkshopDependency::Complete(bool bSuccess)
 			UGCSubsystem->OnDependencyRemoved.RemoveDynamic(this, &USteamAsyncSetWorkshopDependency::HandleDependencyResult);
 		}
 	}
+}
+
+void USteamAsyncSetWorkshopDependency::Complete(bool bSuccess)
+{
+	CancelWork();
+	if (!FinishAction())
+	{
+		return;
+	}
 
 	if (bSuccess)
 	{
@@ -824,7 +803,6 @@ void USteamAsyncSetWorkshopDependency::Complete(bool bSuccess)
 	{
 		OnFailure.Broadcast(ParentPublishedFileId, ChildPublishedFileId);
 	}
-	SetReadyToDestroy();
 }
 
 // ---- USteamAsyncSetWorkshopAppDependency ----
@@ -832,25 +810,22 @@ void USteamAsyncSetWorkshopDependency::Complete(bool bSuccess)
 USteamAsyncSetWorkshopAppDependency* USteamAsyncSetWorkshopAppDependency::SetWorkshopAppDependency(UObject* WorldContext, int64 PublishedFileId, int32 AppId, bool bAdd, float Timeout)
 {
 	USteamAsyncSetWorkshopAppDependency* Action = NewObject<USteamAsyncSetWorkshopAppDependency>();
-	Action->WorldContextObject = WorldContext;
-	Action->Subsystem = GetUGCSubsystem(WorldContext);
 	Action->PublishedFileId = PublishedFileId;
 	Action->AppId = AppId;
 	Action->bAdd = bAdd;
-	Action->Timeout = Timeout;
-	Action->RegisterWithGameInstance(WorldContext);
+	Action->InitAsyncAction(WorldContext, Timeout);
 	return Action;
 }
 
-void USteamAsyncSetWorkshopAppDependency::Activate()
+void USteamAsyncSetWorkshopAppDependency::ExecuteAction()
 {
-	UESteamUGCSubsystem* UGCSubsystem = Subsystem.Get();
+	UESteamUGCSubsystem* UGCSubsystem = RequireGameInstanceSubsystem<UESteamUGCSubsystem>();
 	if (!UGCSubsystem)
 	{
-		Complete(false);
 		return;
 	}
 
+	Subsystem = UGCSubsystem;
 	if (bAdd)
 	{
 		UGCSubsystem->OnAppDependencyAdded.AddDynamic(this, &USteamAsyncSetWorkshopAppDependency::HandleAppDependencyResult);
@@ -860,40 +835,35 @@ void USteamAsyncSetWorkshopAppDependency::Activate()
 		UGCSubsystem->OnAppDependencyRemoved.AddDynamic(this, &USteamAsyncSetWorkshopAppDependency::HandleAppDependencyResult);
 	}
 
-	const bool bIssued = bAdd
-		? UGCSubsystem->AddAppDependency(PublishedFileId, AppId)
-		: UGCSubsystem->RemoveAppDependency(PublishedFileId, AppId);
+	bool bIssued = false;
+	CallWithContext([&]
+	{
+		bIssued = bAdd
+			? UGCSubsystem->AddAppDependency(PublishedFileId, AppId)
+			: UGCSubsystem->RemoveAppDependency(PublishedFileId, AppId);
+	});
 	if (!bIssued)
 	{
 		Complete(false);
-		return;
 	}
-
-	// Fail the node if the subsystem delegate never fires.
-	ArmTimeout(Timeout);
 }
 
 void USteamAsyncSetWorkshopAppDependency::HandleAppDependencyResult(bool bSuccess, int64 InPublishedFileId, int32 InAppId)
 {
-	if (InPublishedFileId != PublishedFileId || InAppId != AppId)
+	if (!IsResultForThisCall() || InPublishedFileId != PublishedFileId || InAppId != AppId)
 	{
 		return;
 	}
 	Complete(bSuccess);
 }
 
-void USteamAsyncSetWorkshopAppDependency::OnTimeoutFailure()
+void USteamAsyncSetWorkshopAppDependency::BroadcastFailure(const FEFResult& /*Result*/)
 {
-	Complete(false);
+	OnFailure.Broadcast(PublishedFileId, AppId);
 }
 
-void USteamAsyncSetWorkshopAppDependency::Complete(bool bSuccess)
+void USteamAsyncSetWorkshopAppDependency::CancelWork()
 {
-	if (!BeginComplete())
-	{
-		return;
-	}
-
 	if (UESteamUGCSubsystem* UGCSubsystem = Subsystem.Get())
 	{
 		if (bAdd)
@@ -905,6 +875,15 @@ void USteamAsyncSetWorkshopAppDependency::Complete(bool bSuccess)
 			UGCSubsystem->OnAppDependencyRemoved.RemoveDynamic(this, &USteamAsyncSetWorkshopAppDependency::HandleAppDependencyResult);
 		}
 	}
+}
+
+void USteamAsyncSetWorkshopAppDependency::Complete(bool bSuccess)
+{
+	CancelWork();
+	if (!FinishAction())
+	{
+		return;
+	}
 
 	if (bSuccess)
 	{
@@ -914,7 +893,6 @@ void USteamAsyncSetWorkshopAppDependency::Complete(bool bSuccess)
 	{
 		OnFailure.Broadcast(PublishedFileId, AppId);
 	}
-	SetReadyToDestroy();
 }
 
 // ---- USteamAsyncGetWorkshopAppDependencies ----
@@ -922,59 +900,58 @@ void USteamAsyncSetWorkshopAppDependency::Complete(bool bSuccess)
 USteamAsyncGetWorkshopAppDependencies* USteamAsyncGetWorkshopAppDependencies::GetWorkshopAppDependencies(UObject* WorldContext, int64 PublishedFileId, float Timeout)
 {
 	USteamAsyncGetWorkshopAppDependencies* Action = NewObject<USteamAsyncGetWorkshopAppDependencies>();
-	Action->WorldContextObject = WorldContext;
-	Action->Subsystem = GetUGCSubsystem(WorldContext);
 	Action->PublishedFileId = PublishedFileId;
-	Action->Timeout = Timeout;
-	Action->RegisterWithGameInstance(WorldContext);
+	Action->InitAsyncAction(WorldContext, Timeout);
 	return Action;
 }
 
-void USteamAsyncGetWorkshopAppDependencies::Activate()
+void USteamAsyncGetWorkshopAppDependencies::ExecuteAction()
 {
-	UESteamUGCSubsystem* UGCSubsystem = Subsystem.Get();
+	UESteamUGCSubsystem* UGCSubsystem = RequireGameInstanceSubsystem<UESteamUGCSubsystem>();
 	if (!UGCSubsystem)
 	{
-		Complete(false, TArray<int32>());
 		return;
 	}
 
+	Subsystem = UGCSubsystem;
 	UGCSubsystem->OnAppDependenciesReceived.AddDynamic(this, &USteamAsyncGetWorkshopAppDependencies::HandleAppDependencies);
 
-	if (!UGCSubsystem->GetAppDependencies(PublishedFileId))
+	bool bStarted = false;
+	CallWithContext([&] { bStarted = UGCSubsystem->GetAppDependencies(PublishedFileId); });
+	if (!bStarted)
 	{
 		Complete(false, TArray<int32>());
-		return;
 	}
-
-	// Fail the node if the subsystem delegate never fires.
-	ArmTimeout(Timeout);
 }
 
 void USteamAsyncGetWorkshopAppDependencies::HandleAppDependencies(bool bSuccess, int64 InPublishedFileId, const TArray<int32>& AppIds)
 {
-	if (InPublishedFileId != PublishedFileId)
+	if (!IsResultForThisCall() || InPublishedFileId != PublishedFileId)
 	{
 		return;
 	}
 	Complete(bSuccess, AppIds);
 }
 
-void USteamAsyncGetWorkshopAppDependencies::OnTimeoutFailure()
+void USteamAsyncGetWorkshopAppDependencies::BroadcastFailure(const FEFResult& /*Result*/)
 {
-	Complete(false, TArray<int32>());
+	OnFailure.Broadcast(PublishedFileId, TArray<int32>());
+}
+
+void USteamAsyncGetWorkshopAppDependencies::CancelWork()
+{
+	if (UESteamUGCSubsystem* UGCSubsystem = Subsystem.Get())
+	{
+		UGCSubsystem->OnAppDependenciesReceived.RemoveDynamic(this, &USteamAsyncGetWorkshopAppDependencies::HandleAppDependencies);
+	}
 }
 
 void USteamAsyncGetWorkshopAppDependencies::Complete(bool bSuccess, const TArray<int32>& AppIds)
 {
-	if (!BeginComplete())
+	CancelWork();
+	if (!FinishAction())
 	{
 		return;
-	}
-
-	if (UESteamUGCSubsystem* UGCSubsystem = Subsystem.Get())
-	{
-		UGCSubsystem->OnAppDependenciesReceived.RemoveDynamic(this, &USteamAsyncGetWorkshopAppDependencies::HandleAppDependencies);
 	}
 
 	if (bSuccess)
@@ -985,7 +962,6 @@ void USteamAsyncGetWorkshopAppDependencies::Complete(bool bSuccess, const TArray
 	{
 		OnFailure.Broadcast(PublishedFileId, AppIds);
 	}
-	SetReadyToDestroy();
 }
 
 // ---- USteamAsyncStartPlaytimeTracking ----
@@ -993,56 +969,59 @@ void USteamAsyncGetWorkshopAppDependencies::Complete(bool bSuccess, const TArray
 USteamAsyncStartPlaytimeTracking* USteamAsyncStartPlaytimeTracking::StartPlaytimeTracking(UObject* WorldContext, const TArray<int64>& PublishedFileIds, float Timeout)
 {
 	USteamAsyncStartPlaytimeTracking* Action = NewObject<USteamAsyncStartPlaytimeTracking>();
-	Action->WorldContextObject = WorldContext;
-	Action->Subsystem = GetUGCSubsystem(WorldContext);
 	Action->PublishedFileIds = PublishedFileIds;
-	Action->Timeout = Timeout;
-	Action->RegisterWithGameInstance(WorldContext);
+	Action->InitAsyncAction(WorldContext, Timeout);
 	return Action;
 }
 
-void USteamAsyncStartPlaytimeTracking::Activate()
+void USteamAsyncStartPlaytimeTracking::ExecuteAction()
 {
-	UESteamUGCSubsystem* UGCSubsystem = Subsystem.Get();
+	UESteamUGCSubsystem* UGCSubsystem = RequireGameInstanceSubsystem<UESteamUGCSubsystem>();
 	if (!UGCSubsystem)
 	{
-		Complete(false);
 		return;
 	}
 
+	Subsystem = UGCSubsystem;
 	UGCSubsystem->OnPlaytimeTrackingStarted.AddDynamic(this, &USteamAsyncStartPlaytimeTracking::HandleTrackingResult);
 
-	if (!UGCSubsystem->StartPlaytimeTracking(PublishedFileIds))
+	bool bStarted = false;
+	CallWithContext([&] { bStarted = UGCSubsystem->StartPlaytimeTracking(PublishedFileIds); });
+	if (!bStarted)
 	{
 		Complete(false);
-		return;
 	}
-
-	// Fail the node if the subsystem delegate never fires.
-	ArmTimeout(Timeout);
 }
 
 void USteamAsyncStartPlaytimeTracking::HandleTrackingResult(bool bSuccess)
 {
-	// The result carries no ids to discriminate; relies on Timeout + one-in-flight subsystem limit.
+	// The result carries no ids; the subsystem tags it with the call context of its request.
+	if (!IsResultForThisCall())
+	{
+		return;
+	}
 	Complete(bSuccess);
 }
 
-void USteamAsyncStartPlaytimeTracking::OnTimeoutFailure()
+void USteamAsyncStartPlaytimeTracking::BroadcastFailure(const FEFResult& /*Result*/)
 {
-	Complete(false);
+	OnFailure.Broadcast();
+}
+
+void USteamAsyncStartPlaytimeTracking::CancelWork()
+{
+	if (UESteamUGCSubsystem* UGCSubsystem = Subsystem.Get())
+	{
+		UGCSubsystem->OnPlaytimeTrackingStarted.RemoveDynamic(this, &USteamAsyncStartPlaytimeTracking::HandleTrackingResult);
+	}
 }
 
 void USteamAsyncStartPlaytimeTracking::Complete(bool bSuccess)
 {
-	if (!BeginComplete())
+	CancelWork();
+	if (!FinishAction())
 	{
 		return;
-	}
-
-	if (UESteamUGCSubsystem* UGCSubsystem = Subsystem.Get())
-	{
-		UGCSubsystem->OnPlaytimeTrackingStarted.RemoveDynamic(this, &USteamAsyncStartPlaytimeTracking::HandleTrackingResult);
 	}
 
 	if (bSuccess)
@@ -1053,7 +1032,6 @@ void USteamAsyncStartPlaytimeTracking::Complete(bool bSuccess)
 	{
 		OnFailure.Broadcast();
 	}
-	SetReadyToDestroy();
 }
 
 // ---- USteamAsyncStopPlaytimeTracking ----
@@ -1061,57 +1039,60 @@ void USteamAsyncStartPlaytimeTracking::Complete(bool bSuccess)
 USteamAsyncStopPlaytimeTracking* USteamAsyncStopPlaytimeTracking::StopPlaytimeTracking(UObject* WorldContext, const TArray<int64>& PublishedFileIds, float Timeout)
 {
 	USteamAsyncStopPlaytimeTracking* Action = NewObject<USteamAsyncStopPlaytimeTracking>();
-	Action->WorldContextObject = WorldContext;
-	Action->Subsystem = GetUGCSubsystem(WorldContext);
 	Action->PublishedFileIds = PublishedFileIds;
-	Action->Timeout = Timeout;
-	Action->RegisterWithGameInstance(WorldContext);
+	Action->InitAsyncAction(WorldContext, Timeout);
 	return Action;
 }
 
-void USteamAsyncStopPlaytimeTracking::Activate()
+void USteamAsyncStopPlaytimeTracking::ExecuteAction()
 {
-	UESteamUGCSubsystem* UGCSubsystem = Subsystem.Get();
+	UESteamUGCSubsystem* UGCSubsystem = RequireGameInstanceSubsystem<UESteamUGCSubsystem>();
 	if (!UGCSubsystem)
 	{
-		Complete(false);
 		return;
 	}
 
+	Subsystem = UGCSubsystem;
 	UGCSubsystem->OnPlaytimeTrackingStopped.AddDynamic(this, &USteamAsyncStopPlaytimeTracking::HandleTrackingResult);
 
-	if (!UGCSubsystem->StopPlaytimeTracking(PublishedFileIds))
+	bool bStarted = false;
+	CallWithContext([&] { bStarted = UGCSubsystem->StopPlaytimeTracking(PublishedFileIds); });
+	if (!bStarted)
 	{
 		Complete(false);
-		return;
 	}
-
-	// Fail the node if the subsystem delegate never fires.
-	ArmTimeout(Timeout);
 }
 
 void USteamAsyncStopPlaytimeTracking::HandleTrackingResult(bool bSuccess)
 {
 	// StopPlaytimeTracking/ForAllItems share one subsystem delegate and the result carries no ids;
-	// relies on Timeout + one-in-flight subsystem limit.
+	// the subsystem tags each result with the call context of its request.
+	if (!IsResultForThisCall())
+	{
+		return;
+	}
 	Complete(bSuccess);
 }
 
-void USteamAsyncStopPlaytimeTracking::OnTimeoutFailure()
+void USteamAsyncStopPlaytimeTracking::BroadcastFailure(const FEFResult& /*Result*/)
 {
-	Complete(false);
+	OnFailure.Broadcast();
+}
+
+void USteamAsyncStopPlaytimeTracking::CancelWork()
+{
+	if (UESteamUGCSubsystem* UGCSubsystem = Subsystem.Get())
+	{
+		UGCSubsystem->OnPlaytimeTrackingStopped.RemoveDynamic(this, &USteamAsyncStopPlaytimeTracking::HandleTrackingResult);
+	}
 }
 
 void USteamAsyncStopPlaytimeTracking::Complete(bool bSuccess)
 {
-	if (!BeginComplete())
+	CancelWork();
+	if (!FinishAction())
 	{
 		return;
-	}
-
-	if (UESteamUGCSubsystem* UGCSubsystem = Subsystem.Get())
-	{
-		UGCSubsystem->OnPlaytimeTrackingStopped.RemoveDynamic(this, &USteamAsyncStopPlaytimeTracking::HandleTrackingResult);
 	}
 
 	if (bSuccess)
@@ -1122,7 +1103,6 @@ void USteamAsyncStopPlaytimeTracking::Complete(bool bSuccess)
 	{
 		OnFailure.Broadcast();
 	}
-	SetReadyToDestroy();
 }
 
 // ---- USteamAsyncStopPlaytimeTrackingForAllItems ----
@@ -1130,56 +1110,59 @@ void USteamAsyncStopPlaytimeTracking::Complete(bool bSuccess)
 USteamAsyncStopPlaytimeTrackingForAllItems* USteamAsyncStopPlaytimeTrackingForAllItems::StopPlaytimeTrackingForAllItems(UObject* WorldContext, float Timeout)
 {
 	USteamAsyncStopPlaytimeTrackingForAllItems* Action = NewObject<USteamAsyncStopPlaytimeTrackingForAllItems>();
-	Action->WorldContextObject = WorldContext;
-	Action->Subsystem = GetUGCSubsystem(WorldContext);
-	Action->Timeout = Timeout;
-	Action->RegisterWithGameInstance(WorldContext);
+	Action->InitAsyncAction(WorldContext, Timeout);
 	return Action;
 }
 
-void USteamAsyncStopPlaytimeTrackingForAllItems::Activate()
+void USteamAsyncStopPlaytimeTrackingForAllItems::ExecuteAction()
 {
-	UESteamUGCSubsystem* UGCSubsystem = Subsystem.Get();
+	UESteamUGCSubsystem* UGCSubsystem = RequireGameInstanceSubsystem<UESteamUGCSubsystem>();
 	if (!UGCSubsystem)
 	{
-		Complete(false);
 		return;
 	}
 
+	Subsystem = UGCSubsystem;
 	UGCSubsystem->OnPlaytimeTrackingStopped.AddDynamic(this, &USteamAsyncStopPlaytimeTrackingForAllItems::HandleTrackingResult);
 
-	if (!UGCSubsystem->StopPlaytimeTrackingForAllItems())
+	bool bStarted = false;
+	CallWithContext([&] { bStarted = UGCSubsystem->StopPlaytimeTrackingForAllItems(); });
+	if (!bStarted)
 	{
 		Complete(false);
-		return;
 	}
-
-	// Fail the node if the subsystem delegate never fires.
-	ArmTimeout(Timeout);
 }
 
 void USteamAsyncStopPlaytimeTrackingForAllItems::HandleTrackingResult(bool bSuccess)
 {
 	// StopPlaytimeTracking/ForAllItems share one subsystem delegate and the result carries no ids;
-	// relies on Timeout + one-in-flight subsystem limit.
+	// the subsystem tags each result with the call context of its request.
+	if (!IsResultForThisCall())
+	{
+		return;
+	}
 	Complete(bSuccess);
 }
 
-void USteamAsyncStopPlaytimeTrackingForAllItems::OnTimeoutFailure()
+void USteamAsyncStopPlaytimeTrackingForAllItems::BroadcastFailure(const FEFResult& /*Result*/)
 {
-	Complete(false);
+	OnFailure.Broadcast();
+}
+
+void USteamAsyncStopPlaytimeTrackingForAllItems::CancelWork()
+{
+	if (UESteamUGCSubsystem* UGCSubsystem = Subsystem.Get())
+	{
+		UGCSubsystem->OnPlaytimeTrackingStopped.RemoveDynamic(this, &USteamAsyncStopPlaytimeTrackingForAllItems::HandleTrackingResult);
+	}
 }
 
 void USteamAsyncStopPlaytimeTrackingForAllItems::Complete(bool bSuccess)
 {
-	if (!BeginComplete())
+	CancelWork();
+	if (!FinishAction())
 	{
 		return;
-	}
-
-	if (UESteamUGCSubsystem* UGCSubsystem = Subsystem.Get())
-	{
-		UGCSubsystem->OnPlaytimeTrackingStopped.RemoveDynamic(this, &USteamAsyncStopPlaytimeTrackingForAllItems::HandleTrackingResult);
 	}
 
 	if (bSuccess)
@@ -1190,7 +1173,6 @@ void USteamAsyncStopPlaytimeTrackingForAllItems::Complete(bool bSuccess)
 	{
 		OnFailure.Broadcast();
 	}
-	SetReadyToDestroy();
 }
 
 // ---- USteamAsyncQueryUserWorkshopItems ----
@@ -1198,62 +1180,65 @@ void USteamAsyncStopPlaytimeTrackingForAllItems::Complete(bool bSuccess)
 USteamAsyncQueryUserWorkshopItems* USteamAsyncQueryUserWorkshopItems::QueryUserWorkshopItems(UObject* WorldContext, FESteamId User, EESteamUserUGCList ListType, EESteamUserUGCListSortOrder SortOrder, EESteamUGCMatchingType MatchingType, int32 Page, const FESteamUGCQueryConfig& Config, float Timeout)
 {
 	USteamAsyncQueryUserWorkshopItems* Action = NewObject<USteamAsyncQueryUserWorkshopItems>();
-	Action->WorldContextObject = WorldContext;
-	Action->Subsystem = GetUGCSubsystem(WorldContext);
 	Action->User = User;
 	Action->ListType = ListType;
 	Action->SortOrder = SortOrder;
 	Action->MatchingType = MatchingType;
 	Action->Page = Page;
 	Action->Config = Config;
-	Action->Timeout = Timeout;
-	Action->RegisterWithGameInstance(WorldContext);
+	Action->InitAsyncAction(WorldContext, Timeout);
 	return Action;
 }
 
-void USteamAsyncQueryUserWorkshopItems::Activate()
+void USteamAsyncQueryUserWorkshopItems::ExecuteAction()
 {
-	UESteamUGCSubsystem* UGCSubsystem = Subsystem.Get();
+	UESteamUGCSubsystem* UGCSubsystem = RequireGameInstanceSubsystem<UESteamUGCSubsystem>();
 	if (!UGCSubsystem)
 	{
-		Complete(false, TArray<FESteamUGCDetails>(), 0);
 		return;
 	}
 
+	Subsystem = UGCSubsystem;
 	UGCSubsystem->OnQueryCompleted.AddDynamic(this, &USteamAsyncQueryUserWorkshopItems::HandleQueryCompleted);
 
-	if (!UGCSubsystem->QueryUserItems(User, ListType, SortOrder, MatchingType, Page, Config))
+	bool bStarted = false;
+	CallWithContext([&] { bStarted = UGCSubsystem->QueryUserItems(User, ListType, SortOrder, MatchingType, Page, Config); });
+	if (!bStarted)
 	{
 		Complete(false, TArray<FESteamUGCDetails>(), 0);
-		return;
 	}
-
-	// Fail the node if the subsystem delegate never fires.
-	ArmTimeout(Timeout);
 }
 
 void USteamAsyncQueryUserWorkshopItems::HandleQueryCompleted(bool bSuccess, const TArray<FESteamUGCDetails>& Results, int32 TotalMatchingResults)
 {
-	// FOnSteamUGCQueryCompleted carries no query handle; cannot discriminate.
-	// Relies on Timeout + one-in-flight subsystem limit.
+	// FOnSteamUGCQueryCompleted carries no query handle; the subsystem tags each result with the
+	// call context of its request.
+	if (!IsResultForThisCall())
+	{
+		return;
+	}
 	Complete(bSuccess, Results, TotalMatchingResults);
 }
 
-void USteamAsyncQueryUserWorkshopItems::OnTimeoutFailure()
+void USteamAsyncQueryUserWorkshopItems::BroadcastFailure(const FEFResult& /*Result*/)
 {
-	Complete(false, TArray<FESteamUGCDetails>(), 0);
+	OnFailure.Broadcast(TArray<FESteamUGCDetails>(), 0);
+}
+
+void USteamAsyncQueryUserWorkshopItems::CancelWork()
+{
+	if (UESteamUGCSubsystem* UGCSubsystem = Subsystem.Get())
+	{
+		UGCSubsystem->OnQueryCompleted.RemoveDynamic(this, &USteamAsyncQueryUserWorkshopItems::HandleQueryCompleted);
+	}
 }
 
 void USteamAsyncQueryUserWorkshopItems::Complete(bool bSuccess, const TArray<FESteamUGCDetails>& Results, int32 TotalResults)
 {
-	if (!BeginComplete())
+	CancelWork();
+	if (!FinishAction())
 	{
 		return;
-	}
-
-	if (UESteamUGCSubsystem* UGCSubsystem = Subsystem.Get())
-	{
-		UGCSubsystem->OnQueryCompleted.RemoveDynamic(this, &USteamAsyncQueryUserWorkshopItems::HandleQueryCompleted);
 	}
 
 	if (bSuccess)
@@ -1264,7 +1249,6 @@ void USteamAsyncQueryUserWorkshopItems::Complete(bool bSuccess, const TArray<FES
 	{
 		OnFailure.Broadcast(Results, TotalResults);
 	}
-	SetReadyToDestroy();
 }
 
 // ---- USteamAsyncQueryWorkshopItemsByIds ----
@@ -1272,57 +1256,60 @@ void USteamAsyncQueryUserWorkshopItems::Complete(bool bSuccess, const TArray<FES
 USteamAsyncQueryWorkshopItemsByIds* USteamAsyncQueryWorkshopItemsByIds::QueryWorkshopItemsByIds(UObject* WorldContext, const TArray<int64>& PublishedFileIds, float Timeout)
 {
 	USteamAsyncQueryWorkshopItemsByIds* Action = NewObject<USteamAsyncQueryWorkshopItemsByIds>();
-	Action->WorldContextObject = WorldContext;
-	Action->Subsystem = GetUGCSubsystem(WorldContext);
 	Action->PublishedFileIds = PublishedFileIds;
-	Action->Timeout = Timeout;
-	Action->RegisterWithGameInstance(WorldContext);
+	Action->InitAsyncAction(WorldContext, Timeout);
 	return Action;
 }
 
-void USteamAsyncQueryWorkshopItemsByIds::Activate()
+void USteamAsyncQueryWorkshopItemsByIds::ExecuteAction()
 {
-	UESteamUGCSubsystem* UGCSubsystem = Subsystem.Get();
+	UESteamUGCSubsystem* UGCSubsystem = RequireGameInstanceSubsystem<UESteamUGCSubsystem>();
 	if (!UGCSubsystem)
 	{
-		Complete(false, TArray<FESteamUGCDetails>(), 0);
 		return;
 	}
 
+	Subsystem = UGCSubsystem;
 	UGCSubsystem->OnQueryCompleted.AddDynamic(this, &USteamAsyncQueryWorkshopItemsByIds::HandleQueryCompleted);
 
-	if (!UGCSubsystem->QueryItemsByIds(PublishedFileIds))
+	bool bStarted = false;
+	CallWithContext([&] { bStarted = UGCSubsystem->QueryItemsByIds(PublishedFileIds); });
+	if (!bStarted)
 	{
 		Complete(false, TArray<FESteamUGCDetails>(), 0);
-		return;
 	}
-
-	// Fail the node if the subsystem delegate never fires.
-	ArmTimeout(Timeout);
 }
 
 void USteamAsyncQueryWorkshopItemsByIds::HandleQueryCompleted(bool bSuccess, const TArray<FESteamUGCDetails>& Results, int32 TotalMatchingResults)
 {
-	// FOnSteamUGCQueryCompleted carries no query handle; cannot discriminate.
-	// Relies on Timeout + one-in-flight subsystem limit.
+	// FOnSteamUGCQueryCompleted carries no query handle; the subsystem tags each result with the
+	// call context of its request.
+	if (!IsResultForThisCall())
+	{
+		return;
+	}
 	Complete(bSuccess, Results, TotalMatchingResults);
 }
 
-void USteamAsyncQueryWorkshopItemsByIds::OnTimeoutFailure()
+void USteamAsyncQueryWorkshopItemsByIds::BroadcastFailure(const FEFResult& /*Result*/)
 {
-	Complete(false, TArray<FESteamUGCDetails>(), 0);
+	OnFailure.Broadcast(TArray<FESteamUGCDetails>(), 0);
+}
+
+void USteamAsyncQueryWorkshopItemsByIds::CancelWork()
+{
+	if (UESteamUGCSubsystem* UGCSubsystem = Subsystem.Get())
+	{
+		UGCSubsystem->OnQueryCompleted.RemoveDynamic(this, &USteamAsyncQueryWorkshopItemsByIds::HandleQueryCompleted);
+	}
 }
 
 void USteamAsyncQueryWorkshopItemsByIds::Complete(bool bSuccess, const TArray<FESteamUGCDetails>& Results, int32 TotalResults)
 {
-	if (!BeginComplete())
+	CancelWork();
+	if (!FinishAction())
 	{
 		return;
-	}
-
-	if (UESteamUGCSubsystem* UGCSubsystem = Subsystem.Get())
-	{
-		UGCSubsystem->OnQueryCompleted.RemoveDynamic(this, &USteamAsyncQueryWorkshopItemsByIds::HandleQueryCompleted);
 	}
 
 	if (bSuccess)
@@ -1333,5 +1320,4 @@ void USteamAsyncQueryWorkshopItemsByIds::Complete(bool bSuccess, const TArray<FE
 	{
 		OnFailure.Broadcast(Results, TotalResults);
 	}
-	SetReadyToDestroy();
 }

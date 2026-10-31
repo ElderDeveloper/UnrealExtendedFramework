@@ -4,6 +4,7 @@
 #include "Shared/ESteamLog.h"
 #include "Shared/ESteamSDK.h"
 #include "Misc/StringBuilder.h"
+#include "Async/EFCallContext.h"
 
 #if WITH_EXTENDEDSTEAM_SDK
 THIRD_PARTY_INCLUDES_START
@@ -71,23 +72,30 @@ public:
 	{
 	}
 
+	// Track* also remember the EFCallContext active when the call was made; it is made active again
+	// while the result is broadcast, so async nodes can tell concurrent calls apart.
+
 	void TrackEncryptedTicketRequest(SteamAPICall_t Call)
 	{
+		EncryptedTicketContext = EFCallContext::GetActive();
 		EncryptedTicketResult.Set(Call, this, &FESteamUserCallbacks::HandleEncryptedTicketResponse);
 	}
 
 	void TrackMarketEligibilityRequest(SteamAPICall_t Call)
 	{
+		MarketEligibilityContext = EFCallContext::GetActive();
 		MarketEligibilityResult.Set(Call, this, &FESteamUserCallbacks::HandleMarketEligibilityResponse);
 	}
 
 	void TrackStoreAuthURLRequest(SteamAPICall_t Call)
 	{
+		StoreAuthURLContext = EFCallContext::GetActive();
 		StoreAuthURLResult.Set(Call, this, &FESteamUserCallbacks::HandleStoreAuthURLResponse);
 	}
 
 	void TrackDurationControlRequest(SteamAPICall_t Call)
 	{
+		DurationControlContext = EFCallContext::GetActive();
 		DurationControlResult.Set(Call, this, &FESteamUserCallbacks::HandleDurationControlResponse);
 	}
 
@@ -162,6 +170,7 @@ private:
 
 	void HandleEncryptedTicketResponse(EncryptedAppTicketResponse_t* Data, bool bIOFailure)
 	{
+		EFCallContext::FScope Scope(EncryptedTicketContext);
 		UESteamUserSubsystem* Subsystem = Owner.Get();
 		if (!Subsystem)
 		{
@@ -185,6 +194,7 @@ private:
 
 	void HandleMarketEligibilityResponse(MarketEligibilityResponse_t* Data, bool bIOFailure)
 	{
+		EFCallContext::FScope Scope(MarketEligibilityContext);
 		if (UESteamUserSubsystem* Subsystem = Owner.Get())
 		{
 			Subsystem->OnMarketEligibility.Broadcast(!bIOFailure && Data->m_bAllowed);
@@ -193,6 +203,7 @@ private:
 
 	void HandleStoreAuthURLResponse(StoreAuthURLResponse_t* Data, bool bIOFailure)
 	{
+		EFCallContext::FScope Scope(StoreAuthURLContext);
 		if (UESteamUserSubsystem* Subsystem = Owner.Get())
 		{
 			FString Url;
@@ -207,6 +218,7 @@ private:
 
 	void HandleDurationControlResponse(DurationControl_t* Data, bool bIOFailure)
 	{
+		EFCallContext::FScope Scope(DurationControlContext);
 		if (bIOFailure)
 		{
 			if (UESteamUserSubsystem* Subsystem = Owner.Get())
@@ -219,6 +231,7 @@ private:
 	}
 
 	// DurationControl_t also arrives asynchronously on Steam's own playtime timers (not just GetDurationControl).
+	// Those carry no call context, so every listener accepts them.
 	void HandleDurationControlTimer(DurationControl_t* Data)
 	{
 		BroadcastDurationControl(Data);
@@ -248,6 +261,12 @@ private:
 	CCallResult<FESteamUserCallbacks, MarketEligibilityResponse_t> MarketEligibilityResult;
 	CCallResult<FESteamUserCallbacks, StoreAuthURLResponse_t> StoreAuthURLResult;
 	CCallResult<FESteamUserCallbacks, DurationControl_t> DurationControlResult;
+
+	// EFCallContext of the request each single-slot call result has in flight.
+	int64 EncryptedTicketContext = 0;
+	int64 MarketEligibilityContext = 0;
+	int64 StoreAuthURLContext = 0;
+	int64 DurationControlContext = 0;
 };
 #else
 class FESteamUserCallbacks

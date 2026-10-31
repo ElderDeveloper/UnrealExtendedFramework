@@ -3,7 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Engine/DeveloperSettings.h"
+#include "Settings/EFDeveloperSettings.h"
 #include "Engine/EngineTypes.h"
 #include "ESteamPublishSettings.generated.h"
 
@@ -36,18 +36,18 @@ struct FESteamPublishDepot
  * Project Settings -> Extended Framework -> Extended Steam Publish.
  *
  * Non-secret build configuration is stored here (committed to DefaultEditor.ini). Credentials are NOT
- * stored here — the Username/Password fields are transient UI mirrors of the version-control-ignored
- * credentials file (see FESteamPublishCredentials). Use the action buttons to prepare tools, secure
- * credentials for version control, and upload a build via steamcmd.
+ * stored here — the Username/Password fields are transient UI mirrors of FESteamPublishCredentials:
+ * the user name lives in the version-control-ignored Config/SteamPublish folder, the password in the
+ * per-user OS credential store (FEFCredentialStore), never in project config. Use the action buttons
+ * to prepare tools, secure the local folder for version control, and upload a build via steamcmd.
  */
 UCLASS(Config = Editor, DefaultConfig, meta = (DisplayName = "Extended Steam Publish"))
-class EXTENDEDSTEAMEDITOR_API UESteamPublishSettings : public UDeveloperSettings
+class EXTENDEDSTEAMEDITOR_API UESteamPublishSettings : public UEFDeveloperSettings
 {
 	GENERATED_BODY()
 
 public:
-	//~ UDeveloperSettings
-	virtual FName GetCategoryName() const override;
+	//~ UObject
 	virtual void PostInitProperties() override;
 
 	static UESteamPublishSettings* GetMutable() { return GetMutableDefault<UESteamPublishSettings>(); }
@@ -90,15 +90,19 @@ public:
 	FDirectoryPath ContentBuilderDirectory;
 
 	// ---------------------------------------------------------------------------------------------
-	// Credentials (transient — mirrored to the ignored credentials file, never to committed config)
+	// Credentials (transient — mirrored to FESteamPublishCredentials, never to committed config)
 	// ---------------------------------------------------------------------------------------------
 
-	/** Steam account used for uploads. Prefer a dedicated Steamworks builder account over a personal one. */
+	/** Steam account used for uploads (kept in the ignored Config/SteamPublish folder). Prefer a dedicated Steamworks builder account over a personal one. */
 	UPROPERTY(EditAnywhere, Transient, Category = "Steam Publish|Credentials")
 	FString SteamUsername;
 
-	/** Password for the upload account. Stored AES-256 encrypted in the ignored credentials file, never in committed config. */
-	UPROPERTY(EditAnywhere, Transient, Category = "Steam Publish|Credentials", meta = (PasswordField = true))
+	/**
+	 * Password for the upload account. Saved per user to the OS credential store (Windows: encrypted
+	 * with DPAPI; macOS: login Keychain; Linux: a file only your user can read), never to project
+	 * config or anywhere in the project folder.
+	 */
+	UPROPERTY(EditAnywhere, Transient, Category = "Steam Publish|Credentials", meta = (PasswordField = true, EFSecret))
 	FString SteamPassword;
 
 	// ---------------------------------------------------------------------------------------------
@@ -113,7 +117,7 @@ public:
 	UFUNCTION(CallInEditor, Category = "Steam Publish|Actions", meta = (DisplayName = "2. Secure Credentials for Version Control"))
 	void SecureCredentialsForVersionControl();
 
-	/** Write the Username/Password above to the version-control-ignored credentials file. */
+	/** Save the Username above to the version-control-ignored credentials file and the Password to the OS credential store. */
 	UFUNCTION(CallInEditor, Category = "Steam Publish|Actions", meta = (DisplayName = "3. Save Credentials"))
 	void SaveCredentials();
 

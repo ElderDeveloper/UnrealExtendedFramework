@@ -4,6 +4,7 @@
 #include "Shared/ESteamLog.h"
 #include "Shared/ESteamSDK.h"
 #include "Containers/Queue.h"
+#include "Async/EFCallContext.h"
 
 #if WITH_EXTENDEDSTEAM_SDK
 THIRD_PARTY_INCLUDES_START
@@ -98,17 +99,23 @@ namespace
 	}
 }
 
+// Each pending struct carries CallContext: the EFCallContext active when the request was made
+// (stamped by Enqueue*). It is made active again while the request's result is broadcast, so async
+// nodes waiting on the shared delegates can tell concurrent calls apart.
+
 /** Parameters captured to (re-)issue a queued ISteamMatchmaking::CreateLobby call. */
 struct FESteamPendingCreateLobby
 {
 	ELobbyType LobbyType = k_ELobbyTypePrivate;
 	int32 MaxMembers = 0;
+	int64 CallContext = 0;
 };
 
 /** Parameters captured to (re-)issue a queued ISteamMatchmaking::JoinLobby call. */
 struct FESteamPendingJoinLobby
 {
 	FESteamId LobbyId;
+	int64 CallContext = 0;
 };
 
 /**
@@ -120,7 +127,8 @@ struct FESteamPendingJoinLobby
  * cleanly when the holder is destroyed on Steam shutdown / Deinitialize.
  *
  * RequestLobbyList carries no per-request parameters here (its search filters live on the
- * Steam side, see the header note), so its "queue" is just a count of pending intents.
+ * Steam side, see the header note), so its "queue" only holds the call context of each pending
+ * intent.
  */
 class FESteamMatchmakingCallbacks
 {
@@ -141,8 +149,9 @@ public:
 	// immediate path when the Steam call could not be issued (preserves the public methods'
 	// historical "return false when the request could not be issued" contract).
 
-	bool EnqueueCreateLobby(const FESteamPendingCreateLobby& Request)
+	bool EnqueueCreateLobby(FESteamPendingCreateLobby Request)
 	{
+		Request.CallContext = EFCallContext::GetActive();
 		if (bCreateLobbyBusy)
 		{
 			CreateLobbyQueue.Enqueue(Request);
@@ -151,8 +160,9 @@ public:
 		return IssueCreateLobby(Request);
 	}
 
-	bool EnqueueJoinLobby(const FESteamPendingJoinLobby& Request)
+	bool EnqueueJoinLobby(FESteamPendingJoinLobby Request)
 	{
+		Request.CallContext = EFCallContext::GetActive();
 		if (bJoinLobbyBusy)
 		{
 			JoinLobbyQueue.Enqueue(Request);
@@ -163,12 +173,13 @@ public:
 
 	bool EnqueueLobbyList()
 	{
+		const int64 CallContext = EFCallContext::GetActive();
 		if (bLobbyListBusy)
 		{
-			++PendingLobbyListRequestCount;
+			PendingLobbyListContexts.Add(CallContext);
 			return true;
 		}
-		return IssueLobbyList();
+		return IssueLobbyList(CallContext);
 	}
 
 private:
@@ -188,12 +199,14 @@ private:
 			return false;
 		}
 		CreateLobbyResult.Set(Call, this, &FESteamMatchmakingCallbacks::HandleCreateLobbyResult);
+		CreateLobbyContext = Request.CallContext;
 		bCreateLobbyBusy = true;
 		return true;
 	}
 
 	void HandleCreateLobbyResult(LobbyCreated_t* Data, bool bIOFailure)
 	{
+		EFCallContext::FScope Scope(CreateLobbyContext);
 		if (UESteamMatchmakingSubsystem* Subsystem = Owner.Get())
 		{
 			const bool bSuccess = !bIOFailure && Data->m_eResult == k_EResultOK;
@@ -214,6 +227,7 @@ private:
 			}
 			if (!IssueCreateLobby(Request))
 			{
+				EFCallContext::FScope RequestScope(Request.CallContext);
 				// Steam went away while draining: fail this queued request instead of dropping it.
 				if (UESteamMatchmakingSubsystem* Subsystem = Owner.Get())
 				{
@@ -239,12 +253,14 @@ private:
 			return false;
 		}
 		JoinLobbyResult.Set(Call, this, &FESteamMatchmakingCallbacks::HandleJoinLobbyResult);
+		JoinLobbyContext = Request.CallContext;
 		bJoinLobbyBusy = true;
 		return true;
 	}
 
 	void HandleJoinLobbyResult(LobbyEnter_t* Data, bool bIOFailure)
 	{
+		EFCallContext::FScope Scope(JoinLobbyContext);
 		if (UESteamMatchmakingSubsystem* Subsystem = Owner.Get())
 		{
 			const bool bSuccess = !bIOFailure && Data->m_EChatRoomEnterResponse == k_EChatRoomEnterResponseSuccess;
@@ -265,6 +281,7 @@ private:
 			}
 			if (!IssueJoinLobby(Request))
 			{
+				EFCallContext::FScope RequestScope(Request.CallContext);
 				if (UESteamMatchmakingSubsystem* Subsystem = Owner.Get())
 				{
 					Subsystem->OnLobbyEntered.Broadcast(false, Request.LobbyId);
@@ -275,7 +292,7 @@ private:
 
 	// ---- RequestLobbyList (serialized) ----
 
-	bool IssueLobbyList()
+	bool IssueLobbyList(int64 CallContext)
 	{
 		UESteamMatchmakingSubsystem* Subsystem = Owner.Get();
 		if (!Subsystem || !Subsystem->IsSteamAvailable() || !SteamMatchmaking())
@@ -289,12 +306,14 @@ private:
 			return false;
 		}
 		LobbyListResult.Set(Call, this, &FESteamMatchmakingCallbacks::HandleLobbyListResult);
+		LobbyListContext = CallContext;
 		bLobbyListBusy = true;
 		return true;
 	}
 
 	void HandleLobbyListResult(LobbyMatchList_t* Data, bool bIOFailure)
 	{
+		EFCallContext::FScope Scope(LobbyListContext);
 		if (UESteamMatchmakingSubsystem* Subsystem = Owner.Get())
 		{
 			TArray<FESteamId> Lobbies;
@@ -320,11 +339,13 @@ private:
 
 	void DrainLobbyListQueue()
 	{
-		while (!bLobbyListBusy && PendingLobbyListRequestCount > 0)
+		while (!bLobbyListBusy && PendingLobbyListContexts.Num() > 0)
 		{
-			--PendingLobbyListRequestCount;
-			if (!IssueLobbyList())
+			const int64 QueuedContext = PendingLobbyListContexts[0];
+			PendingLobbyListContexts.RemoveAt(0);
+			if (!IssueLobbyList(QueuedContext))
 			{
+				EFCallContext::FScope RequestScope(QueuedContext);
 				if (UESteamMatchmakingSubsystem* Subsystem = Owner.Get())
 				{
 					const TArray<FESteamId> EmptyLobbies;
@@ -429,14 +450,19 @@ private:
 	CCallResult<FESteamMatchmakingCallbacks, LobbyMatchList_t> LobbyListResult;
 
 	// In-flight flags + FIFO queues, one per serialized operation type. RequestLobbyList has no
-	// per-request parameters, so it uses a pending-intent counter instead of a queue.
+	// per-request parameters, so its queue only holds each pending intent's call context.
 	bool bCreateLobbyBusy = false;
 	bool bJoinLobbyBusy = false;
 	bool bLobbyListBusy = false;
 
 	TQueue<FESteamPendingCreateLobby> CreateLobbyQueue;
 	TQueue<FESteamPendingJoinLobby> JoinLobbyQueue;
-	int32 PendingLobbyListRequestCount = 0;
+	TArray<int64> PendingLobbyListContexts;
+
+	// EFCallContext of the request each operation has in flight (see the pending structs).
+	int64 CreateLobbyContext = 0;
+	int64 JoinLobbyContext = 0;
+	int64 LobbyListContext = 0;
 };
 #else
 class FESteamMatchmakingCallbacks

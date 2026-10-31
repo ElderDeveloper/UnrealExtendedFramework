@@ -5,6 +5,7 @@
 #include "Shared/ESteamSDK.h"
 #include "Engine/Texture2D.h"
 #include "Containers/Queue.h"
+#include "Async/EFCallContext.h"
 
 #if WITH_EXTENDEDSTEAM_SDK
 THIRD_PARTY_INCLUDES_START
@@ -42,9 +43,11 @@ namespace ESteamFriendsPrivate
 
 // Parameters captured to (re-)issue queued ISteamFriends CCallResult requests. Each serialized op
 // has its own FIFO queue in FESteamFriendsCallbacks so overlapping requests are never dropped.
-struct FESteamPendingFollowerCount { FESteamId User; };
-struct FESteamPendingIsFollowing { FESteamId User; };
-struct FESteamPendingEnumerateFollowing { int32 StartIndex = 0; };
+// CallContext is the EFCallContext active when the request was made (stamped by Enqueue*); it is
+// made active again while the request's result is broadcast, so async nodes can tell calls apart.
+struct FESteamPendingFollowerCount { FESteamId User; int64 CallContext = 0; };
+struct FESteamPendingIsFollowing { FESteamId User; int64 CallContext = 0; };
+struct FESteamPendingEnumerateFollowing { int32 StartIndex = 0; int64 CallContext = 0; };
 struct FESteamPendingClanActivityCounts { FESteamId Clan; };
 struct FESteamPendingClanOfficerList { FESteamId Clan; };
 
@@ -67,8 +70,9 @@ public:
 	// queues the request and issues it in order as earlier ones complete. Returns true when issued or
 	// queued; false only on the immediate path when the Steam call could not be issued.
 
-	bool EnqueueFollowerCount(const FESteamPendingFollowerCount& Request)
+	bool EnqueueFollowerCount(FESteamPendingFollowerCount Request)
 	{
+		Request.CallContext = EFCallContext::GetActive();
 		if (bFollowerCountBusy)
 		{
 			FollowerCountQueue.Enqueue(Request);
@@ -77,8 +81,9 @@ public:
 		return IssueFollowerCount(Request);
 	}
 
-	bool EnqueueIsFollowing(const FESteamPendingIsFollowing& Request)
+	bool EnqueueIsFollowing(FESteamPendingIsFollowing Request)
 	{
+		Request.CallContext = EFCallContext::GetActive();
 		if (bIsFollowingBusy)
 		{
 			IsFollowingQueue.Enqueue(Request);
@@ -87,8 +92,9 @@ public:
 		return IssueIsFollowing(Request);
 	}
 
-	bool EnqueueEnumerateFollowing(const FESteamPendingEnumerateFollowing& Request)
+	bool EnqueueEnumerateFollowing(FESteamPendingEnumerateFollowing Request)
 	{
+		Request.CallContext = EFCallContext::GetActive();
 		if (bEnumerateFollowingBusy)
 		{
 			EnumerateFollowingQueue.Enqueue(Request);
@@ -190,12 +196,14 @@ private:
 			return false;
 		}
 		FollowerCountResult.Set(Call, this, &FESteamFriendsCallbacks::HandleFollowerCount);
+		FollowerCountContext = Request.CallContext;
 		bFollowerCountBusy = true;
 		return true;
 	}
 
 	void HandleFollowerCount(FriendsGetFollowerCount_t* Data, bool bIOFailure)
 	{
+		EFCallContext::FScope Scope(FollowerCountContext);
 		if (UESteamFriendsSubsystem* Subsystem = Owner.Get())
 		{
 			const bool bSuccess = !bIOFailure && Data->m_eResult == k_EResultOK;
@@ -217,6 +225,7 @@ private:
 			}
 			if (!IssueFollowerCount(Request))
 			{
+				EFCallContext::FScope RequestScope(Request.CallContext);
 				if (UESteamFriendsSubsystem* Subsystem = Owner.Get())
 				{
 					Subsystem->OnFollowerCount.Broadcast(false, Request.User, 0);
@@ -241,12 +250,14 @@ private:
 			return false;
 		}
 		IsFollowingResult.Set(Call, this, &FESteamFriendsCallbacks::HandleIsFollowing);
+		IsFollowingContext = Request.CallContext;
 		bIsFollowingBusy = true;
 		return true;
 	}
 
 	void HandleIsFollowing(FriendsIsFollowing_t* Data, bool bIOFailure)
 	{
+		EFCallContext::FScope Scope(IsFollowingContext);
 		if (UESteamFriendsSubsystem* Subsystem = Owner.Get())
 		{
 			const bool bSuccess = !bIOFailure && Data->m_eResult == k_EResultOK;
@@ -268,6 +279,7 @@ private:
 			}
 			if (!IssueIsFollowing(Request))
 			{
+				EFCallContext::FScope RequestScope(Request.CallContext);
 				if (UESteamFriendsSubsystem* Subsystem = Owner.Get())
 				{
 					Subsystem->OnIsFollowing.Broadcast(false, Request.User, false);
@@ -292,12 +304,14 @@ private:
 			return false;
 		}
 		EnumerateFollowingResult.Set(Call, this, &FESteamFriendsCallbacks::HandleEnumerateFollowing);
+		EnumerateFollowingContext = Request.CallContext;
 		bEnumerateFollowingBusy = true;
 		return true;
 	}
 
 	void HandleEnumerateFollowing(FriendsEnumerateFollowingList_t* Data, bool bIOFailure)
 	{
+		EFCallContext::FScope Scope(EnumerateFollowingContext);
 		if (UESteamFriendsSubsystem* Subsystem = Owner.Get())
 		{
 			const bool bSuccess = !bIOFailure && Data->m_eResult == k_EResultOK;
@@ -330,6 +344,7 @@ private:
 			}
 			if (!IssueEnumerateFollowing(Request))
 			{
+				EFCallContext::FScope RequestScope(Request.CallContext);
 				if (UESteamFriendsSubsystem* Subsystem = Owner.Get())
 				{
 					Subsystem->OnFollowingListEnumerated.Broadcast(false, TArray<FESteamId>(), 0);
@@ -465,6 +480,11 @@ private:
 	TQueue<FESteamPendingEnumerateFollowing> EnumerateFollowingQueue;
 	TQueue<FESteamPendingClanActivityCounts> ClanActivityQueue;
 	TQueue<FESteamPendingClanOfficerList> ClanOfficerListQueue;
+
+	// EFCallContext of the request each node-facing operation has in flight (see the pending structs).
+	int64 FollowerCountContext = 0;
+	int64 IsFollowingContext = 0;
+	int64 EnumerateFollowingContext = 0;
 };
 #else
 class FESteamFriendsCallbacks

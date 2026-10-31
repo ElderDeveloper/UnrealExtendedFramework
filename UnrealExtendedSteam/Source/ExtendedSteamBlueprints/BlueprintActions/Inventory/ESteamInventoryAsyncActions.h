@@ -14,8 +14,10 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FSteamAsyncInventoryItemsPin, const 
  * Requests the full Steam inventory of the current user and completes when the parsed
  * result arrives from UESteamInventorySubsystem.
  *
- * Note: OnInventoryItemsReceived is shared by all inventory operations; a result from a
- * concurrent GetItemsById/TriggerItemDrop/ConsumeItem call completes this node too.
+ * Note: OnInventoryItemsReceived is shared by all inventory operations. Results of calls another
+ * node started are told apart by their call context and ignored, but a result with no context (a
+ * GetItemsById/TriggerItemDrop/ConsumeItem call made directly, or a Steam-initiated update) still
+ * completes this node.
  */
 UCLASS()
 class USteamAsyncGetAllInventoryItems : public USteamAsyncActionBase
@@ -31,9 +33,6 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Steam|Async|Inventory", meta = (BlueprintInternalUseOnly = "true", WorldContext = "WorldContext", DisplayName = "Steam: Get All Inventory Items"))
 	static USteamAsyncGetAllInventoryItems* GetAllInventoryItems(UObject* WorldContext, float Timeout = 10.0f);
 
-	//~ UBlueprintAsyncActionBase
-	virtual void Activate() override;
-
 	/** The inventory arrived; Items holds every item instance the user owns. */
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncInventoryItemsPin OnSuccess;
@@ -42,11 +41,15 @@ public:
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncInventoryItemsPin OnFailure;
 
+protected:
+	//~ UEFAsyncActionBase
+	virtual void ExecuteAction() override;
+	virtual void BroadcastFailure(const FEFResult& Result) override;
+	virtual void CancelWork() override;
+
 private:
 	UFUNCTION()
 	void HandleInventoryItemsReceived(bool bSuccess, const TArray<FESteamInventoryItem>& Items);
-
-	virtual void OnTimeoutFailure() override;
 
 	void Complete(bool bSuccess, const TArray<FESteamInventoryItem>& Items);
 
@@ -70,9 +73,6 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Steam|Async|Inventory", meta = (BlueprintInternalUseOnly = "true", WorldContext = "WorldContext", DisplayName = "Steam: Request Inventory Prices"))
 	static USteamAsyncRequestInventoryPrices* RequestInventoryPrices(UObject* WorldContext, float Timeout = 10.0f);
 
-	//~ UBlueprintAsyncActionBase
-	virtual void Activate() override;
-
 	/** Prices are ready; Currency is the user's 3-letter ISO 4217 currency code (e.g. "USD"). */
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncInventoryPricesPin OnSuccess;
@@ -81,11 +81,15 @@ public:
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncInventoryPricesPin OnFailure;
 
+protected:
+	//~ UEFAsyncActionBase
+	virtual void ExecuteAction() override;
+	virtual void BroadcastFailure(const FEFResult& Result) override;
+	virtual void CancelWork() override;
+
 private:
 	UFUNCTION()
 	void HandlePricesReceived(bool bSuccess, FString Currency);
-
-	virtual void OnTimeoutFailure() override;
 
 	void Complete(bool bSuccess, const FString& Currency);
 
@@ -110,9 +114,6 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Steam|Async|Inventory", meta = (BlueprintInternalUseOnly = "true", WorldContext = "WorldContext", DisplayName = "Steam: Start Inventory Purchase"))
 	static USteamAsyncStartInventoryPurchase* StartInventoryPurchase(UObject* WorldContext, const TArray<int32>& Definitions, const TArray<int32>& Quantities, float Timeout = 10.0f);
 
-	//~ UBlueprintAsyncActionBase
-	virtual void Activate() override;
-
 	/** Steam initialized the transaction; OrderId/TransactionId identify it. */
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncInventoryPurchasePin OnSuccess;
@@ -121,11 +122,15 @@ public:
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncInventoryPurchasePin OnFailure;
 
+protected:
+	//~ UEFAsyncActionBase
+	virtual void ExecuteAction() override;
+	virtual void BroadcastFailure(const FEFResult& Result) override;
+	virtual void CancelWork() override;
+
 private:
 	UFUNCTION()
 	void HandlePurchaseStarted(bool bSuccess, int64 OrderId, int64 TransactionId);
-
-	virtual void OnTimeoutFailure() override;
 
 	void Complete(bool bSuccess, int64 OrderId, int64 TransactionId);
 
@@ -151,9 +156,6 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Steam|Async|Inventory", meta = (BlueprintInternalUseOnly = "true", WorldContext = "WorldContext", DisplayName = "Steam: Request Eligible Promo Item Defs"))
 	static USteamAsyncRequestEligiblePromoItemDefs* RequestEligiblePromoItemDefs(UObject* WorldContext, FESteamId SteamId, float Timeout = 10.0f);
 
-	//~ UBlueprintAsyncActionBase
-	virtual void Activate() override;
-
 	/** The eligible manual-promo item definition ids for the queried user. */
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncEligiblePromoPin OnSuccess;
@@ -162,11 +164,15 @@ public:
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncEligiblePromoPin OnFailure;
 
+protected:
+	//~ UEFAsyncActionBase
+	virtual void ExecuteAction() override;
+	virtual void BroadcastFailure(const FEFResult& Result) override;
+	virtual void CancelWork() override;
+
 private:
 	UFUNCTION()
 	void HandleEligiblePromoReceived(bool bSuccess, const TArray<int32>& DefIds);
-
-	virtual void OnTimeoutFailure() override;
 
 	void Complete(bool bSuccess, const TArray<int32>& DefIds);
 

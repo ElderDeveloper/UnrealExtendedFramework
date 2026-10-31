@@ -45,9 +45,6 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Steam|Async|User", meta = (BlueprintInternalUseOnly = "true", WorldContext = "WorldContext", DisplayName = "Steam: Get Web API Auth Ticket"))
 	static USteamAsyncGetWebApiAuthTicket* GetWebApiAuthTicket(UObject* WorldContext, const FString& RemoteServiceIdentity, float Timeout = 10.0f);
 
-	//~ UBlueprintAsyncActionBase
-	virtual void Activate() override;
-
 	/** The ticket is ready; HexTicket holds it hex-encoded. */
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncWebApiAuthTicketPin OnSuccess;
@@ -56,11 +53,15 @@ public:
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncWebApiAuthTicketPin OnFailure;
 
+protected:
+	//~ UEFAsyncActionBase
+	virtual void ExecuteAction() override;
+	virtual void BroadcastFailure(const FEFResult& Result) override;
+	virtual void CancelWork() override;
+
 private:
 	UFUNCTION()
 	void HandleWebApiAuthTicketReady(bool bSuccess, int32 TicketHandle, const FString& HexTicket);
-
-	virtual void OnTimeoutFailure() override;
 
 	void Complete(bool bSuccess, const FString& HexTicket);
 
@@ -86,9 +87,6 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Steam|Async|User", meta = (BlueprintInternalUseOnly = "true", WorldContext = "WorldContext", DisplayName = "Steam: Request Encrypted App Ticket"))
 	static USteamAsyncRequestEncryptedAppTicket* RequestEncryptedAppTicket(UObject* WorldContext, float Timeout = 10.0f);
 
-	//~ UBlueprintAsyncActionBase
-	virtual void Activate() override;
-
 	/** The ticket is ready; HexTicket holds it hex-encoded. */
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncEncryptedAppTicketPin OnSuccess;
@@ -97,11 +95,15 @@ public:
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncEncryptedAppTicketPin OnFailure;
 
+protected:
+	//~ UEFAsyncActionBase
+	virtual void ExecuteAction() override;
+	virtual void BroadcastFailure(const FEFResult& Result) override;
+	virtual void CancelWork() override;
+
 private:
 	UFUNCTION()
 	void HandleEncryptedAppTicketReady(bool bSuccess, const FString& HexTicket);
-
-	virtual void OnTimeoutFailure() override;
 
 	void Complete(bool bSuccess, const FString& HexTicket);
 
@@ -124,9 +126,6 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Steam|Async|User", meta = (BlueprintInternalUseOnly = "true", WorldContext = "WorldContext", DisplayName = "Steam: Request Store Auth URL"))
 	static USteamAsyncRequestStoreAuthURL* RequestStoreAuthURL(UObject* WorldContext, const FString& RedirectUrl, float Timeout = 10.0f);
 
-	//~ UBlueprintAsyncActionBase
-	virtual void Activate() override;
-
 	/** The URL is ready. */
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncStoreAuthURLPin OnSuccess;
@@ -135,11 +134,15 @@ public:
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncStoreAuthURLPin OnFailure;
 
+protected:
+	//~ UEFAsyncActionBase
+	virtual void ExecuteAction() override;
+	virtual void BroadcastFailure(const FEFResult& Result) override;
+	virtual void CancelWork() override;
+
 private:
 	UFUNCTION()
 	void HandleStoreAuthURL(bool bSuccess, const FString& Url);
-
-	virtual void OnTimeoutFailure() override;
 
 	void Complete(bool bSuccess, const FString& Url);
 
@@ -164,9 +167,6 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Steam|Async|User", meta = (BlueprintInternalUseOnly = "true", WorldContext = "WorldContext", DisplayName = "Steam: Get Market Eligibility"))
 	static USteamAsyncGetMarketEligibility* GetMarketEligibility(UObject* WorldContext, float Timeout = 10.0f);
 
-	//~ UBlueprintAsyncActionBase
-	virtual void Activate() override;
-
 	/** The eligibility result is ready; bAllowed reports market access. */
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncMarketEligibilityPin OnSuccess;
@@ -175,11 +175,15 @@ public:
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncMarketEligibilityPin OnFailure;
 
+protected:
+	//~ UEFAsyncActionBase
+	virtual void ExecuteAction() override;
+	virtual void BroadcastFailure(const FEFResult& Result) override;
+	virtual void CancelWork() override;
+
 private:
 	UFUNCTION()
 	void HandleMarketEligibility(bool bAllowed);
-
-	virtual void OnTimeoutFailure() override;
 
 	void Complete(bool bResultArrived, bool bAllowed);
 
@@ -203,9 +207,6 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Steam|Async|User", meta = (BlueprintInternalUseOnly = "true", WorldContext = "WorldContext", DisplayName = "Steam: Get Duration Control"))
 	static USteamAsyncGetDurationControl* GetDurationControl(UObject* WorldContext, float Timeout = 10.0f);
 
-	//~ UBlueprintAsyncActionBase
-	virtual void Activate() override;
-
 	/** The duration control state is ready. */
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncDurationControlPin OnSuccess;
@@ -214,11 +215,15 @@ public:
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncDurationControlPin OnFailure;
 
+protected:
+	//~ UEFAsyncActionBase
+	virtual void ExecuteAction() override;
+	virtual void BroadcastFailure(const FEFResult& Result) override;
+	virtual void CancelWork() override;
+
 private:
 	UFUNCTION()
 	void HandleDurationControl(bool bApplicable, int32 SecondsLast5h, int32 SecondsToday, int32 SecondsRemaining);
-
-	virtual void OnTimeoutFailure() override;
 
 	void Complete(bool bResultArrived, bool bApplicable, int32 SecondsLast5h, int32 SecondsToday, int32 SecondsRemaining);
 
@@ -242,9 +247,6 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Steam|Async|Apps", meta = (BlueprintInternalUseOnly = "true", WorldContext = "WorldContext", DisplayName = "Steam: Get File Details"))
 	static USteamAsyncGetFileDetails* GetFileDetails(UObject* WorldContext, const FString& FileName, float Timeout = 10.0f);
 
-	//~ UBlueprintAsyncActionBase
-	virtual void Activate() override;
-
 	/** The file details are ready. */
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncFileDetailsPin OnSuccess;
@@ -253,11 +255,15 @@ public:
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncFileDetailsPin OnFailure;
 
+protected:
+	//~ UEFAsyncActionBase
+	virtual void ExecuteAction() override;
+	virtual void BroadcastFailure(const FEFResult& Result) override;
+	virtual void CancelWork() override;
+
 private:
 	UFUNCTION()
 	void HandleFileDetails(bool bSuccess, int64 FileSize, const FString& Sha1Hex, int32 Flags);
-
-	virtual void OnTimeoutFailure() override;
 
 	void Complete(bool bSuccess, int64 FileSize, const FString& Sha1Hex, int32 Flags);
 

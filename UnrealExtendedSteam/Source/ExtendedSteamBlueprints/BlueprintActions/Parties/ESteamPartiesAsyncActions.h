@@ -30,9 +30,6 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Steam|Async|Parties", meta = (BlueprintInternalUseOnly = "true", WorldContext = "WorldContext", DisplayName = "Steam: Join Party"))
 	static USteamAsyncJoinParty* JoinParty(UObject* WorldContext, int64 BeaconId, float Timeout = 10.0f);
 
-	//~ UBlueprintAsyncActionBase
-	virtual void Activate() override;
-
 	/** A slot was reserved; ConnectString holds the game-specific connect instructions. */
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncJoinPartyPin OnSuccess;
@@ -41,11 +38,15 @@ public:
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncJoinPartyPin OnFailure;
 
+protected:
+	//~ UEFAsyncActionBase
+	virtual void ExecuteAction() override;
+	virtual void BroadcastFailure(const FEFResult& Result) override;
+	virtual void CancelWork() override;
+
 private:
 	UFUNCTION()
 	void HandlePartyJoined(bool bSuccess, int64 InBeaconId, const FString& ConnectString);
-
-	virtual void OnTimeoutFailure() override;
 
 	void Complete(bool bSuccess, int64 InBeaconId, const FString& ConnectString);
 
@@ -71,9 +72,6 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Steam|Async|Parties", meta = (BlueprintInternalUseOnly = "true", WorldContext = "WorldContext", DisplayName = "Steam: Create Beacon"))
 	static USteamAsyncCreateBeacon* CreateBeacon(UObject* WorldContext, int32 OpenSlots, const FString& ConnectString, const FString& Metadata, float Timeout = 10.0f);
 
-	//~ UBlueprintAsyncActionBase
-	virtual void Activate() override;
-
 	/** The beacon is live; BeaconId identifies it. */
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncCreateBeaconPin OnSuccess;
@@ -82,11 +80,15 @@ public:
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncCreateBeaconPin OnFailure;
 
+protected:
+	//~ UEFAsyncActionBase
+	virtual void ExecuteAction() override;
+	virtual void BroadcastFailure(const FEFResult& Result) override;
+	virtual void CancelWork() override;
+
 private:
 	UFUNCTION()
 	void HandleBeaconCreated(bool bSuccess, int64 InBeaconId);
-
-	virtual void OnTimeoutFailure() override;
 
 	void Complete(bool bSuccess, int64 InBeaconId);
 

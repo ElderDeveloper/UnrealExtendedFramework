@@ -32,10 +32,13 @@ public class UnrealExtendedSteam : ModuleRules
 
 		// AudioExtensions provides IAudioProxyDataFactory, the base of USoundWave used by
 		// UESteamVoiceSoundWave (USoundWaveProcedural) for Steam voice playback.
+		// ExtendedFoundation: EFCallContext propagation in the subsystem .cpp files and the
+		// foundation version check in the module .cpp (no public header includes it).
 		PrivateDependencyModuleNames.AddRange(
 			new string[]
 			{
-				"AudioExtensions"
+				"AudioExtensions",
+				"ExtendedFoundation"
 			}
 		);
 
