@@ -57,6 +57,16 @@ namespace EGSoftCollisionCVars
 		TEXT("Run the scan on worker threads when there are enough scanners."),
 		ECVF_Default);
 
+	static TAutoConsoleVariable<int32> RejectEvery(
+		TEXT("eg.SoftCollision.Debug.RejectEvery"), 0,
+		TEXT("Server: reject every Nth push request, to test the client's reject path. 0 rejects nothing."),
+		ECVF_Cheat);
+
+	static TAutoConsoleVariable<int32> SafetyLevelOverride(
+		TEXT("eg.SoftCollision.SafetyLevelOverride"), -1,
+		TEXT("Server: -1 uses each profile's safety level. 0 keys only, 1 accept client position, 2 client authoritative window."),
+		ECVF_Cheat);
+
 	static TAutoConsoleVariable<int32> ParallelThreshold(
 		TEXT("eg.SoftCollision.ParallelThreshold"), 64,
 		TEXT("Scanner count below which the scan runs inline on the game thread."),
@@ -657,6 +667,21 @@ int32 UEGSoftCollisionSubsystem::GetDebugLevel()
 bool UEGSoftCollisionSubsystem::IsForceServerOnly()
 {
 	return EGSoftCollisionCVars::ForceServerOnly.GetValueOnGameThread() != 0;
+}
+
+int32 UEGSoftCollisionSubsystem::GetDebugRejectEvery()
+{
+	return FMath::Max(EGSoftCollisionCVars::RejectEvery.GetValueOnGameThread(), 0);
+}
+
+EEGSoftCollisionSafetyLevel UEGSoftCollisionSubsystem::ResolveSafetyLevel(EEGSoftCollisionSafetyLevel ProfileLevel)
+{
+	const int32 Override = EGSoftCollisionCVars::SafetyLevelOverride.GetValueOnGameThread();
+	if (Override < 0)
+	{
+		return ProfileLevel;
+	}
+	return static_cast<EEGSoftCollisionSafetyLevel>(FMath::Clamp(Override, 0, static_cast<int32>(EEGSoftCollisionSafetyLevel::ClientAuthoritativeWindow)));
 }
 
 void UEGSoftCollisionSubsystem::NoteRequestsSent(int32 Count)

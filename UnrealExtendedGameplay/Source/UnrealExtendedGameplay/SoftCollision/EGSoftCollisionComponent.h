@@ -225,7 +225,8 @@ private:
 		NoNeighbour,
 		BumpCooldown,
 		Late,
-		DriverFailed
+		DriverFailed,
+		DebugReject
 	};
 
 	void ResolveDrivers();

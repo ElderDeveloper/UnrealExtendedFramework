@@ -4,6 +4,16 @@ Soft Collision replaces pawn-vs-pawn blocking with soft, overlapping pushes. Paw
 
 It is a drop-in system: one component on the pawn. It needs no Character, CharacterMovementComponent or Pawn subclass, and no Gameplay Ability System.
 
+## Using it
+
+1. Add `UEGSoftCollisionComponent` to the pawn (Blueprint or C++). That is all a pawn needs: without a profile the class defaults of `UEGSoftCollisionProfile` apply, and the drivers are picked from the pawn's movement.
+2. Optionally create a `UEGSoftCollisionProfile` data asset per kind of pawn (players, small AI, large AI, vehicles) and assign it to the component.
+3. Optionally implement `IEGSoftCollisionInterface` on the pawn for game rules: who may push whom (`GetSoftCollisionFilter`), a profile override, and `ModifySoftPushVelocity` to reshape or veto pushes. Call `RefreshFilter` when the rules change (death, mounting, team change).
+4. Bind `OnSoftPush` and `OnBump` for animation, sound and voice lines. `SetSoftCollisionEnabled(false)` on every machine for dead or ragdolled pawns.
+5. Turn on push-model replication (`net.IsPushModelEnabled 1`).
+
+Docs/SoftCollisionTesting.md is the verification procedure: the engine checks of Phase 0, the network test matrix and the performance captures.
+
 ## Targets
 
 | | |
@@ -96,7 +106,7 @@ struct FEGSoftPushKey
 
 1. **Start of the client frame**, from `FWorldDelegates::OnWorldPreActorTick`, before any movement ticks: apply the pending push results. The source's start time is the current client timestamp, so it starts on this frame's move. Send the request at once, before the CMC sends that move.
 2. **Server, network receive.** The request runs before the move it belongs to, when both arrive. The handler applies the source with the client's start time, so the next move simulates exactly what the client simulated.
-3. **End of the frame**, after all tick groups: snapshot positions and launch the scan for the next frame (see Threading).
+3. **End of the frame**, in a tick function in `TG_PostUpdateWork` after every pawn moved: snapshot positions and launch the scan for the next frame (see Threading).
 
 ### Request flow
 
@@ -151,21 +161,22 @@ The calculation runs on worker threads inside one frame. It never runs asynchron
 
 Below about 64 scanners the computation runs inline, because starting tasks would cost more than the work. A client scans one pawn, so it never uses worker threads.
 
-Game rules that need UObjects (the interface's `CanPush` and `CanBePushedBy`, profile overrides) are resolved into flags during the snapshot, never on a worker thread.
+Game rules that need UObjects (the interface's filter and profile override) are resolved into plain values at BeginPlay and on `RefreshFilter`, and copied into the snapshot, never called from a worker thread.
 
 ## Scanning and performance
 
 Built for a thousand pawns from the start.
 
-- **Registry.** `UEGSoftCollisionSubsystem`, a world subsystem, keeps every registered pawn in flat arrays: position, velocity, shape, cached profile values, flags and cell. Components never tick.
+- **Registry.** `UEGSoftCollisionSubsystem`, a world subsystem, keeps every registered pawn in flat arrays of plain structs (`FEGSoftBody`: position, velocity, shape, weight, filter) next to the registry entries (cell, scan schedule, contact state). Components never tick. Registrations and removals are deferred to the snapshot, so the arrays never change while the scan task reads them.
 - **Spatial grid.** A uniform 2D hash grid with cells twice the largest push radius. An entry is re-binned only when its cell changes. A neighbour query reads the 3x3 cells around a pawn. No physics traces at all.
 - **Narrow phase.** Plain math: vertical cylinder (capsules) and oriented box, plus a height-overlap test.
 - **Sleeping.** A pawn that is not moving and has no neighbour in its 3x3 cells is skipped. The grid wakes it when a neighbour moves into range.
 - **Scan rate by relevance.** On the server, AI far from every player scans less often or not at all. Distances and rates are in the profile.
 - **Reissue rule.** A new push is sent only when the direction changes more than a set angle, the strength changes more than a set ratio, or the current push is about to end. A per-pawn token bucket also caps requests, which protects the server from a misbehaving client.
-- **Client registry.** A client only needs entries near its own pawn; replication relevancy already limits what exists there, and entries outside the scan area are not re-binned.
+- **Client registry.** A client registers only the pawns replication relevancy gives it, and only its own pawn scans.
 - **Replication cost.** All replicated properties use the push model, so a thousand components cost nothing to compare while idle.
-- **Avoidance.** Profiles can scale pushes down for pawns using RVO or crowd avoidance, so the two systems do not fight.
+- **Avoidance.** Profiles scale push strengths down for Characters using RVO avoidance (`AvoidanceScale`), so the two systems do not fight. Detour crowd avoidance is not detected; give crowd-steered pawns their own profile.
+- **Collision.** The component sets the push primitive's response to the soft channel to Ignore by default, not Overlap: Overlap makes the physics scene report every touching pair, which is expensive with hundreds of pawns.
 
 The CMC itself is the main cost of a thousand moving Characters. Soft Collision must stay a small fraction of it, and the Phase 6 numbers are reported against that baseline.
 
@@ -173,11 +184,11 @@ The CMC itself is the main cost of a thousand moving Characters. Soft Collision 
 
 - **Penetration** `p` = overlap depth divided by combined radius, 0 to 1.
 - **Momentum share** `share_me = M_other / (M_me + M_other)`, where `M = Weight * max(speed toward the other pawn, IdleFloor)`. An idle pawn hit by a runner takes almost all of the push, the runner almost none, and two idle pawns split it evenly.
-- **Strength** per neighbour = `MaxStrength * Falloff(p) * share * RelationScale`. Summed as vectors, then clamped.
+- **Strength** per neighbour = `SeparationStrength * Response(p) * 2 * share`, with the deep-overlap ramp applied to `Response(p)`. The factor 2 gives two idle equal pawns the full strength each. Summed as vectors, then capped at `MaxTotalStrength`. Pawns a filter excludes contribute nothing.
 - **Separation band.** Gentle and continuous while pawns overlap.
-- **Bump band.** When `share * approach speed` crosses a threshold: stronger, and fires the bump event.
+- **Bump band.** When the share is at least `BumpMinShare` and the relative approach speed at least `BumpMinRelativeSpeed`: the strongest such neighbour adds `BumpStrength * min(relative speed / BumpReferenceSpeed, 1.5) * min(2 * share, 2)`, and the push fires the bump event. A bump inside its cooldown falls back to the separation part alone.
 - **Deep-overlap guard.** Past a set penetration the strength ramps steeply so pawns never fully merge.
-- **Optional blocking core.** A small inner collider that still blocks, off by default. It brings back desync, but only at deep overlap.
+- **No blocking core.** The plan considered a small inner collider that still blocks. Dropped: the CMC only sweeps its updated component (the root capsule), so a child collider would never stop a Character, and the deep-overlap ramp already keeps pawns from merging.
 
 ## Drivers
 
@@ -197,17 +208,19 @@ A Mover driver is deferred until Mover leaves Experimental and its layered-move 
 
 ## Modularity and API
 
-- **`UEGSoftCollisionComponent`.** Add it to any pawn. It sets the collision response to the Pawn channel to overlap on the chosen primitive, restores it at `EndPlay`, registers with the subsystem, and picks its drivers.
+- **`UEGSoftCollisionComponent`.** Add it to any pawn. It sets the push primitive's response to the soft channel (Pawn by default) to Ignore, restores it at `EndPlay`, registers with the subsystem, and picks its drivers. Blueprint API: `SetSoftCollisionEnabled`, `SetProfile`, `RefreshFilter`, `IsPushActive`, `GetActivePushVelocity`, `GetEffectiveProfile`, `GetPushPrimitive`, `FindSoftCollisionComponent`.
 - **`UEGSoftCollisionProfile`**, a `UPrimaryDataAsset`: shape and radius scale, weight and push power, separation and bump bands, durations and falloff, scan rates and relevance distances, safety level, drivers.
-- **`IEGSoftCollisionInterface`**, optional on the pawn: `CanPush` and `CanBePushedBy` (teammates, dead or mounted pawns), a profile override, and `ModifyPush` as a `BlueprintNativeEvent`.
+- **`FEGSoftCollisionFilter`**: a layer (0 to 31), the layers allowed to push this pawn, and can-push and can-be-pushed switches. Set on the component, or computed by the interface.
+- **`IEGSoftCollisionInterface`**, optional on the pawn, all `BlueprintNativeEvent`s: `GetSoftCollisionFilter`, `GetSoftCollisionProfileOverride`, and `ModifySoftPushVelocity` (runs once per issued push on the deciding machine; return zero to veto).
+- **Drivers in Blueprint.** `UEGSoftCollisionDriver_Blueprint` exposes apply, tick, cancel and supports as implementable events. Slower than native drivers, so meant for a few special pawns.
 - **Events.** `OnSoftPush` and `OnBump` fire at once on the owner's machine and authoritatively on the server.
 - **Cosmetic bumps.** Other machines receive bumps through a throttled, push-model replicated struct with a counter, skipping the owner. This is the hook for shove montages, physical hit reactions and voice lines.
 
 ## Debugging
 
-- Console variables: `eg.SoftCollision.Enable`, `eg.SoftCollision.Debug`, `eg.SoftCollision.ShowGrid`, `eg.SoftCollision.ForceServerOnly`.
+- Console variables: `eg.SoftCollision.Enable`, `eg.SoftCollision.Debug`, `eg.SoftCollision.ShowGrid`, `eg.SoftCollision.ForceServerOnly`, `eg.SoftCollision.Parallel`, `eg.SoftCollision.ParallelThreshold`, and for the engine checks `eg.SoftCollision.SafetyLevelOverride` and `eg.SoftCollision.Debug.RejectEvery`.
 - Visual Logger entries for scans, requests, accepts, rejects, late arrivals and unanswered pushes.
-- A stat group: registered pawns, active scanners, sleeping pawns, neighbour tests, requests per second, rejects, late arrivals.
+- `stat EGSoftCollision`: snapshot, inline scan, wait, apply and frame update timings; registered pawns, scanners, sleeping pawns, grid cells, neighbour tests, pushes issued, requests sent, accepted, rejected, late, unanswered. Insights CPU scopes `EGSoftCollision_*` cover the same steps, including the worker-thread scan.
 - The engine's `p.NetShowCorrections` shows the corrections that still happen.
 
 ## Tests
@@ -230,17 +243,19 @@ Play-in-editor matrix:
 ## File layout
 
 ```
+Docs/SoftCollisionPlan.md                  this document
+Docs/SoftCollisionTesting.md               engine checks, network matrix, performance captures
 Source/UnrealExtendedGameplay/SoftCollision/
-    EGSoftCollisionTypes.h                 shapes, keys, requests, events, enums
-    EGSoftCollisionMath.h/.cpp             narrow phase, strength model, quantization (plain C++)
+    EGSoftCollisionTypes.h/.cpp            shapes, filter, tuning, keys, requests, events, enums, log and stats
+    EGSoftCollisionMath.h/.cpp             narrow phase, strength model, quantization, token bucket (plain C++)
     EGSoftCollisionGrid.h/.cpp             spatial hash grid (plain C++)
     EGSoftCollisionProfile.h/.cpp
     EGSoftCollisionInterface.h
-    EGSoftCollisionComponent.h/.cpp
-    EGSoftCollisionSubsystem.h/.cpp        registry, snapshot, task launch and apply
+    EGSoftCollisionComponent.h/.cpp        control, results, requests, server application, events
+    EGSoftCollisionSubsystem.h/.cpp        registry, snapshot tick, scan task, apply, console variables
     EGRootMotionSource_SoftPush.h/.cpp
-    Prediction/EGSoftCollisionPrediction.h/.cpp   client queue, server scheduling, safety lease
-    Drivers/EGSoftCollisionDriver.h/.cpp
+    Prediction/EGSoftCollisionPrediction.h/.cpp   client queue, server state, safety lease
+    Drivers/EGSoftCollisionDriver.h/.cpp          base and Blueprint base
     Drivers/EGSoftCollisionDriver_CharacterRootMotion.h/.cpp
     Drivers/EGSoftCollisionDriver_CharacterForce.h/.cpp
     Drivers/EGSoftCollisionDriver_PawnMovement.h/.cpp
@@ -250,20 +265,26 @@ Source/UnrealExtendedGameplay/SoftCollision/
 
 ## Phases
 
-- [x] **Documentation pass.** Engine facts above, from Epic's API reference and community sources.
-- [ ] **0. Engine spike.** Needs the 5.6 engine source or a test map:
-  - How `PrepareRootMotion` treats a start time in the past, and therefore how a late request is applied.
-  - The unset start time defaults on autonomous proxy and authority.
-  - That moves are not combined while a source is active, and what that costs on the server.
-  - `Matches` and `UpdateStateFrom` behaviour with the custom source during a correction.
-  - `RepRootMotion` size with the custom source.
-  - That a request sent in `OnWorldPreActorTick` is processed before its move on the server, with and without Iris.
-  - Timestamp reset handling for requests in flight.
-  - The results are written back into the Engine facts table.
-- [ ] **1. Data and math.** Types, profile, narrow phase, strength model, quantization, unit tests.
-- [ ] **2. Registry and scanning.** Subsystem, grid, snapshot, task pipeline, sleeping, debug drawing. Authority pushes only (standalone and server AI) through `_CharacterForce`.
-- [ ] **3. Predicted push.** The custom root motion source and `_CharacterRootMotion`, local authority first.
-- [ ] **4. Prediction.** Keys, batched redundant requests, server application in the RPC handler, validation, ack, reject and timeout, safety leases.
-- [ ] **5. Drivers and API.** `_PawnMovement`, `_PhysicsBody`, events, cosmetic bumps, interface, Blueprint API.
-- [ ] **6. Optimization.** Insights captures and bandwidth numbers at 100, 500 and 1000 pawns against the budgets above.
-- [ ] **7. Verification and documentation.** The network test matrix, and header documentation in the plugin's style.
+"Written" means the code exists on this branch. It was written without an engine or compiler available, so nothing has been compiled or run yet. "Verified" means checked in a running engine; those steps are in Docs/SoftCollisionTesting.md.
+
+| Phase | Written | Verified |
+| --- | --- | --- |
+| Documentation pass | Yes. Engine facts above | Not needed |
+| 0. Engine spike | Procedure and debug switches (`SafetyLevelOverride`, `Debug.RejectEvery`) | No. Needs the 5.6 engine source or a test map |
+| 1. Data and math | Yes. Types, profile, interface, narrow phase, strength model, quantization, tests | No. Tests not run |
+| 2. Registry and scanning | Yes. Subsystem, grid, snapshot tick, task pipeline, relevance, sleeping, debug drawing, `_CharacterForce` | No |
+| 3. Predicted push | Yes. `FEGRootMotionSource_SoftPush`, `_CharacterRootMotion` | No |
+| 4. Prediction | Yes. Keys, batched redundant requests, server application in the RPC handler, validation, ack, reject, timeout, scheduled removal, safety lease with the Level 2 check | No |
+| 5. Drivers and API | Yes. `_PawnMovement`, `_PhysicsBody`, Blueprint driver base, events, cosmetic bumps, Blueprint API | No |
+| 6. Optimization | Code side: inline threshold, worker-thread scan, sleeping, relevance, reissue rule, push model, Ignore response, movement delegate bound only while needed, stats and Insights scopes | No. Captures at 100, 500 and 1000 pawns not taken |
+| 7. Verification and documentation | Header documentation; test procedure and result tables | No. Network matrix not run |
+
+What Phase 0 still has to answer, in order of risk:
+
+1. Whether the server applies a source from a client start time exactly, and what it does with a start time in the past (Testing checks 1 and 2).
+2. Whether a push rejected by the server comes back when the client replays its saved moves after a correction (check 5). If it does, the reject path has to remove it from the saved moves as well.
+3. Whether moves really are not combined while a push is active, and what that costs (check 3).
+4. Whether the request reliably arrives before its move, with and without Iris (check 6).
+5. `RepRootMotion` cost on other clients (check 7) and timestamp resets (check 8).
+
+The Mover driver stays deferred until Mover leaves Experimental.

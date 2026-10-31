@@ -87,6 +87,8 @@ public:
 	static bool IsSystemEnabled();
 	static int32 GetDebugLevel();
 	static bool IsForceServerOnly();
+	static int32 GetDebugRejectEvery();
+	static EEGSoftCollisionSafetyLevel ResolveSafetyLevel(EEGSoftCollisionSafetyLevel ProfileLevel);
 
 	void NoteRequestsSent(int32 Count);
 	void NoteRequestAccepted();

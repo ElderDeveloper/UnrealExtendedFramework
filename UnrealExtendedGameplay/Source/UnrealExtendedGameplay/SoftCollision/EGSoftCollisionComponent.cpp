@@ -835,6 +835,10 @@ UEGSoftCollisionComponent::ERejectReason UEGSoftCollisionComponent::ValidateRequ
 	{
 		return ERejectReason::BadBand;
 	}
+	if (const int32 RejectEvery = UEGSoftCollisionSubsystem::GetDebugRejectEvery(); RejectEvery > 0 && Request.Sequence % RejectEvery == 0)
+	{
+		return ERejectReason::DebugReject;
+	}
 
 	FEGSoftCollisionTuning Tuning;
 	GetEffectiveTuning(Tuning);
@@ -954,7 +958,7 @@ void UEGSoftCollisionComponent::ProcessServerRequest(const FEGSoftPushRequest& R
 	if (Movement)
 	{
 		const float StartClientTime = Command.bHasStartTime ? Command.StartTime : CurrentClientTime;
-		SafetyLease.Acquire(*Movement, Network.SafetyLevel, StartClientTime + Command.Duration + Network.SafetyGrace);
+		SafetyLease.Acquire(*Movement, UEGSoftCollisionSubsystem::ResolveSafetyLevel(Network.SafetyLevel), StartClientTime + Command.Duration + Network.SafetyGrace);
 	}
 
 	if (Request.Band == EEGSoftPushBand::Bump)
