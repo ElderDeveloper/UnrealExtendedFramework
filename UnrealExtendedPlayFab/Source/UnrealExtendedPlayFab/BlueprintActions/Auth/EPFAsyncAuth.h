@@ -12,7 +12,7 @@
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnEPFAsyncLoginSuccess, const FString&, PlayFabId);
 
 UCLASS(meta = (DisplayName = "PlayFab: Login"))
-class UNREALEXTENDEDPLAYFAB_API UEPFAsyncLogin : public UBlueprintAsyncActionBase
+class UNREALEXTENDEDPLAYFAB_API UEPFAsyncLogin : public UEPFAsyncActionBase
 {
 	GENERATED_BODY()
 
@@ -33,16 +33,16 @@ public:
 	static UEPFAsyncLogin* LoginWithPlayFabAccount(UObject* WorldContext, const FString& Username, const FString& Password);
 
 	UPROPERTY(BlueprintAssignable) FOnEPFAsyncLoginSuccess OnSuccess;
-	UPROPERTY(BlueprintAssignable) FOnEPFAsyncFailed OnFailure;
 
-	virtual void Activate() override;
+protected:
+	virtual void ExecuteAction() override;
+	virtual void CancelWork() override;
 
 private:
 	enum ELoginMethod { ELogin_Steam, ELogin_CustomID, ELogin_DeviceID, ELogin_Email, ELogin_PlayFab };
-	ELoginMethod Method;
+	ELoginMethod Method = ELogin_Steam;
 	FString Credential;
 	FString Credential2;
-	TWeakObjectPtr<UObject> WorldContext;
 
 	UFUNCTION() void HandleComplete(const FEPFResult& Result, const FString& PlayFabId);
 };
@@ -53,7 +53,7 @@ private:
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnEPFAsyncDisplayNameSuccess, const FString&, DisplayName);
 
 UCLASS(meta = (DisplayName = "PlayFab: Update Display Name"))
-class UNREALEXTENDEDPLAYFAB_API UEPFAsyncUpdateDisplayName : public UBlueprintAsyncActionBase
+class UNREALEXTENDEDPLAYFAB_API UEPFAsyncUpdateDisplayName : public UEPFAsyncActionBase
 {
 	GENERATED_BODY()
 
@@ -62,13 +62,13 @@ public:
 	static UEPFAsyncUpdateDisplayName* UpdateDisplayName(UObject* WorldContext, const FString& DisplayName);
 
 	UPROPERTY(BlueprintAssignable) FOnEPFAsyncDisplayNameSuccess OnSuccess;
-	UPROPERTY(BlueprintAssignable) FOnEPFAsyncFailed OnFailure;
 
-	virtual void Activate() override;
+protected:
+	virtual void ExecuteAction() override;
+	virtual void CancelWork() override;
 
 private:
-	FString DisplayName;
-	TWeakObjectPtr<UObject> WorldContext;
+	FString RequestedDisplayName;
 
 	UFUNCTION() void HandleComplete(const FEPFResult& Result, const FString& NewDisplayName);
 };
@@ -79,7 +79,7 @@ private:
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnEPFAsyncRegisterSuccess, const FString&, PlayFabId);
 
 UCLASS(meta = (DisplayName = "PlayFab: Register User"))
-class UNREALEXTENDEDPLAYFAB_API UEPFAsyncRegisterUser : public UBlueprintAsyncActionBase
+class UNREALEXTENDEDPLAYFAB_API UEPFAsyncRegisterUser : public UEPFAsyncActionBase
 {
 	GENERATED_BODY()
 
@@ -88,13 +88,13 @@ public:
 	static UEPFAsyncRegisterUser* RegisterUser(UObject* WorldContext, const FString& Username, const FString& Email, const FString& Password);
 
 	UPROPERTY(BlueprintAssignable) FOnEPFAsyncRegisterSuccess OnSuccess;
-	UPROPERTY(BlueprintAssignable) FOnEPFAsyncFailed OnFailure;
 
-	virtual void Activate() override;
+protected:
+	virtual void ExecuteAction() override;
+	virtual void CancelWork() override;
 
 private:
-	FString Username, Email, Password;
-	TWeakObjectPtr<UObject> WorldContext;
+	FString AccountUsername, AccountEmail, AccountPassword;
 	UFUNCTION() void HandleComplete(const FEPFResult& Result, const FString& PlayFabId);
 };
 
@@ -102,7 +102,7 @@ private:
 // ── Add Username Password ────────────────────────────────────────────────────
 
 UCLASS(meta = (DisplayName = "PlayFab: Add Username Password"))
-class UNREALEXTENDEDPLAYFAB_API UEPFAsyncAddUsernamePassword : public UBlueprintAsyncActionBase
+class UNREALEXTENDEDPLAYFAB_API UEPFAsyncAddUsernamePassword : public UEPFAsyncActionBase
 {
 	GENERATED_BODY()
 
@@ -111,13 +111,13 @@ public:
 	static UEPFAsyncAddUsernamePassword* AddUsernamePassword(UObject* WorldContext, const FString& Username, const FString& Email, const FString& Password);
 
 	UPROPERTY(BlueprintAssignable) FOnEPFAsyncSimpleSuccess OnSuccess;
-	UPROPERTY(BlueprintAssignable) FOnEPFAsyncFailed OnFailure;
 
-	virtual void Activate() override;
+protected:
+	virtual void ExecuteAction() override;
+	virtual void CancelWork() override;
 
 private:
-	FString Username, Email, Password;
-	TWeakObjectPtr<UObject> WorldContext;
+	FString AccountUsername, AccountEmail, AccountPassword;
 	UFUNCTION() void HandleComplete(const FEPFResult& Result);
 };
 
@@ -125,7 +125,7 @@ private:
 // ── Account Recovery Email ───────────────────────────────────────────────────
 
 UCLASS(meta = (DisplayName = "PlayFab: Send Account Recovery Email"))
-class UNREALEXTENDEDPLAYFAB_API UEPFAsyncAccountRecovery : public UBlueprintAsyncActionBase
+class UNREALEXTENDEDPLAYFAB_API UEPFAsyncAccountRecovery : public UEPFAsyncActionBase
 {
 	GENERATED_BODY()
 
@@ -134,12 +134,12 @@ public:
 	static UEPFAsyncAccountRecovery* SendAccountRecoveryEmail(UObject* WorldContext, const FString& Email);
 
 	UPROPERTY(BlueprintAssignable) FOnEPFAsyncSimpleSuccess OnSuccess;
-	UPROPERTY(BlueprintAssignable) FOnEPFAsyncFailed OnFailure;
 
-	virtual void Activate() override;
+protected:
+	virtual void ExecuteAction() override;
+	virtual void CancelWork() override;
 
 private:
-	FString Email;
-	TWeakObjectPtr<UObject> WorldContext;
+	FString RecoveryEmail;
 	UFUNCTION() void HandleComplete(const FEPFResult& Result);
 };

@@ -1,103 +1,127 @@
 // Copyright Kemal Erdem YILMAZ. All Rights Reserved.
 
 #include "EPFAsyncCharacters.h"
-#include "Engine/GameInstance.h"
 
 // ── Get Characters ───────────────────────────────────────────────────────────
 UEPFAsyncGetCharacters* UEPFAsyncGetCharacters::GetAllCharacters(UObject* WorldContext)
 {
-	auto* A = NewObject<UEPFAsyncGetCharacters>(); A->WorldContext = WorldContext; A->RegisterWithGameInstance(WorldContext); return A;
+	auto* A = NewObject<UEPFAsyncGetCharacters>(); A->InitAsyncAction(WorldContext); return A;
 }
-void UEPFAsyncGetCharacters::Activate()
+void UEPFAsyncGetCharacters::ExecuteAction()
 {
-	auto* S = GetEPFSubsystemFromContext<UEPFCharacterSubsystem>(WorldContext.Get());
-	if (!S) { BroadcastEPFFailure(OnFailure, MakeEPFAsyncError(TEXT("Character subsystem not available"))); SetReadyToDestroy(); return; }
+	auto* S = RequireGameInstanceSubsystem<UEPFCharacterSubsystem>();
+	if (!S) return;
 	S->OnCharactersReceived.AddDynamic(this, &UEPFAsyncGetCharacters::HandleComplete);
-	S->GetAllCharacters();
+	CallWithContext([&] { S->GetAllCharacters(); });
+}
+void UEPFAsyncGetCharacters::CancelWork()
+{
+	if (auto* S = GetGameInstanceSubsystem<UEPFCharacterSubsystem>()) S->OnCharactersReceived.RemoveDynamic(this, &UEPFAsyncGetCharacters::HandleComplete);
 }
 void UEPFAsyncGetCharacters::HandleComplete(const FEPFResult& Result, const TArray<FEPFCharacter>& Characters)
 {
-	if (auto* S = GetEPFSubsystemFromContext<UEPFCharacterSubsystem>(WorldContext.Get())) S->OnCharactersReceived.RemoveDynamic(this, &UEPFAsyncGetCharacters::HandleComplete);
+	if (!IsResultForThisCall()) return;
+	CancelWork();
+	if (!FinishAction()) return;
 	Result.bSuccess ? OnSuccess.Broadcast(Characters) : BroadcastEPFFailure(OnFailure, MakeEPFAsyncError(Result, TEXT("Failed to get characters")));
-	SetReadyToDestroy();
 }
 
 // ── Grant Character ──────────────────────────────────────────────────────────
 UEPFAsyncGrantCharacter* UEPFAsyncGrantCharacter::GrantCharacter(UObject* WorldContext, const FString& CharacterName, const FString& ItemId)
 {
-	auto* A = NewObject<UEPFAsyncGrantCharacter>(); A->Name = CharacterName; A->Item = ItemId; A->WorldContext = WorldContext; A->RegisterWithGameInstance(WorldContext); return A;
+	auto* A = NewObject<UEPFAsyncGrantCharacter>(); A->Name = CharacterName; A->Item = ItemId; A->InitAsyncAction(WorldContext); return A;
 }
-void UEPFAsyncGrantCharacter::Activate()
+void UEPFAsyncGrantCharacter::ExecuteAction()
 {
-	if (Name.IsEmpty() || Item.IsEmpty()) { BroadcastEPFFailure(OnFailure, MakeEPFAsyncError(TEXT("CharacterName and ItemId required"))); SetReadyToDestroy(); return; }
-	auto* S = GetEPFSubsystemFromContext<UEPFCharacterSubsystem>(WorldContext.Get());
-	if (!S) { BroadcastEPFFailure(OnFailure, MakeEPFAsyncError(TEXT("Character subsystem not available"))); SetReadyToDestroy(); return; }
+	if (Name.IsEmpty() || Item.IsEmpty()) { FailInvalidArgument(TEXT("CharacterName and ItemId required")); return; }
+	auto* S = RequireGameInstanceSubsystem<UEPFCharacterSubsystem>();
+	if (!S) return;
 	S->OnCharacterGranted.AddDynamic(this, &UEPFAsyncGrantCharacter::HandleComplete);
-	S->GrantCharacter(Name, Item);
+	CallWithContext([&] { S->GrantCharacter(Name, Item); });
+}
+void UEPFAsyncGrantCharacter::CancelWork()
+{
+	if (auto* S = GetGameInstanceSubsystem<UEPFCharacterSubsystem>()) S->OnCharacterGranted.RemoveDynamic(this, &UEPFAsyncGrantCharacter::HandleComplete);
 }
 void UEPFAsyncGrantCharacter::HandleComplete(const FEPFResult& Result, const FString& CharId)
 {
-	if (auto* S = GetEPFSubsystemFromContext<UEPFCharacterSubsystem>(WorldContext.Get())) S->OnCharacterGranted.RemoveDynamic(this, &UEPFAsyncGrantCharacter::HandleComplete);
+	if (!IsResultForThisCall()) return;
+	CancelWork();
+	if (!FinishAction()) return;
 	Result.bSuccess ? OnSuccess.Broadcast(CharId) : BroadcastEPFFailure(OnFailure, MakeEPFAsyncError(Result, TEXT("Failed to grant character")));
-	SetReadyToDestroy();
 }
 
 // ── Delete Character ─────────────────────────────────────────────────────────
 UEPFAsyncDeleteCharacter* UEPFAsyncDeleteCharacter::DeleteCharacter(UObject* WorldContext, const FString& CharacterId)
 {
-	auto* A = NewObject<UEPFAsyncDeleteCharacter>(); A->CharId = CharacterId; A->WorldContext = WorldContext; A->RegisterWithGameInstance(WorldContext); return A;
+	auto* A = NewObject<UEPFAsyncDeleteCharacter>(); A->CharId = CharacterId; A->InitAsyncAction(WorldContext); return A;
 }
-void UEPFAsyncDeleteCharacter::Activate()
+void UEPFAsyncDeleteCharacter::ExecuteAction()
 {
-	if (CharId.IsEmpty()) { BroadcastEPFFailure(OnFailure, MakeEPFAsyncError(TEXT("CharacterId cannot be empty"))); SetReadyToDestroy(); return; }
-	auto* S = GetEPFSubsystemFromContext<UEPFCharacterSubsystem>(WorldContext.Get());
-	if (!S) { BroadcastEPFFailure(OnFailure, MakeEPFAsyncError(TEXT("Character subsystem not available"))); SetReadyToDestroy(); return; }
+	if (CharId.IsEmpty()) { FailInvalidArgument(TEXT("CharacterId cannot be empty")); return; }
+	auto* S = RequireGameInstanceSubsystem<UEPFCharacterSubsystem>();
+	if (!S) return;
 	S->OnCharacterDeleted.AddDynamic(this, &UEPFAsyncDeleteCharacter::HandleComplete);
-	S->DeleteCharacter(CharId);
+	CallWithContext([&] { S->DeleteCharacter(CharId); });
+}
+void UEPFAsyncDeleteCharacter::CancelWork()
+{
+	if (auto* S = GetGameInstanceSubsystem<UEPFCharacterSubsystem>()) S->OnCharacterDeleted.RemoveDynamic(this, &UEPFAsyncDeleteCharacter::HandleComplete);
 }
 void UEPFAsyncDeleteCharacter::HandleComplete(const FEPFResult& Result)
 {
-	if (auto* S = GetEPFSubsystemFromContext<UEPFCharacterSubsystem>(WorldContext.Get())) S->OnCharacterDeleted.RemoveDynamic(this, &UEPFAsyncDeleteCharacter::HandleComplete);
+	if (!IsResultForThisCall()) return;
+	CancelWork();
+	if (!FinishAction()) return;
 	Result.bSuccess ? OnSuccess.Broadcast() : BroadcastEPFFailure(OnFailure, MakeEPFAsyncError(Result, TEXT("Failed to delete character")));
-	SetReadyToDestroy();
 }
 
 // ── Get Character Data ───────────────────────────────────────────────────────
 UEPFAsyncGetCharData* UEPFAsyncGetCharData::GetCharacterData(UObject* WorldContext, const FString& CharacterId, const TArray<FString>& Keys)
 {
-	auto* A = NewObject<UEPFAsyncGetCharData>(); A->CharId = CharacterId; A->Keys = Keys; A->WorldContext = WorldContext; A->RegisterWithGameInstance(WorldContext); return A;
+	auto* A = NewObject<UEPFAsyncGetCharData>(); A->CharId = CharacterId; A->RequestedKeys = Keys; A->InitAsyncAction(WorldContext); return A;
 }
-void UEPFAsyncGetCharData::Activate()
+void UEPFAsyncGetCharData::ExecuteAction()
 {
-	if (CharId.IsEmpty()) { BroadcastEPFFailure(OnFailure, MakeEPFAsyncError(TEXT("CharacterId cannot be empty"))); SetReadyToDestroy(); return; }
-	auto* S = GetEPFSubsystemFromContext<UEPFCharacterSubsystem>(WorldContext.Get());
-	if (!S) { BroadcastEPFFailure(OnFailure, MakeEPFAsyncError(TEXT("Character subsystem not available"))); SetReadyToDestroy(); return; }
+	if (CharId.IsEmpty()) { FailInvalidArgument(TEXT("CharacterId cannot be empty")); return; }
+	auto* S = RequireGameInstanceSubsystem<UEPFCharacterSubsystem>();
+	if (!S) return;
 	S->OnCharacterDataReceived.AddDynamic(this, &UEPFAsyncGetCharData::HandleComplete);
-	S->GetCharacterData(CharId, Keys);
+	CallWithContext([&] { S->GetCharacterData(CharId, RequestedKeys); });
+}
+void UEPFAsyncGetCharData::CancelWork()
+{
+	if (auto* S = GetGameInstanceSubsystem<UEPFCharacterSubsystem>()) S->OnCharacterDataReceived.RemoveDynamic(this, &UEPFAsyncGetCharData::HandleComplete);
 }
 void UEPFAsyncGetCharData::HandleComplete(const FEPFResult& Result)
 {
-	if (auto* S = GetEPFSubsystemFromContext<UEPFCharacterSubsystem>(WorldContext.Get())) S->OnCharacterDataReceived.RemoveDynamic(this, &UEPFAsyncGetCharData::HandleComplete);
+	if (!IsResultForThisCall()) return;
+	CancelWork();
+	if (!FinishAction()) return;
 	Result.bSuccess ? OnSuccess.Broadcast() : BroadcastEPFFailure(OnFailure, MakeEPFAsyncError(Result, TEXT("Failed to get character data")));
-	SetReadyToDestroy();
 }
 
 // ── Get Character Stats ──────────────────────────────────────────────────────
 UEPFAsyncGetCharStats* UEPFAsyncGetCharStats::GetCharacterStatistics(UObject* WorldContext, const FString& CharacterId)
 {
-	auto* A = NewObject<UEPFAsyncGetCharStats>(); A->CharId = CharacterId; A->WorldContext = WorldContext; A->RegisterWithGameInstance(WorldContext); return A;
+	auto* A = NewObject<UEPFAsyncGetCharStats>(); A->CharId = CharacterId; A->InitAsyncAction(WorldContext); return A;
 }
-void UEPFAsyncGetCharStats::Activate()
+void UEPFAsyncGetCharStats::ExecuteAction()
 {
-	if (CharId.IsEmpty()) { BroadcastEPFFailure(OnFailure, MakeEPFAsyncError(TEXT("CharacterId cannot be empty"))); SetReadyToDestroy(); return; }
-	auto* S = GetEPFSubsystemFromContext<UEPFCharacterSubsystem>(WorldContext.Get());
-	if (!S) { BroadcastEPFFailure(OnFailure, MakeEPFAsyncError(TEXT("Character subsystem not available"))); SetReadyToDestroy(); return; }
+	if (CharId.IsEmpty()) { FailInvalidArgument(TEXT("CharacterId cannot be empty")); return; }
+	auto* S = RequireGameInstanceSubsystem<UEPFCharacterSubsystem>();
+	if (!S) return;
 	S->OnCharacterStatsReceived.AddDynamic(this, &UEPFAsyncGetCharStats::HandleComplete);
-	S->GetCharacterStatistics(CharId);
+	CallWithContext([&] { S->GetCharacterStatistics(CharId); });
+}
+void UEPFAsyncGetCharStats::CancelWork()
+{
+	if (auto* S = GetGameInstanceSubsystem<UEPFCharacterSubsystem>()) S->OnCharacterStatsReceived.RemoveDynamic(this, &UEPFAsyncGetCharStats::HandleComplete);
 }
 void UEPFAsyncGetCharStats::HandleComplete(const FEPFResult& Result)
 {
-	if (auto* S = GetEPFSubsystemFromContext<UEPFCharacterSubsystem>(WorldContext.Get())) S->OnCharacterStatsReceived.RemoveDynamic(this, &UEPFAsyncGetCharStats::HandleComplete);
+	if (!IsResultForThisCall()) return;
+	CancelWork();
+	if (!FinishAction()) return;
 	Result.bSuccess ? OnSuccess.Broadcast() : BroadcastEPFFailure(OnFailure, MakeEPFAsyncError(Result, TEXT("Failed to get character stats")));
-	SetReadyToDestroy();
 }

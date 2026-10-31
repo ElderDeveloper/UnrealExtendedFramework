@@ -108,6 +108,9 @@ protected:
 
 	static FEPFAuthContext SharedAuthContext;
 
+	/** The plugin's automation tests install a session through it and put the previous one back (Tests/EPFAsyncNodeTests.cpp). */
+	friend struct FEPFSharedAuthTestScope;
+
 private:
 
 	static constexpr int32 MaxRetries = 3;

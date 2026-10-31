@@ -144,5 +144,12 @@ private:
 	FString PollingQueueName;
 	FString PollingTicketId;
 
+	/**
+	 * The call context poll ticks run under (see EFCallContext): the one active when polling started,
+	 * or a fresh one. Poll results then never look like the result of a Get Matchmaking Status node's
+	 * own call, which waits on the same OnTicketStatusReceived delegate.
+	 */
+	int64 PollCallContext = 0;
+
 	void PollTick();
 };

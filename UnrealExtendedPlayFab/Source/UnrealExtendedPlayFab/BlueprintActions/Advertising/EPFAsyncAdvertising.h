@@ -11,7 +11,7 @@
 // ── Attribute Install ────────────────────────────────────────────────────────
 
 UCLASS(meta = (DisplayName = "PlayFab: Attribute Install"))
-class UNREALEXTENDEDPLAYFAB_API UEPFAsyncAttributeInstall : public UBlueprintAsyncActionBase
+class UNREALEXTENDEDPLAYFAB_API UEPFAsyncAttributeInstall : public UEPFAsyncActionBase
 {
 	GENERATED_BODY()
 
@@ -20,13 +20,13 @@ public:
 	static UEPFAsyncAttributeInstall* AttributeInstall(UObject* WorldContext, const FString& AdvertisingIdType, const FString& AdvertisingId);
 
 	UPROPERTY(BlueprintAssignable) FOnEPFAsyncSimpleSuccess OnSuccess;
-	UPROPERTY(BlueprintAssignable) FOnEPFAsyncFailed OnFailure;
 
-	virtual void Activate() override;
+protected:
+	virtual void ExecuteAction() override;
+	virtual void CancelWork() override;
 
 private:
 	FString IdType, IdValue;
-	TWeakObjectPtr<UObject> WorldContext;
 	UFUNCTION() void HandleComplete(const FEPFResult& Result);
 };
 
@@ -36,7 +36,7 @@ private:
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnEPFAsyncAdPlacementsSuccess, const TArray<FEPFAdPlacement>&, Placements);
 
 UCLASS(meta = (DisplayName = "PlayFab: Get Ad Placements"))
-class UNREALEXTENDEDPLAYFAB_API UEPFAsyncGetAdPlacements : public UBlueprintAsyncActionBase
+class UNREALEXTENDEDPLAYFAB_API UEPFAsyncGetAdPlacements : public UEPFAsyncActionBase
 {
 	GENERATED_BODY()
 
@@ -45,12 +45,12 @@ public:
 	static UEPFAsyncGetAdPlacements* GetAdPlacements(UObject* WorldContext, const FString& AppId, const FString& Identifier = TEXT(""));
 
 	UPROPERTY(BlueprintAssignable) FOnEPFAsyncAdPlacementsSuccess OnSuccess;
-	UPROPERTY(BlueprintAssignable) FOnEPFAsyncFailed OnFailure;
 
-	virtual void Activate() override;
+protected:
+	virtual void ExecuteAction() override;
+	virtual void CancelWork() override;
 
 private:
-	FString AppId, Identifier;
-	TWeakObjectPtr<UObject> WorldContext;
+	FString PlacementAppId, PlacementIdentifier;
 	UFUNCTION() void HandleComplete(const FEPFResult& Result, const TArray<FEPFAdPlacement>& Placements);
 };

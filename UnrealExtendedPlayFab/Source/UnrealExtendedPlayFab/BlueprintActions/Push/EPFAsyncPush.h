@@ -10,7 +10,7 @@
 // ── Register Push ────────────────────────────────────────────────────────────
 
 UCLASS(meta = (DisplayName = "PlayFab: Register Push Notification"))
-class UNREALEXTENDEDPLAYFAB_API UEPFAsyncRegisterPush : public UBlueprintAsyncActionBase
+class UNREALEXTENDEDPLAYFAB_API UEPFAsyncRegisterPush : public UEPFAsyncActionBase
 {
 	GENERATED_BODY()
 
@@ -22,15 +22,15 @@ public:
 	static UEPFAsyncRegisterPush* RegisterForAndroidPush(UObject* WorldContext, const FString& DeviceToken);
 
 	UPROPERTY(BlueprintAssignable) FOnEPFAsyncSimpleSuccess OnSuccess;
-	UPROPERTY(BlueprintAssignable) FOnEPFAsyncFailed OnFailure;
 
-	virtual void Activate() override;
+protected:
+	virtual void ExecuteAction() override;
+	virtual void CancelWork() override;
 
 private:
 	enum EPlatform { IOS, Android };
-	EPlatform Platform;
-	FString DeviceToken;
-	TWeakObjectPtr<UObject> WorldContext;
+	EPlatform Platform = IOS;
+	FString PushDeviceToken;
 	UFUNCTION() void HandleComplete(const FEPFResult& Result);
 };
 
@@ -38,7 +38,7 @@ private:
 // ── Send Push ────────────────────────────────────────────────────────────────
 
 UCLASS(meta = (DisplayName = "PlayFab: Send Push Notification"))
-class UNREALEXTENDEDPLAYFAB_API UEPFAsyncSendPush : public UBlueprintAsyncActionBase
+class UNREALEXTENDEDPLAYFAB_API UEPFAsyncSendPush : public UEPFAsyncActionBase
 {
 	GENERATED_BODY()
 
@@ -47,12 +47,12 @@ public:
 	static UEPFAsyncSendPush* SendPushNotification(UObject* WorldContext, const FString& RecipientPlayFabId, const FString& Message, const FString& Subject = TEXT(""));
 
 	UPROPERTY(BlueprintAssignable) FOnEPFAsyncSimpleSuccess OnSuccess;
-	UPROPERTY(BlueprintAssignable) FOnEPFAsyncFailed OnFailure;
 
-	virtual void Activate() override;
+protected:
+	virtual void ExecuteAction() override;
+	virtual void CancelWork() override;
 
 private:
-	FString RecipientId, Message, Subject;
-	TWeakObjectPtr<UObject> WorldContext;
+	FString RecipientId, PushMessage, PushSubject;
 	UFUNCTION() void HandleComplete(const FEPFResult& Result);
 };

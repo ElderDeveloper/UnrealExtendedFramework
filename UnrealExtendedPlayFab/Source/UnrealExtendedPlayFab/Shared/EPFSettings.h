@@ -3,7 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Engine/DeveloperSettings.h"
+#include "Settings/EFDeveloperSettings.h"
 #include "PlayerProfile/EPFPlayerProfileSubsystem.h"
 #include "EPFSettings.generated.h"
 
@@ -13,7 +13,7 @@
  * These settings appear in Project Settings → Extended Framework → PlayFab.
  */
 UCLASS(config=Game, defaultconfig, meta=(DisplayName="Extended PlayFab"))
-class UNREALEXTENDEDPLAYFAB_API UEPFSettings : public UDeveloperSettings
+class UNREALEXTENDEDPLAYFAB_API UEPFSettings : public UEFDeveloperSettings
 {
 	GENERATED_BODY()
 
@@ -83,7 +83,7 @@ public:
 
 	/** Optional developer secret key for server-only tooling. Do not configure this in a client build. */
 	UPROPERTY(config, EditAnywhere, BlueprintReadOnly, Category = "Server",
-		meta = (DisplayName = "Developer Secret Key"))
+		meta = (DisplayName = "Developer Secret Key", EFSecret))
 	FString DeveloperSecretKey;
 
 
@@ -152,7 +152,4 @@ public:
 		}
 		return FString::Printf(TEXT("https://%s.playfabapi.com"), *TitleId);
 	}
-
-	/** Category path for Project Settings UI */
-	virtual FName GetCategoryName() const override { return FName(TEXT("Extended Framework")); }
 };

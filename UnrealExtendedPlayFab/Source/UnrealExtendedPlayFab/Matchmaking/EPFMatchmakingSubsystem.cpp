@@ -3,6 +3,7 @@
 #include "EPFMatchmakingSubsystem.h"
 #include "Auth/EPFAuthSubsystem.h"
 #include "UnrealExtendedPlayFab.h"
+#include "Async/EFCallContext.h"
 #include "Dom/JsonObject.h"
 #include "Engine/GameInstance.h"
 #include "TimerManager.h"
@@ -219,6 +220,15 @@ void UEPFMatchmakingSubsystem::StartPolling(const FString& QueueName, const FStr
 	PollingQueueName = QueueName;
 	PollingTicketId = TicketId;
 
+	// Poll ticks broadcast OnTicketStatusReceived, the delegate a Get Matchmaking Status node waits on.
+	// Tag them with the starter's call context, or with one no node owns, so a node asking about its
+	// own (possibly different) ticket does not finish on a poll result.
+	PollCallContext = EFCallContext::GetActive();
+	if (PollCallContext == 0)
+	{
+		PollCallContext = EFCallContext::New();
+	}
+
 	if (UWorld* World = GetGameInstance()->GetWorld())
 	{
 		World->GetTimerManager().SetTimer(
@@ -260,5 +270,7 @@ FEPFMatchmakingResult UEPFMatchmakingSubsystem::GetLastResult() const
 
 void UEPFMatchmakingSubsystem::PollTick()
 {
+	// A timer callback has no context of its own; SendPlayFabRequestDetailed carries this one to the broadcast.
+	EFCallContext::FScope Scope(PollCallContext);
 	GetTicketStatus(PollingQueueName, PollingTicketId);
 }
