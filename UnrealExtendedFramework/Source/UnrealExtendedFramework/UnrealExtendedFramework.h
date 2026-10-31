@@ -3,6 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Internationalization/StringTableRegistry.h"
 #include "Modules/ModuleManager.h"
 #include "Interfaces/IPluginManager.h"
 
@@ -23,6 +24,15 @@ public:
 	/** IModuleInterface implementation */
 	virtual void StartupModule() override;
 	virtual void ShutdownModule() override;
+
+	/** Id of the string table holding the plugin's player-facing text: LOCTABLE("ExtendedFramework", Key). */
+	static constexpr const TCHAR* StringTableId = TEXT("ExtendedFramework");
+
+	/**
+	 * Registers the "ExtendedFramework" string table from <Plugin>/Localization/ExtendedFramework.csv.
+	 * Safe to call more than once; only the first call that finds the plugin registers anything.
+	 */
+	static void RegisterStringTable();
 
 private:
 	/** Initialize gameplay tags from CSV file */

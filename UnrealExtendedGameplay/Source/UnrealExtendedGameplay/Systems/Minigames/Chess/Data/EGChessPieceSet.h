@@ -117,9 +117,23 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Move feel", meta = (ClampMin = "0.05", Units = "s"))
 	float ResetTime = 1.0f;
 
-	/** See-through material for the move preview. Empty means no ghost piece. */
+	/**
+	 * See-through material for the move preview: the selected piece drawn on the target square under
+	 * the cursor. Empty uses an unlit translucent engine material tinted GhostColor.
+	 */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Presentation")
 	TSoftObjectPtr<UMaterialInterface> GhostMaterial;
+
+	/** The ghost's tint when GhostMaterial is empty. Alpha is the opacity. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Presentation")
+	FLinearColor GhostColor = FLinearColor(1.0f, 0.78f, 0.35f, 0.4f);
+
+	/**
+	 * Custom-depth stencil for the ghost's silhouette, so an outline post-process draws its edge.
+	 * 0 = OutlineStencil; negative draws none.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Presentation", meta = (ClampMin = "-1", ClampMax = "255"))
+	int32 GhostOutlineStencil = 0;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Presentation")
 	bool bToppleKingOnLoss = true;
@@ -138,6 +152,10 @@ public:
 	/** How far the selected piece floats off its square, in authored units. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Presentation", meta = (ClampMin = "0"))
 	float SelectedLiftHeight = 2.5f;
+
+	/** How high a carried piece floats over the board, in authored units (input config bCarrySelectedPiece). */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Presentation", meta = (ClampMin = "0"))
+	float CarryLiftHeight = 4.0f;
 
 	/** Render missing icons from the meshes at runtime. Off falls back to letters. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Presentation")

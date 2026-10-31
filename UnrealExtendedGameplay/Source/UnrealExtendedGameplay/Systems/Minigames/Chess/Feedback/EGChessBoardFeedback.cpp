@@ -100,5 +100,11 @@ namespace EGChessBoardFeedback
 				Mark(Move.To, EEGChessMarkType::HoverTarget);
 			}
 		}
+
+		// On a legal target the hover target is the cursor; both at once only muddy the square.
+		if (EGChess::IsValidSquare(Input.CursorSquare) && EGChessMarks::Has(OutMarks[Input.CursorSquare], EEGChessMarkType::HoverTarget))
+		{
+			OutMarks[Input.CursorSquare] &= static_cast<uint16>(~EGChessMarks::Bit(EEGChessMarkType::Cursor));
+		}
 	}
 }

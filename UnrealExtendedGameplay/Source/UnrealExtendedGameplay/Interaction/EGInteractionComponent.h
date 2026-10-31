@@ -9,8 +9,6 @@
 
 #include "EGInteractionComponent.generated.h"
 
-struct FCollisionQueryParams;
-
 class AController;
 class APawn;
 class UEGInteractionPromptWidget;
@@ -28,11 +26,15 @@ class UInputAction;
  * world state (§IsServerInteractionValid) and only then dispatches to the interactable. Nothing
  * about the client's focus reaches gameplay except as a hint about which actor it meant.
  *
- * Interaction can be refused four ways, each logged separately:
+ * Interaction can be refused four ways:
  *  - the winning mode stack entry blocks it (a modal screen is open),
  *  - SetInteractionBlocked(true) was pushed by game code (a GAS tag gate, for instance),
  *  - CanOwnerInteract() returns false (the owner is dead, a ghost, riding something),
  *  - the target itself refuses via CanInteract or carries a BlockedTags tag.
+ * The server's range, facing and line-of-sight checks can also refuse a request the client
+ * thought was fine. Every refusal is logged with its reason whatever the debug flags say: the
+ * server writes the details, then sends the reason back to the client, which logs it as well
+ * and passes the player-facing half to OnInteractionFailed.
  *
  * Gameplay never disables this component; it refuses instead, so prompts stay accurate.
  * When InteractionInputAction is configured, the component also owns its Enhanced Input
@@ -265,6 +267,15 @@ public:
 	bool CanOwnerInteract() const;
 	virtual bool CanOwnerInteract_Implementation() const { return true; }
 
+	/**
+	 * Per-target owner veto, checked for every candidate on both client and server (focus and server
+	 * validation alike), after CanOwnerInteract has let the owner interact at all. For rules that depend
+	 * on both sides - "a ghost may only use what welcomes ghosts". Default allows.
+	 */
+	UFUNCTION(BlueprintNativeEvent, BlueprintCallable, Category = "Extended|Interaction")
+	bool CanOwnerInteractWith(const AActor* Candidate) const;
+	virtual bool CanOwnerInteractWith_Implementation(const AActor* Candidate) const { return true; }
+
 	/** True when anything at all currently refuses interaction. */
 	UFUNCTION(BlueprintPure, Category = "Extended|Interaction")
 	bool IsInteractionAllowed() const;
@@ -321,9 +332,6 @@ public:
 	float GetHoldProgress() const;
 
 protected:
-	/** Local focus acquisition only; authoritative validation uses fresh queries. */
-	virtual bool TraceFocusLine(FHitResult& OutHit, const FVector& Start, const FVector& End, ECollisionChannel Channel, const FCollisionQueryParams& Params) const;
-
 	/** Creates the prompt widget. Override to route through a HUD or widget stack instead. */
 	virtual void CreatePromptWidget();
 
@@ -335,6 +343,13 @@ protected:
 	TObjectPtr<UEGInteractionPromptWidget> PromptWidgetInstance;
 
 private:
+	/** Why a request was refused: Reason is shown to the player, Detail only goes to the logs. */
+	struct FRejection
+	{
+		FText Reason;
+		FString Detail;
+	};
+
 	TWeakObjectPtr<AActor> FocusedActor;
 	FEGInteractionPresentation FocusedPresentation;
 	FHitResult LastHitResult;
@@ -365,13 +380,20 @@ private:
 	void ServerInteractionEnd(int64 AttemptId);
 
 	UFUNCTION(Client, Reliable)
-	void ClientInteractionResult(int64 AttemptId, bool bSuccess, bool bFinished, AActor* TargetActor, const FText& FailureReason);
+	void ClientInteractionResult(int64 AttemptId, bool bSuccess, bool bFinished, AActor* TargetActor, const FText& FailureReason, const FString& FailureDetail);
+
+	/** Logs the refusal, then broadcasts OnInteractionFailed. */
+	void NotifyInteractionFailed(AActor* TargetActor, const FText& Reason, const FString& Detail);
+
+	/** Which gate IsInteractionAllowed is currently refusing on, for the logs. */
+	FString DescribeOwnerGate() const;
 
 	// Trace
 	void PerformTrace();
 	void PerformMouseTrace();
 	bool GatherTraceHits(const FVector& Start, const FVector& End, TArray<FHitResult>& OutHits) const;
-	bool IsCandidateValid(AActor* Candidate, const FHitResult& HitResult, const FVector& ViewLocation, bool bServerValidation) const;
+	/** OutRejection, when given, says which check failed; the per-frame focus path leaves it null. */
+	bool IsCandidateValid(AActor* Candidate, const FHitResult& HitResult, const FVector& ViewLocation, bool bServerValidation, FRejection* OutRejection = nullptr) const;
 	AActor* SelectBestCandidate(const TArray<FHitResult>& Hits, const FVector& Start, const FVector& Direction, FHitResult& OutHit) const;
 	bool PassesTagFilter(const AActor* Candidate) const;
 	void GetViewPoint(FVector& OutLocation, FRotator& OutRotation) const;
@@ -392,9 +414,10 @@ private:
 	void UpdateHoldProgressFeedback();
 
 	// Authority
-	bool BeginInteractionOnServer(AActor* TargetActor, const FHitResult& HitResult);
+	/** Logs any refusal itself, so the authority's own requests are covered as well. */
+	bool BeginInteractionOnServer(AActor* TargetActor, const FHitResult& HitResult, FRejection& OutRejection);
 	void EndInteractionOnServer(AActor* TargetActor);
-	bool IsServerInteractionValid(AActor* TargetActor, const FHitResult& HitResult) const;
+	bool IsServerInteractionValid(AActor* TargetActor, const FHitResult& HitResult, FRejection& OutRejection) const;
 
 	// Mode stack
 

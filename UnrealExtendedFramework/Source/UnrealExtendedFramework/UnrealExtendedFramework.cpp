@@ -5,21 +5,61 @@
 #include "HAL/PlatformFilemanager.h"
 #include "Misc/Paths.h"
 #include "Engine/Engine.h"
+#include "Internationalization/StringTableRegistry.h"
 
 DEFINE_LOG_CATEGORY(LogExtendedFramework);
 
 #define LOCTEXT_NAMESPACE "FUnrealExtendedFrameworkModule"
 
+#if !IS_MONOLITHIC
+namespace
+{
+	/**
+	 * Registers the string table while this DLL loads. Dependent plugin modules hold LOCTABLE texts in
+	 * namespace-scope constants (EGInteractionComponent's refusal reasons), which are built during their own
+	 * DLL load - before any StartupModule - and would otherwise log a missing entry once each. A dependency's
+	 * DLL initializes before its dependents, so this runs first. Monolithic builds initialize everything
+	 * before plugins are discovered, so there StartupModule does the registration instead.
+	 */
+	struct FEFStringTableEarlyRegistration
+	{
+		FEFStringTableEarlyRegistration() { FUnrealExtendedFrameworkModule::RegisterStringTable(); }
+	} GEFStringTableEarlyRegistration;
+}
+#endif
+
 void FUnrealExtendedFrameworkModule::StartupModule()
 {
 	// This code will execute after your module is loaded into memory; the exact timing is specified in the .uplugin file per-module
 	InitializeGameplayTags();
+	RegisterStringTable();
 }
 
 void FUnrealExtendedFrameworkModule::ShutdownModule()
 {
 	// This function may be called during shutdown to clean up your module.  For modules that support dynamic reloading,
 	// we call this function before unloading the module.
+	FStringTableRegistry::Get().UnregisterStringTable(StringTableId);
+}
+
+void FUnrealExtendedFrameworkModule::RegisterStringTable()
+{
+	if (FStringTableRegistry::Get().FindStringTable(StringTableId).IsValid())
+	{
+		return;
+	}
+
+	// The plugin's player-facing text (settings names, chess and interaction messages) is
+	// LOCTABLE("ExtendedFramework", ...) in code. The table is resolved from the plugin's own folder rather
+	// than the project's Content, so the plugin keeps working wherever it is installed.
+	const TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(TEXT("UnrealExtendedFramework"));
+	if (!Plugin.IsValid())
+	{
+		UE_LOG(LogExtendedFramework, Warning, TEXT("UnrealExtendedFramework plugin not found; its string table is not registered."));
+		return;
+	}
+	FStringTableRegistry::Get().Internal_LocTableFromFile(StringTableId, TEXT("ExtendedFramework"),
+		TEXT("Localization/ExtendedFramework.csv"), Plugin->GetBaseDir());
 }
 
 void FUnrealExtendedFrameworkModule::InitializeGameplayTags()

@@ -36,6 +36,15 @@ namespace EGChessEngineAssets
 		return LoadCached<UMaterialInterface>(TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
 	}
 
+	UMaterialInterface* UnlitTranslucentMaterial()
+	{
+		// Asked again on every mark change: once it is known missing, stop trying (each failed load logs).
+		static bool bMissing = false;
+		UMaterialInterface* Material = bMissing ? nullptr : LoadCached<UMaterialInterface>(TEXT("/Engine/EngineDebugMaterials/M_SimpleUnlitTranslucent.M_SimpleUnlitTranslucent"));
+		bMissing = Material == nullptr;
+		return Material ? Material : BasicMaterial();
+	}
+
 	UMaterialInstanceDynamic* TintedMaterial(UObject* Outer, const FLinearColor& Color)
 	{
 		UMaterialInterface* Base = BasicMaterial();

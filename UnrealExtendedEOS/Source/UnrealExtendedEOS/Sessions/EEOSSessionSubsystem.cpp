@@ -322,7 +322,8 @@ bool UEEOSSessionSubsystem::JoinSession(int32 SearchResultIndex, const FString& 
 	}
 	FOnlineSessionSearchResult Target = SessionSearch->SearchResults[SearchResultIndex];
 	Target.Session.SessionSettings.bUseLobbiesIfAvailable = SearchBackend == EEOSSessionBackend::Lobby;
-	if (SearchBackend == EEOSSessionBackend::Lobby) Target.Session.SessionSettings.bUsesPresence = true;
+	// Join presence needs an Epic account (EOS_Lobby_JoinLobbyOptions.bPresenceEnabled); a Connect-only user only gets an SDK warning.
+	if (SearchBackend == EEOSSessionBackend::Lobby) Target.Session.SessionSettings.bUsesPresence = GetEOSReadiness().bHasEpicAccount;
 	return BeginJoinSession(Target, SessionName);
 }
 

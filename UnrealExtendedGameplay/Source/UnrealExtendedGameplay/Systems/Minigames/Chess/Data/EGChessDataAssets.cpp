@@ -1,15 +1,14 @@
 // Copyright Kemal Erdem YILMAZ. All Rights Reserved.
 
 #include "EGChessAIProfile.h"
+#include "Internationalization/StringTableRegistry.h"
 #include "EGChessAnimationSet.h"
 #include "EGChessPieceSet.h"
 #include "EGChessUIConfig.h"
 
-#define LOCTEXT_NAMESPACE "EGChess"
-
 UEGChessAIProfile::UEGChessAIProfile()
 {
-	DisplayName = LOCTEXT("AIDefaultName", "Computer");
+	DisplayName = LOCTABLE("ExtendedFramework", "Common.Computer");
 }
 
 const FEGChessPieceVisual& UEGChessPieceSet::GetVisual(EEGChessPieceType Type) const
@@ -110,8 +109,8 @@ void UEGChessAnimationSet::GatherSoftPaths(TArray<FSoftObjectPath>& OutPaths) co
 	Add(ExitLeft);
 	Add(ExitRight);
 	Add(ExitBack);
-	Add(MoveRightHand);
-	Add(MoveLeftHand);
+	Add(ClockPressRightHand);
+	Add(ClockPressLeftHand);
 	for (const TSoftObjectPtr<UAnimMontage>& Montage : ThinkingIdles)
 	{
 		Add(Montage);
@@ -126,43 +125,43 @@ void UEGChessAnimationSet::GatherSoftPaths(TArray<FSoftObjectPath>& OutPaths) co
 
 UEGChessUIConfig::UEGChessUIConfig()
 {
-	SitPromptText = LOCTEXT("SitPrompt", "Sit");
-	WaitingText = LOCTEXT("Waiting", "Waiting for an opponent");
-	PlayVersusAIText = LOCTEXT("PlayVersusAI", "Play against the AI");
-	UntimedText = LOCTEXT("Untimed", "Untimed");
+	SitPromptText = LOCTABLE("ExtendedFramework", "EGChess.SitPrompt");
+	WaitingText = LOCTABLE("ExtendedFramework", "Common.WaitingForAnOpponent");
+	PlayVersusAIText = LOCTABLE("ExtendedFramework", "EGChess.PlayVersusAI");
+	UntimedText = LOCTABLE("ExtendedFramework", "Common.Untimed");
 
-	NoticeTexts.Add(EEGChessNotice::NotYourTurn, LOCTEXT("NoticeNotYourTurn", "It's not your turn"));
-	NoticeTexts.Add(EEGChessNotice::IllegalMove, LOCTEXT("NoticeIllegal", "That move isn't allowed"));
-	NoticeTexts.Add(EEGChessNotice::DrawOffered, LOCTEXT("NoticeDrawOffered", "Your opponent offers a draw"));
-	NoticeTexts.Add(EEGChessNotice::DrawDeclined, LOCTEXT("NoticeDrawDeclined", "Draw offer declined"));
-	NoticeTexts.Add(EEGChessNotice::OpponentJoined, LOCTEXT("NoticeOpponentJoined", "An opponent sat down"));
-	NoticeTexts.Add(EEGChessNotice::OpponentLeft, LOCTEXT("NoticeOpponentLeft", "Your opponent left"));
-	NoticeTexts.Add(EEGChessNotice::OpponentDisconnected, LOCTEXT("NoticeOpponentDisconnected", "Your opponent disconnected"));
-	NoticeTexts.Add(EEGChessNotice::OpponentReconnected, LOCTEXT("NoticeOpponentReconnected", "Your opponent is back"));
-	NoticeTexts.Add(EEGChessNotice::TakebackDone, LOCTEXT("NoticeTakeback", "Move taken back"));
-	NoticeTexts.Add(EEGChessNotice::LowTime, LOCTEXT("NoticeLowTime", "Low time"));
-	NoticeTexts.Add(EEGChessNotice::SeatTaken, LOCTEXT("NoticeSeatTaken", "That seat is taken"));
-	NoticeTexts.Add(EEGChessNotice::RematchRequested, LOCTEXT("NoticeRematch", "Your opponent wants a rematch"));
+	NoticeTexts.Add(EEGChessNotice::NotYourTurn, LOCTABLE("ExtendedFramework", "EGChess.NoticeNotYourTurn"));
+	NoticeTexts.Add(EEGChessNotice::IllegalMove, LOCTABLE("ExtendedFramework", "EGChess.NoticeIllegal"));
+	NoticeTexts.Add(EEGChessNotice::DrawOffered, LOCTABLE("ExtendedFramework", "Common.YourOpponentOffersADraw"));
+	NoticeTexts.Add(EEGChessNotice::DrawDeclined, LOCTABLE("ExtendedFramework", "EGChess.NoticeDrawDeclined"));
+	NoticeTexts.Add(EEGChessNotice::OpponentJoined, LOCTABLE("ExtendedFramework", "EGChess.NoticeOpponentJoined"));
+	NoticeTexts.Add(EEGChessNotice::OpponentLeft, LOCTABLE("ExtendedFramework", "EGChess.NoticeOpponentLeft"));
+	NoticeTexts.Add(EEGChessNotice::OpponentDisconnected, LOCTABLE("ExtendedFramework", "EGChess.NoticeOpponentDisconnected"));
+	NoticeTexts.Add(EEGChessNotice::OpponentReconnected, LOCTABLE("ExtendedFramework", "EGChess.NoticeOpponentReconnected"));
+	NoticeTexts.Add(EEGChessNotice::TakebackDone, LOCTABLE("ExtendedFramework", "EGChess.NoticeTakeback"));
+	NoticeTexts.Add(EEGChessNotice::LowTime, LOCTABLE("ExtendedFramework", "EGChess.NoticeLowTime"));
+	NoticeTexts.Add(EEGChessNotice::SeatTaken, LOCTABLE("ExtendedFramework", "EGChess.NoticeSeatTaken"));
+	NoticeTexts.Add(EEGChessNotice::RematchRequested, LOCTABLE("ExtendedFramework", "EGChess.NoticeRematch"));
 
-	ReasonTexts.Add(EEGChessEndReason::Checkmate, LOCTEXT("ReasonCheckmate", "Checkmate"));
-	ReasonTexts.Add(EEGChessEndReason::Resignation, LOCTEXT("ReasonResignation", "Resignation"));
-	ReasonTexts.Add(EEGChessEndReason::Timeout, LOCTEXT("ReasonTimeout", "Time ran out"));
-	ReasonTexts.Add(EEGChessEndReason::Stalemate, LOCTEXT("ReasonStalemate", "Stalemate"));
-	ReasonTexts.Add(EEGChessEndReason::ThreefoldRepetition, LOCTEXT("ReasonRepetition", "Threefold repetition"));
-	ReasonTexts.Add(EEGChessEndReason::FiftyMoveRule, LOCTEXT("ReasonFifty", "Fifty-move rule"));
-	ReasonTexts.Add(EEGChessEndReason::InsufficientMaterial, LOCTEXT("ReasonMaterial", "Insufficient material"));
-	ReasonTexts.Add(EEGChessEndReason::Agreement, LOCTEXT("ReasonAgreement", "Draw agreed"));
-	ReasonTexts.Add(EEGChessEndReason::Forfeit, LOCTEXT("ReasonForfeit", "Forfeit"));
+	ReasonTexts.Add(EEGChessEndReason::Checkmate, LOCTABLE("ExtendedFramework", "EGChess.ReasonCheckmate"));
+	ReasonTexts.Add(EEGChessEndReason::Resignation, LOCTABLE("ExtendedFramework", "EGChess.ReasonResignation"));
+	ReasonTexts.Add(EEGChessEndReason::Timeout, LOCTABLE("ExtendedFramework", "EGChess.ReasonTimeout"));
+	ReasonTexts.Add(EEGChessEndReason::Stalemate, LOCTABLE("ExtendedFramework", "EGChess.ReasonStalemate"));
+	ReasonTexts.Add(EEGChessEndReason::ThreefoldRepetition, LOCTABLE("ExtendedFramework", "EGChess.ReasonRepetition"));
+	ReasonTexts.Add(EEGChessEndReason::FiftyMoveRule, LOCTABLE("ExtendedFramework", "EGChess.ReasonFifty"));
+	ReasonTexts.Add(EEGChessEndReason::InsufficientMaterial, LOCTABLE("ExtendedFramework", "EGChess.ReasonMaterial"));
+	ReasonTexts.Add(EEGChessEndReason::Agreement, LOCTABLE("ExtendedFramework", "EGChess.ReasonAgreement"));
+	ReasonTexts.Add(EEGChessEndReason::Forfeit, LOCTABLE("ExtendedFramework", "EGChess.ReasonForfeit"));
 
-	PromptTitles.Add(EEGChessPromptKind::ConfirmResign, LOCTEXT("PromptResign", "Resign?"));
-	PromptTitles.Add(EEGChessPromptKind::ConfirmLeave, LOCTEXT("PromptLeave", "Resign and leave?"));
-	PromptTitles.Add(EEGChessPromptKind::DrawOffered, LOCTEXT("PromptDraw", "Your opponent offers a draw"));
+	PromptTitles.Add(EEGChessPromptKind::ConfirmResign, LOCTABLE("ExtendedFramework", "EGChess.PromptResign"));
+	PromptTitles.Add(EEGChessPromptKind::ConfirmLeave, LOCTABLE("ExtendedFramework", "EGChess.PromptLeave"));
+	PromptTitles.Add(EEGChessPromptKind::DrawOffered, LOCTABLE("ExtendedFramework", "Common.YourOpponentOffersADraw"));
 
-	WinText = LOCTEXT("ResultWin", "You won");
-	LoseText = LOCTEXT("ResultLose", "You lost");
-	DrawText = LOCTEXT("ResultDraw", "Draw");
-	WhiteWinsText = LOCTEXT("ResultWhiteWins", "White wins");
-	BlackWinsText = LOCTEXT("ResultBlackWins", "Black wins");
+	WinText = LOCTABLE("ExtendedFramework", "EGChess.ResultWin");
+	LoseText = LOCTABLE("ExtendedFramework", "EGChess.ResultLose");
+	DrawText = LOCTABLE("ExtendedFramework", "EGChess.ResultDraw");
+	WhiteWinsText = LOCTABLE("ExtendedFramework", "EGChess.ResultWhiteWins");
+	BlackWinsText = LOCTABLE("ExtendedFramework", "EGChess.ResultBlackWins");
 }
 
 FText UEGChessUIConfig::GetNoticeText(EEGChessNotice Notice) const
@@ -183,4 +182,3 @@ FText UEGChessUIConfig::GetPromptTitle(EEGChessPromptKind Kind) const
 	return Found ? *Found : FText::GetEmpty();
 }
 
-#undef LOCTEXT_NAMESPACE

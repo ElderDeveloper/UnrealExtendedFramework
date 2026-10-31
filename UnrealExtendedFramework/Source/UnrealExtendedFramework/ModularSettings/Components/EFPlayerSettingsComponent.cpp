@@ -240,6 +240,11 @@ bool UEFPlayerSettingsComponent::RequestUpdateSetting(FGameplayTag Tag, const FS
       return false;
     }
 
+    if (!bFromLoad)
+    {
+      DropPendingLoadedValue(Tag);
+    }
+
     Setting->Apply();
     OnSettingChanged.Broadcast(Setting);
 
@@ -267,6 +272,11 @@ bool UEFPlayerSettingsComponent::RequestUpdateSetting(FGameplayTag Tag, const FS
       // Rejected locally (locked / unknown / out of range). Do not push a value
       // the server might accept against stale lock state.
       return false;
+    }
+
+    if (!bFromLoad)
+    {
+      DropPendingLoadedValue(Tag);
     }
 
     Setting->Apply();
@@ -774,12 +784,19 @@ void UEFPlayerSettingsComponent::SavePlayerSettings()
 
   // Write ONLY player settings — no read-modify-write of other data
   SaveGameInstance->PlayerSettings.Empty();
-  for (UEFModularSettingsBase* Setting : Settings) 
+  for (UEFModularSettingsBase* Setting : Settings)
   {
-    if (Setting && Setting->SettingTag.IsValid()) 
+    if (Setting && Setting->SettingTag.IsValid())
     {
-      SaveGameInstance->PlayerSettings.Add(Setting->SettingTag,Setting->GetValueAsString());
+      SaveGameInstance->PlayerSettings.Add(Setting->SettingTag,Setting->GetValueToSave());
     }
+  }
+
+  // A value loaded from disk that this session has not applied yet is still the player's
+  // choice. Writing the default the setting shows in its place would lose it for good.
+  for (const TPair<FGameplayTag, FString>& Pending : PendingLoadedValues)
+  {
+    SaveGameInstance->PlayerSettings.Add(Pending.Key, Pending.Value);
   }
 
   // Write to disk using the dedicated player settings slot
@@ -879,34 +896,53 @@ void UEFPlayerSettingsComponent::TryApplyPendingValues()
     return;
   }
 
-  TArray<FGameplayTag> AppliedTags;
+  // A copy: applying a value broadcasts OnSettingChanged, and a listener may change the
+  // pending map (a player's own choice drops its entry) while this loop is walking it.
+  const TMap<FGameplayTag, FString> Snapshot = PendingLoadedValues;
+  int32 AppliedCount = 0;
 
-  for (const auto& Pair : PendingLoadedValues)
+  for (const TPair<FGameplayTag, FString>& Pair : Snapshot)
   {
-    if (UEFModularSettingsBase* Setting = GetSettingByTag(Pair.Key))
+    const FString* StillPending = PendingLoadedValues.Find(Pair.Key);
+    if (!StillPending || *StillPending != Pair.Value)
     {
-      // Apply the saved value locally
-      Setting->SetValueFromString(Pair.Value);
-      Setting->SaveCurrentValue();
-      Setting->ClearDirty();
-
-      // Send RPC to server with bFromLoad=true to prevent circular save
-      RequestUpdateSetting(Pair.Key, Pair.Value, /*bFromLoad=*/true);
-
-      AppliedTags.Add(Pair.Key);
+      continue;
     }
+
+    UEFModularSettingsBase* Setting = GetSettingByTag(Pair.Key);
+    if (!Setting)
+    {
+      continue;
+    }
+
+    // Not yet (an option locked until this machine knows what the player owns). Applying it
+    // would reset the setting to its default, and the save after the load would then write
+    // that default to disk. Kept pending; a lock change retries it.
+    if (!Setting->CanApplyLoadedValue(Pair.Value))
+    {
+      UE_LOG(LogTemp, Verbose, TEXT("[UEFPlayerSettingsComponent] Holding saved value '%s' for %s until the setting can take it."),
+        *Pair.Value, *Pair.Key.ToString());
+      continue;
+    }
+
+    // Removed before applying, so nothing the apply broadcasts to sees it as still pending.
+    PendingLoadedValues.Remove(Pair.Key);
+
+    // Apply the saved value locally
+    Setting->SetValueFromString(Pair.Value);
+    Setting->SaveCurrentValue();
+    Setting->ClearDirty();
+
+    // Send RPC to server with bFromLoad=true to prevent circular save
+    RequestUpdateSetting(Pair.Key, Pair.Value, /*bFromLoad=*/true);
+
+    ++AppliedCount;
   }
 
-  // Remove successfully applied entries from the pending map
-  for (const FGameplayTag& Tag : AppliedTags)
-  {
-    PendingLoadedValues.Remove(Tag);
-  }
-
-  if (AppliedTags.Num() > 0)
+  if (AppliedCount > 0)
   {
     UE_LOG(LogTemp, Log, TEXT("[UEFPlayerSettingsComponent] Applied %d pending values. %d remaining."),
-      AppliedTags.Num(), PendingLoadedValues.Num());
+      AppliedCount, PendingLoadedValues.Num());
   }
 
   // Transition to Ready once all pending values are applied
@@ -916,6 +952,40 @@ void UEFPlayerSettingsComponent::TryApplyPendingValues()
     
     // Save to the new slot (ensures migration is persisted)
     RequestSave();
+  }
+}
+
+void UEFPlayerSettingsComponent::RetryPendingLoadedValuesNextTick()
+{
+  if (bPendingRetryScheduled || PendingLoadedValues.Num() == 0)
+  {
+    return;
+  }
+
+  UWorld* World = GetWorld();
+  if (!World)
+  {
+    return;
+  }
+
+  bPendingRetryScheduled = true;
+  World->GetTimerManager().SetTimerForNextTick(FTimerDelegate::CreateWeakLambda(this, [this]()
+  {
+    bPendingRetryScheduled = false;
+    TryApplyPendingValues();
+  }));
+}
+
+void UEFPlayerSettingsComponent::DropPendingLoadedValue(FGameplayTag Tag)
+{
+  if (PendingLoadedValues.Remove(Tag) == 0)
+  {
+    return;
+  }
+
+  if (PendingLoadedValues.Num() == 0 && LoadState == EPlayerSettingsLoadState::SyncingWithServer)
+  {
+    LoadState = EPlayerSettingsLoadState::Ready;
   }
 }
 

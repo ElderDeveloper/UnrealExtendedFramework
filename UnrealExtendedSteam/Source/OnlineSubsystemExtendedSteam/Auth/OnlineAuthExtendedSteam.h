@@ -3,6 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Containers/Ticker.h"
 #include "Core/OnlineSubsystemExtendedSteamPackage.h"
 
 class FOnlineSubsystemExtendedSteam;
@@ -68,11 +69,17 @@ public:
 	 * Requests a web-API auth ticket for a named third-party service, asynchronously.
 	 * The ticket is delivered via Delegate once GetTicketForWebApiResponse_t arrives.
 	 *
+	 * Steam refuses a web-API ticket while another one is still pending, whoever asked for it (two
+	 * subsystems signing in at startup both ask in the same frame). A refused request is therefore
+	 * held and sent again when the next GetTicketForWebApiResponse_t arrives, and fails only when
+	 * no ticket comes back for DeferredWebApiTimeoutSeconds.
+	 *
 	 * @param ServiceIdentity optional service identity string the backend expects (may be empty).
 	 * @param Delegate        receives (bSuccess, HexTicket). Always fired: immediately with failure
 	 *                        when unavailable, otherwise from the Steam callback.
 	 * @return the HAuthTicket handle correlating the pending request; 0 when it could not start
-	 *         (SDK < 1.57, SDK compiled out, or Steam client down).
+	 *         (SDK < 1.57, SDK compiled out, Steam client down or not logged on) or was held
+	 *         for a retry. The delegate fires in every case.
 	 */
 	uint32 GetAuthTicketForWebApi(const FString& ServiceIdentity, const FOnExtendedSteamWebApiTicket& Delegate);
 
@@ -95,8 +102,33 @@ public:
 private:
 	friend class FOnlineAuthExtendedSteamCallbacks;
 
-	/** GetTicketForWebApiResponse_t arrived (forwarded by the callback holder); fires + clears the pending delegate. */
+	/** A web-API request Steam refused while another ticket was pending, waiting to be sent again. */
+	struct FDeferredWebApiRequest
+	{
+		FString ServiceIdentity;
+		FOnExtendedSteamWebApiTicket Delegate;
+	};
+
+	/** How long a refused request may wait for a ticket to come back before it fails. */
+	static constexpr float DeferredWebApiTimeoutSeconds = 15.0f;
+
+	/**
+	 * GetTicketForWebApiResponse_t arrived (forwarded by the callback holder) for any handle, ours
+	 * or another component's; fires + clears the pending delegate, then re-sends held requests.
+	 */
 	void HandleWebApiTicketResponse(uint32 AuthTicketHandle, bool bSuccess, const FString& HexTicket);
+
+	/** Asks Steam for the ticket. False when Steam refused it, which leaves the delegate unfired. */
+	bool TryStartWebApiTicket(const FString& ServiceIdentity, const FOnExtendedSteamWebApiTicket& Delegate, uint32& OutHandle);
+
+	/** Sends held requests again now that a pending ticket has come back; one can start per response. */
+	void RetryDeferredWebApiRequests();
+
+	/** (Re)starts the one-shot deadline for the held requests, or stops it when none are held. */
+	void RefreshDeferredWebApiTimeout();
+
+	/** One-shot ticker: no ticket came back in time, so fail every held request. */
+	bool HandleDeferredWebApiTimeout(float DeltaTime);
 
 	/** Owning subsystem (owns this object; outlives it). */
 	FOnlineSubsystemExtendedSteam* Subsystem = nullptr;
@@ -109,6 +141,12 @@ private:
 
 	/** Web-API ticket requests awaiting GetTicketForWebApiResponse_t, keyed by HAuthTicket. */
 	TMap<uint32, FOnExtendedSteamWebApiTicket> PendingWebApiTickets;
+
+	/** Requests Steam refused while another ticket was pending, oldest first. Guarded by AuthLock. */
+	TArray<FDeferredWebApiRequest> DeferredWebApiRequests;
+
+	/** Deadline for DeferredWebApiRequests; reset whenever a held request gets through. */
+	FTSTicker::FDelegateHandle DeferredWebApiTimeoutHandle;
 };
 
 typedef TSharedPtr<FOnlineAuthExtendedSteam, ESPMode::ThreadSafe> FOnlineAuthExtendedSteamPtr;

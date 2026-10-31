@@ -101,6 +101,17 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnSteamStoreAuthURL, bool, bSucces
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_FourParams(FOnSteamDurationControl, bool, bApplicable, int32, SecondsLast5h, int32, SecondsToday, int32, SecondsRemaining);
 
 /**
+ * Fired when the user answers a Steam microtransaction dialog, i.e. an order a backend created with
+ * ISteamMicroTxn/InitTxn and usersession "client". The dialog belongs to the Steam client, so this is
+ * the only way the game learns the user's answer.
+ *
+ * OrderId is the 64-bit order id the backend chose, as a decimal string, because Blueprints have no
+ * uint64. bAuthorized is false when the user declined or closed the dialog. An authorized order still
+ * has to be settled with FinalizeTxn by whoever holds the publisher key.
+ */
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FOnSteamMicroTxnAuthorization, int32, AppId, const FString&, OrderId, bool, bAuthorized);
+
+/**
  * Wraps ISteamUser: local identity, auth session tickets, web API tickets and
  * encrypted app tickets, license/ownership checks, market eligibility and duration control.
  */
@@ -260,6 +271,10 @@ public:
 
 	UPROPERTY(BlueprintAssignable, Category = "Steam|User")
 	FOnSteamDurationControl OnDurationControl;
+
+	/** The user answered a microtransaction dialog. See FOnSteamMicroTxnAuthorization. */
+	UPROPERTY(BlueprintAssignable, Category = "Steam|User|MicroTxn")
+	FOnSteamMicroTxnAuthorization OnMicroTxnAuthorizationResponse;
 
 protected:
 	virtual void HandleSteamClientInitialized() override;

@@ -4,6 +4,7 @@
 
 #include "EGState.h"
 #include "DrawDebugHelpers.h"
+#include "Engine/World.h"
 #include "GameFramework/Actor.h"
 #include "Net/UnrealNetwork.h"
 
@@ -187,8 +188,16 @@ UEGState* UEGStateMachineComponent::RegisterInstancedState(UEGState* StateInstan
 
 	if (UEGState** FoundState = RegisteredStatesByClass.Find(StateClass))
 	{
-		UE_LOG(LogEGStateMachine, Warning, TEXT("EGStateMachine: State class '%s' already registered. Skipping duplicate instance."),
-			*StateClass->GetName());
+		// The same instance again is not a duplicate. An actor in a streamed level that is hidden and
+		// shown again ends play and begins play a second time on the same objects (EndPlay with
+		// RemovedFromWorld does not destroy anything), so BeginPlay walks StateDefinitions again over
+		// states this registry already holds. Only a second, different instance of a class is a
+		// genuine duplicate definition - its tuning would be silently ignored.
+		if (*FoundState != StateInstance)
+		{
+			UE_LOG(LogEGStateMachine, Warning, TEXT("EGStateMachine: State class '%s' already registered. Skipping duplicate instance."),
+				*StateClass->GetName());
+		}
 		return *FoundState;
 	}
 

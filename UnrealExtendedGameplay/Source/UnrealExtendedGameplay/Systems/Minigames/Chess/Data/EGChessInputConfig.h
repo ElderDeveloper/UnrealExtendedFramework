@@ -18,6 +18,11 @@ enum class EEGChessAimMode : uint8
 	ViewCentre,
 	/** A free mouse cursor picks squares; the camera turns while the right mouse button is held. */
 	MouseCursor,
+	/**
+	 * A free mouse cursor picks squares and the camera never moves: the seat's board camera, no
+	 * look, no view toggle. Right mouse only cancels.
+	 */
+	FixedCursor,
 };
 
 /**
@@ -52,6 +57,24 @@ public:
 	/** How the player points at squares. The default, ViewCentre, is first-person play with no cursor. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Chess|Look")
 	EEGChessAimMode AimMode = EEGChessAimMode::ViewCentre;
+
+	/**
+	 * The selected piece is carried: it leaves its square and follows the pointer (or the
+	 * keyboard/pad cursor) over the board until it is placed or dropped. Off, it only lifts in place.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Chess|Carry")
+	bool bCarrySelectedPiece = false;
+
+	/**
+	 * Releasing the select button over a legal square places the piece picked up by that press, so
+	 * drag and drop works next to click-click.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Chess|Carry", meta = (EditCondition = "bCarrySelectedPiece"))
+	bool bDropOnRelease = true;
+
+	/** How quickly the carried piece catches up with the pointer. 0 follows it exactly. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Chess|Carry", meta = (ClampMin = "0.0", EditCondition = "bCarrySelectedPiece"))
+	float CarryFollowSpeed = 25.0f;
 
 	/**
 	 * Axis2D, in degrees: X turns the seated camera right, Y tilts it up. It is added to the view as

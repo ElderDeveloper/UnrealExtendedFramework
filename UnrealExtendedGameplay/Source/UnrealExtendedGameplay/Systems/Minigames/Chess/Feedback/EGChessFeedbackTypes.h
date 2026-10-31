@@ -45,6 +45,18 @@ namespace EGChessMarks
 	constexpr int32 NumTypes = static_cast<int32>(EEGChessMarkType::Count);
 }
 
+/** The outline of a mark, as the instanced renderer draws it. */
+UENUM(BlueprintType)
+enum class EEGChessMarkerShape : uint8
+{
+	/** A filled square. */
+	Plate,
+	/** A hollow square, FrameWidth thick. */
+	Frame,
+	/** A filled circle (the engine cylinder, flattened, when no Mesh is set). */
+	Disc,
+};
+
 /** How one mark type looks. Everything optional; engine shapes fill the gaps. */
 USTRUCT(BlueprintType)
 struct UNREALEXTENDEDGAMEPLAY_API FEGChessMarkerVisual
@@ -55,11 +67,11 @@ struct UNREALEXTENDEDGAMEPLAY_API FEGChessMarkerVisual
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Chess")
 	TSoftObjectPtr<UStaticMesh> Mesh;
 
-	/** Unlit translucent works best. With none, a tinted engine material is used. */
+	/** Unlit translucent works best. With none, an unlit translucent engine material is used. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Chess")
 	TSoftObjectPtr<UMaterialInterface> Material;
 
-	/** Pushed to the material's "Color" vector parameter. */
+	/** Pushed to the material's "Color" vector parameter. Alpha is the opacity. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Chess")
 	FLinearColor Color = FLinearColor::White;
 
@@ -67,9 +79,38 @@ struct UNREALEXTENDEDGAMEPLAY_API FEGChessMarkerVisual
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Chess", meta = (ClampMin = "0.01"))
 	float Scale = 1.0f;
 
-	/** Height above the playing surface, in uu. Keeps marks from z-fighting the board. */
+	/** Height above the playing surface, in uu. Keeps marks from z-fighting the board; higher marks draw on top. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Chess")
 	float HeightOffset = 0.15f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Chess")
+	EEGChessMarkerShape Shape = EEGChessMarkerShape::Plate;
+
+	/** Thickness of a Frame, as a fraction of a square. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Chess", meta = (ClampMin = "0.005", EditCondition = "Shape == EEGChessMarkerShape::Frame"))
+	float FrameWidth = 0.1f;
+
+	/** Drawn inside a Frame, under it. Alpha 0 leaves the frame hollow. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Chess", meta = (EditCondition = "Shape == EEGChessMarkerShape::Frame"))
+	FLinearColor FillColor = FLinearColor::Transparent;
+
+	/**
+	 * A stroke drawn under the mark, OutlineWidth past each of its edges. A dark stroke under a
+	 * light mark reads on light and dark squares alike. Alpha 0 draws none.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Chess")
+	FLinearColor OutlineColor = FLinearColor::Transparent;
+
+	/** As a fraction of a square. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Chess", meta = (ClampMin = "0"))
+	float OutlineWidth = 0.03f;
+
+	/** How far the mark dims at the low point of its pulse, 0..1. 0 holds it steady. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Chess", meta = (ClampMin = "0", ClampMax = "1"))
+	float PulseAmount = 0.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Chess", meta = (ClampMin = "0.1", Units = "s"))
+	float PulsePeriod = 1.0f;
 };
 
 /** Per-player marker options, for a game to bind to its own settings. */

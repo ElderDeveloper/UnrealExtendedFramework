@@ -3,10 +3,12 @@
 
 #include "Engine/Font.h"
 #include "Engine/Texture2D.h"
+#include "Materials/MaterialInterface.h"
 #include "Styling/CoreStyle.h"
 #include "UnrealExtendedFramework/Systems/Loading/Data/EFLoadingScreenSettings.h"
 #include "Widgets/Images/SImage.h"
 #include "Widgets/Images/SThrobber.h"
+#include "Widgets/Layout/SBox.h"
 #include "Widgets/Layout/SScaleBox.h"
 #include "Widgets/SBoxPanel.h"
 #include "Widgets/SOverlay.h"
@@ -89,6 +91,9 @@ void SEFLoadingScreenWidget::Construct(const FArguments& InArgs)
 				.Image(&BackgroundBrush)
 			]
 		];
+
+	// Layers 2+: material layers, under the throbber and text so those stay readable.
+	AddMaterialLayers(RootOverlay, InArgs._LayerMaterials);
 
 	if (bShowCircularThrobber)
 	{
@@ -185,4 +190,59 @@ void SEFLoadingScreenWidget::Construct(const FArguments& InArgs)
 	[
 		RootOverlay
 	];
+}
+
+void SEFLoadingScreenWidget::AddMaterialLayers(const TSharedRef<SOverlay>& Overlay, const TArray<UMaterialInterface*>& Materials)
+{
+	const UEFLoadingScreenSettings* Settings = GetDefault<UEFLoadingScreenSettings>();
+	if (!Settings)
+	{
+		return;
+	}
+
+	// The subsystem builds one entry per settings row; a shorter list means the settings were
+	// edited after this session's materials were loaded, and the rows past it wait for the next one.
+	const int32 LayerCount = FMath::Min(Settings->MaterialLayers.Num(), Materials.Num());
+	for (int32 LayerIndex = 0; LayerIndex < LayerCount; ++LayerIndex)
+	{
+		UMaterialInterface* Material = Materials[LayerIndex];
+		if (!Material)
+		{
+			continue;
+		}
+
+		const FEFLoadingScreenMaterialLayer& Layer = Settings->MaterialLayers[LayerIndex];
+		const FVector2D LayerSize(FMath::Max(1.0, Layer.Size.X), FMath::Max(1.0, Layer.Size.Y));
+
+		LayerMaterials.Emplace(Material);
+
+		FSlateBrush& Brush = *LayerBrushes.Add_GetRef(MakeUnique<FSlateBrush>());
+		Brush.DrawAs = ESlateBrushDrawType::Image;
+		Brush.SetResourceObject(Material);
+		Brush.ImageSize = LayerSize;
+		Brush.TintColor = FSlateColor(Layer.Tint);
+
+		Overlay->AddSlot()
+			.HAlign(HAlign_Fill)
+			.VAlign(VAlign_Fill)
+			[
+				SNew(SScaleBox)
+				.Stretch(Layer.Stretch.GetValue())
+				.StretchDirection(EStretchDirection::Both)
+				.HAlign(Layer.HorizontalAlignment.GetValue())
+				.VAlign(Layer.VerticalAlignment.GetValue())
+				// A render transform moves the drawn layer without changing how it is laid out, so
+				// Offset means the same thing whatever the alignment is.
+				.RenderTransform(FSlateRenderTransform(FVector2f(Layer.Offset)))
+				[
+					SNew(SBox)
+					.WidthOverride(LayerSize.X)
+					.HeightOverride(LayerSize.Y)
+					[
+						SNew(SImage)
+						.Image(&Brush)
+					]
+				]
+			];
+	}
 }

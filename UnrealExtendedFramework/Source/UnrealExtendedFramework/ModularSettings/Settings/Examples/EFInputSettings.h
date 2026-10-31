@@ -12,6 +12,7 @@
 #include "InputMappingContext.h"
 #include "EnhancedInput/Public/UserSettings/EnhancedInputUserSettings.h"
 #include "PlayerMappableKeySettings.h"
+#include "Internationalization/StringTableRegistry.h"
 #include "EFInputSettings.generated.h"
 
 
@@ -165,7 +166,7 @@ public:
 	UEFMouseSensitivitySetting()
 	{
 		SettingTag = FGameplayTag::RequestGameplayTag(TEXT("Settings.Controls.MouseSensitivity"));
-		DisplayName = NSLOCTEXT("Settings", "MouseSensitivity", "Mouse Sensitivity");
+		DisplayName = LOCTABLE("ExtendedFramework", "Settings.MouseSensitivity");
 		ConfigCategory = TEXT("Controls");
 		DefaultValue = 1.0f;
 		
@@ -197,7 +198,7 @@ public:
 	UEFMouseSensitivityXSetting()
 	{
 		SettingTag = FGameplayTag::RequestGameplayTag(TEXT("Settings.Controls.MouseSensitivityX"));
-		DisplayName = NSLOCTEXT("Settings", "MouseSensitivityX", "Mouse Sensitivity X");
+		DisplayName = LOCTABLE("ExtendedFramework", "Settings.MouseSensitivityX");
 		ConfigCategory = TEXT("Controls");
 		DefaultValue = 1.0f;
 		
@@ -224,7 +225,7 @@ public:
 	UEFMouseSensitivityYSetting()
 	{
 		SettingTag = FGameplayTag::RequestGameplayTag(TEXT("Settings.Controls.MouseSensitivityY"));
-		DisplayName = NSLOCTEXT("Settings", "MouseSensitivityY", "Mouse Sensitivity Y");
+		DisplayName = LOCTABLE("ExtendedFramework", "Settings.MouseSensitivityY");
 		ConfigCategory = TEXT("Controls");
 		DefaultValue = 1.0f;
 		
@@ -251,7 +252,7 @@ public:
 	UEFReverseMouseYSetting()
 	{
 		SettingTag = FGameplayTag::RequestGameplayTag(TEXT("Settings.Controls.ReverseMouseY"));
-		DisplayName = NSLOCTEXT("Settings", "ReverseMouseY", "Reverse Mouse Y-Axis");
+		DisplayName = LOCTABLE("ExtendedFramework", "Settings.ReverseMouseY");
 		ConfigCategory = TEXT("Controls");
 		DefaultValue = false;
 		Value = false;
@@ -280,7 +281,7 @@ public:
 	UEFMouseSmoothingSetting()
 	{
 		SettingTag = FGameplayTag::RequestGameplayTag(TEXT("Settings.Controls.MouseSmoothing"));
-		DisplayName = NSLOCTEXT("Settings", "MouseSmoothing", "Mouse Smoothing");
+		DisplayName = LOCTABLE("ExtendedFramework", "Settings.MouseSmoothing");
 		ConfigCategory = TEXT("Controls");
 		DefaultValue = true;
 		Value = true;
@@ -304,7 +305,7 @@ public:
 	UEFMouseAccelerationSetting()
 	{
 		SettingTag = FGameplayTag::RequestGameplayTag(TEXT("Settings.Controls.MouseAcceleration"));
-		DisplayName = NSLOCTEXT("Settings", "MouseAcceleration", "Mouse Acceleration");
+		DisplayName = LOCTABLE("ExtendedFramework", "Settings.MouseAcceleration");
 		ConfigCategory = TEXT("Controls");
 		DefaultValue = false;
 		Value = false;
@@ -328,7 +329,7 @@ public:
 	UEFControllerSensitivitySetting()
 	{
 		SettingTag = FGameplayTag::RequestGameplayTag(TEXT("Settings.Controls.ControllerSensitivity"));
-		DisplayName = NSLOCTEXT("Settings", "ControllerSensitivity", "Controller Sensitivity");
+		DisplayName = LOCTABLE("ExtendedFramework", "Settings.ControllerSensitivity");
 		ConfigCategory = TEXT("Controls");
 		DefaultValue = 1.0f;
 		
@@ -356,7 +357,7 @@ public:
 	UEFControllerDeadzoneSetting()
 	{
 		SettingTag = FGameplayTag::RequestGameplayTag(TEXT("Settings.Controls.ControllerDeadzone"));
-		DisplayName = NSLOCTEXT("Settings", "ControllerDeadzone", "Controller Deadzone");
+		DisplayName = LOCTABLE("ExtendedFramework", "Settings.ControllerDeadzone");
 		ConfigCategory = TEXT("Controls");
 		DefaultValue = 0.2f;
 		
@@ -384,7 +385,7 @@ public:
 	UEFControllerVibrationSetting()
 	{
 		SettingTag = FGameplayTag::RequestGameplayTag(TEXT("Settings.Controls.ControllerVibration"));
-		DisplayName = NSLOCTEXT("Settings", "ControllerVibration", "Controller Vibration");
+		DisplayName = LOCTABLE("ExtendedFramework", "Settings.ControllerVibration");
 		ConfigCategory = TEXT("Controls");
 		DefaultValue = true;
 		Value = true;
@@ -411,7 +412,7 @@ public:
 	UEFControllerVibrationStrengthSetting()
 	{
 		SettingTag = FGameplayTag::RequestGameplayTag(TEXT("Settings.Controls.ControllerVibrationStrength"));
-		DisplayName = NSLOCTEXT("Settings", "ControllerVibrationStrength", "Vibration Strength");
+		DisplayName = LOCTABLE("ExtendedFramework", "Settings.ControllerVibrationStrength");
 		ConfigCategory = TEXT("Controls");
 		DefaultValue = 1.0f;
 		
@@ -438,7 +439,7 @@ public:
 	UEFMouseWheelSensitivitySetting()
 	{
 		SettingTag = FGameplayTag::RequestGameplayTag(TEXT("Settings.Controls.MouseWheelSensitivity"));
-		DisplayName = NSLOCTEXT("Settings", "MouseWheelSensitivity", "Mouse Wheel Sensitivity");
+		DisplayName = LOCTABLE("ExtendedFramework", "Settings.MouseWheelSensitivity");
 		ConfigCategory = TEXT("Controls");
 		DefaultValue = 1.0f;
 		

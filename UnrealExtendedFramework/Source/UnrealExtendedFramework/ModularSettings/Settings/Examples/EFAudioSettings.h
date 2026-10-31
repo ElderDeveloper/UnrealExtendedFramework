@@ -6,6 +6,7 @@
 #include "Sound/SoundMix.h"
 #include "UnrealExtendedFramework/ModularSettings/Settings/AudioDevice/EFAudioDeviceSubsystem.h"
 #include "UnrealExtendedFramework/ModularSettings/Settings/EFModularSettingsBase.h"
+#include "Internationalization/StringTableRegistry.h"
 #include "EFAudioSettings.generated.h"
 
 UCLASS(Abstract, Blueprintable, EditInlineNew)
@@ -125,7 +126,7 @@ protected:
 
 	virtual FText GetDefaultDeviceDisplayName() const
 	{
-		return NSLOCTEXT("Settings", "DefaultAudioDevice", "System Default Device");
+		return LOCTABLE("ExtendedFramework", "Settings.DefaultAudioDevice");
 	}
 
 	/** True for the "follow the OS default device" value (empty counts too, as the subsystem treats it). */
@@ -146,7 +147,7 @@ public:
 	{
 		DefaultValue = 1.0f;
 		ConfigCategory = TEXT("Audio");
-		DisplayName = NSLOCTEXT("Settings", "MasterVolume", "Master Volume");
+		DisplayName = LOCTABLE("ExtendedFramework", "Settings.MasterVolume");
 		SettingTag = FGameplayTag::RequestGameplayTag(FName("Settings.Audio.MasterVolume"));
 	}
 
@@ -180,7 +181,7 @@ public:
 	{
 		DefaultValue = 1.0f;
 		ConfigCategory = TEXT("Audio");
-		DisplayName = NSLOCTEXT("Settings", "MusicVolume", "Music Volume");
+		DisplayName = LOCTABLE("ExtendedFramework", "Settings.MusicVolume");
 		SettingTag = FGameplayTag::RequestGameplayTag(FName("Settings.Audio.MusicVolume"));
 	}
 
@@ -214,7 +215,7 @@ public:
 	{
 		DefaultValue = 1.0f;
 		ConfigCategory = TEXT("Audio");
-		DisplayName = NSLOCTEXT("Settings", "SFXVolume", "SFX Volume");
+		DisplayName = LOCTABLE("ExtendedFramework", "Settings.SFXVolume");
 		SettingTag = FGameplayTag::RequestGameplayTag(FName("Settings.Audio.SFXVolume"));
 	}
 
@@ -248,7 +249,7 @@ public:
 	{
 		DefaultValue = 1.0f;
 		ConfigCategory = TEXT("Audio");
-		DisplayName = NSLOCTEXT("Settings", "VoiceVolume", "Voice Volume");
+		DisplayName = LOCTABLE("ExtendedFramework", "Settings.VoiceVolume");
 		SettingTag = FGameplayTag::RequestGameplayTag(FName("Settings.Audio.VoiceVolume"));
 	}
 
@@ -282,7 +283,7 @@ public:
 	{
 		DefaultValue = 1.0f;
 		ConfigCategory = TEXT("Audio");
-		DisplayName = NSLOCTEXT("Settings", "AmbientVolume", "Ambient Volume");
+		DisplayName = LOCTABLE("ExtendedFramework", "Settings.AmbientVolume");
 		SettingTag = FGameplayTag::RequestGameplayTag(FName("Settings.Audio.AmbientVolume"));
 	}
 
@@ -315,7 +316,7 @@ class UNREALEXTENDEDFRAMEWORK_API UEFModularAudioSettingOutputDevice : public UE
 public:
 	UEFModularAudioSettingOutputDevice()
 	{
-		DisplayName = NSLOCTEXT("Settings", "OutputDevice", "Output Device");
+		DisplayName = LOCTABLE("ExtendedFramework", "Settings.OutputDevice");
 		SettingTag = FGameplayTag::RequestGameplayTag(FName("Settings.Audio.OutputDevice"));
 	}
 
@@ -327,7 +328,7 @@ protected:
 
 	virtual FText GetDefaultDeviceDisplayName() const override
 	{
-		return NSLOCTEXT("Settings", "DefaultOutputDevice", "System Default Output");
+		return LOCTABLE("ExtendedFramework", "Settings.DefaultOutputDevice");
 	}
 };
 
@@ -341,7 +342,7 @@ class UNREALEXTENDEDFRAMEWORK_API UEFModularAudioSettingInputDevice : public UEF
 public:
 	UEFModularAudioSettingInputDevice()
 	{
-		DisplayName = NSLOCTEXT("Settings", "InputDevice", "Input Device");
+		DisplayName = LOCTABLE("ExtendedFramework", "Settings.InputDevice");
 		SettingTag = FGameplayTag::RequestGameplayTag(FName("Settings.Audio.InputDevice"));
 	}
 
@@ -353,7 +354,7 @@ protected:
 
 	virtual FText GetDefaultDeviceDisplayName() const override
 	{
-		return NSLOCTEXT("Settings", "DefaultInputDevice", "System Default Input");
+		return LOCTABLE("ExtendedFramework", "Settings.DefaultInputDevice");
 	}
 };
 

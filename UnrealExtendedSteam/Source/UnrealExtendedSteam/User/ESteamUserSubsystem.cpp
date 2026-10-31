@@ -68,6 +68,7 @@ public:
 		, ServersDisconnected(this, &FESteamUserCallbacks::HandleServersDisconnected)
 		, ServerConnectFailure(this, &FESteamUserCallbacks::HandleServerConnectFailure)
 		, DurationControlTimer(this, &FESteamUserCallbacks::HandleDurationControlTimer)
+		, MicroTxnAuthorization(this, &FESteamUserCallbacks::HandleMicroTxnAuthorization)
 	{
 	}
 
@@ -236,6 +237,17 @@ private:
 		}
 	}
 
+	void HandleMicroTxnAuthorization(MicroTxnAuthorizationResponse_t* Data)
+	{
+		if (UESteamUserSubsystem* Subsystem = Owner.Get())
+		{
+			Subsystem->OnMicroTxnAuthorizationResponse.Broadcast(
+				static_cast<int32>(Data->m_unAppID),
+				FString::Printf(TEXT("%llu"), static_cast<unsigned long long>(Data->m_ulOrderID)),
+				Data->m_bAuthorized != 0);
+		}
+	}
+
 	TWeakObjectPtr<UESteamUserSubsystem> Owner;
 	CCallback<FESteamUserCallbacks, GetAuthSessionTicketResponse_t> AuthTicketResponse;
 	CCallback<FESteamUserCallbacks, GetTicketForWebApiResponse_t> WebApiTicketResponse;
@@ -244,6 +256,7 @@ private:
 	CCallback<FESteamUserCallbacks, SteamServersDisconnected_t> ServersDisconnected;
 	CCallback<FESteamUserCallbacks, SteamServerConnectFailure_t> ServerConnectFailure;
 	CCallback<FESteamUserCallbacks, DurationControl_t> DurationControlTimer;
+	CCallback<FESteamUserCallbacks, MicroTxnAuthorizationResponse_t> MicroTxnAuthorization;
 	CCallResult<FESteamUserCallbacks, EncryptedAppTicketResponse_t> EncryptedTicketResult;
 	CCallResult<FESteamUserCallbacks, MarketEligibilityResponse_t> MarketEligibilityResult;
 	CCallResult<FESteamUserCallbacks, StoreAuthURLResponse_t> StoreAuthURLResult;

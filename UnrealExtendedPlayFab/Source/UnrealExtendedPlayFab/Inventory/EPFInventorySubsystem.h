@@ -163,11 +163,15 @@ private:
 	static bool ItemMatchesId(const FEPFInventoryItem& Item, const FString& ItemId);
 
 	/**
-	 * Economy v2 pages these endpoints with a ContinuationToken. Each page appends to the
-	 * cache; the caller-facing GetInventory/GetCatalog clear it once up front and the
-	 * received delegate fires only after the last page.
+	 * Economy v2 pages these endpoints with a ContinuationToken, and the received delegate fires
+	 * only after the last page.
+	 *
+	 * Inventory pages append to a staging array of their own fetch and replace CachedInventory only
+	 * once the last page has arrived, so the cache never reads as empty while a refresh is in flight:
+	 * anything asking "does the player own this?" during that window would otherwise be told no.
+	 * A failed fetch leaves the previous cache in place. The catalog still clears up front and appends.
 	 */
-	void FetchInventoryPage(const FString& ContinuationToken, int32 PageIndex);
+	void FetchInventoryPage(const FString& ContinuationToken, int32 PageIndex, TSharedRef<TArray<FEPFInventoryItem>> StagedInventory);
 	void FetchCatalogPage(const FString& StoreId, const FString& ContinuationToken, int32 PageIndex);
 
 	/** Runaway guard: 50 per page, so this is 1000 entries. */

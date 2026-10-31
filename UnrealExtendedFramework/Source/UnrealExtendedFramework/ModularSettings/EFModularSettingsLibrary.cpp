@@ -2,6 +2,7 @@
 
 
 #include "EFModularSettingsLibrary.h"
+#include "Engine/GameInstance.h"
 #include "GameFramework/PlayerState.h"
 #include "GameFramework/GameStateBase.h"
 #include "Engine/World.h"
@@ -255,7 +256,8 @@ void UEFModularSettingsLibrary::AdjustModularIndex(const UObject* WorldContextOb
 					}
 				}
 
-				if (!MultiSelectSetting->IsIndexLocked(NextCandidate))
+				// Skip padlocked options and options this device does not offer.
+				if (!MultiSelectSetting->IsIndexLocked(NextCandidate) && MultiSelectSetting->IsIndexOffered(NextCandidate))
 				{
 					NewIndex = NextCandidate;
 					bFound = true;
@@ -281,6 +283,43 @@ TArray<FText> UEFModularSettingsLibrary::GetModularOptions(const UObject* WorldC
 		return Setting->DisplayNames;
 	}
 	return TArray<FText>();
+}
+
+
+TArray<FText> UEFModularSettingsLibrary::GetModularOfferedOptions(const UObject* WorldContextObject, FGameplayTag Tag, TArray<int32>& OutIndices, EEFSettingsSource Source, APlayerState* SpecificPlayer)
+{
+	OutIndices.Reset();
+	TArray<FText> Options;
+	if (const UEFModularSettingsMultiSelect* Setting = Cast<UEFModularSettingsMultiSelect>(GetModularSetting(WorldContextObject, Tag, Source, SpecificPlayer)))
+	{
+		for (const int32 Index : Setting->GetOfferedIndices())
+		{
+			OutIndices.Add(Index);
+			Options.Add(Setting->DisplayNames.IsValidIndex(Index) ? Setting->DisplayNames[Index] : FText::FromString(Setting->Values[Index]));
+		}
+	}
+	return Options;
+}
+
+
+bool UEFModularSettingsLibrary::IsModularSettingVisible(const UObject* WorldContextObject, FGameplayTag Tag, EEFSettingsSource Source, APlayerState* SpecificPlayer)
+{
+	const UEFModularSettingsBase* Setting = GetModularSetting(WorldContextObject, Tag, Source, SpecificPlayer);
+	return Setting && Setting->IsVisibleOnThisDevice();
+}
+
+
+bool UEFModularSettingsLibrary::IsModularSettingEditable(const UObject* WorldContextObject, FGameplayTag Tag, EEFSettingsSource Source, APlayerState* SpecificPlayer)
+{
+	const UEFModularSettingsBase* Setting = GetModularSetting(WorldContextObject, Tag, Source, SpecificPlayer);
+	return Setting && Setting->IsEditableOnThisDevice();
+}
+
+
+EEFSettingAvailability UEFModularSettingsLibrary::GetModularSettingAvailability(const UObject* WorldContextObject, FGameplayTag Tag, EEFSettingsSource Source, APlayerState* SpecificPlayer)
+{
+	const UEFModularSettingsBase* Setting = GetModularSetting(WorldContextObject, Tag, Source, SpecificPlayer);
+	return Setting ? Setting->GetAvailability() : EEFSettingAvailability::Hidden;
 }
 
 

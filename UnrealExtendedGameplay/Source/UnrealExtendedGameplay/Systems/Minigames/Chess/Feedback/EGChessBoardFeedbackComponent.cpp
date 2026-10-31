@@ -8,6 +8,7 @@
 #include "Engine/Texture2D.h"
 #include "EGChessFeedbackRenderer.h"
 #include "Materials/MaterialInstanceDynamic.h"
+#include "ProceduralMeshComponent.h"
 #include "UnrealExtendedGameplay/Systems/Minigames/Chess/Data/EGChessTableStyle.h"
 #include "UnrealExtendedGameplay/Systems/Minigames/Chess/Presentation/EGChessEngineAssets.h"
 
@@ -17,7 +18,9 @@
 
 UEGChessBoardFeedbackComponent::UEGChessBoardFeedbackComponent()
 {
-	PrimaryComponentTick.bCanEverTick = false;
+	// Ticks only while a mark animates (ApplyMarks switches it).
+	PrimaryComponentTick.bCanEverTick = true;
+	PrimaryComponentTick.bStartWithTickEnabled = false;
 	for (uint16& Flags : CurrentMarks)
 	{
 		Flags = 0;
@@ -50,6 +53,21 @@ void UEGChessBoardFeedbackComponent::ApplyMarks(const FEGChessSquareMarks& Marks
 	{
 		Renderer->Apply(Marks, Geometry);
 	}
+	SetComponentTickEnabled(Renderer && Renderer->WantsTick());
+}
+
+void UEGChessBoardFeedbackComponent::TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
+{
+	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
+
+	if (Renderer && Renderer->WantsTick())
+	{
+		Renderer->Tick(DeltaTime);
+	}
+	else
+	{
+		SetComponentTickEnabled(false);
+	}
 }
 
 void UEGChessBoardFeedbackComponent::OnUnregister()
@@ -75,6 +93,11 @@ UEGChessFeedbackRenderer::FResolvedMarker UEGChessFeedbackRenderer::ResolveMarke
 {
 	FResolvedMarker Out;
 	const FEGChessMarkerVisual* Visual = Style.IsValid() ? Style->FindMarker(Type) : nullptr;
+	if (!Visual)
+	{
+		// A table with no style (or a style that dropped this type) uses the style class defaults.
+		Visual = GetDefault<UEGChessTableStyle>()->FindMarker(Type);
+	}
 	if (Visual)
 	{
 		Out.Mesh = EGChessEngineAssets::Resolve(Visual->Mesh);
@@ -82,30 +105,28 @@ UEGChessFeedbackRenderer::FResolvedMarker UEGChessFeedbackRenderer::ResolveMarke
 		Out.Color = Visual->Color;
 		Out.Scale = Visual->Scale;
 		Out.HeightOffset = Visual->HeightOffset;
+		Out.Shape = Visual->Shape;
+		Out.FrameWidth = Visual->FrameWidth;
+		Out.FillColor = Visual->FillColor;
+		Out.OutlineColor = Visual->OutlineColor;
+		Out.OutlineWidth = Visual->OutlineWidth;
+		Out.PulseAmount = Visual->PulseAmount;
+		Out.PulsePeriod = Visual->PulsePeriod;
+		Out.bAuthoredMesh = Out.Mesh != nullptr;
 	}
 	else
 	{
-		// A table with no style still needs to be readable.
-		switch (Type)
-		{
-		case EEGChessMarkType::Move: Out.Color = FLinearColor(0.1f, 0.1f, 0.1f); Out.Scale = 0.3f; break;
-		case EEGChessMarkType::Capture: Out.Color = FLinearColor(0.9f, 0.3f, 0.2f); Out.Scale = 0.9f; break;
-		case EEGChessMarkType::Check:
-		case EEGChessMarkType::Illegal: Out.Color = FLinearColor(0.9f, 0.1f, 0.1f); break;
-		case EEGChessMarkType::LastMoveFrom:
-		case EEGChessMarkType::LastMoveTo: Out.Color = FLinearColor(0.9f, 0.8f, 0.2f); Out.Scale = 0.95f; break;
-		case EEGChessMarkType::Cursor: Out.Color = FLinearColor::White; Out.Scale = 0.5f; break;
-		default: Out.Color = FLinearColor(0.3f, 0.6f, 1.0f); Out.Scale = 0.95f; break;
-		}
+		Out.Color = FLinearColor(0.3f, 0.6f, 1.0f, 0.6f);
 		Out.HeightOffset = 0.05f + 0.01f * static_cast<float>(Type);
 	}
 	if (!Out.Mesh)
 	{
-		Out.Mesh = EGChessEngineAssets::Plane();
+		Out.Mesh = Out.Shape == EEGChessMarkerShape::Disc ? EGChessEngineAssets::Cylinder() : EGChessEngineAssets::Plane();
 	}
 	if (!Out.Material)
 	{
-		Out.Material = EGChessEngineAssets::BasicMaterial();
+		// Unlit, so a mark is as bright in a dark room as in a lit one, and translucent, so its alpha counts.
+		Out.Material = EGChessEngineAssets::UnlitTranslucentMaterial();
 		Out.bUsesFallbackMaterial = true;
 	}
 	return Out;
@@ -114,6 +135,80 @@ UEGChessFeedbackRenderer::FResolvedMarker UEGChessFeedbackRenderer::ResolveMarke
 // ---------------------------------------------------------------------------------------------
 // Instanced
 // ---------------------------------------------------------------------------------------------
+
+namespace EGChessFeedbackInstancedPrivate
+{
+	/** Receives one flat piece of a mark: a box SizeX by SizeY, or a disc SizeX across, centred on Center. */
+	using FEmitPiece = TFunctionRef<void(const FVector& Center, float SizeX, float SizeY, bool bDisc)>;
+
+	/** Breaks one shape on one square into pieces. Size and Width in uu. */
+	void EmitShape(EEGChessMarkerShape Shape, const FVector& Center, float Size, float Width, FEmitPiece Emit)
+	{
+		if (Size <= 0.0f)
+		{
+			return;
+		}
+		if (Shape != EEGChessMarkerShape::Frame || Width * 2.0f >= Size)
+		{
+			Emit(Center, Size, Size, Shape == EEGChessMarkerShape::Disc);
+			return;
+		}
+		const float Offset = (Size - Width) * 0.5f;
+		const float Inner = Size - 2.0f * Width;
+		Emit(Center + FVector(Offset, 0.0f, 0.0f), Width, Size, false);
+		Emit(Center - FVector(Offset, 0.0f, 0.0f), Width, Size, false);
+		Emit(Center + FVector(0.0f, Offset, 0.0f), Inner, Width, false);
+		Emit(Center - FVector(0.0f, Offset, 0.0f), Inner, Width, false);
+	}
+
+	/** Flat triangles facing up, for a procedural layer. */
+	struct FFlatMesh
+	{
+		TArray<FVector> Vertices;
+		TArray<int32> Triangles;
+
+		void AddPiece(const FVector& Center, float SizeX, float SizeY, bool bDisc)
+		{
+			const int32 Base = Vertices.Num();
+			if (!bDisc)
+			{
+				// Same corner order and winding as the engine's procedural box top.
+				const float HX = SizeX * 0.5f;
+				const float HY = SizeY * 0.5f;
+				Vertices.Add(Center + FVector(-HX, HY, 0.0f));
+				Vertices.Add(Center + FVector(HX, HY, 0.0f));
+				Vertices.Add(Center + FVector(HX, -HY, 0.0f));
+				Vertices.Add(Center + FVector(-HX, -HY, 0.0f));
+				Triangles.Append({ Base, Base + 1, Base + 3, Base + 1, Base + 2, Base + 3 });
+				return;
+			}
+			constexpr int32 Segments = 24;
+			const float Radius = SizeX * 0.5f;
+			Vertices.Add(Center);
+			for (int32 Index = 0; Index < Segments; ++Index)
+			{
+				// Clockwise seen from above, as the quad.
+				const float Angle = -UE_TWO_PI * static_cast<float>(Index) / Segments;
+				Vertices.Add(Center + FVector(FMath::Cos(Angle) * Radius, FMath::Sin(Angle) * Radius, 0.0f));
+			}
+			for (int32 Index = 0; Index < Segments; ++Index)
+			{
+				Triangles.Append({ Base, Base + 1 + Index, Base + 1 + (Index + 1) % Segments });
+			}
+		}
+	};
+
+	/** Brightness of a pulse at Time: full at 0, dimmed by Amount at the half period. */
+	float PulseFactor(float Amount, float Period, float Time)
+	{
+		if (Amount <= 0.0f)
+		{
+			return 1.0f;
+		}
+		const float Phase = FMath::Cos(UE_TWO_PI * Time / FMath::Max(0.1f, Period));
+		return 1.0f - Amount * 0.5f * (1.0f - Phase);
+	}
+}
 
 void UEGChessFeedbackRenderer_Instanced::Initialize(UEGChessBoardFeedbackComponent* InOwner, const UEGChessTableStyle* InStyle)
 {
@@ -125,38 +220,102 @@ void UEGChessFeedbackRenderer_Instanced::Initialize(UEGChessBoardFeedbackCompone
 		return;
 	}
 
-	Layers.SetNum(EGChessMarks::NumTypes);
+	// Translucent marks sort by priority, not by their few hundredths of a uu of height, so draw
+	// them in HeightOffset order: the higher a mark sits, the later it draws.
+	TArray<FResolvedMarker> Markers;
+	TArray<int32> Order;
 	for (int32 Index = 0; Index < EGChessMarks::NumTypes; ++Index)
 	{
-		const FResolvedMarker Marker = ResolveMarker(static_cast<EEGChessMarkType>(Index));
-		UInstancedStaticMeshComponent* Layer = NewObject<UInstancedStaticMeshComponent>(InOwner->GetOwner(), NAME_None, RF_Transient);
-		Layer->SetStaticMesh(Marker.Mesh);
-		Layer->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-		Layer->SetCastShadow(false);
-		Layer->SetCanEverAffectNavigation(false);
-		Layer->bReceivesDecals = false;
-		Layer->SetupAttachment(InOwner);
-		Layer->RegisterComponent();
+		Markers.Add(ResolveMarker(static_cast<EEGChessMarkType>(Index)));
+		Order.Add(Index);
+	}
+	Order.StableSort([&Markers](int32 A, int32 B) { return Markers[A].HeightOffset < Markers[B].HeightOffset; });
 
-		UMaterialInstanceDynamic* Material = UMaterialInstanceDynamic::Create(Marker.Material, Layer);
-		if (Material)
+	Layers.SetNum(EGChessMarks::NumTypes * NumParts);
+	LayerMaterials.SetNum(Layers.Num());
+	LayerColors.Init(FLinearColor::White, Layers.Num());
+	PulseClocks.Init(0.0f, EGChessMarks::NumTypes);
+	TypeShowing.Init(false, EGChessMarks::NumTypes);
+	PulseSettings.Reset();
+	for (const FResolvedMarker& Marker : Markers)
+	{
+		PulseSettings.Add(FVector2f(Marker.PulseAmount, Marker.PulsePeriod));
+	}
+
+	for (int32 Rank = 0; Rank < Order.Num(); ++Rank)
+	{
+		const int32 TypeIndex = Order[Rank];
+		const FResolvedMarker& Marker = Markers[TypeIndex];
+		for (int32 PartIndex = 0; PartIndex < NumParts; ++PartIndex)
 		{
-			Material->SetVectorParameterValue(TEXT("Color"), Marker.Color);
-			Layer->SetMaterial(0, Material);
+			const ELayerPart Part = static_cast<ELayerPart>(PartIndex);
+			FLinearColor Color = Marker.Color;
+			if (Part == Outline)
+			{
+				Color = Marker.OutlineColor;
+				if (Color.A <= 0.0f || Marker.OutlineWidth <= 0.0f)
+				{
+					continue;
+				}
+			}
+			else if (Part == Fill)
+			{
+				Color = Marker.FillColor;
+				if (Color.A <= 0.0f || Marker.Shape != EEGChessMarkerShape::Frame)
+				{
+					continue;
+				}
+			}
+
+			// An authored mesh is instanced (its material is the style's, built for that). The engine
+			// stand-ins are built as procedural meshes instead: the fallback material is an engine
+			// asset that lacks the instanced-mesh usage flag and would draw as the default grid.
+			UMeshComponent* Layer = nullptr;
+			if (Marker.bAuthoredMesh)
+			{
+				UInstancedStaticMeshComponent* Instanced = NewObject<UInstancedStaticMeshComponent>(InOwner->GetOwner(), NAME_None, RF_Transient);
+				Instanced->SetStaticMesh(Marker.Mesh);
+				Instanced->SetCanEverAffectNavigation(false);
+				Layer = Instanced;
+			}
+			else
+			{
+				UProceduralMeshComponent* Procedural = NewObject<UProceduralMeshComponent>(InOwner->GetOwner(), NAME_None, RF_Transient);
+				Procedural->SetCanEverAffectNavigation(false);
+				Procedural->bUseComplexAsSimpleCollision = false;
+				Layer = Procedural;
+			}
+			Layer->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+			Layer->SetCastShadow(false);
+			Layer->bReceivesDecals = false;
+			Layer->SetTranslucentSortPriority(Rank * NumParts + PartIndex);
+			Layer->SetupAttachment(InOwner);
+			Layer->RegisterComponent();
+
+			UMaterialInstanceDynamic* Material = UMaterialInstanceDynamic::Create(Marker.Material, Layer);
+			if (Material)
+			{
+				Material->SetVectorParameterValue(TEXT("Color"), Color);
+				Layer->SetMaterial(0, Material);
+			}
+			const int32 Index = LayerIndex(TypeIndex, Part);
+			Layers[Index] = Layer;
+			LayerMaterials[Index] = Material;
+			LayerColors[Index] = Color;
 		}
-		Layers[Index] = Layer;
 	}
 	bHasApplied = false;
 }
 
 void UEGChessFeedbackRenderer_Instanced::Apply(const FEGChessSquareMarks& Marks, const FEGChessBoardGeometry& Geometry)
 {
+	using namespace EGChessFeedbackInstancedPrivate;
+
 	const bool bGeometryChanged = !bHasApplied || Geometry.WhiteSeat != LastWhiteSeat || !FMath::IsNearlyEqual(Geometry.SquareSize, LastSquareSize);
 
-	for (int32 TypeIndex = 0; TypeIndex < Layers.Num(); ++TypeIndex)
+	for (int32 TypeIndex = 0; TypeIndex < EGChessMarks::NumTypes; ++TypeIndex)
 	{
-		UInstancedStaticMeshComponent* Layer = Layers[TypeIndex];
-		if (!Layer)
+		if (!Layers.IsValidIndex(LayerIndex(TypeIndex, Main)) || !Layers[LayerIndex(TypeIndex, Main)])
 		{
 			continue;
 		}
@@ -171,21 +330,88 @@ void UEGChessFeedbackRenderer_Instanced::Apply(const FEGChessSquareMarks& Marks,
 		{
 			continue;
 		}
+		PulseClocks[TypeIndex] = 0.0f;
+		TypeShowing[TypeIndex] = false;
+		for (int32 Square = 0; Square < 64 && !TypeShowing[TypeIndex]; ++Square)
+		{
+			TypeShowing[TypeIndex] = EGChessMarks::Has(Marks[Square], Type);
+		}
 
 		const FResolvedMarker Marker = ResolveMarker(Type);
 		const FBoxSphereBounds Bounds = Marker.Mesh ? Marker.Mesh->GetBounds() : FBoxSphereBounds(FVector::ZeroVector, FVector(50.0f), 50.0f);
 		const float MeshSize = FMath::Max(1.0f, static_cast<float>(FMath::Max(Bounds.BoxExtent.X, Bounds.BoxExtent.Y) * 2.0f));
-		const float Scale = Geometry.SquareSize * Marker.Scale / MeshSize;
+		// An authored mesh with depth is flattened to a sliver.
+		const float ZScale = Bounds.BoxExtent.Z > 0.01 ? 0.02f / static_cast<float>(Bounds.BoxExtent.Z * 2.0) : 1.0f;
+		const float Size = Geometry.SquareSize * Marker.Scale;
+		const float Width = Geometry.SquareSize * Marker.FrameWidth;
+		const float Stroke = Geometry.SquareSize * Marker.OutlineWidth;
 
-		Layer->ClearInstances();
-		for (int32 Square = 0; Square < 64; ++Square)
+		for (int32 PartIndex = 0; PartIndex < NumParts; ++PartIndex)
 		{
-			if (!EGChessMarks::Has(Marks[Square], Type))
+			UMeshComponent* Layer = Layers[LayerIndex(TypeIndex, static_cast<ELayerPart>(PartIndex))];
+			if (!Layer)
 			{
 				continue;
 			}
-			const FVector Location = Geometry.SquareToLocal(Square) + FVector(0.0f, 0.0f, Marker.HeightOffset);
-			Layer->AddInstance(FTransform(FQuat::Identity, Location, FVector(Scale, Scale, 1.0f)), false);
+
+			// The stroke runs past both edges of a frame, so it frames the frame inside and out. The
+			// lower parts sit a hair lower too, for any viewer whose sort order disagrees.
+			EEGChessMarkerShape PartShape = Marker.Shape;
+			float PartSize = Size;
+			float PartWidth = Width;
+			float PartDrop = 0.0f;
+			if (PartIndex == Outline)
+			{
+				PartSize = Size + 2.0f * Stroke;
+				PartWidth = Width + 2.0f * Stroke;
+				PartDrop = 0.005f;
+			}
+			else if (PartIndex == Fill)
+			{
+				PartShape = EEGChessMarkerShape::Plate;
+				PartSize = Size - 2.0f * Width;
+				PartDrop = 0.0025f;
+			}
+
+			FFlatMesh Flat;
+			UInstancedStaticMeshComponent* Instanced = Cast<UInstancedStaticMeshComponent>(Layer);
+			if (Instanced)
+			{
+				Instanced->ClearInstances();
+			}
+			for (int32 Square = 0; Square < 64; ++Square)
+			{
+				if (!EGChessMarks::Has(Marks[Square], Type))
+				{
+					continue;
+				}
+				const FVector Center = Geometry.SquareToLocal(Square) + FVector(0.0f, 0.0f, Marker.HeightOffset - PartDrop);
+				EmitShape(PartShape, Center, PartSize, PartWidth, [&](const FVector& PieceCenter, float SizeX, float SizeY, bool bDisc)
+				{
+					if (Instanced)
+					{
+						Instanced->AddInstance(FTransform(FQuat::Identity, PieceCenter, FVector(SizeX / MeshSize, SizeY / MeshSize, ZScale)), false);
+					}
+					else
+					{
+						Flat.AddPiece(PieceCenter, SizeX, SizeY, bDisc);
+					}
+				});
+			}
+
+			if (UProceduralMeshComponent* Procedural = Cast<UProceduralMeshComponent>(Layer))
+			{
+				if (Flat.Vertices.IsEmpty())
+				{
+					Procedural->ClearMeshSection(0);
+				}
+				else
+				{
+					TArray<FVector> Normals;
+					Normals.Init(FVector::UpVector, Flat.Vertices.Num());
+					Procedural->CreateMeshSection_LinearColor(0, Flat.Vertices, Flat.Triangles, Normals, {}, {}, {}, /*bCreateCollision=*/ false);
+				}
+			}
 		}
 	}
 
@@ -195,9 +421,48 @@ void UEGChessFeedbackRenderer_Instanced::Apply(const FEGChessSquareMarks& Marks,
 	bHasApplied = true;
 }
 
+bool UEGChessFeedbackRenderer_Instanced::WantsTick() const
+{
+	for (int32 TypeIndex = 0; TypeIndex < EGChessMarks::NumTypes; ++TypeIndex)
+	{
+		if (TypeShowing.IsValidIndex(TypeIndex) && TypeShowing[TypeIndex] && PulseSettings[TypeIndex].X > 0.0f)
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
+void UEGChessFeedbackRenderer_Instanced::Tick(float DeltaTime)
+{
+	using namespace EGChessFeedbackInstancedPrivate;
+
+	for (int32 TypeIndex = 0; TypeIndex < EGChessMarks::NumTypes; ++TypeIndex)
+	{
+		const FVector2f Pulse = PulseSettings.IsValidIndex(TypeIndex) ? PulseSettings[TypeIndex] : FVector2f::ZeroVector;
+		if (!TypeShowing.IsValidIndex(TypeIndex) || !TypeShowing[TypeIndex] || Pulse.X <= 0.0f)
+		{
+			continue;
+		}
+		PulseClocks[TypeIndex] += DeltaTime;
+		const float Factor = PulseFactor(Pulse.X, Pulse.Y, PulseClocks[TypeIndex]);
+
+		// The mark and its fill breathe; the stroke under them holds, so the edge never washes out.
+		for (const ELayerPart Part : { Fill, Main })
+		{
+			const int32 Index = LayerIndex(TypeIndex, Part);
+			if (UMaterialInstanceDynamic* Material = LayerMaterials[Index])
+			{
+				const FLinearColor& Base = LayerColors[Index];
+				Material->SetVectorParameterValue(TEXT("Color"), FLinearColor(Base.R * Factor, Base.G * Factor, Base.B * Factor, Base.A * FMath::Lerp(1.0f, Factor, 0.5f)));
+			}
+		}
+	}
+}
+
 void UEGChessFeedbackRenderer_Instanced::Shutdown()
 {
-	for (UInstancedStaticMeshComponent* Layer : Layers)
+	for (UMeshComponent* Layer : Layers)
 	{
 		if (Layer)
 		{
@@ -205,6 +470,11 @@ void UEGChessFeedbackRenderer_Instanced::Shutdown()
 		}
 	}
 	Layers.Reset();
+	LayerMaterials.Reset();
+	LayerColors.Reset();
+	PulseClocks.Reset();
+	TypeShowing.Reset();
+	PulseSettings.Reset();
 	bHasApplied = false;
 }
 

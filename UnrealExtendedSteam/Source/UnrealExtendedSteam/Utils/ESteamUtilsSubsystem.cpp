@@ -1,8 +1,14 @@
 // Copyright Kemal Erdem YILMAZ. All Rights Reserved.
 
 #include "Utils/ESteamUtilsSubsystem.h"
+#include "DeviceProfiles/DeviceProfile.h"
+#include "DeviceProfiles/DeviceProfileManager.h"
+#include "Misc/CommandLine.h"
+#include "Misc/ConfigCacheIni.h"
+#include "Misc/Parse.h"
 #include "Shared/ESteamLog.h"
 #include "Shared/ESteamSDK.h"
+#include "Shared/ESteamSettings.h"
 
 #if WITH_EXTENDEDSTEAM_SDK
 THIRD_PARTY_INCLUDES_START
@@ -128,6 +134,85 @@ void UESteamUtilsSubsystem::HandleSteamClientInitialized()
 		Callbacks = MakeShared<FESteamUtilsCallbacks>(this);
 	}
 #endif
+
+	ReconcileSteamDeckDeviceProfile();
+}
+
+void UESteamUtilsSubsystem::ReconcileSteamDeckDeviceProfile()
+{
+	const FString DeckProfile = GetSteamSettings() ? GetSteamSettings()->SteamDeckDeviceProfile.TrimStartAndEnd() : FString();
+	if (DeckProfile.IsEmpty() || GIsEditor || !UDeviceProfileManager::DeviceProfileManagerSingleton)
+	{
+		return;
+	}
+
+	// A profile forced on the command line (-dp=SteamDeck to try the Deck settings on a desktop) is a
+	// deliberate choice; correcting it would defeat the test.
+	FString Forced;
+	if (FParse::Value(FCommandLine::Get(), TEXT("DeviceProfile="), Forced) || FParse::Value(FCommandLine::Get(), TEXT("dp="), Forced))
+	{
+		UE_LOG(LogExtendedSteam, Log, TEXT("Steam Deck check skipped: device profile '%s' forced on the command line"), *Forced);
+		return;
+	}
+
+	UDeviceProfileManager& Manager = UDeviceProfileManager::Get();
+	const FString Active = Manager.GetActiveDeviceProfileName();
+
+	// The active profile and its parents, read from config the way the engine does (GetDPChain is not
+	// exported). A profile that derives from the Deck one counts as a Deck.
+	bool bDeckActive = false;
+	TSet<FString> Visited;
+	for (FString Current = Active; !Current.IsEmpty() && !Visited.Contains(Current);)
+	{
+		Visited.Add(Current);
+		if (Current.Equals(DeckProfile, ESearchCase::IgnoreCase))
+		{
+			bDeckActive = true;
+			break;
+		}
+		FString Parent;
+		if (!GConfig || !GConfig->GetString(*(Current + TEXT(" DeviceProfile")), TEXT("BaseProfileName"), Parent, GDeviceProfilesIni))
+		{
+			break;
+		}
+		Current = Parent.TrimStartAndEnd();
+	}
+
+	const bool bOnDeck = IsSteamRunningOnSteamDeck();
+	UE_LOG(LogExtendedSteam, Log, TEXT("Steam Deck check: Steam says %s; active device profile '%s'%s"),
+		bOnDeck ? TEXT("Steam Deck") : TEXT("not a Steam Deck"), *Active, bDeckActive ? TEXT(" (Deck profile)") : TEXT(""));
+
+	FString Target;
+	if (bOnDeck && !bDeckActive)
+	{
+		Target = DeckProfile;
+	}
+	else if (!bOnDeck && bDeckActive)
+	{
+		Target = FPlatformProperties::PlatformName();
+	}
+	if (Target.IsEmpty())
+	{
+		return;
+	}
+
+	// Shared with the device profile selector by config key, not by code: this plugin does not depend
+	// on it, and a project without that selector simply never reads the key.
+	if (GConfig)
+	{
+		GConfig->SetString(TEXT("ExtendedDeviceProfileSelector"), TEXT("SelectedProfile"), *Target, GGameUserSettingsIni);
+		GConfig->Flush(false, GGameUserSettingsIni);
+	}
+
+	if (UDeviceProfile* Profile = Manager.FindProfile(Target, /*bCreateProfileOnFail*/ false))
+	{
+		UE_LOG(LogExtendedSteam, Log, TEXT("Steam Deck check: switching device profile '%s' -> '%s' (remembered for the next launch)"), *Active, *Target);
+		Manager.SetOverrideDeviceProfile(Profile);
+	}
+	else
+	{
+		UE_LOG(LogExtendedSteam, Warning, TEXT("Steam Deck check: device profile '%s' does not exist; remembered it but did not switch"), *Target);
+	}
 }
 
 void UESteamUtilsSubsystem::HandleSteamClientShutdown()

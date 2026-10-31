@@ -3,10 +3,58 @@
 
 #include "CoreMinimal.h"
 #include "Engine/DeveloperSettings.h"
+#include "Types/SlateEnums.h"
+#include "Widgets/Layout/SScaleBox.h"
 #include "EFLoadingScreenSettings.generated.h"
 
 class UFont;
+class UMaterialInterface;
 class UTexture2D;
+
+/**
+ * One material drawn on the loading screen. Layers stack in array order (first entry at the
+ * bottom) above the background image and below the throbber and the text.
+ *
+ * The layer is laid out as a box of Size, scaled into the screen by Stretch, placed by the two
+ * alignments and then moved by Offset. The defaults stretch it over the whole screen.
+ */
+USTRUCT(BlueprintType)
+struct UNREALEXTENDEDFRAMEWORK_API FEFLoadingScreenMaterialLayer
+{
+	GENERATED_BODY()
+
+	/**
+	 * A User Interface domain material. It is drawn during the blocking map load as well, on
+	 * MoviePlayer's loading thread, so it can animate there, with one condition: drive the
+	 * animation from a Time node with Ignore Pause ticked. A plain Time node, and a Panner or
+	 * Rotator whose Time input is left empty, read game time, which stands still for as long as
+	 * the map is loading. Ignore Pause reads real time, which keeps running.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Material Layer")
+	TSoftObjectPtr<UMaterialInterface> Material;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Material Layer")
+	FLinearColor Tint = FLinearColor::White;
+
+	/** Design size of the layer in Slate units, before Stretch scales it. Its aspect ratio is what the uniform stretch modes keep. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Material Layer", meta = (ClampMin = "1.0"))
+	FVector2D Size = FVector2D(1920.0f, 1080.0f);
+
+	/** How the layer is scaled into the screen. Fill stretches it over the whole screen; None keeps Size as it is. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Material Layer")
+	TEnumAsByte<EStretch::Type> Stretch = EStretch::Fill;
+
+	/** Where the layer sits when it does not fill the screen. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Material Layer")
+	TEnumAsByte<EHorizontalAlignment> HorizontalAlignment = HAlign_Center;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Material Layer")
+	TEnumAsByte<EVerticalAlignment> VerticalAlignment = VAlign_Center;
+
+	/** Moves the layer after it is placed, in Slate units. Positive X moves right, negative Y moves up. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Material Layer")
+	FVector2D Offset = FVector2D::ZeroVector;
+};
 
 /**
  * Project-wide loading screen settings, editable in
@@ -38,6 +86,15 @@ public:
 
 	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Slate")
 	FLinearColor BackgroundImageTint = FLinearColor::White;
+
+	/**
+	 * Materials drawn over the background image, first entry at the bottom. Unlike UMG, they are
+	 * drawn during the blocking map load too. To animate there, a material has to use real time;
+	 * see the Material property of a layer. Every layer is shown on every load; an entry with no
+	 * material, or one that fails to load, is skipped.
+	 */
+	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Materials", meta = (TitleProperty = "Material"))
+	TArray<FEFLoadingScreenMaterialLayer> MaterialLayers;
 
 	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Slate")
 	bool bShowCircularThrobber = true;

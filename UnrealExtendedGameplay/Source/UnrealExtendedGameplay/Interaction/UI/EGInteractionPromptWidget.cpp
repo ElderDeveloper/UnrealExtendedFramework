@@ -4,11 +4,19 @@
 
 #include "Components/Image.h"
 #include "Components/TextBlock.h"
+#include "Engine/Texture2D.h"
 #include "GameFramework/PlayerController.h"
 #include "Materials/MaterialInstanceDynamic.h"
 
 void UEGInteractionPromptWidget::NativeConstruct()
 {
+	// The Designer's static icon, before any prompt (a key glyph, a StaticIcon) can have replaced it.
+	if (InteractionIcon && !bHasAuthoredStaticBrush)
+	{
+		AuthoredStaticBrush = InteractionIcon->GetBrush();
+		bHasAuthoredStaticBrush = true;
+	}
+
 	Super::NativeConstruct();
 	HidePrompt();
 }
@@ -48,9 +56,22 @@ void UEGInteractionPromptWidget::ShowPrompt_Implementation(const FText& InPrompt
 
 	if (bShowingStaticIcon)
 	{
-		// Keep the brush authored in the Designer: never write the interactable's texture here.
+		// Keep the brush authored in the Designer: never write the interactable's ordinary icon here. Only
+		// a presentation that asked for a static icon of its own swaps the picture, keeping the brush's
+		// size and tint; the next prompt without one puts the authored picture back.
 		if (InteractionIcon)
 		{
+			if (!bHasAuthoredStaticBrush)
+			{
+				AuthoredStaticBrush = InteractionIcon->GetBrush();
+				bHasAuthoredStaticBrush = true;
+			}
+			FSlateBrush Brush = AuthoredStaticBrush;
+			if (PresentationStaticIcon)
+			{
+				Brush.SetResourceObject(PresentationStaticIcon);
+			}
+			InteractionIcon->SetBrush(Brush);
 			InteractionIcon->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
 		}
 		return;
@@ -69,6 +90,9 @@ void UEGInteractionPromptWidget::ShowPrompt_Implementation(const FText& InPrompt
 void UEGInteractionPromptWidget::ShowPresentation(const FEGInteractionPresentation& Presentation)
 {
 	TGuardValue<bool> OverrideGuard(bPresentationOverridesStaticIcon, Presentation.bOverrideStaticIcon);
+	TGuardValue<TObjectPtr<UTexture2D>> StaticIconGuard(PresentationStaticIcon, Presentation.StaticIcon);
+	TGuardValue<FText> HintGuard(PresentationHintText, Presentation.HintText);
+	TGuardValue<bool> HintKeyGuard(bPresentationHintShowsKey, Presentation.bHintShowsKey);
 	ShowPrompt(Presentation.Text, Presentation.Icon);
 }
 

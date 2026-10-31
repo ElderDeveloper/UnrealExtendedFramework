@@ -5,6 +5,7 @@
 #include "Components/SceneComponent.h"
 #include "CoreMinimal.h"
 #include "EGChessMatchTypes.h"
+#include "UnrealExtendedGameplay/Systems/Minigames/Chess/Player/EGChessHandTypes.h"
 
 #include "EGChessSeatComponent.generated.h"
 
@@ -18,12 +19,22 @@ class USkeletalMeshComponent;
 class UStaticMeshComponent;
 struct FBranchingPointNotifyPayload;
 
-/** When the pieces of one move lift, land and press the clock, in seconds after the commit. */
+/**
+ * How one move is presented. Either the seated character's hand moves the pieces (bHandDriven: the
+ * piece visuals plan the motion from the animation set) or the pieces move by themselves on the
+ * times below, in seconds after the commit. Either way a seated character presses the clock with
+ * its clock press clip (bCharacterDriven).
+ */
 struct FEGChessMoveTiming
 {
 	bool bCharacterDriven = false;
-	/** False when the clip plays but the piece keeps its own timing (UEGChessAnimationSet::bPieceWaitsForHand). */
-	bool bPieceFollowsHand = true;
+	bool bHandDriven = false;
+	/** The hand on the clock's side moves the pieces and presses the clock. */
+	bool bRightHand = true;
+	/** Speed-up of the hand motion and the clock press (UEGChessAnimationSet::FastPlayRate under MoveAnimation = Fast). */
+	float PlayRate = 1.0f;
+	TWeakObjectPtr<APawn> Pawn;
+	TWeakObjectPtr<const UEGChessAnimationSet> AnimationSet;
 	float PickTime = 0.1f;
 	float PlaceTime = 0.55f;
 	float ClockPressTime = 0.85f;
@@ -105,6 +116,10 @@ public:
 	void ClearOccupant();
 	void MarkDisconnected(double ForfeitServerTime);
 
+	/** The seated player's hand intent, as their machine sent it (validated by the table). */
+	void SetHandIntent(const FEGChessHandIntent& Intent) { HandIntent = Intent; }
+	void SetHandPointer(const FVector& Pointer) { HandIntent.Pointer = Pointer; }
+
 	/** Pick the entry side facing the pawn with space to stand in. */
 	EEGChessEntrySide ChooseEntrySide(const APawn* Pawn) const;
 	EEGChessEntrySide ChooseExitSide(const APawn* Pawn) const;
@@ -117,16 +132,29 @@ public:
 	// Every machine
 	// -----------------------------------------------------------------
 
+	/** The seated character's animation set, or null when the seat is empty or mid sit/stand. Fills a move's timing. */
+	const UEGChessAnimationSet* GetMoveAnimationSet() const;
+
+	/** True when the seated character moves pieces with its own hand (IEGChessCharacterInterface::CanMoveChessPiecesByHand). */
+	bool CanMovePiecesByHand() const;
+
 	/**
-	 * Play the move clip for the seated character. False when there is nobody (or no clip), in
-	 * which case OutTiming keeps the table's defaults and pieces move by themselves.
+	 * What the seated player's hand does between moves, replicated from their machine. The table
+	 * reads its own local player's intent straight from their component instead
+	 * (AEGChessTableActor::GetSeatHandIntent), so this is what everyone else sees.
 	 */
-	bool PlayMoveClip(float PlayRate, bool bClockOnRight, FEGChessMoveTiming& OutTiming);
+	const FEGChessHandIntent& GetHandIntent() const { return HandIntent; }
+
+	/**
+	 * Play the clock press clip for the seated character. OutPressDelay is the seconds until the
+	 * button goes down if the clip's notify never arrives. False when there is nobody or no clip.
+	 */
+	bool PlayClockPressClip(float PlayRate, bool bClockOnRight, float& OutPressDelay);
 
 	void PlayReaction(EEGChessReaction Reaction, int32 Variant);
 
-	/** The montage length of the move clip that would play, divided by the play rate; 0 without one. */
-	float GetMoveClipDuration(float PlayRate, bool bClockOnRight) const;
+	/** The montage length of the clock press clip that would play, divided by the play rate; 0 without one. */
+	float GetClockPressClipDuration(float PlayRate, bool bClockOnRight) const;
 
 	void SetOwningTable(AEGChessTableActor* InTable) { OwningTable = InTable; }
 
@@ -140,6 +168,10 @@ protected:
 
 	UPROPERTY(ReplicatedUsing = OnRep_AnimState)
 	FEGChessSeatAnimState AnimState;
+
+	/** Read every frame by the piece visuals, so it needs no RepNotify. */
+	UPROPERTY(Replicated)
+	FEGChessHandIntent HandIntent;
 
 	UFUNCTION()
 	void OnRep_Occupant();

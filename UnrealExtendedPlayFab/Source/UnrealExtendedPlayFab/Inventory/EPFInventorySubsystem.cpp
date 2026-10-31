@@ -184,12 +184,13 @@ void UEPFInventorySubsystem::Deinitialize()
 
 void UEPFInventorySubsystem::GetInventory()
 {
-	// Cleared once here, not per page — FetchInventoryPage appends.
-	CachedInventory.Empty();
-	FetchInventoryPage(FString(), 0);
+	// Not cleared here: the pages fill a staging array of this fetch's own, and the cache is
+	// swapped only once the last one lands. Emptying it up front made every ownership check
+	// during the round trip answer "not owned".
+	FetchInventoryPage(FString(), 0, MakeShared<TArray<FEPFInventoryItem>>());
 }
 
-void UEPFInventorySubsystem::FetchInventoryPage(const FString& ContinuationToken, int32 PageIndex)
+void UEPFInventorySubsystem::FetchInventoryPage(const FString& ContinuationToken, int32 PageIndex, TSharedRef<TArray<FEPFInventoryItem>> StagedInventory)
 {
 	TSharedRef<FJsonObject> Body = MakeShared<FJsonObject>();
 	Body->SetObjectField(TEXT("Entity"), MakeEntityKeyObject(GetEntityId(), GetEntityType()));
@@ -203,7 +204,7 @@ void UEPFInventorySubsystem::FetchInventoryPage(const FString& ContinuationToken
 		TEXT("/Inventory/GetInventoryItems"),
 		Body,
 		EEPFAuthMode::EntityToken,
-		FOnPlayFabResponseDetailed::CreateLambda([this, PageIndex](const FEPFResult& Result, TSharedPtr<FJsonObject> Response)
+		FOnPlayFabResponseDetailed::CreateLambda([this, PageIndex, StagedInventory](const FEPFResult& Result, TSharedPtr<FJsonObject> Response)
 		{
 			if (Result.bSuccess && Response.IsValid())
 			{
@@ -261,7 +262,7 @@ void UEPFInventorySubsystem::FetchInventoryPage(const FString& ContinuationToken
 								}
 							}
 
-							CachedInventory.Add(Item);
+							StagedInventory->Add(Item);
 						}
 					}
 				}
@@ -271,7 +272,7 @@ void UEPFInventorySubsystem::FetchInventoryPage(const FString& ContinuationToken
 				Response->TryGetStringField(TEXT("ContinuationToken"), NextToken);
 				if (!NextToken.IsEmpty() && PageIndex + 1 < MaxInventoryPages)
 				{
-					FetchInventoryPage(NextToken, PageIndex + 1);
+					FetchInventoryPage(NextToken, PageIndex + 1, StagedInventory);
 					return;
 				}
 
@@ -282,12 +283,15 @@ void UEPFInventorySubsystem::FetchInventoryPage(const FString& ContinuationToken
 						MaxInventoryPages);
 				}
 
+				CachedInventory = MoveTemp(*StagedInventory);
 				EF_LOG(ExtendedPlayFab, Log, TEXT("EPFInventorySubsystem — Fetched %d inventory items"), CachedInventory.Num());
 				OnInventoryReceived.Broadcast(Result, CachedInventory);
 			}
 			else
 			{
-				EF_LOG(ExtendedPlayFab, Warning, TEXT("EPFInventorySubsystem — Failed to fetch inventory"));
+				// The previous cache stays: a half-fetched or failed refresh says nothing new about
+				// what the player owns.
+				EF_LOG(ExtendedPlayFab, Warning, TEXT("EPFInventorySubsystem — Failed to fetch inventory; keeping the %d cached item(s)"), CachedInventory.Num());
 				OnInventoryReceived.Broadcast(Result, CachedInventory);
 			}
 		})

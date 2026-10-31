@@ -120,6 +120,8 @@ private:
 	mutable uint32 ObservedCapabilities = 0;
 	FTSTicker::FDelegateHandle ContextTicker;
 	bool TickEOSContext(float DeltaTime);
+	void HandleContextLoginStatusChanged(int32 User, ELoginStatus::Type Previous, ELoginStatus::Type Current);
+	friend struct FEEOSContextTestAccess;
 	bool bEOSShuttingDown = false;
 	TMap<FName, FEEOSOperationOutcome> OperationOutcomes;
 	TMap<FName, FEEOSOperationOutcome> TerminalOutcomes;

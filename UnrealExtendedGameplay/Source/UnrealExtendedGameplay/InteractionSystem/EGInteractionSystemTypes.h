@@ -185,6 +185,10 @@ struct UNREALEXTENDEDGAMEPLAY_API FEGInteractionPrompt
 	UPROPERTY(BlueprintReadWrite, Category = "Interaction")
 	FText SubText;
 
+	/** False when SubText only informs, so the HUD draws it without the interact key in front. */
+	UPROPERTY(BlueprintReadWrite, Category = "Interaction")
+	bool bSubTextShowsKey = true;
+
 	UPROPERTY(BlueprintReadWrite, Category = "Interaction")
 	TObjectPtr<UTexture2D> Icon = nullptr;
 
@@ -218,6 +222,7 @@ struct UNREALEXTENDEDGAMEPLAY_API FEGInteractionPrompt
 			&& Priority == Other.Priority
 			&& bEnabled == Other.bEnabled
 			&& bVisible == Other.bVisible
+			&& bSubTextShowsKey == Other.bSubTextShowsKey
 			&& Icon == Other.Icon
 			&& Target == Other.Target
 			&& Text.EqualTo(Other.Text)

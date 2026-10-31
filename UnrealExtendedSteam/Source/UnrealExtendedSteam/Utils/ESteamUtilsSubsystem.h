@@ -271,6 +271,13 @@ protected:
 	virtual void HandleSteamClientShutdown() override;
 
 private:
+	/**
+	 * Compares Steam's own Steam Deck check with the active device profile and switches when they
+	 * disagree (UESteamSettings::SteamDeckDeviceProfile). Steam is the authority; earlier signals (GPU
+	 * name, environment) only decide until Steam is up.
+	 */
+	void ReconcileSteamDeckDeviceProfile();
+
 	friend class FESteamUtilsCallbacks;
 	TSharedPtr<class FESteamUtilsCallbacks> Callbacks;
 };

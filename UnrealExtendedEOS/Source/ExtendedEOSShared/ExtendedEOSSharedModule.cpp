@@ -7,6 +7,10 @@
 #include "IEOSSDKManager.h"
 #include "Misc/ConfigCacheIni.h"
 #if WITH_EOS_SDK && !NO_LOGGING && EF_LOG_ENABLED
+#include "Async/Async.h"
+#include "Misc/CoreDelegates.h"
+#include "Misc/ScopeRWLock.h"
+#include "Templates/SharedPointer.h"
 #include "eos_logging.h"
 #endif
 
@@ -17,11 +21,69 @@ namespace
 {
 	// EOSShared does not export its category object. Unreal synchronizes handles by name.
 	FLogCategory<ELogVerbosity::Log, ELogVerbosity::All> SDKPassthrough(TEXT("LogEOSSDK"));
-	bool MatchesSuppression(const TCHAR* Key, const FString& Text)
+
+	// EOSShared reads its suppression rules from this section of the engine ini.
+	const TCHAR* const SuppressionSection = TEXT("EOSSDK");
+
+	// The SDK calls RouteSDKLog from its own threads as well (RTC audio capture), so the callback
+	// must not read GConfig. The lists are read on the game thread into an immutable snapshot, and
+	// a reload swaps the pointer; a reader keeps whichever snapshot it copied.
+	struct FSuppressionLists
 	{
-		TArray<FString> Patterns;
-		GConfig->GetArray(TEXT("EOSSDK"), Key, Patterns, GEngineIni);
-		return Patterns.ContainsByPredicate([&Text](const FString& Pattern) { return Text.Contains(Pattern); });
+		TArray<FString> Strings;
+		TArray<FString> Categories;
+		TArray<FString> Strings_VeryVerbose;
+		TArray<FString> Categories_VeryVerbose;
+	};
+	FRWLock SuppressionLock;
+	TSharedPtr<const FSuppressionLists, ESPMode::ThreadSafe> SuppressionLists;
+
+	// Game thread only.
+	void LoadSuppressionLists()
+	{
+		const TSharedRef<FSuppressionLists, ESPMode::ThreadSafe> Lists = MakeShared<FSuppressionLists, ESPMode::ThreadSafe>();
+		if (GConfig)
+		{
+			GConfig->GetArray(SuppressionSection, TEXT("SuppressedLogStrings"), Lists->Strings, GEngineIni);
+			GConfig->GetArray(SuppressionSection, TEXT("SuppressedLogCategories"), Lists->Categories, GEngineIni);
+			GConfig->GetArray(SuppressionSection, TEXT("SuppressedLogStrings_VeryVerbose"), Lists->Strings_VeryVerbose, GEngineIni);
+			GConfig->GetArray(SuppressionSection, TEXT("SuppressedLogCategories_VeryVerbose"), Lists->Categories_VeryVerbose, GEngineIni);
+		}
+		// Declared outside the lock so the old snapshot, if this was its last reference, is freed after it.
+		TSharedPtr<const FSuppressionLists, ESPMode::ThreadSafe> Previous;
+		{
+			FWriteScopeLock Lock(SuppressionLock);
+			Previous = SuppressionLists;
+			SuppressionLists = Lists;
+		}
+	}
+
+	TSharedPtr<const FSuppressionLists, ESPMode::ThreadSafe> GetSuppressionLists()
+	{
+		FReadScopeLock Lock(SuppressionLock);
+		return SuppressionLists;
+	}
+
+	bool MatchesAny(const TArray<FString>& Patterns, const FString& Value)
+	{
+		return Patterns.ContainsByPredicate([&Value](const FString& Pattern) { return Value.Contains(Pattern); });
+	}
+
+	// Mirrors EOSShared's file-local ConvertLogLevel (EOSSDKManager.cpp).
+	EOS_ELogLevel ToEOSLogLevel(ELogVerbosity::Type Verbosity)
+	{
+		switch (static_cast<ELogVerbosity::Type>(Verbosity & ELogVerbosity::VerbosityMask))
+		{
+		case ELogVerbosity::NoLogging:		return EOS_ELogLevel::EOS_LOG_Off;
+		case ELogVerbosity::Fatal:			return EOS_ELogLevel::EOS_LOG_Fatal;
+		case ELogVerbosity::Error:			return EOS_ELogLevel::EOS_LOG_Error;
+		case ELogVerbosity::Warning:		return EOS_ELogLevel::EOS_LOG_Warning;
+		case ELogVerbosity::Verbose:		return EOS_ELogLevel::EOS_LOG_Verbose;
+		case ELogVerbosity::VeryVerbose:	return EOS_ELogLevel::EOS_LOG_VeryVerbose;
+		case ELogVerbosity::Display:
+		case ELogVerbosity::Log:
+		default:							return EOS_ELogLevel::EOS_LOG_Info;
+		}
 	}
 
 	void EOS_CALL RouteSDKLog(const EOS_LogMessage* Message)
@@ -37,17 +99,21 @@ namespace
 		// Preserve EOSShared's runtime suppression rules for SDK messages left in Unreal's log.
 		if (!bRTC)
 		{
-			if (Level < EOS_ELogLevel::EOS_LOG_VeryVerbose &&
-				(MatchesSuppression(TEXT("SuppressedLogStrings_VeryVerbose"), Text) ||
-				 MatchesSuppression(TEXT("SuppressedLogCategories_VeryVerbose"), Category)))
+			const TSharedPtr<const FSuppressionLists, ESPMode::ThreadSafe> Lists = GetSuppressionLists();
+			if (Lists)
 			{
-				Level = EOS_ELogLevel::EOS_LOG_VeryVerbose;
-			}
-			if (Level < EOS_ELogLevel::EOS_LOG_Info &&
-				(MatchesSuppression(TEXT("SuppressedLogStrings"), Text) ||
-				 MatchesSuppression(TEXT("SuppressedLogCategories"), Category)))
-			{
-				Level = EOS_ELogLevel::EOS_LOG_Info;
+				if (Level < EOS_ELogLevel::EOS_LOG_VeryVerbose &&
+					(MatchesAny(Lists->Strings_VeryVerbose, Text) ||
+					 MatchesAny(Lists->Categories_VeryVerbose, Category)))
+				{
+					Level = EOS_ELogLevel::EOS_LOG_VeryVerbose;
+				}
+				if (Level < EOS_ELogLevel::EOS_LOG_Info &&
+					(MatchesAny(Lists->Strings, Text) ||
+					 MatchesAny(Lists->Categories, Category)))
+				{
+					Level = EOS_ELogLevel::EOS_LOG_Info;
+				}
 			}
 		}
 		// EF_LOG has no Fatal level. Keep the engine's fatal/crash behavior even for RTC.
@@ -81,6 +147,10 @@ public:
 	virtual void StartupModule() override
 	{
 #if WITH_EOS_SDK && !NO_LOGGING && EF_LOG_ENABLED
+		// RouteSDKLog matches against this snapshot, so load it before the callback can be installed.
+		LoadSuppressionLists();
+		ConfigChangedHandle = FCoreDelegates::TSOnConfigSectionsChanged().AddRaw(this, &FExtendedEOSSharedModule::OnConfigSectionsChanged);
+
 		// A link dependency does not start EOSShared; the manager must be registered first.
 		FModuleManager::Get().LoadModuleChecked<IModuleInterface>(TEXT("EOSShared"));
 		if (IEOSSDKManager* Manager = IEOSSDKManager::Get())
@@ -97,6 +167,7 @@ public:
 	virtual void ShutdownModule() override
 	{
 #if WITH_EOS_SDK && !NO_LOGGING && EF_LOG_ENABLED
+		FCoreDelegates::TSOnConfigSectionsChanged().Remove(ConfigChangedHandle);
 		if (IEOSSDKManager* Manager = IEOSSDKManager::Get())
 		{
 			Manager->OnPostInitializeSDK.Remove(PostInitializeHandle);
@@ -117,17 +188,49 @@ private:
 #if WITH_EOS_SDK && !NO_LOGGING && EF_LOG_ENABLED
 	void OnSDKInitialized(EOS_EResult Result)
 	{
-		if (Result == EOS_EResult::EOS_Success)
+		if (Result != EOS_EResult::EOS_Success)
 		{
-			const EOS_EResult CallbackResult = EOS_Logging_SetCallback(&RouteSDKLog);
-			bCallbackInstalled = CallbackResult == EOS_EResult::EOS_Success;
-			if (!bCallbackInstalled)
-			{
-				UE_LOG(LogExtendedEOS, Warning, TEXT("Could not route EOS RTC logs: %s"), *LexToString(CallbackResult));
-			}
+			return;
+		}
+
+		const EOS_EResult CallbackResult = EOS_Logging_SetCallback(&RouteSDKLog);
+		bCallbackInstalled = CallbackResult == EOS_EResult::EOS_Success;
+		if (!bCallbackInstalled)
+		{
+			UE_LOG(LogExtendedEOS, Warning, TEXT("Could not route EOS RTC logs: %s"), *LexToString(CallbackResult));
+		}
+
+		// Constructing SDKPassthrough during this DLL's static init moves it from zero-initialised
+		// NoLogging to Log, and that broadcast makes EOSShared set the SDK to Info when the SDK is
+		// already up. Linking the category to LogEOSSDK then copies the configured verbosity back
+		// without a broadcast, so Unreal would keep e.g. Verbose while the SDK filters at Info.
+		const ELogVerbosity::Type Verbosity = SDKPassthrough.GetVerbosity();
+		const EOS_EResult LevelResult = EOS_Logging_SetLogLevel(EOS_ELogCategory::EOS_LC_ALL_CATEGORIES, ToEOSLogLevel(Verbosity));
+		if (LevelResult != EOS_EResult::EOS_Success)
+		{
+			UE_LOG(LogExtendedEOS, Warning, TEXT("Could not re-apply the EOS SDK log level %s: %s"), ToString(Verbosity), *LexToString(LevelResult));
 		}
 	}
+
+	void OnConfigSectionsChanged(const FString& IniFilename, const TSet<FString>& SectionNames)
+	{
+		if (IniFilename != GEngineIni || !SectionNames.Contains(SuppressionSection))
+		{
+			return;
+		}
+		if (IsInGameThread())
+		{
+			LoadSuppressionLists();
+		}
+		else
+		{
+			// The lists are read from GConfig on the game thread only.
+			AsyncTask(ENamedThreads::GameThread, [] { LoadSuppressionLists(); });
+		}
+	}
+
 	FDelegateHandle PostInitializeHandle;
+	FDelegateHandle ConfigChangedHandle;
 	bool bCallbackInstalled = false;
 #endif
 };

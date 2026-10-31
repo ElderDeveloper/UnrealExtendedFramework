@@ -4,12 +4,28 @@
 
 #include "EFUpscalerSettings.h"
 
+#include "Interfaces/IPluginManager.h"
+#include "UnrealEngine.h"
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  Helper: Get or set r.ScreenPercentage CVar
 // ─────────────────────────────────────────────────────────────────────────────
 namespace EFUpscalerInternal
 {
+	/**
+	 * Vendor upscaler modules (DLSS, NGX, FSR, XeSS) load in the PostEngineInit phase. A game process
+	 * creates its GameInstance, and applies the saved settings, before that phase, so a vendor query
+	 * made then answers "not supported" when the truth is "not loaded yet" (DLSS also logs an error).
+	 * FCoreDelegates::OnPostEngineInit is no help here: it is broadcast before those modules load.
+	 * ELoadingPhase::None is the starting value and sorts after PostEngineInit, so it is excluded.
+	 */
+	static bool AreUpscalerModulesLoaded()
+	{
+		const ELoadingPhase::Type Phase = IPluginManager::Get().GetLastCompletedLoadingPhase();
+		return Phase != ELoadingPhase::None && Phase >= ELoadingPhase::PostEngineInit;
+	}
+
 	static void SetScreenPercentage(float NewValue)
 	{
 		if (IConsoleVariable* CVar = IConsoleManager::Get().FindConsoleVariable(TEXT("r.ScreenPercentage")))
@@ -128,6 +144,12 @@ namespace EFUpscalerInternal
 // ─────────────────────────────────────────────────────────────────────────────
 bool UEFUpscalerSelectSetting::IsUpscalerAvailable(const FString& UpscalerName)
 {
+	// Before the vendor modules load nothing can be known about them, so only "None" is available.
+	if (!EFUpscalerInternal::AreUpscalerModulesLoaded())
+	{
+		return UpscalerName == TEXT("None");
+	}
+
 #if WITH_DLSS
 	if (UpscalerName == TEXT("DLSS"))
 	{
@@ -157,6 +179,87 @@ bool UEFUpscalerSelectSetting::IsUpscalerAvailable(const FString& UpscalerName)
 	return false;
 }
 
+bool UEFUpscalerSelectSetting::IsOptionSupported(const FString& OptionValue) const
+{
+	// Before the vendor modules load, support is unknown rather than absent: offering everything keeps
+	// a saved DLSS from being set aside on a machine that runs it. The subsystem asks again once the
+	// PostEngineInit phase has completed.
+	return !EFUpscalerInternal::AreUpscalerModulesLoaded() || IsUpscalerAvailable(OptionValue);
+}
+
+FString UEFUpscalerSelectSetting::ComputeDeviceDefault() const
+{
+	if (!EFUpscalerInternal::AreUpscalerModulesLoaded())
+	{
+		return FString();
+	}
+
+	for (const FString& Option : Values)
+	{
+		if (Option != TEXT("None") && IsUpscalerAvailable(Option))
+		{
+			return Option;
+		}
+	}
+	return TEXT("None");
+}
+
+bool UEFUpscalerDLSSModeSetting::IsSupportedOnThisMachine() const
+{
+#if WITH_DLSS
+	return !EFUpscalerInternal::AreUpscalerModulesLoaded() || UDLSSLibrary::IsDLSSSupported();
+#else
+	return false;
+#endif
+}
+
+bool UEFUpscalerDLSSRRSetting::IsSupportedOnThisMachine() const
+{
+#if WITH_DLSS
+	return !EFUpscalerInternal::AreUpscalerModulesLoaded() || UDLSSLibrary::IsDLSSSupported();
+#else
+	return false;
+#endif
+}
+
+bool UEFUpscalerFSRModeSetting::IsSupportedOnThisMachine() const
+{
+#if WITH_FSR
+	return true;
+#else
+	return false;
+#endif
+}
+
+bool UEFUpscalerFSRSharpnessSetting::IsSupportedOnThisMachine() const
+{
+#if WITH_FSR
+	return true;
+#else
+	return false;
+#endif
+}
+
+bool UEFUpscalerXeSSQualityModeSetting::IsSupportedOnThisMachine() const
+{
+#if WITH_XESS
+	return !EFUpscalerInternal::AreUpscalerModulesLoaded() || UXeSSBlueprintLibrary::IsXeSSSupported();
+#else
+	return false;
+#endif
+}
+
+bool UEFUpscalerFrameGenSetting::IsSupportedOnThisMachine() const
+{
+#if WITH_FSR4 || WITH_FSR3
+	return true;
+#elif WITH_XESS
+	return !EFUpscalerInternal::AreUpscalerModulesLoaded() || UXeFGBlueprintLibrary::IsXeFGSupported();
+#else
+	return false;
+#endif
+}
+
 void UEFUpscalerSelectSetting::SetValueFromString(const FString& Value)
 {
 	if (Value.Equals(TEXT("Off"), ESearchCase::IgnoreCase)
@@ -176,44 +279,42 @@ void UEFUpscalerSelectSetting::Apply_Implementation()
 		return;
 	}
 
+	// The saved settings are applied before the vendor modules load (see AreUpscalerModulesLoaded).
+	// Applying now would decide availability on an answer that is not final, so wait for the phase.
+	// PostEngineInit completes before the first frame is drawn, so nothing renders in between.
+	if (!EFUpscalerInternal::AreUpscalerModulesLoaded())
+	{
+		if (!UpscalerModulesLoadedHandle.IsValid())
+		{
+			UpscalerModulesLoadedHandle = IPluginManager::Get().OnLoadingPhaseComplete().AddWeakLambda(this,
+				[this](ELoadingPhase::Type Phase, bool /*bSuccess*/)
+				{
+					if (Phase != ELoadingPhase::PostEngineInit)
+					{
+						return;
+					}
+
+					// Removing a delegate while its own broadcast runs destroys it in place (TMulticastDelegateBase::
+					// RemoveDelegateInstance unbinds it), captured `this` included. Copy what is needed first and
+					// touch nothing captured after the Remove, or the packaged game reads freed memory at startup.
+					UEFUpscalerSelectSetting* Self = this;
+					const FDelegateHandle Handle = Self->UpscalerModulesLoadedHandle;
+					Self->UpscalerModulesLoadedHandle.Reset();
+					IPluginManager::Get().OnLoadingPhaseComplete().Remove(Handle);
+					Self->Apply();
+				});
+		}
+		return;
+	}
+
 	const FString RequestedUpscaler = Values[SelectedIndex];
 	FString AppliedUpscaler = RequestedUpscaler;
 	if (!IsUpscalerAvailable(RequestedUpscaler))
 	{
+		// The selection is kept, so the saved choice comes back on a machine that supports it.
 		AppliedUpscaler = TEXT("None");
-
-		if (RequestedUpscaler != TEXT("None") && !bAvailabilityRetryScheduled)
-		{
-			if (AvailabilityRetryCount < AvailabilityRetryLimit)
-			{
-				++AvailabilityRetryCount;
-				bAvailabilityRetryScheduled = true;
-
-				if (AvailabilityRetryCount == 1)
-				{
-					UE_LOG(LogTemp, Warning, TEXT("Upscaler '%s' is not available yet. Preserving the saved selection and retrying apply."),
-						*RequestedUpscaler);
-				}
-
-				FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateWeakLambda(this, [this](float)
-				{
-					bAvailabilityRetryScheduled = false;
-					Apply();
-					return false;
-				}), AvailabilityRetryDelaySeconds);
-			}
-			else if (AvailabilityRetryCount == AvailabilityRetryLimit)
-			{
-				++AvailabilityRetryCount;
-				UE_LOG(LogTemp, Warning, TEXT("Upscaler '%s' did not become available after startup retries. Preserving the selection and applying 'None' for now."),
-					*RequestedUpscaler);
-			}
-		}
-	}
-	else
-	{
-		AvailabilityRetryCount = 0;
-		bAvailabilityRetryScheduled = false;
+		UE_LOG(LogTemp, Warning, TEXT("Upscaler '%s' is not supported on this machine. Keeping the selection and applying 'None'."),
+			*RequestedUpscaler);
 	}
 
 	if (AppliedUpscaler == RequestedUpscaler)
@@ -316,6 +417,12 @@ void UEFUpscalerSelectSetting::Apply_Implementation()
 void UEFUpscalerDLSSModeSetting::Apply_Implementation()
 {
 #if WITH_DLSS
+	// Too early to ask DLSS anything; the upscaler selection re-applies this once the modules load.
+	if (!EFUpscalerInternal::AreUpscalerModulesLoaded())
+	{
+		return;
+	}
+
 	const FString ActiveUpscaler = EFUpscalerInternal::GetActiveUpscalerFromSubsystem(this);
 	if (ActiveUpscaler != TEXT("DLSS") || !UDLSSLibrary::IsDLSSSupported())
 	{
@@ -376,7 +483,8 @@ void UEFUpscalerDLSSModeSetting::Apply_Implementation()
 void UEFUpscalerDLSSRRSetting::Apply_Implementation()
 {
 #if WITH_DLSS
-	if (!UDLSSLibrary::IsDLSSSupported())
+	// Too early to ask DLSS anything; the upscaler selection re-applies this once the modules load.
+	if (!EFUpscalerInternal::AreUpscalerModulesLoaded() || !UDLSSLibrary::IsDLSSSupported())
 	{
 		return;
 	}
@@ -416,7 +524,7 @@ void UEFUpscalerDLSSRRSetting::Apply_Implementation()
 bool UEFUpscalerDLSSRRSetting::IsDLSSRayReconstructionAvailable()
 {
 #if WITH_DLSS
-	return UDLSSLibrary::IsDLSSRRSupported();
+	return EFUpscalerInternal::AreUpscalerModulesLoaded() && UDLSSLibrary::IsDLSSRRSupported();
 #else
 	return false;
 #endif

@@ -9,6 +9,7 @@
 #include "EFLoadingScreenSubsystem.generated.h"
 
 class SWidget;
+class UMaterialInterface;
 class UTexture2D;
 class UWorld;
 struct FWorldContext;
@@ -110,6 +111,10 @@ public:
 	FDelegateHandle RegisterReadinessQuery(FEFLoadingScreenReadinessQuery Query);
 	void UnregisterReadinessQuery(FDelegateHandle Handle);
 
+	/** Optional game-owned presentation. The bool selects the blocking MoviePlayer surface. */
+	using FWidgetFactory = TFunction<TSharedPtr<SWidget>(UTexture2D*, const FText&, bool)>;
+	void SetWidgetFactory(FWidgetFactory Factory) { WidgetFactory=MoveTemp(Factory); }
+
 	/**
 	 * True when the given world has finished initializing actors and streaming (level streaming and
 	 * World Partition), no hold is outstanding and every readiness query agrees. Exposed so a boot
@@ -119,11 +124,19 @@ public:
 	bool IsWorldReadyToHideLoadingScreen(UWorld* World) const;
 
 private:
-	/** Picks the texture and tip once per loading session, so every widget in the session matches. */
+	/** Picks the texture, tip and layer materials once per loading session, so every widget in the session matches. */
 	void PrepareLoadingSession();
-	TSharedRef<SWidget> CreateLoadingScreenWidget() const;
+	TSharedRef<SWidget> CreateLoadingScreenWidget(bool bForMoviePlayer=false) const;
+	FWidgetFactory WidgetFactory;
 	UTexture2D* ResolveLoadingScreenTexture() const;
 	FText ResolveLoadingTip() const;
+	/** Loads one material per UEFLoadingScreenSettings::MaterialLayers row into ActiveLayerMaterials, null where a row has none. */
+	void ResolveMaterialLayers();
+	/**
+	 * Forces the textures a layer material samples to full resolution before the blocking load, where
+	 * nothing streams them in. In an editor build it first waits for any of them that is still compiling.
+	 */
+	static void MakeMaterialTexturesResident(UMaterialInterface* Material);
 	bool ShowViewportLoadingScreen();
 	/** Hands MoviePlayer the widget for the next blocking load. False when MoviePlayer is unavailable. */
 	bool SetupMoviePlayerLoadingScreen();
@@ -145,6 +158,9 @@ private:
 	TStrongObjectPtr<UTexture2D> ActiveBackgroundTexture;
 	FText ActiveLoadingTip;
 	bool bLoadingTipResolved = false;
+	/** Same order as the settings rows. Held here so the map load's garbage collection cannot take them mid-screen. */
+	TArray<TStrongObjectPtr<UMaterialInterface>> ActiveLayerMaterials;
+	bool bMaterialLayersResolved = false;
 
 	TWeakObjectPtr<UWorld> PendingLoadedWorld;
 	FTSTicker::FDelegateHandle WorldReadinessTickerHandle;

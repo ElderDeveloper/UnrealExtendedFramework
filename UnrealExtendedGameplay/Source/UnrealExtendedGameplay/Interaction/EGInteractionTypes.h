@@ -53,6 +53,28 @@ struct UNREALEXTENDEDGAMEPLAY_API FEGInteractionPresentation
 	 */
 	UPROPERTY(BlueprintReadWrite, Category = "Extended|Interaction")
 	bool bOverrideStaticIcon = false;
+
+	/**
+	 * In static-icon mode, draw this instead of the icon authored on the prompt widget - still icon
+	 * only, no text, at the authored icon's size. For an interactable whose kind should read at a
+	 * glance (an eye on a hiding place instead of the hand). Null keeps the authored icon.
+	 */
+	UPROPERTY(BlueprintReadWrite, Category = "Extended|Interaction")
+	TObjectPtr<UTexture2D> StaticIcon = nullptr;
+
+	/**
+	 * A second line under the prompt that says how to use what is looked at ("Hold to hide"). Shown
+	 * in static-icon mode too; the prompt widget decides how to draw it. Empty draws nothing.
+	 */
+	UPROPERTY(BlueprintReadWrite, Category = "Extended|Interaction")
+	FText HintText;
+
+	/**
+	 * Lead HintText with the interact key, for a line that says what pressing it does. Off for a line
+	 * that only informs (a balance, a reason it cannot be used), where a key in front reads as an action.
+	 */
+	UPROPERTY(BlueprintReadWrite, Category = "Extended|Interaction")
+	bool bHintShowsKey = true;
 };
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FEGInteractionFocusChanged, AActor*, FocusedActor, FText, InteractionText, UTexture2D*, Icon);

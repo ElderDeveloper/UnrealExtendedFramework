@@ -1,6 +1,7 @@
 // Copyright Kemal Erdem YILMAZ. All Rights Reserved.
 
 #include "EGChessTableActor.h"
+#include "Internationalization/StringTableRegistry.h"
 
 #include "Camera/CameraComponent.h"
 #include "Components/AudioComponent.h"
@@ -174,7 +175,7 @@ AEGChessTableActor::AEGChessTableActor()
 		FEGInteractionDefinition SitDefinition;
 		SitDefinition.Id = TAG_EGChess_Interaction_Sit;
 		SitDefinition.InteractionClass = UEGChessInteraction_Sit::StaticClass();
-		SitDefinition.Text = LOCTEXT("SitPrompt", "Sit");
+		SitDefinition.Text = LOCTABLE("ExtendedFramework", "EGChess.SitPrompt");
 		SitInteraction->Definitions.Add(FInstancedStruct::Make(SitDefinition));
 	}
 }
@@ -225,7 +226,9 @@ void AEGChessTableActor::PostInitializeComponents()
 		}
 		SitInteraction->NotifyDefinitionsChanged();
 	}
-	SitInteraction->OnFocusChanged.AddDynamic(this, &AEGChessTableActor::HandleSitFocusChanged);
+	// Unique: a streamed level that is hidden and shown again routes PostInitializeComponents a second
+	// time on the same actor, and a plain AddDynamic ensures (and binds the handler twice).
+	SitInteraction->OnFocusChanged.AddUniqueDynamic(this, &AEGChessTableActor::HandleSitFocusChanged);
 }
 
 void AEGChessTableActor::BeginPlay()
@@ -688,7 +691,7 @@ FText AEGChessTableActor::GetSeatDisplayName(EEGChessSeat Seat) const
 	if (Occupant.bAI)
 	{
 		const UEGChessAIProfile* Profile = ActiveRules.AIProfile;
-		return Profile ? Profile->DisplayName : LOCTEXT("AIName", "Computer");
+		return Profile ? Profile->DisplayName : LOCTABLE("ExtendedFramework", "Common.Computer");
 	}
 	if (Occupant.PlayerState)
 	{
@@ -721,6 +724,53 @@ bool AEGChessTableActor::IsSeatLocallyControlled(EEGChessSeat Seat) const
 {
 	const FEGChessSeatOccupant& Occupant = GetSeat(Seat)->GetOccupantRef();
 	return !Occupant.bAI && Occupant.Pawn && Occupant.Pawn->IsLocallyControlled();
+}
+
+bool AEGChessTableActor::UsesLiveHand(EEGChessSeat Seat) const
+{
+	const UEGChessSeatComponent* SeatComponent = GetSeat(Seat);
+	const UEGChessAnimationSet* Set = SeatComponent->GetMoveAnimationSet();
+	return Set && Set->bHandFollowsPointer
+		&& ActiveRules.MoveAnimation != EEGChessMoveAnimation::Off
+		&& SeatComponent->CanMovePiecesByHand();
+}
+
+FEGChessHandIntent AEGChessTableActor::GetSeatHandIntent(EEGChessSeat Seat) const
+{
+	// This machine's own player: no round trip, so the hand answers the mouse in the same frame.
+	const UEGChessPlayerComponent* Driver = LocalDriver.Get();
+	if (Driver && Driver->GetSeat() == Seat && IsSeatLocallyControlled(Seat))
+	{
+		return Driver->GetLocalHandIntent();
+	}
+	return GetSeat(Seat)->GetHandIntent();
+}
+
+void AEGChessTableActor::HandleSetHandIntent(APlayerController* Controller, const FEGChessHandIntent& Intent)
+{
+	EEGChessSeat Seat;
+	if (!ResolveRequester(Controller, Seat))
+	{
+		return;
+	}
+	// Only what a hand can do: the visuals decide on every machine whether it is this seat's turn.
+	FEGChessHandIntent Clean = Intent;
+	Clean.HeldSquare = Intent.bRaised && EGChess::IsValidSquare(Intent.HeldSquare) ? Intent.HeldSquare : static_cast<int8>(-1);
+	Clean.PlaceSquare = Clean.HeldSquare >= 0 && EGChess::IsValidSquare(Intent.PlaceSquare) ? Intent.PlaceSquare : static_cast<int8>(-1);
+	const float SquareSize = GetBoardGeometry().SquareSize;
+	Clean.Pointer = FVector(FMath::Clamp(Intent.Pointer.X, -SquareSize, 8.0f * SquareSize), FMath::Clamp(Intent.Pointer.Y, -SquareSize, 8.0f * SquareSize), 0.0f);
+	GetSeat(Seat)->SetHandIntent(Clean);
+}
+
+void AEGChessTableActor::HandleSetHandPointer(APlayerController* Controller, const FVector& Pointer)
+{
+	EEGChessSeat Seat;
+	if (!ResolveRequester(Controller, Seat))
+	{
+		return;
+	}
+	const float SquareSize = GetBoardGeometry().SquareSize;
+	GetSeat(Seat)->SetHandPointer(FVector(FMath::Clamp(Pointer.X, -SquareSize, 8.0f * SquareSize), FMath::Clamp(Pointer.Y, -SquareSize, 8.0f * SquareSize), 0.0f));
 }
 
 bool AEGChessTableActor::IsSeatAI(EEGChessSeat Seat) const
@@ -895,7 +945,7 @@ void AEGChessTableActor::OnRep_Rules()
 // Multicasts
 // =============================================================================================
 
-void AEGChessTableActor::MulticastMoveCommitted_Implementation(const FEGChessMoveRecord& Record, int32 PlyIndex, EEGChessSeat MoverSeat)
+FEGChessMoveTiming AEGChessTableActor::MakeMoveTiming(EEGChessSeat MoverSeat) const
 {
 	FEGChessMoveTiming Timing;
 	const UEGChessPieceSet* Set = GetPieceSet();
@@ -904,25 +954,25 @@ void AEGChessTableActor::MulticastMoveCommitted_Implementation(const FEGChessMov
 	Timing.PlaceTime = Timing.PickTime + MoveTime;
 	Timing.ClockPressTime = Timing.PlaceTime + 0.2f;
 
-	if (ActiveRules.MoveAnimation != EEGChessMoveAnimation::Off)
+	const UEGChessSeatComponent* Seat = GetSeat(MoverSeat);
+	const UEGChessAnimationSet* AnimSet = Seat->GetMoveAnimationSet();
+	if (ActiveRules.MoveAnimation == EEGChessMoveAnimation::Off || !AnimSet)
 	{
-		const APawn* Pawn = GetSeat(MoverSeat)->GetSeatedPawn();
-		const UEGChessAnimationSet* AnimSet = GetAnimationSetFor(Pawn);
-		const float Rate = (ActiveRules.MoveAnimation == EEGChessMoveAnimation::Fast && AnimSet) ? AnimSet->FastPlayRate : 1.0f;
-		FEGChessMoveTiming CharacterTiming;
-		if (GetSeat(MoverSeat)->PlayMoveClip(Rate, IsClockOnSeatRight(MoverSeat), CharacterTiming))
-		{
-			if (AnimSet && !AnimSet->bPieceWaitsForHand)
-			{
-				// The piece leaves at once on its own timing; the clip still presses the clock.
-				CharacterTiming.bPieceFollowsHand = false;
-				CharacterTiming.PickTime = 0.0f;
-				CharacterTiming.PlaceTime = MoveTime;
-				CharacterTiming.ClockPressTime = FMath::Max(CharacterTiming.ClockPressTime, CharacterTiming.PlaceTime);
-			}
-			Timing = CharacterTiming;
-		}
+		return Timing;
 	}
+	// The character presses the clock either way; with a hand that can hold pieces it also moves them.
+	Timing.bCharacterDriven = true;
+	Timing.bHandDriven = Seat->CanMovePiecesByHand();
+	Timing.bRightHand = IsClockOnSeatRight(MoverSeat);
+	Timing.PlayRate = ActiveRules.MoveAnimation == EEGChessMoveAnimation::Fast ? AnimSet->FastPlayRate : 1.0f;
+	Timing.Pawn = Seat->GetSeatedPawn();
+	Timing.AnimationSet = AnimSet;
+	return Timing;
+}
+
+void AEGChessTableActor::MulticastMoveCommitted_Implementation(const FEGChessMoveRecord& Record, int32 PlyIndex, EEGChessSeat MoverSeat)
+{
+	const FEGChessMoveTiming Timing = MakeMoveTiming(MoverSeat);
 
 	if (bVisualsReady)
 	{
@@ -1125,10 +1175,8 @@ void AEGChessTableActor::HandleSeatExitFinished(EEGChessSeat Seat)
 void AEGChessTableActor::HandleCharacterNotify(EEGChessSeat Seat, FName NotifyName)
 {
 	const UEGChessAnimationSet* Set = GetAnimationSetFor(GetSeat(Seat)->GetSeatedPawn());
-	const FName Pick = Set ? Set->NotifyPick : FName(TEXT("Chess.Pick"));
-	const FName Place = Set ? Set->NotifyPlace : FName(TEXT("Chess.Place"));
 	const FName ClockPress = Set ? Set->NotifyClockPress : FName(TEXT("Chess.ClockPress"));
-	PieceVisuals->HandleCharacterNotify(Seat, NotifyName, Pick, Place, ClockPress);
+	PieceVisuals->HandleCharacterNotify(Seat, NotifyName, ClockPress);
 }
 
 void AEGChessTableActor::HandleSitFocusChanged(bool bFocused, UPrimitiveComponent* HitComponent)
@@ -2191,18 +2239,14 @@ float AEGChessTableActor::EstimateLastMovePresentation() const
 	}
 	const FEGChessMoveRecord& Last = MoveHistory.Last();
 	const EEGChessSeat Seat = GetSeatForColor(Last.MoverColor);
-	if (ActiveRules.MoveAnimation != EEGChessMoveAnimation::Off)
-	{
-		const UEGChessAnimationSet* Set = GetAnimationSetFor(GetSeat(Seat)->GetSeatedPawn());
-		const float Rate = (ActiveRules.MoveAnimation == EEGChessMoveAnimation::Fast && Set) ? Set->FastPlayRate : 1.0f;
-		const float Clip = GetSeat(Seat)->GetMoveClipDuration(Rate, IsClockOnSeatRight(Seat));
-		if (Clip > 0.0f)
-		{
-			return Clip;
-		}
-	}
-	const UEGChessPieceSet* PieceSet = GetPieceSet();
-	return (PieceSet ? PieceSet->MoveTime : 0.45f) + 0.4f;
+	const FEGChessMoveTiming Timing = MakeMoveTiming(Seat);
+
+	// Until the last piece is down: the hand's motion, or the pieces' own glide.
+	const float PiecesDown = Timing.bHandDriven
+		? PieceVisuals->EstimateHandMoveDuration(Last, Seat, Timing)
+		: Timing.PlaceTime;
+	const float Clip = Timing.bCharacterDriven ? GetSeat(Seat)->GetClockPressClipDuration(Timing.PlayRate, Timing.bRightHand) : 0.0f;
+	return PiecesDown + (Clip > 0.0f ? Clip : 0.4f);
 }
 
 void AEGChessTableActor::ScheduleAITurn()
@@ -2291,6 +2335,12 @@ void AEGChessTableActor::Tick(float DeltaSeconds)
 	if (bVisualsReady)
 	{
 		UpdateClockHands();
+
+		// The visuals sleep between moves; a hand that rises over the board wakes them.
+		if (!PieceVisuals->IsComponentTickEnabled() && PieceVisuals->WantsLiveHandTick())
+		{
+			PieceVisuals->SetComponentTickEnabled(true);
+		}
 	}
 
 	const double Now = GetServerTime();

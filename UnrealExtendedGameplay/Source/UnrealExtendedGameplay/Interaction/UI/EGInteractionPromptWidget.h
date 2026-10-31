@@ -4,6 +4,7 @@
 
 #include "Blueprint/UserWidget.h"
 #include "CoreMinimal.h"
+#include "Styling/SlateBrush.h"
 #include "UnrealExtendedGameplay/Interaction/EGInteractionTypes.h"
 
 #include "EGInteractionPromptWidget.generated.h"
@@ -81,6 +82,20 @@ protected:
 
 	/** Set by ShowPresentation for the duration of its ShowPrompt call. */
 	bool bPresentationOverridesStaticIcon = false;
+
+	/** The presentation's StaticIcon, set by ShowPresentation for the duration of its ShowPrompt call. */
+	UPROPERTY(Transient)
+	TObjectPtr<UTexture2D> PresentationStaticIcon = nullptr;
+
+	/** The presentation's HintText, set by ShowPresentation for the duration of its ShowPrompt call. */
+	FText PresentationHintText;
+
+	/** The presentation's bHintShowsKey, set by ShowPresentation for the duration of its ShowPrompt call. */
+	bool bPresentationHintShowsKey = true;
+
+	/** InteractionIcon's brush as the Designer left it; static mode draws it, or a StaticIcon on top of it. */
+	FSlateBrush AuthoredStaticBrush;
+	bool bHasAuthoredStaticBrush = false;
 
 	/** Offset from the cursor, so the prompt does not sit under the pointer. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Extended|Interaction|UI")

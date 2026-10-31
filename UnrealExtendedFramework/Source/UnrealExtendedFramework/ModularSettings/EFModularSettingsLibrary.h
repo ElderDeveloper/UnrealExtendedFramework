@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "Kismet/BlueprintFunctionLibrary.h"
 #include "GameplayTagContainer.h"
+#include "UnrealExtendedFramework/ModularSettings/Device/EFModularSettingsDeviceRules.h"
 #include "EFModularSettingsLibrary.generated.h"
 
 class UEFModularSettingsBase;
@@ -58,6 +59,25 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "Modular Settings", meta = (WorldContext = "WorldContextObject"))
 	static TArray<FText> GetModularOptions(const UObject* WorldContextObject, FGameplayTag Tag, EEFSettingsSource Source = EEFSettingsSource::Auto, APlayerState* SpecificPlayer = nullptr);
+
+	/**
+	 * The options this device offers, in order, with each one's index in the full option list. A settings
+	 * row shows these; hidden options keep their index, so map a row position back through OutIndices.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Modular Settings|Device", meta = (WorldContext = "WorldContextObject"))
+	static TArray<FText> GetModularOfferedOptions(const UObject* WorldContextObject, FGameplayTag Tag, TArray<int32>& OutIndices, EEFSettingsSource Source = EEFSettingsSource::Auto, APlayerState* SpecificPlayer = nullptr);
+
+	/** False when the setting does not exist or this device hides it. */
+	UFUNCTION(BlueprintPure, Category = "Modular Settings|Device", meta = (WorldContext = "WorldContextObject"))
+	static bool IsModularSettingVisible(const UObject* WorldContextObject, FGameplayTag Tag, EEFSettingsSource Source = EEFSettingsSource::Auto, APlayerState* SpecificPlayer = nullptr);
+
+	/** False when the setting does not exist or this device locks or hides it. */
+	UFUNCTION(BlueprintPure, Category = "Modular Settings|Device", meta = (WorldContext = "WorldContextObject"))
+	static bool IsModularSettingEditable(const UObject* WorldContextObject, FGameplayTag Tag, EEFSettingsSource Source = EEFSettingsSource::Auto, APlayerState* SpecificPlayer = nullptr);
+
+	/** Hidden when the setting does not exist. */
+	UFUNCTION(BlueprintPure, Category = "Modular Settings|Device", meta = (WorldContext = "WorldContextObject"))
+	static EEFSettingAvailability GetModularSettingAvailability(const UObject* WorldContextObject, FGameplayTag Tag, EEFSettingsSource Source = EEFSettingsSource::Auto, APlayerState* SpecificPlayer = nullptr);
 
 	UFUNCTION(BlueprintPure, Category = "Modular Settings", meta = (WorldContext = "WorldContextObject"))
 	static bool IsModularOptionLocked(const UObject* WorldContextObject, FGameplayTag Tag, int32 Index, EEFSettingsSource Source = EEFSettingsSource::Auto, APlayerState* SpecificPlayer = nullptr);

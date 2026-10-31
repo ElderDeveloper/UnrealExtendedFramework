@@ -14,6 +14,7 @@
 #include "Dom/JsonObject.h"
 #include "TimerManager.h"
 #include "Engine/GameInstance.h"
+#include "Engine/World.h"
 
 namespace
 {
@@ -588,11 +589,23 @@ bool UEPFSubsystem::TryReauthenticateAndReplay(
 	*WaiterHandle = Auth->OnReauthFinished.AddWeakLambda(this,
 		[this, WaiterHandle, ApiPath, RequestBodyString, AuthMode, OnComplete, RetryAttempt, Error, JsonResponse](bool bReauthSucceeded)
 		{
-			if (UGameInstance* GI = GetGameInstance())
+			// Removing this waiter destroys the lambda that is running, captures and all, so
+			// everything the rest of the call needs is copied out first.
+			UEPFSubsystem* const Self = this;
+			const FString LocalApiPath = ApiPath;
+			const FString LocalRequestBody = RequestBodyString;
+			const EEPFAuthMode LocalAuthMode = AuthMode;
+			const FOnPlayFabResponseDetailed LocalOnComplete = OnComplete;
+			const int32 LocalRetryAttempt = RetryAttempt;
+			const FEPFError LocalError = Error;
+			const TSharedPtr<FJsonObject> LocalJsonResponse = JsonResponse;
+			const FDelegateHandle LocalWaiterHandle = *WaiterHandle;
+
+			if (UGameInstance* GI = Self->GetGameInstance())
 			{
 				if (UEPFAuthSubsystem* AuthSubsystem = GI->GetSubsystem<UEPFAuthSubsystem>())
 				{
-					AuthSubsystem->OnReauthFinished.Remove(*WaiterHandle);
+					AuthSubsystem->OnReauthFinished.Remove(LocalWaiterHandle);
 				}
 			}
 
@@ -600,13 +613,13 @@ bool UEPFSubsystem::TryReauthenticateAndReplay(
 			{
 				// Hand back the original rejection, not a re-auth error: the caller asked about
 				// its own request, and that is still the failure it needs to see.
-				DeliverFailure(Error, JsonResponse, OnComplete);
+				Self->DeliverFailure(LocalError, LocalJsonResponse, LocalOnComplete);
 				return;
 			}
 
 			// ExecuteRequest reads the token out of SharedAuthContext as it builds the headers,
 			// so the replay picks up the one the re-login just installed.
-			ExecuteRequest(ApiPath, RequestBodyString, AuthMode, OnComplete, RetryAttempt + 1);
+			Self->ExecuteRequest(LocalApiPath, LocalRequestBody, LocalAuthMode, LocalOnComplete, LocalRetryAttempt + 1);
 		});
 
 	Auth->NotifySessionRejected();

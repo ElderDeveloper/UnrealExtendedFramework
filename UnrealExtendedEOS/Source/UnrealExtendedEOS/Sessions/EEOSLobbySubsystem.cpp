@@ -8,6 +8,7 @@
 #include "OnlineSubsystemImpl.h"
 #include "OnlineSessionSettings.h"
 #include "Online/OnlineSessionNames.h"
+#include "OnlineSubsystemEOSTypesPublic.h"
 #include "Shared/EEOSSettings.h"
 #include "UnrealExtendedEOS.h"
 #include "Shared/EEOSBlueprintLibrary.h"
@@ -78,8 +79,11 @@ struct FEEOSLateLobbyCleanup : TSharedFromThis<FEEOSLateLobbyCleanup>
 			FOnUpdateSessionCompleteDelegate::CreateLambda([Self](FName Name, bool)
 			{
 				if (Name != LOBBY_SESSION_NAME) return;
-				Self->Sessions->ClearOnUpdateSessionCompleteDelegate_Handle(Self->UpdateHandle);
-				Self->UpdateHandle.Reset(); Self->bUpdatePending = false; Self->BeginCleanup();
+				// Clearing this binding destroys the running lambda and its Self capture; the local
+				// reference keeps the drain alive and reachable for the rest of the call.
+				const TSharedRef<FEEOSLateLobbyCleanup> Drain = Self;
+				Drain->Sessions->ClearOnUpdateSessionCompleteDelegate_Handle(Drain->UpdateHandle);
+				Drain->UpdateHandle.Reset(); Drain->bUpdatePending = false; Drain->BeginCleanup();
 			}));
 		DestroyHandle = Sessions->AddOnDestroySessionCompleteDelegate_Handle(
 			FOnDestroySessionCompleteDelegate::CreateLambda([Self](FName Name, bool)
@@ -521,6 +525,17 @@ bool UEEOSLobbySubsystem::CreateLobby(int32 MaxMembers, bool bIsPublic, bool bUs
 		OnLobbyCreated.Broadcast(false, CurrentLobbyId); OnOperationCompleted.Broadcast(Outcome);
 		return false;
 	}
+	if (const IOnlineSessionPtr Sessions = OSS ? OSS->GetSessionInterface() : IOnlineSessionPtr())
+	{
+		// A lobby we were removed from is still being released (HandleSessionParticipantLeft), or the owner closed
+		// it under us: StartLobbyExit cannot close a session we are not a member of, so this would fail outright.
+		const FNamedOnlineSession* Existing = Sessions->GetNamedSession(LOBBY_SESSION_NAME);
+		if (Existing && !bInLobby && Existing->SessionState == EOnlineSessionState::Destroying)
+		{
+			RejectOperation(TEXT("CreateLobby"), EEOSOperationCode::Busy, TEXT("The previous lobby is still being released; retry."));
+			return false;
+		}
+	}
 	if (!AcquireLobbyMembership(TEXT("CreateLobby"))) return false;
 	FOnlineSessionSettings Settings;
 	Settings.NumPublicConnections = MaxMembers;
@@ -588,6 +603,15 @@ bool UEEOSLobbySubsystem::FindLobbiesFiltered(int32 MaxResults, const TMap<FStri
 	LobbySearch->QuerySettings.Set(FName(TEXT("LOBBYSEARCH")), true, EOnlineComparisonOp::Equals);
 	for (const auto& Filter : SearchFilters)
 		LobbySearch->QuerySettings.Set(FName(*Filter.Key), Filter.Value, EOnlineComparisonOp::Equals);
+	FString Bucket = FString::FromInt(GetBuildUniqueId());
+	if (const FOnlineSessionSearchParam* CustomBucket = LobbySearch->QuerySettings.SearchParams.Find(OSSEOS_BUCKET_ID_ATTRIBUTE_KEY))
+		CustomBucket->Data.GetValue(Bucket);
+	TArray<FString> FilterKeys;
+	for (const auto& Filter : SearchFilters) FilterKeys.Add(Filter.Key);
+	FilterKeys.Sort();
+	UE_LOG(LogExtendedEOS, Log, TEXT("EOSLobbySearchSubmit Request=%lld Instance=%s Bucket=%s Context=%lld Filters=%s ValueType=String MaxResults=%d"),
+		Token, *SearchContext.Instance.ToString(), *FEEOSNativeOperationLease::SafeField(Bucket), SearchContext.Generation,
+		*FString::Join(FilterKeys, TEXT(",")), MaxResults);
 	FindLobbiesCompleteHandle = Sessions->AddOnFindSessionsCompleteDelegate_Handle(
 		FOnFindSessionsCompleteDelegate::CreateUObject(this, &UEEOSLobbySubsystem::HandleFindSessionsComplete));
 	const auto SubmittedSearch = LobbySearch.ToSharedRef();
@@ -728,7 +752,10 @@ bool UEEOSLobbySubsystem::BeginJoinLobby(const FOnlineSessionSearchResult& Searc
 	}
 
 	FOnlineSessionSearchResult Target = SearchResult;
-	Target.Session.SessionSettings.bUsesPresence = true;
+	// The engine passes this straight through as EOS_Lobby_JoinLobbyOptions.bPresenceEnabled. Presence needs an Epic
+	// account; a Connect-only user (EAS off) cannot have one, and the SDK warned "user lacks permission to advertise
+	// presence" on every join while ignoring the request. Nothing about the join itself depends on it.
+	Target.Session.SessionSettings.bUsesPresence = GetEOSReadiness().bHasEpicAccount;
 	Target.Session.SessionSettings.bUseLobbiesIfAvailable = true;
 	JoinRequest.Begin(Target, Existing != nullptr);
 	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSLobbySubsystem: Join requested target='%s', existing='%s', state=%d, cachedMember=%d"),
@@ -782,7 +809,15 @@ void UEEOSLobbySubsystem::RefreshLobbyState(const FNamedOnlineSession* Session)
 	{
 		JoinedLobbyAwaitingMemberList.Empty();
 	}
-	const bool bNativeReady = (bLocalMember || bShuttingDown) && Session && Session->SessionInfo.IsValid() && Session->SessionInfo->IsValid()
+	const bool bSessionIdKnown = Session && Session->SessionInfo.IsValid() && Session->SessionInfo->IsValid();
+	// A lobby we were removed from stays a Destroying session until its release completes. An owner that received its
+	// own DISCONNECTED still counts as a member of it, and re-adopting it here would announce its end a second time.
+	const bool bReleasedRemoval = !ReleasedRemovedLobbyId.IsEmpty() && bSessionIdKnown && Session->GetSessionIdStr() == ReleasedRemovedLobbyId;
+	if (!ReleasedRemovedLobbyId.IsEmpty() && !bReleasedRemoval)
+	{
+		ReleasedRemovedLobbyId.Empty(); // the released session is gone
+	}
+	const bool bNativeReady = (bLocalMember || bShuttingDown) && bSessionIdKnown && !(bReleasedRemoval && !bShuttingDown)
 		&& Session->SessionState != EOnlineSessionState::NoSession && Session->SessionState != EOnlineSessionState::Creating;
 	const FString NativeId = bNativeReady ? Session->GetSessionIdStr() : FString();
 	if (bInLobby != bNativeReady || CurrentLobbyId != NativeId)
@@ -1307,7 +1342,18 @@ bool UEEOSLobbySubsystem::IsLobbyOwner() const
 
 bool UEEOSLobbySubsystem::KickMember(const FString& MemberId)
 {
-	if (bShuttingDown || IsMembershipOperationInFlight()) return false;
+	// Only membership/ownership transitions conflict with a kick (the set EnqueueLobbyUpdate gates on). An attribute,
+	// capacity or joinability write in flight is an independent EOS_Lobby_UpdateLobby request, and refusing on it
+	// silently kept members the owner meant to remove.
+	if (bShuttingDown)
+	{
+		return false; // the shutdown drain broadcasts nothing
+	}
+	if (CreateLobbyCompleteHandle.IsValid() || ExitRequest.IsActive() || JoinRequest.IsActive() || bPromotionPending)
+	{
+		RejectOperation(TEXT("KickMember"), EEOSOperationCode::Busy, TEXT("Lobby membership or ownership is changing."));
+		return false;
+	}
 	// The OSS path (UnregisterPlayer) never reaches the backend for lobby-backed sessions, so
 	// a real kick requires the raw SDK: EOS_Lobby_KickMember (owner-only per SDK docs).
 	if (!IsEOSAvailable())
@@ -1886,6 +1932,21 @@ void UEEOSLobbySubsystem::HandleSessionParticipantLeft(FName InSessionName, cons
 			UE_LOG(LogExtendedEOS, Log, TEXT("EOSLobbyMembers Lobby=%s Generation=%llu Change=LocalRemoved Reason=%s Known=%d Members=%d Max=%d Slots=%d Source=%s UnknownReason=%s"),
 				*FEEOSNativeOperationLease::SafeField(CurrentLobbyId), LobbyGeneration, *RemovalReason, Capacity.bKnown, Capacity.Members, Capacity.Maximum, Capacity.AvailableSlots,
 				*FEEOSNativeOperationLease::SafeField(Capacity.Source), *FEEOSNativeOperationLease::SafeField(Capacity.UnknownReason));
+			// Kicked/Disconnected only drop the member (FOnlineSessionEOS::OnMemberStatusReceived). Unlike EOS_LMS_CLOSED
+			// the engine keeps the named EOS_Lobby session, and every later join/create/leave was refused against that
+			// orphan until a restart. Release it before anyone reacts to the removal: a listener that retries at once
+			// then sees a Destroying session and gets the ordinary "retry" answer. The SDK has already forgotten the
+			// lobby, so LeaveLobby ends EOS_NotFound, but the engine's callback still runs RemoveLobbyRoom and
+			// RemoveNamedSession; its destroy completion reaches HandleLifetimeSessionDestroyed with bInLobby false and
+			// is dropped as stale. CanDeliverLobbyNotification above already matched the session id.
+			if (const FNamedOnlineSession* Native = NotificationSessions.IsValid() ? NotificationSessions->GetNamedSession(LOBBY_SESSION_NAME) : nullptr;
+				Native && Native->SessionState != EOnlineSessionState::Destroying && Native->SessionState != EOnlineSessionState::Creating)
+			{
+				ReleasedRemovedLobbyId = CurrentLobbyId;
+				const bool bReleaseStarted = NotificationSessions->DestroySession(LOBBY_SESSION_NAME);
+				UE_LOG(LogExtendedEOS, Log, TEXT("EOSLobbyReconcile Phase=ReleaseRemovedNative Lobby=%s Reason=%s Started=%d"),
+					*FEEOSNativeOperationLease::SafeField(CurrentLobbyId), *RemovalReason, bReleaseStarted);
+			}
 			const FString DestroyedId = ResetLobbyState();
 			const uint64 RemovedGeneration = LobbyGeneration;
 			const auto Outcome = CompleteOperation(TEXT("RemoteLobbyRemoval"), false, EEOSOperationCode::Canceled,
@@ -2077,13 +2138,18 @@ int64 UEEOSLobbySubsystem::EnqueueLobbyUpdate(EPendingLobbyUpdate Kind, const FS
 		if (GetEOSSettings()->bEnableOperationLogging) UE_LOG(LogExtendedEOS, Log, TEXT("EOSLobbyUpdate Request=%lld ParentRequest=%lld Phase=Accepted Context=%lld Lobby=%s Generation=%llu Kind=%d Key=%s"),
 			Id, Parent, Admission.ContextGeneration, *FEEOSNativeOperationLease::SafeField(CurrentLobbyId), LobbyGeneration, int32(Kind), *FEEOSNativeOperationLease::SafeField(Key));
 	};
+	const int32 Index = QueuedUpdates.IndexOfByPredicate([&](const auto& Item) { return Item.Kind == Kind && FName(*Item.Key) == FName(*Key); });
 	if (UpdateLobbyCompleteHandle.IsValid() && PendingUpdateKind == Kind && FName(*PendingAttributeKey) == FName(*Key) && PendingAttributeValue == Value
 		&& PendingUpdateGeneration == LobbyGeneration && UpdateFollowers.Num() < 32)
 	{
+		// The in-flight write already carries this value. A different value of the same key still queued behind it
+		// would run afterwards and overwrite it (A in flight, B queued, A again ended on B), so it is retired too.
+		TOptional<FQueuedLobbyUpdate> Dropped;
+		if (Index != INDEX_NONE) { Dropped = QueuedUpdates[Index]; QueuedUpdates.RemoveAt(Index); }
 		RememberAdmission(PendingUpdateRequestId); UpdateFollowers.Add(Id);
+		if (Dropped.IsSet()) EmitQueuedUpdateOutcome(Dropped.GetValue(), EEOSOperationCode::Superseded, TEXT("Replaced by a newer desired value."));
 		return Id;
 	}
-	const int32 Index = QueuedUpdates.IndexOfByPredicate([&](const auto& Item) { return Item.Kind == Kind && FName(*Item.Key) == FName(*Key); });
 	if (Index == INDEX_NONE && QueuedUpdates.Num() >= 32)
 	{
 		RejectOperation(TEXT("UpdateLobby"), EEOSOperationCode::Busy, TEXT("Lobby update queue is full."));
@@ -2347,6 +2413,11 @@ void UEEOSLobbySubsystem::FinishLobbyCreation(bool bSuccess, EEOSOperationCode C
 			Native->SessionSettings.bUseLobbiesVoiceChatIfAvailable, bMigration, Native->SessionSettings.bShouldAdvertise);
 	}
 	const auto Readiness = GetEOSReadiness();
+	FString Bucket = FString::FromInt(GetBuildUniqueId());
+	if (Native) Native->SessionSettings.Get(OSSEOS_BUCKET_ID_ATTRIBUTE_KEY, Bucket);
+	UE_LOG(LogExtendedEOS, Log, TEXT("EOSLobbyHostDiscovery Lobby=%s Bucket=%s PublicConnections=%d Context=%lld"),
+		*FEEOSNativeOperationLease::SafeField(CurrentLobbyId), *FEEOSNativeOperationLease::SafeField(Bucket),
+		Native ? Native->SessionSettings.NumPublicConnections : 0, Readiness.Generation);
 	UE_LOG(LogExtendedEOS, Log, TEXT("EOSLobbyHostContext Request=%lld Instance=%s Backend=Lobby RequestedCapacity=%d EffectiveCapacity=%d PrivateSlotsPolicy=PermissionSelected PresenceEligible=%d ConnectReady=%d LocalOwner=%d WorldNetMode=%d"),
 		MembershipLease.GetRequestId(), *FEEOSNativeOperationLease::SafeField(Readiness.Instance.ToString()), PendingCreateLobbySettings.NumPublicConnections + PendingCreateLobbySettings.NumPrivateConnections,
 		GetLobbyCapacity().Maximum, Readiness.bHasEpicAccount, Readiness.bConnectLoggedIn, IsLobbyOwner(), GetWorld() ? int32(GetWorld()->GetNetMode()) : -1);

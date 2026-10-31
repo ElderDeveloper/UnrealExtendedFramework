@@ -71,6 +71,18 @@ public:
 	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Steam|General")
 	bool bRelaunchInSteam = false;
 
+	/**
+	 * Device profile for a Steam Deck (empty = off). When the Steam client comes up, Steam's own check
+	 * (ISteamUtils::IsSteamRunningOnSteamDeck) is compared with the active device profile chain: on a
+	 * Deck without this profile active it switches to it, and on a machine that is not a Deck while it
+	 * is active (a desktop in Steam's Deck interface can look like one) it switches to the platform's
+	 * profile. Either way the choice is remembered in GameUserSettings.ini under
+	 * [ExtendedDeviceProfileSelector] SelectedProfile, which a device profile selector can read so the
+	 * next launch starts on the right profile before the first frame. Not done in the editor.
+	 */
+	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Steam|Device")
+	FString SteamDeckDeviceProfile;
+
 	/** Seconds before an in-flight Steam async operation is considered timed out. */
 	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Steam|General", meta = (ClampMin = "1.0", ClampMax = "120.0"))
 	float AsyncTaskTimeoutSeconds = 10.0f;

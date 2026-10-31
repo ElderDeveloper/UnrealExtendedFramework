@@ -15,6 +15,7 @@ class UEGChessTableStyle;
 class UInstancedStaticMeshComponent;
 class UMaterialInstanceDynamic;
 class UMaterialInterface;
+class UMeshComponent;
 class UStaticMesh;
 class UTexture2D;
 
@@ -37,6 +38,10 @@ public:
 	virtual void Apply(const FEGChessSquareMarks& Marks, const FEGChessBoardGeometry& Geometry) {}
 	virtual void Shutdown() {}
 
+	/** True while something on the board animates; the owner ticks the renderer only then. */
+	virtual bool WantsTick() const { return false; }
+	virtual void Tick(float DeltaTime) {}
+
 protected:
 	UEGChessBoardFeedbackComponent* GetOwnerComponent() const { return OwnerComponent.Get(); }
 	const UEGChessTableStyle* GetStyle() const { return Style.Get(); }
@@ -49,7 +54,16 @@ protected:
 		FLinearColor Color = FLinearColor::White;
 		float Scale = 1.0f;
 		float HeightOffset = 0.1f;
+		EEGChessMarkerShape Shape = EEGChessMarkerShape::Plate;
+		float FrameWidth = 0.1f;
+		FLinearColor FillColor = FLinearColor::Transparent;
+		FLinearColor OutlineColor = FLinearColor::Transparent;
+		float OutlineWidth = 0.0f;
+		float PulseAmount = 0.0f;
+		float PulsePeriod = 1.0f;
 		bool bUsesFallbackMaterial = false;
+		/** The style named a mesh; false when Mesh is an engine stand-in. */
+		bool bAuthoredMesh = false;
 	};
 	FResolvedMarker ResolveMarker(EEGChessMarkType Type) const;
 
@@ -59,9 +73,11 @@ private:
 };
 
 /**
- * Default renderer: one instanced static mesh per mark type, each instance flat on its square
- * just above the surface. A change rewrites only the types whose squares changed, so all marks
- * together cost a handful of draw calls on any board.
+ * Default renderer: one mesh component per mark type and part (the mark, plus its fill and
+ * contrast stroke where it has them), flat on the squares just above the surface. A style's own
+ * mesh is instanced, a frame being four bars of it; with none, the shapes are built as a
+ * procedural mesh. A change rewrites only the types whose squares changed, so all marks together
+ * cost a handful of draw calls on any board. Translucent marks draw in HeightOffset order.
  */
 UCLASS(meta = (DisplayName = "Instanced meshes"))
 class UNREALEXTENDEDGAMEPLAY_API UEGChessFeedbackRenderer_Instanced : public UEGChessFeedbackRenderer
@@ -72,10 +88,33 @@ public:
 	virtual void Initialize(UEGChessBoardFeedbackComponent* InOwner, const UEGChessTableStyle* InStyle) override;
 	virtual void Apply(const FEGChessSquareMarks& Marks, const FEGChessBoardGeometry& Geometry) override;
 	virtual void Shutdown() override;
+	virtual bool WantsTick() const override;
+	virtual void Tick(float DeltaTime) override;
 
 private:
+	/** A mark type's components, bottom to top. */
+	enum ELayerPart : int32 { Outline, Fill, Main, NumParts };
+	static int32 LayerIndex(int32 TypeIndex, ELayerPart Part) { return TypeIndex * NumParts + Part; }
+
+	/** NumParts per mark type; null where the type has no such part. Instanced or procedural. */
 	UPROPERTY(Transient)
-	TArray<TObjectPtr<UInstancedStaticMeshComponent>> Layers;
+	TArray<TObjectPtr<UMeshComponent>> Layers;
+
+	/** Each layer's material, for the pulse. Parallel to Layers. */
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UMaterialInstanceDynamic>> LayerMaterials;
+
+	/** The colour each layer was given, before any pulse. Parallel to Layers. */
+	TArray<FLinearColor> LayerColors;
+
+	/** Seconds since each type's squares last changed, so a newly marked square starts its pulse bright. */
+	TArray<float> PulseClocks;
+
+	/** Whether any square carries each type, as of the last Apply. */
+	TArray<bool> TypeShowing;
+
+	/** Each type's pulse amount (X) and period (Y), resolved once. */
+	TArray<FVector2f> PulseSettings;
 
 	FEGChessSquareMarks LastMarks;
 	EEGChessSeat LastWhiteSeat = EEGChessSeat::A;

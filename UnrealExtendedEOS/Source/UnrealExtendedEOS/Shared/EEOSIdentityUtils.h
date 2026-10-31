@@ -23,9 +23,14 @@ namespace EEOSIdentity
 	{
 		return HasLocalEpicAccount(Identity) ? Identity->GetPlayerNickname(0) : FString();
 	}
+	/** Keeps the lease of a native login/logout that outlives the subsystem which submitted it.
+	 * The identity is held WEAKLY on purpose: FOnlineSubsystemEOS::Shutdown drops its user manager
+	 * expecting it to die there, and the engine's EOS callbacks check nothing but that owner
+	 * (TEOSCallback::Owner). A strong reference kept the user manager alive past its online
+	 * subsystem, so a login answered after a quick PIE stop ran FullLoginCallback on freed memory. */
 	struct FRetired : TSharedFromThis<FRetired>
 	{
-		IOnlineIdentityPtr Identity;
+		TWeakPtr<IOnlineIdentity, ESPMode::ThreadSafe> Identity;
 		FEEOSNativeOperationLease Lease;
 		FName Instance;
 		FDelegateHandle Handle;
@@ -34,10 +39,10 @@ namespace EEOSIdentity
 		void Finish()
 		{
 			const auto Self = AsShared();
-			if (Identity.IsValid())
+			if (const IOnlineIdentityPtr Live = Identity.Pin())
 			{
-				if (bLogout) Identity->ClearOnLogoutCompleteDelegate_Handle(0, Handle);
-				else Identity->ClearOnLoginCompleteDelegate_Handle(0, Handle);
+				if (bLogout) Live->ClearOnLogoutCompleteDelegate_Handle(0, Handle);
+				else Live->ClearOnLoginCompleteDelegate_Handle(0, Handle);
 			}
 			if (Watcher.IsValid()) FTSTicker::GetCoreTicker().RemoveTicker(Watcher);
 			Watcher.Reset(); Handle.Reset(); Lease.Reset(); Identity.Reset();
@@ -51,12 +56,14 @@ namespace EEOSIdentity
 				[Self](int32 User, bool) { if (User == 0) Self->Finish(); }));
 			else Self->Handle = Identity->AddOnLoginCompleteDelegate_Handle(0, FOnLoginCompleteDelegate::CreateLambda(
 				[Self](int32 User, bool, const FUniqueNetId&, const FString&) { if (User == 0) Self->Finish(); }));
+			// Every frame: the lease is keyed on the identity's address, which is free for reuse once it is gone.
 			Self->Watcher = FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([Self](float)
 			{
-				IOnlineSubsystem* OSS = IOnlineSubsystem::DoesInstanceExist(Self->Instance) ? IOnlineSubsystem::Get(Self->Instance) : nullptr;
-				if (!OSS || OSS->GetIdentityInterface() != Self->Identity) { Self->Finish(); return false; }
+				const IOnlineIdentityPtr Live = Self->Identity.Pin();
+				IOnlineSubsystem* OSS = Live.IsValid() && IOnlineSubsystem::DoesInstanceExist(Self->Instance) ? IOnlineSubsystem::Get(Self->Instance) : nullptr;
+				if (!OSS || OSS->GetIdentityInterface() != Live) { Self->Finish(); return false; }
 				return true;
-			}), 1.0f);
+			}));
 		}
 	};
 }

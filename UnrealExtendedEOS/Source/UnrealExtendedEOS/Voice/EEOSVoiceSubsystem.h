@@ -14,6 +14,7 @@ class IEOSPlatformHandle;
 struct FEEOSVoiceCaptureState;
 class FUniqueNetId;
 struct FVoiceChatResult;
+class UWorld;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnEOSVoiceRoomJoined, const FString&, RoomName);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnEOSVoiceRoomLeft, const FString&, RoomName);
@@ -22,6 +23,25 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnEOSPlayerTalking, const FString&
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnEOSVoicePlayerJoinedRoom, const FString&, RoomName, const FString&, UserId);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnEOSVoicePlayerLeftRoom, const FString&, RoomName, const FString&, UserId);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnEOSVoiceAudioDevicesChanged);
+
+/** The local microphone as the EOS voice backend last reported it (EOS_ERTCAudioInputStatus). */
+UENUM(BlueprintType)
+enum class EEOSMicrophoneState : uint8
+{
+	/** Nothing reported yet, or not in a voice room. */
+	Unknown,
+	/** The device is released, e.g. while alone in a room. */
+	Idle,
+	Recording,
+	/** Recording, but the platform holds the device exclusively, so only silence arrives. */
+	Silent,
+	/** The device was unplugged. A device-list change re-applies the selection. */
+	Disconnected,
+	/** Capture broke. The subsystem re-arms the input device. */
+	Failed
+};
+
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnEOSMicrophoneStateChanged, EEOSMicrophoneState, State);
 
 /**
 	* Manages EOS voice chat rooms, per-player audio, transmit modes, and device management.
@@ -121,6 +141,10 @@ public:
 	/** Mute/unmute the local microphone */
 	UFUNCTION(BlueprintCallable, Category = "EOS|Voice")
 	void SetLocalMuted(bool bMuted);
+
+	/** The capture state EOS last reported for the local microphone. */
+	UFUNCTION(BlueprintPure, Category = "EOS|Voice")
+	EEOSMicrophoneState GetMicrophoneState() const { return MicrophoneState; }
 
 	// ── Transmit Modes ───────────────────────────────────────────────────────
 	// NOTE: nothing is transmitted until something asks. A voice user starts with an empty transmit
@@ -290,6 +314,10 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "EOS|Voice")
 	FOnEOSVoiceAudioDevicesChanged OnAudioDevicesChanged;
 
+	/** The local microphone's capture state changed (see GetMicrophoneState). Broadcast on the game thread. */
+	UPROPERTY(BlueprintAssignable, Category = "EOS|Voice")
+	FOnEOSMicrophoneStateChanged OnMicrophoneStateChanged;
+
 private:
 
 	// ── Voice user resolution ────────────────────────────────────────────────
@@ -355,8 +383,9 @@ private:
 	/** Purge + re-apply the max-wins aggregate volume for one player (1.0 restore when none remain). */
 	void ApplyAggregatedVolumeForPlayer(const FString& UserId);
 
-	/** Compute and push one player's aggregate. Assumes dead sources were just purged. */
-	void ApplyAggregatedVolumeForPlayerInternal(const FString& UserId);
+	/** Compute and push one player's aggregate. Assumes dead sources were just purged. While the engine has the
+	 *  player muted the value is held in PendingPlayerVolumes instead; bIgnoreMute lands it (just before an unmute). */
+	void ApplyAggregatedVolumeForPlayerInternal(const FString& UserId, bool bIgnoreMute = false);
 
 	/** Drop contributions from dead sources (components destroyed without EndPlay/unregister)
 	 *  and re-apply the aggregate for EVERY player they touched — a stale contribution must not
@@ -450,6 +479,8 @@ private:
 	TMap<FString, float> PlayerVolumeScales;
 	/** Last volume actually pushed per player, so unchanged aggregates skip the SDK call. */
 	TMap<FString, float> AppliedPlayerVolumes;
+	/** Aggregate held back while the engine has the player muted. Pushed just before the unmute, never after it. */
+	TMap<FString, float> PendingPlayerVolumes;
 
 	/** Periodic stale-contribution sweep (see PurgeStaleVolumeContributions). */
 	FTSTicker::FDelegateHandle StaleContributionSweepHandle;
@@ -457,7 +488,44 @@ private:
 	double LastCadenceTick = 0, CadenceDelayStart = 0, LastCadenceSummary = 0, CadenceRecoveryStart = 0, MaximumCadenceGap = 0;
 	int32 DelayedCadenceTicks = 0;
 	bool TickCadence(float DeltaTime);
+	/** A blocking map load stalls the game thread by design; its gap is logged as Phase=MapLoad, not as a delay.
+	 *  Process-wide: any world's load blocks the one game thread every subsystem ticks on. */
+	void HandlePreLoadMap(const FString& MapName);
+	void HandlePostLoadMapWithWorld(UWorld* LoadedWorld);
+	bool bInMapLoad = false;
+	/** Set by PreLoadMap, cleared by the next cadence tick. PostLoadMapWithWorld fires before that tick, so
+	 *  bInMapLoad alone is already false by the time a blocking load's gap is measured. */
+	bool bMapLoadSinceCadenceTick = false;
 	FString DisconnectedRTCLobby;
 	int64 DisconnectedRTCGeneration = 0;
 	FEEOSRequestContext DisconnectedRTCContext;
+
+	// ── Microphone capture state ─────────────────────────────────────────────
+	// EOS reports capture failures only through the engine's process-wide
+	// FEOSVoiceChatDelegates::OnAudioInputDeviceStatusChanged; IVoiceChatUser has no equivalent.
+
+	void HandleMicrophoneStatus(const FString& PlayerName, EEOSMicrophoneState NewState);
+	void SetMicrophoneState(EEOSMicrophoneState NewState);
+	/** Next bounded re-arm after a Failed report; nothing is scheduled once the attempts are spent. */
+	void ScheduleMicrophoneRecovery();
+	/** Re-submits the last submitted input device, bypassing RequestedInputDevice's dedup. */
+	void ReArmInputDevice(bool bDetour);
+	void CancelMicrophoneRecoveryTicker();
+	/** Cancels the ticker and gives the next failure a fresh budget of attempts. */
+	void ResetMicrophoneRecovery();
+	/** Not in a room / no voice user: no capture state to keep. Broadcasts Unknown. */
+	void ForgetMicrophoneState();
+	/** Transmit just opened while capture is Failed: the player is trying to talk, so re-arm once more. */
+	void ReArmMicrophoneOnTransmit(bool bTransmitting);
+
+	EEOSMicrophoneState MicrophoneState = EEOSMicrophoneState::Unknown;
+	/** Capture reported Failed and has not reported Recording/Silent since. Separate from MicrophoneState, which is the
+	 *  last report from any room (the engine drops the room name), so another room's Idle cannot cancel recovery. */
+	bool bMicrophoneCaptureFailed = false;
+	/** What SetInputDevice last submitted to the engine; RequestedInputDevice is a dedup cache cleared on device changes. */
+	TOptional<FString> LastSubmittedInputDevice;
+	FDelegateHandle MicrophoneStatusHandle;
+	FTSTicker::FDelegateHandle MicrophoneRecoveryTicker;
+	int32 MicrophoneRecoveryAttempts = 0;
+	double LastMicrophoneReArmSeconds = 0.0;
 };

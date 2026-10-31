@@ -1,5 +1,6 @@
 // EFSubtitleUserSettings.cpp
 #include "EFSubtitleUserSettings.h"
+#include "Internationalization/StringTableRegistry.h"
 
 #include "GameplayTagsManager.h"
 
@@ -11,7 +12,7 @@
 UEFSubtitleEnabledSetting::UEFSubtitleEnabledSetting()
 {
 	SettingTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Settings.Accessibility.SubtitlesEnabled")), false);
-	DisplayName = NSLOCTEXT("Settings", "SubtitlesEnabled", "Subtitles Enabled");
+	DisplayName = LOCTABLE("ExtendedFramework", "Settings.SubtitlesEnabled");
 	ConfigCategory = TEXT("Accessibility");
 	DefaultValue = true;
 	Value = true;
@@ -28,7 +29,7 @@ void UEFSubtitleEnabledSetting::Apply_Implementation()
 UEFSubtitleTextSizeSetting::UEFSubtitleTextSizeSetting()
 {
 	SettingTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Settings.Accessibility.SubtitleTextSize")), false);
-	DisplayName = NSLOCTEXT("Settings", "SubtitleTextSize", "Subtitle Text Size");
+	DisplayName = LOCTABLE("ExtendedFramework", "Settings.SubtitleTextSize");
 	ConfigCategory = TEXT("Accessibility");
 	DefaultValue = 1.0f;
 	Value = 1.0f;
@@ -49,7 +50,7 @@ void UEFSubtitleTextSizeSetting::Apply_Implementation()
 UEFSubtitleBgOpacitySetting::UEFSubtitleBgOpacitySetting()
 {
 	SettingTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Settings.Accessibility.SubtitleBgOpacity")), false);
-	DisplayName = NSLOCTEXT("Settings", "SubtitleBgOpacity", "Subtitle Background Opacity");
+	DisplayName = LOCTABLE("ExtendedFramework", "Settings.SubtitleBgOpacity");
 	ConfigCategory = TEXT("Accessibility");
 	DefaultValue = 0.7f;
 	Value = 0.7f;
@@ -70,7 +71,7 @@ void UEFSubtitleBgOpacitySetting::Apply_Implementation()
 UEFSubtitleSpeakerLabelsSetting::UEFSubtitleSpeakerLabelsSetting()
 {
 	SettingTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Settings.Accessibility.SubtitleSpeakerLabels")), false);
-	DisplayName = NSLOCTEXT("Settings", "SubtitleSpeakerLabels", "Show Speaker Labels");
+	DisplayName = LOCTABLE("ExtendedFramework", "Settings.SubtitleSpeakerLabels");
 	ConfigCategory = TEXT("Accessibility");
 	DefaultValue = true;
 	Value = true;
@@ -87,11 +88,11 @@ void UEFSubtitleSpeakerLabelsSetting::Apply_Implementation()
 UEFSubtitleStyleProfileSetting::UEFSubtitleStyleProfileSetting()
 {
 	SettingTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Settings.Accessibility.SubtitleStyleProfile")), false);
-	DisplayName = NSLOCTEXT("Settings", "SubtitleStyleProfile", "Subtitle Style");
+	DisplayName = LOCTABLE("ExtendedFramework", "Settings.SubtitleStyleProfile");
 	ConfigCategory = TEXT("Accessibility");
 	DefaultValue = TEXT("Default");
 	Values = { TEXT("Default") };
-	DisplayNames = { NSLOCTEXT("Settings", "SubtitleStyleDefault", "Default") };
+	DisplayNames = { LOCTABLE("ExtendedFramework", "Settings.SubtitleStyleDefault") };
 	SelectedIndex = 0;
 }
 
@@ -101,7 +102,7 @@ void UEFSubtitleStyleProfileSetting::RefreshValues_Implementation()
 	DisplayNames.Reset();
 
 	Values.Add(TEXT("Default"));
-	DisplayNames.Add(NSLOCTEXT("Settings", "SubtitleStyleDefault", "Default"));
+	DisplayNames.Add(LOCTABLE("ExtendedFramework", "Settings.SubtitleStyleDefault"));
 
 	if (const UEFSubtitleProjectSettings* Settings = GetDefault<UEFSubtitleProjectSettings>())
 	{

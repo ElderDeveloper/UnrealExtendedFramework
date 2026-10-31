@@ -18,6 +18,28 @@ namespace
 {
 	struct FCreationBudget { int32 Remaining = 3; bool bReported = false; };
 	TMap<FName, FCreationBudget> CreationBudgets;
+
+	/**
+	 * Every UEEOSSubsystem (~25 of them) observes the same EOS instance and reports the instance,
+	 * its capability mask and each context change itself, so one native event printed ~25 copies.
+	 * Only the first observer of a state logs at Log; the others log at Verbose. Keyed by line and
+	 * instance on the last state reported, so a state that recurs later (a second login after a
+	 * logout) is reported again. Game thread only: anywhere else every line stays at Log.
+	 */
+	bool IsFirstObserver(const TCHAR* Line, FName Instance, const FString& State)
+	{
+		if (!IsInGameThread()) return true;
+		static TMap<FString, FString> LastReported;
+		const FString Key = FString::Printf(TEXT("%s/%s"), Line, *Instance.ToString());
+		if (const FString* Last = LastReported.Find(Key); Last && *Last == State) return false;
+		LastReported.Add(Key, State);
+		return true;
+	}
+	void LogObservation(bool bFirstObserver, const FString& Message)
+	{
+		if (bFirstObserver) { UE_LOG(LogExtendedEOS, Log, TEXT("%s"), *Message); }
+		else { UE_LOG(LogExtendedEOS, Verbose, TEXT("%s"), *Message); }
+	}
 }
 
 void UEEOSSubsystem::Initialize(FSubsystemCollectionBase& Collection)
@@ -64,8 +86,9 @@ IOnlineSubsystem* UEEOSSubsystem::GetExistingEOSOnlineSubsystem() const
 	IOnlineSubsystem* Current = IOnlineSubsystem::Get(Instance);
 	if (Current != CachedEOSSubsystem)
 	{
-		UE_LOG(LogExtendedEOS, Log, TEXT("EOSInstance Instance=%s GameInstance=%s Phase=Resolved Available=%d"),
-			*FEEOSNativeOperationLease::SafeField(Instance.ToString()), *GetNameSafe(GetGameInstance()), Current != nullptr);
+		LogObservation(IsFirstObserver(TEXT("EOSInstance"), Instance, FString::Printf(TEXT("%p"), Current)),
+			FString::Printf(TEXT("EOSInstance Instance=%s GameInstance=%s Phase=Resolved Available=%d"),
+				*FEEOSNativeOperationLease::SafeField(Instance.ToString()), *GetNameSafe(GetGameInstance()), Current != nullptr));
 		CachedEOSSubsystem = Current;
 	}
 	return Current;
@@ -100,8 +123,9 @@ FEEOSRequestContext UEEOSSubsystem::CaptureEOSContext() const
 		| (OSS->GetPresenceInterface().IsValid() ? 8u : 0u) : 0u;
 	if (ObservedCapabilities != Capabilities)
 	{
-		UE_LOG(LogExtendedEOS, Log, TEXT("EOSCapabilities Instance=%s PreviousMask=%u NewMask=%u Bits=Session1Chat2User4Presence8"),
-			*GetOwningEOSInstanceName().ToString(), ObservedCapabilities, Capabilities);
+		LogObservation(IsFirstObserver(TEXT("EOSCapabilities"), GetOwningEOSInstanceName(), FString::Printf(TEXT("%u"), Capabilities)),
+			FString::Printf(TEXT("EOSCapabilities Instance=%s PreviousMask=%u NewMask=%u Bits=Session1Chat2User4Presence8"),
+				*GetOwningEOSInstanceName().ToString(), ObservedCapabilities, Capabilities));
 		ObservedCapabilities = Capabilities;
 	}
 	const auto Identity = OSS ? OSS->GetIdentityInterface() : IOnlineIdentityPtr();
@@ -113,9 +137,12 @@ FEEOSRequestContext UEEOSSubsystem::CaptureEOSContext() const
 	const bool bChanged = bPlatformChanged || ObservedContext.LocalId != LocalId || ObservedLoginStatus != Status;
 	if (bChanged)
 	{
-		UE_LOG(LogExtendedEOS, Log, TEXT("EOSContext Instance=%s Generation=%lld PreviousPlatform=%d NewPlatform=%d PreviousLoggedIn=%d NewLoggedIn=%d IdentityChanged=%d Shutdown=%d"),
-			*FEEOSNativeOperationLease::SafeField(Instance.ToString()), ObservedContext.Generation + 1, ObservedContext.Platform.IsValid(), Platform.IsValid(),
-			ObservedLoginStatus == ELoginStatus::LoggedIn, Status == ELoginStatus::LoggedIn, ObservedContext.LocalId != LocalId, bEOSShuttingDown);
+		// The state every observer of this instance converges on; Generation is per observer.
+		const FString ObservedState = FString::Printf(TEXT("%p/%p/%d/%s"), Platform.Get(), Identity.Get(), static_cast<int32>(Status), *LocalId);
+		LogObservation(IsFirstObserver(TEXT("EOSContext"), Instance, ObservedState),
+			FString::Printf(TEXT("EOSContext Instance=%s Generation=%lld PreviousPlatform=%d NewPlatform=%d PreviousLoggedIn=%d NewLoggedIn=%d IdentityChanged=%d Shutdown=%d"),
+				*FEEOSNativeOperationLease::SafeField(Instance.ToString()), ObservedContext.Generation + 1, ObservedContext.Platform.IsValid(), Platform.IsValid(),
+				ObservedLoginStatus == ELoginStatus::LoggedIn, Status == ELoginStatus::LoggedIn, ObservedContext.LocalId != LocalId, bEOSShuttingDown));
 		++ObservedContext.Generation;
 		if (bPlatformChanged) ++ObservedContext.PlatformGeneration;
 	}
@@ -129,18 +156,22 @@ FEEOSRequestContext UEEOSSubsystem::CaptureEOSContext() const
 			ContextStatusHandle = Identity->AddOnLoginStatusChangedDelegate_Handle(0, FOnLoginStatusChangedDelegate::CreateLambda(
 				[Weak](int32 User, ELoginStatus::Type Previous, ELoginStatus::Type Current, const FUniqueNetId&)
 				{
-					if (auto* Self = Weak.Get(); Self && User == 0 && Previous != Current)
-					{
-						// Even a logout/login of the same ID invalidates old SDK work.
-						++Self->ObservedContext.Generation;
-						Self->CaptureEOSContext();
-					}
+					if (auto* Self = Weak.Get()) Self->HandleContextLoginStatusChanged(User, Previous, Current);
 				}));
 		}
 	}
 	ObservedContext.Platform = Platform; ObservedContext.Identity = Identity; ObservedContext.Instance = Instance;
 	ObservedContext.LocalId = LocalId; ObservedLoginStatus = Status;
 	return ObservedContext;
+}
+void UEEOSSubsystem::HandleContextLoginStatusChanged(int32 User, ELoginStatus::Type Previous, ELoginStatus::Type Current)
+{
+	if (User != 0 || Previous == Current) return;
+	// EOS broadcasts login completion before login-status changed. Completion listeners may
+	// already have observed the new identity and submitted work. Capture advances the epoch
+	// only for an actual change; incrementing again here cancels those freshly started requests.
+	// Logout is observed here too, so logging back in as the same ID still retires old work.
+	CaptureEOSContext();
 }
 bool UEEOSSubsystem::IsEOSContextCurrent(const FEEOSRequestContext& Context, bool bRequireSameIdentity) const
 {

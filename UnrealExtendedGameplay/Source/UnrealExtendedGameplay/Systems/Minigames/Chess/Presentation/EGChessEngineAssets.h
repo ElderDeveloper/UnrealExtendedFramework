@@ -25,6 +25,13 @@ namespace EGChessEngineAssets
 	/** Opaque engine material with a "Color" vector parameter. */
 	UNREALEXTENDEDGAMEPLAY_API UMaterialInterface* BasicMaterial();
 
+	/**
+	 * Unlit translucent engine material: its "Color" vector parameter is the emissive colour and its
+	 * alpha the opacity. Falls back to BasicMaterial where it is missing (it lives in the engine's
+	 * debug materials, which a packaged game only has if the project cooks them).
+	 */
+	UNREALEXTENDEDGAMEPLAY_API UMaterialInterface* UnlitTranslucentMaterial();
+
 	/** A dynamic instance of BasicMaterial tinted to Color. */
 	UNREALEXTENDEDGAMEPLAY_API UMaterialInstanceDynamic* TintedMaterial(UObject* Outer, const FLinearColor& Color);
 

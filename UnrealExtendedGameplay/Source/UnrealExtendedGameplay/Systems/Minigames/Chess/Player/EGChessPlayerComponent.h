@@ -5,8 +5,10 @@
 #include "Components/ActorComponent.h"
 #include "CoreMinimal.h"
 #include "InputActionValue.h"
+#include "UnrealExtendedGameplay/Systems/Minigames/Chess/Data/EGChessInputConfig.h"
 #include "UnrealExtendedGameplay/Systems/Minigames/Chess/Feedback/EGChessBoardFeedback.h"
 #include "UnrealExtendedGameplay/Systems/Minigames/Chess/Feedback/EGChessFeedbackTypes.h"
+#include "UnrealExtendedGameplay/Systems/Minigames/Chess/Player/EGChessHandTypes.h"
 #include "UnrealExtendedGameplay/Systems/Minigames/Chess/Table/EGChessMatchTypes.h"
 
 #include "EGChessPlayerComponent.generated.h"
@@ -23,6 +25,7 @@ class UEGChessPromptWidgetBase;
 class UEGChessWidgetBase;
 class UInputAction;
 class UInputMappingContext;
+class USkeletalMeshComponent;
 class UUserWidget;
 
 UENUM(BlueprintType)
@@ -119,6 +122,14 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Chess")
 	bool IsBoardInputBlocked() const { return ModalWidgets.Num() > 0; }
 
+	/**
+	 * What this player's hand should do between moves, rebuilt every tick while seated: raised over
+	 * the board during their turn, following the pointer, holding the selected piece, setting it down
+	 * on the square of a move sent to the server. Only meaningful when the seat uses a live hand
+	 * (AEGChessTableActor::UsesLiveHand); then selection is click to pick up, click to put down.
+	 */
+	const FEGChessHandIntent& GetLocalHandIntent() const { return LocalHandIntent; }
+
 	// -----------------------------------------------------------------
 	// Actions (local; widgets call these)
 	// -----------------------------------------------------------------
@@ -211,6 +222,14 @@ public:
 	UFUNCTION(Server, Reliable)
 	void ServerSubmitMove(const FEGChessMove& Move);
 
+	/** The hand intent's discrete part changed (raised, held, placing). */
+	UFUNCTION(Server, Reliable)
+	void ServerSetHandIntent(const FEGChessHandIntent& Intent);
+
+	/** The pointer moved; streamed, so a lost one is simply replaced by the next. */
+	UFUNCTION(Server, Unreliable)
+	void ServerSetHandPointer(FVector_NetQuantize10 Pointer);
+
 	UFUNCTION(Server, Reliable)
 	void ServerResign();
 
@@ -271,14 +290,51 @@ protected:
 	UInputMappingContext* GetActiveMappingContext() const;
 	void BuildDefaultInput();
 
+	/** The seated controls a HUD may name, each resolved to the action actually bound for it. */
+	enum class EControl : uint8
+	{
+		Select,
+		Cancel,
+		/** The right mouse tap that cancels when the right button also drags the look. Null otherwise. */
+		CancelMouse,
+		ToggleView,
+		Menu,
+		Leave,
+	};
+
+	/** The table config's action for Control when it has one, else the built-in default. Call after BuildDefaultInput. */
+	UInputAction* GetControlAction(EControl Control) const;
+
 	/** The table's input config, or the class defaults when it has none: the look tuning always has values. */
 	const class UEGChessInputConfig* GetLookSettings() const;
 
 	/** True when squares are picked at the centre of the view and no cursor is shown. */
 	bool UsesViewCentreAim() const;
 
+	/** True when the camera never moves: the seat's board camera, a free cursor, no look and no view toggle. */
+	bool UsesFixedCamera() const;
+
 	/** Last chance to scale the look input, in degrees, e.g. by the player's own sensitivity setting. */
 	virtual FVector2D AdjustLookInput(const FVector2D& Degrees) const { return Degrees; }
+
+	/**
+	 * Where the board camera is this frame and its field of view. DeltaTime is 0 when the camera is
+	 * placed with no history (spawned, or the view just changed), which resets any smoothing. The
+	 * default: the seat's authored camera for Elevated; for Eye, the animation set's EyeSocket, eased,
+	 * aimed at the board. Override for another camera in either view; the blend between views stays
+	 * the component's, and free look is added with ApplyLookOffset. Runs after the seated pawn's
+	 * animation, so a bone read here is this frame's.
+	 */
+	virtual FTransform ComputeViewTransform(EEGChessView View, float DeltaTime, float& OutFOV);
+
+	/** Adds the look offset to a view rotation, clamped by the look settings. */
+	FQuat ApplyLookOffset(const FQuat& ViewRotation) const;
+
+	/** The local player's pawn mesh the board camera may follow: IEGChessCharacterInterface::GetChessMesh, else the character mesh. */
+	USkeletalMeshComponent* GetLocalPawnMesh() const;
+
+	/** The camera actor the player views the board through while seated; null standing. */
+	ACameraActor* GetBoardCamera() const { return BoardCamera; }
 
 private:
 
@@ -292,14 +348,12 @@ private:
 	void HandleCursorAction(const FInputActionValue& Value);
 	void HandleCursorReleased(const FInputActionValue& Value);
 	void HandleSelectAction(const FInputActionValue& Value);
+	void HandleSelectReleased(const FInputActionValue& Value);
 	void HandleCancelAction(const FInputActionValue& Value);
 	void HandleToggleViewAction(const FInputActionValue& Value);
 	void HandleMenuAction(const FInputActionValue& Value);
 	void HandleLeaveAction(const FInputActionValue& Value);
 	void HandleLookAction(const FInputActionValue& Value);
-
-	/** Adds the look offset to a view rotation, clamped by the look settings. */
-	FQuat ApplyLookOffset(const FQuat& ViewRotation) const;
 
 	// Cursor and selection
 	void UpdateMouseCursor();
@@ -313,11 +367,39 @@ private:
 	void RefreshSelectionMoves();
 	void RefreshLocalPresentation();
 
+	// Carrying the selected piece (input config bCarrySelectedPiece)
+	void UpdateCarry(float DeltaTime);
+	/** Where the pointer meets the board, BoardSurface space, clamped to the playing area. False when it misses the board. */
+	bool GetPointerOnBoard(FVector& OutLocal) const;
+
+	// The live hand (AEGChessTableActor::UsesLiveHand): the seated character's own hand picks the
+	// selected piece up and carries it, so the cursor carry and drop on release stay off.
+	bool UsesHandCarry() const;
+	void UpdateHandIntent();
+	FEGChessHandIntent LocalHandIntent;
+	/** What the server last got, to send only changes. */
+	FEGChessHandIntent SentHandIntent;
+	double LastHandPointerSendTime = -1.0;
+	/** Where the last sent move comes from, so the hand keeps that piece until the move lands. */
+	int32 SentFromSquare = INDEX_NONE;
+	/** The ray the player is pointing with: the view centre, or the mouse cursor. */
+	bool GetAimRay(FVector& OutOrigin, FVector& OutDirection) const;
+	bool bCarryActive = false;
+	int32 CarrySquare = INDEX_NONE;
+	FVector CarryLocal = FVector::ZeroVector;
+	/** The press that selected the piece is still down, so its release may drop it. */
+	bool bSelectedByHeldPress = false;
+	/** Where the last sent move goes, so the carried piece waits over it for the server. */
+	int32 SentToSquare = INDEX_NONE;
+
 	// Camera
 	void SpawnBoardCamera(float BlendTime);
 	void DestroyBoardCamera();
 	void UpdateBoardCamera(float DeltaTime);
-	FTransform ComputeViewTransform(EEGChessView View, float& OutFOV) const;
+
+	/** The board camera reads the pawn's bones, so it updates after that mesh has animated. */
+	void SetCameraFollowsPawnMesh(bool bFollow);
+	TWeakObjectPtr<USkeletalMeshComponent> CameraPrerequisiteMesh;
 
 	// Widgets
 	template <typename T>
@@ -376,7 +458,7 @@ private:
 	TSharedPtr<struct FSlateBrush> CentreDotBrush;
 
 	/** The aim mode the default mapping context was built for; a change rebuilds it. */
-	bool bDefaultInputForViewCentre = true;
+	EEGChessAimMode DefaultInputAimMode = EEGChessAimMode::ViewCentre;
 
 	bool bLowTimeWarned = false;
 	int32 LastSeenPly = -1;
@@ -389,7 +471,8 @@ private:
 	FTransform ViewBlendFrom;
 	double ViewBlendStart = -1.0;
 	FVector EyeLagLocation = FVector::ZeroVector;
-	bool bEyeLagInitialized = false;
+	/** False until the current view has been computed once: the first computation gets DeltaTime 0. */
+	bool bViewHasHistory = false;
 	FTimerHandle CameraDestroyTimer;
 
 	UPROPERTY(Transient)

@@ -1,13 +1,12 @@
 // Copyright Kemal Erdem YILMAZ. All Rights Reserved.
 
 #include "EGChessWidgetBase.h"
+#include "Internationalization/StringTableRegistry.h"
 
 #include "UnrealExtendedGameplay/Systems/Minigames/Chess/Data/EGChessTimeControl.h"
 #include "UnrealExtendedGameplay/Systems/Minigames/Chess/Data/EGChessUIConfig.h"
 #include "UnrealExtendedGameplay/Systems/Minigames/Chess/Player/EGChessPlayerComponent.h"
 #include "UnrealExtendedGameplay/Systems/Minigames/Chess/Table/EGChessTableActor.h"
-
-#define LOCTEXT_NAMESPACE "EGChess"
 
 // ---------------------------------------------------------------------------------------------
 // Base
@@ -154,7 +153,7 @@ FText UEGChessHUDWidgetBase::GetStatusText() const
 	switch (GetPhase())
 	{
 	case EEGChessPhase::WaitingForOpponent:
-		return UI ? UI->WaitingText : LOCTEXT("WaitingFallback", "Waiting for an opponent");
+		return UI ? UI->WaitingText : LOCTABLE("ExtendedFramework", "Common.WaitingForAnOpponent");
 	case EEGChessPhase::Starting:
 		return FText::AsNumber(GetCountdownSeconds());
 	default:
@@ -185,7 +184,7 @@ FText UEGChessHUDWidgetBase::GetTimeControlText() const
 		return TimeControl->DisplayName;
 	}
 	const UEGChessUIConfig* UI = Table->GetUIConfig();
-	return UI ? UI->UntimedText : LOCTEXT("UntimedFallback", "Untimed");
+	return UI ? UI->UntimedText : LOCTABLE("ExtendedFramework", "Common.Untimed");
 }
 
 bool UEGChessHUDWidgetBase::CanPlayVersusAI() const
@@ -296,4 +295,3 @@ bool UEGChessGameOverWidgetBase::HasOpponentRequestedRematch() const
 	return Owner && Table && Table->HasRematchRequest(EGChess::OtherSeat(Owner->GetSeat()));
 }
 
-#undef LOCTEXT_NAMESPACE

@@ -2,6 +2,7 @@
 
 
 #include "EFSettingsWidgetMultiSelectStepper.h"
+#include "Internationalization/StringTableRegistry.h"
 #include "Components/Button.h"
 #include "Components/TextBlock.h"
 #include "UnrealExtendedFramework/ModularSettings/EFModularSettingsLibrary.h"
@@ -75,7 +76,7 @@ void UEFSettingsWidgetMultiSelectStepper::UpdateText(const UEFModularSettingsBas
 			
 			if (MultiSelectSetting->IsIndexLocked(MultiSelectSetting->SelectedIndex))
 			{
-				DisplayText = FText::Format(NSLOCTEXT("Settings", "LockedFormat", "{0} (Locked)"), DisplayText);
+				DisplayText = FText::Format(LOCTABLE("ExtendedFramework", "Settings.LockedFormat"), DisplayText);
 				ValueText->SetColorAndOpacity(FSlateColor(FLinearColor(1.0f, 1.0f, 1.0f, 0.5f))); // Dimmed
 			}
 			else

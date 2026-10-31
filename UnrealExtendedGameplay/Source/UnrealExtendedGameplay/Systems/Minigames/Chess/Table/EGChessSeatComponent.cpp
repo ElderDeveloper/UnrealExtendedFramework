@@ -46,6 +46,7 @@ void UEGChessSeatComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 	DOREPLIFETIME(UEGChessSeatComponent, Occupant);
 	DOREPLIFETIME(UEGChessSeatComponent, AnimState);
+	DOREPLIFETIME(UEGChessSeatComponent, HandIntent);
 }
 
 void UEGChessSeatComponent::OnUnregister()
@@ -280,6 +281,7 @@ FTransform UEGChessSeatComponent::ExtractActorRootMotion(UAnimMontage* Montage, 
 void UEGChessSeatComponent::SetOccupant(const FEGChessSeatOccupant& NewOccupant)
 {
 	Occupant = NewOccupant;
+	HandIntent = FEGChessHandIntent();
 	OnRep_Occupant();
 }
 
@@ -287,6 +289,7 @@ void UEGChessSeatComponent::ClearOccupant()
 {
 	CancelSequenceAndReleasePawn();
 	Occupant = FEGChessSeatOccupant();
+	HandIntent = FEGChessHandIntent();
 	AnimState.Action = EEGChessSeatAction::None;
 	++AnimState.Sequence;
 	OnRep_Occupant();
@@ -569,7 +572,7 @@ void UEGChessSeatComponent::FinishSequence()
 	}
 
 	// Clients wait for the authoritative occupant clear. Finishing a local animation must not
-	// resume predicted walking while the server still has movement replication disabled.
+	// resume predicted walking while the server still holds the pawn on the seat.
 	if (GetOwnerRole() == ROLE_Authority)
 	{
 		if (AEGChessTableActor* Table = GetTable())
@@ -666,10 +669,9 @@ void UEGChessSeatComponent::PrepareSeatedPawn(APawn* Pawn)
 		}
 		Character->GetCapsuleComponent()->IgnoreActorWhenMoving(GetOwner(), true);
 	}
-	if (Pawn->HasAuthority())
-	{
-		Pawn->SetReplicateMovement(false);
-	}
+	// Movement replication stays on. A client whose pawn stops replicating movement stops sending
+	// moves but keeps advancing its move clock, and after two minutes seated the server dropped every
+	// move as stale: the player walked away on their own screen while the server kept them at the seat.
 
 	BindPawnAnimation(Pawn);
 
@@ -717,7 +719,6 @@ void UEGChessSeatComponent::ReleaseSeatedPawn(APawn* Pawn)
 	}
 	if (Pawn->HasAuthority())
 	{
-		Pawn->SetReplicateMovement(true);
 		Pawn->ForceNetUpdate();
 	}
 
@@ -853,19 +854,36 @@ void UEGChessSeatComponent::HandleOneShotBlendingOut(UAnimMontage* Montage, bool
 	}
 }
 
-bool UEGChessSeatComponent::PlayMoveClip(float PlayRate, bool bClockOnRight, FEGChessMoveTiming& OutTiming)
+const UEGChessAnimationSet* UEGChessSeatComponent::GetMoveAnimationSet() const
 {
-	APawn* Pawn = Occupant.Pawn;
-	const UEGChessAnimationSet* Set = GetAnimationSet(Pawn);
-	if (!Pawn || !Set || Sequence.bActive || AnimState.Action == EEGChessSeatAction::Exiting || AnimState.Action == EEGChessSeatAction::None)
+	const APawn* Pawn = Occupant.Pawn;
+	if (!Pawn || Sequence.bActive || AnimState.Action == EEGChessSeatAction::Exiting || AnimState.Action == EEGChessSeatAction::None)
+	{
+		return nullptr;
+	}
+	return GetAnimationSet(Pawn);
+}
+
+bool UEGChessSeatComponent::CanMovePiecesByHand() const
+{
+	const APawn* Pawn = Occupant.Pawn;
+	return GetMoveAnimationSet()
+		&& Pawn->Implements<UEGChessCharacterInterface>()
+		&& IEGChessCharacterInterface::Execute_CanMoveChessPiecesByHand(Pawn);
+}
+
+bool UEGChessSeatComponent::PlayClockPressClip(float PlayRate, bool bClockOnRight, float& OutPressDelay)
+{
+	const UEGChessAnimationSet* Set = GetMoveAnimationSet();
+	if (!Set)
 	{
 		return false;
 	}
 
-	UAnimMontage* Montage = EGChessEngineAssets::Resolve(bClockOnRight ? Set->MoveRightHand : Set->MoveLeftHand);
+	UAnimMontage* Montage = EGChessEngineAssets::Resolve(bClockOnRight ? Set->ClockPressRightHand : Set->ClockPressLeftHand);
 	if (!Montage)
 	{
-		Montage = EGChessEngineAssets::Resolve(bClockOnRight ? Set->MoveLeftHand : Set->MoveRightHand);
+		Montage = EGChessEngineAssets::Resolve(bClockOnRight ? Set->ClockPressLeftHand : Set->ClockPressRightHand);
 	}
 	if (!Montage || !PlayMontage(Montage, PlayRate, 0.0f, true))
 	{
@@ -873,15 +891,11 @@ bool UEGChessSeatComponent::PlayMoveClip(float PlayRate, bool bClockOnRight, FEG
 	}
 
 	CurrentMoveMontage = Montage;
-	const float Rate = FMath::Max(PlayRate, KINDA_SMALL_NUMBER);
-	OutTiming.bCharacterDriven = true;
-	OutTiming.PickTime = Set->FallbackPickTime / Rate;
-	OutTiming.PlaceTime = FMath::Max(OutTiming.PickTime + 0.05f, Set->FallbackPlaceTime / Rate);
-	OutTiming.ClockPressTime = FMath::Max(OutTiming.PlaceTime, Set->FallbackClockPressTime / Rate);
+	OutPressDelay = Set->FallbackClockPressTime / FMath::Max(PlayRate, KINDA_SMALL_NUMBER);
 	return true;
 }
 
-float UEGChessSeatComponent::GetMoveClipDuration(float PlayRate, bool bClockOnRight) const
+float UEGChessSeatComponent::GetClockPressClipDuration(float PlayRate, bool bClockOnRight) const
 {
 	const APawn* Pawn = Occupant.Pawn;
 	const UEGChessAnimationSet* Set = GetAnimationSet(Pawn);
@@ -889,10 +903,10 @@ float UEGChessSeatComponent::GetMoveClipDuration(float PlayRate, bool bClockOnRi
 	{
 		return 0.0f;
 	}
-	UAnimMontage* Montage = EGChessEngineAssets::Resolve(bClockOnRight ? Set->MoveRightHand : Set->MoveLeftHand);
+	UAnimMontage* Montage = EGChessEngineAssets::Resolve(bClockOnRight ? Set->ClockPressRightHand : Set->ClockPressLeftHand);
 	if (!Montage)
 	{
-		Montage = EGChessEngineAssets::Resolve(bClockOnRight ? Set->MoveLeftHand : Set->MoveRightHand);
+		Montage = EGChessEngineAssets::Resolve(bClockOnRight ? Set->ClockPressLeftHand : Set->ClockPressRightHand);
 	}
 	return Montage ? Montage->GetPlayLength() / FMath::Max(PlayRate, KINDA_SMALL_NUMBER) : 0.0f;
 }

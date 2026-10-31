@@ -60,6 +60,9 @@ public class UnrealExtendedEOS : ModuleRules
 				"Sockets",
 				"OnlineSubsystemEOS",
 				"VoiceChat",
+				// FEOSVoiceChatDelegates::OnAudioInputDeviceStatusChanged: the only report of a failed
+				// microphone capture (IVoiceChatUser has none). Same dependency OnlineSubsystemEOS takes.
+				"EOSVoiceChat",
 				"UnrealExtendedFramework",
 				// The voice component's local capture test (Unreal's own microphone stream).
 				"AudioCapture",

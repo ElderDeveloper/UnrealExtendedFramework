@@ -8,13 +8,63 @@
 #include "Engine/LevelStreaming.h"
 #include "Engine/Texture2D.h"
 #include "Engine/World.h"
+#include "Materials/MaterialInterface.h"
 #include "MoviePlayer.h"
 #include "UObject/UObjectGlobals.h"
 #include "UnrealExtendedFramework/Systems/Loading/Data/EFLoadingScreenSettings.h"
 #include "UnrealExtendedFramework/Systems/Loading/Widget/SEFLoadingScreenWidget.h"
 #include "WorldPartition/WorldPartitionSubsystem.h"
 
+#if WITH_EDITOR
+#include "TextureCompiler.h"
+#endif
+
 DEFINE_LOG_CATEGORY(LogEFLoadingScreen);
+
+#if WITH_EDITOR
+namespace EFLoadingScreenPrivate
+{
+	/**
+	 * Waits until the given textures have been built for this machine. Null entries are skipped.
+	 *
+	 * An editor build (PIE and Standalone included) compresses a texture the first time a machine
+	 * uses it, on a worker thread, and draws a grey checkerboard in its place until that is done.
+	 * The loading screen is often the first thing to use its textures, so without this wait it
+	 * shows the checkerboard until the build ends, which for a large texture is the whole load.
+	 * A cooked build ships its textures already built, which is why this exists in editor builds only.
+	 */
+	void FinishTextureCompilation(TConstArrayView<UTexture*> Textures)
+	{
+		FTextureCompilingManager& TextureCompiler = FTextureCompilingManager::Get();
+
+		TArray<UTexture*> CompilingTextures;
+		for (UTexture* Texture : Textures)
+		{
+			if (Texture && TextureCompiler.IsCompilingTexture(Texture))
+			{
+				CompilingTextures.Add(Texture);
+			}
+		}
+
+		if (CompilingTextures.IsEmpty())
+		{
+			return;
+		}
+
+		// Logged before the wait as well as after it: a large texture can take a long time, and the
+		// window shows nothing until the wait ends.
+		UE_LOG(LogEFLoadingScreen, Log, TEXT("Loading screen: waiting for %d texture(s) to finish compiling, starting with '%s'. This happens once per machine for each version of a texture."),
+			CompilingTextures.Num(),
+			*CompilingTextures[0]->GetPathName());
+
+		const double StartSeconds = FPlatformTime::Seconds();
+		TextureCompiler.FinishCompilation(CompilingTextures);
+
+		UE_LOG(LogEFLoadingScreen, Log, TEXT("Loading screen: texture compilation finished after %.1f s."),
+			FPlatformTime::Seconds() - StartSeconds);
+	}
+}
+#endif
 
 void UEFLoadingScreenSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
@@ -74,6 +124,8 @@ void UEFLoadingScreenSubsystem::HideLoadingScreen()
 	ActiveBackgroundTexture.Reset();
 	ActiveLoadingTip = FText::GetEmpty();
 	bLoadingTipResolved = false;
+	ActiveLayerMaterials.Reset();
+	bMaterialLayersResolved = false;
 	bLoadingScreenRequested = false;
 }
 
@@ -184,6 +236,11 @@ void UEFLoadingScreenSubsystem::PrepareLoadingSession()
 	if (!ActiveBackgroundTexture.IsValid())
 	{
 		ActiveBackgroundTexture.Reset(ResolveLoadingScreenTexture());
+
+#if WITH_EDITOR
+		UTexture* BackgroundTextures[] = { ActiveBackgroundTexture.Get() };
+		EFLoadingScreenPrivate::FinishTextureCompilation(BackgroundTextures);
+#endif
 	}
 
 	// Same for the tip, so the MoviePlayer and viewport widgets never show two different lines.
@@ -192,13 +249,102 @@ void UEFLoadingScreenSubsystem::PrepareLoadingSession()
 		ActiveLoadingTip = ResolveLoadingTip();
 		bLoadingTipResolved = true;
 	}
+
+	// Loaded here, on the game thread and before the travel, because MoviePlayer draws the layers
+	// while the game thread is blocked inside the map load and could not load anything then.
+	if (!bMaterialLayersResolved)
+	{
+		ResolveMaterialLayers();
+		bMaterialLayersResolved = true;
+	}
 }
 
-TSharedRef<SWidget> UEFLoadingScreenSubsystem::CreateLoadingScreenWidget() const
+TSharedRef<SWidget> UEFLoadingScreenSubsystem::CreateLoadingScreenWidget(bool bForMoviePlayer) const
 {
+	if(WidgetFactory)
+	{
+		if(TSharedPtr<SWidget> Custom=WidgetFactory(ActiveBackgroundTexture.Get(),ActiveLoadingTip,bForMoviePlayer)) return Custom.ToSharedRef();
+	}
+	TArray<UMaterialInterface*> LayerMaterials;
+	LayerMaterials.Reserve(ActiveLayerMaterials.Num());
+	for (const TStrongObjectPtr<UMaterialInterface>& Material : ActiveLayerMaterials)
+	{
+		LayerMaterials.Add(Material.Get());
+	}
+
 	return SNew(SEFLoadingScreenWidget)
 		.BackgroundTexture(ActiveBackgroundTexture.Get())
-		.LoadingTip(ActiveLoadingTip);
+		.LoadingTip(ActiveLoadingTip)
+		.LayerMaterials(LayerMaterials);
+}
+
+void UEFLoadingScreenSubsystem::ResolveMaterialLayers()
+{
+	ActiveLayerMaterials.Reset();
+
+	const UEFLoadingScreenSettings* Settings = GetDefault<UEFLoadingScreenSettings>();
+	if (!Settings)
+	{
+		return;
+	}
+
+	// One entry per row, nulls included, so the widget can pair each material with its row's layout by index.
+	ActiveLayerMaterials.Reserve(Settings->MaterialLayers.Num());
+	for (int32 LayerIndex = 0; LayerIndex < Settings->MaterialLayers.Num(); ++LayerIndex)
+	{
+		const TSoftObjectPtr<UMaterialInterface>& MaterialRef = Settings->MaterialLayers[LayerIndex].Material;
+		UMaterialInterface* Material = MaterialRef.IsNull() ? nullptr : MaterialRef.LoadSynchronous();
+
+		if (!Material && !MaterialRef.IsNull())
+		{
+			UE_LOG(LogEFLoadingScreen, Warning, TEXT("Loading screen: MaterialLayers[%d] ('%s') failed to load; the layer is skipped."),
+				LayerIndex,
+				*MaterialRef.ToString());
+		}
+		else if (Material && !Material->IsUIMaterial())
+		{
+			// Slate only has shaders for User Interface materials; anything else draws as the default material, if at all.
+			UE_LOG(LogEFLoadingScreen, Warning, TEXT("Loading screen: MaterialLayers[%d] ('%s') is not a User Interface domain material, so Slate cannot draw it properly. Set its Material Domain to User Interface."),
+				LayerIndex,
+				*Material->GetPathName());
+		}
+
+		if (Material)
+		{
+			MakeMaterialTexturesResident(Material);
+		}
+
+		ActiveLayerMaterials.Emplace(Material);
+	}
+}
+
+void UEFLoadingScreenSubsystem::MakeMaterialTexturesResident(UMaterialInterface* Material)
+{
+	TArray<UTexture*> Textures;
+	Material->GetUsedTextures(Textures);
+
+#if WITH_EDITOR
+	// Before the streaming requests: a texture that is still compiling is not streamed at all.
+	EFLoadingScreenPrivate::FinishTextureCompilation(Textures);
+#endif
+
+	// Ask for every texture first and wait afterwards, so the streaming requests run side by side.
+	// 30 seconds matches the background image, which is forced resident the same way.
+	for (UTexture* Texture : Textures)
+	{
+		if (Texture)
+		{
+			Texture->SetForceMipLevelsToBeResident(30.0f);
+		}
+	}
+
+	for (UTexture* Texture : Textures)
+	{
+		if (Texture)
+		{
+			Texture->WaitForStreaming();
+		}
+	}
 }
 
 UTexture2D* UEFLoadingScreenSubsystem::ResolveLoadingScreenTexture() const
@@ -326,7 +472,7 @@ bool UEFLoadingScreenSubsystem::SetupMoviePlayerLoadingScreen()
 	}
 
 	FLoadingScreenAttributes LoadingScreenAttributes;
-	LoadingScreenAttributes.WidgetLoadingScreen = CreateLoadingScreenWidget();
+	LoadingScreenAttributes.WidgetLoadingScreen = CreateLoadingScreenWidget(true);
 	LoadingScreenAttributes.MinimumLoadingScreenDisplayTime = Settings ? Settings->MinimumLoadingScreenDisplayTime : -1.0f;
 	LoadingScreenAttributes.bAutoCompleteWhenLoadingCompletes = !bManualMoviePlayerStop && (!Settings || Settings->bAutoCompleteWhenLoadingCompletes);
 	LoadingScreenAttributes.bWaitForManualStop = bManualMoviePlayerStop;

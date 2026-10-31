@@ -50,6 +50,7 @@
 #include "XeFGBlueprintLibrary.h"
 #endif
 
+#include "Internationalization/StringTableRegistry.h"
 #include "EFUpscalerSettings.generated.h"
 
 
@@ -65,16 +66,16 @@ public:
 	UEFUpscalerSelectSetting()
 	{
 		SettingTag = FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.Upscaler"));
-		DisplayName = NSLOCTEXT("Settings", "Upscaler", "Upscaler");
+		DisplayName = LOCTABLE("ExtendedFramework", "Settings.Upscaler");
 		ConfigCategory = TEXT("Graphics");
 		DefaultValue = TEXT("");
 
 		Values.Add(TEXT("None"));
-		DisplayNames.Add(NSLOCTEXT("Settings", "UpscalerNone", "None"));
+		DisplayNames.Add(LOCTABLE("ExtendedFramework", "Common.None"));
 
 #if WITH_DLSS
 		Values.Add(TEXT("DLSS"));
-		DisplayNames.Add(NSLOCTEXT("Settings", "UpscalerDLSS", "NVIDIA DLSS"));
+		DisplayNames.Add(LOCTABLE("ExtendedFramework", "Settings.UpscalerDLSS"));
 		if (DefaultValue.IsEmpty())
 		{
 			DefaultValue = TEXT("DLSS");
@@ -83,7 +84,7 @@ public:
 
 #if WITH_FSR
 		Values.Add(TEXT("FSR"));
-		DisplayNames.Add(NSLOCTEXT("Settings", "UpscalerFSR", "AMD FSR"));
+		DisplayNames.Add(LOCTABLE("ExtendedFramework", "Settings.UpscalerFSR"));
 		if (DefaultValue.IsEmpty())
 		{
 			DefaultValue = TEXT("FSR");
@@ -92,7 +93,7 @@ public:
 
 #if WITH_XESS
 		Values.Add(TEXT("XeSS"));
-		DisplayNames.Add(NSLOCTEXT("Settings", "UpscalerXeSS", "Intel XeSS"));
+		DisplayNames.Add(LOCTABLE("ExtendedFramework", "Settings.UpscalerXeSS"));
 		if (DefaultValue.IsEmpty())
 		{
 			DefaultValue = TEXT("XeSS");
@@ -111,6 +112,12 @@ public:
 	virtual void Apply_Implementation() override;
 	virtual void SetValueFromString(const FString& Value) override;
 
+	/** An upscaler this machine cannot run is not offered (DLSS on AMD, XeSS without support). */
+	virtual bool IsOptionSupported(const FString& OptionValue) const override;
+
+	/** The first upscaler, in option order, that this machine supports. */
+	virtual FString ComputeDeviceDefault() const override;
+
 	/** Returns the currently selected upscaler key (DLSS/FSR/XeSS). Returns "None" on invalid index. */
 	UFUNCTION(BlueprintPure, Category = "Upscaler")
 	FString GetActiveUpscaler() const
@@ -123,11 +130,8 @@ public:
 	static bool IsUpscalerAvailable(const FString& UpscalerName);
 
 private:
-	static constexpr int32 AvailabilityRetryLimit = 20;
-	static constexpr float AvailabilityRetryDelaySeconds = 0.25f;
-
-	bool bAvailabilityRetryScheduled = false;
-	int32 AvailabilityRetryCount = 0;
+	/** Set while an Apply made before the vendor modules loaded is waiting for the PostEngineInit phase. */
+	FDelegateHandle UpscalerModulesLoadedHandle;
 };
 
 
@@ -143,7 +147,7 @@ public:
 	UEFUpscalerDLSSModeSetting()
 	{
 		SettingTag = FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.Upscaler.DLSS.Mode"));
-		DisplayName = NSLOCTEXT("Settings", "DLSSMode", "DLSS Mode");
+		DisplayName = LOCTABLE("ExtendedFramework", "Settings.DLSSMode");
 		ConfigCategory = TEXT("Graphics");
 		DefaultValue = TEXT("Auto");
 
@@ -159,19 +163,22 @@ public:
 		};
 
 		DisplayNames = {
-			NSLOCTEXT("Settings", "DLSSAuto", "Auto"),
-			NSLOCTEXT("Settings", "DLSSDLAA", "DLAA"),
-			NSLOCTEXT("Settings", "DLSSUltraQuality", "Ultra Quality"),
-			NSLOCTEXT("Settings", "DLSSQuality", "Quality"),
-			NSLOCTEXT("Settings", "DLSSBalanced", "Balanced"),
-			NSLOCTEXT("Settings", "DLSSPerformance", "Performance"),
-			NSLOCTEXT("Settings", "DLSSUltraPerf", "Ultra Performance")
+			LOCTABLE("ExtendedFramework", "Settings.DLSSAuto"),
+			LOCTABLE("ExtendedFramework", "Settings.DLSSDLAA"),
+			LOCTABLE("ExtendedFramework", "Common.UltraQuality"),
+			LOCTABLE("ExtendedFramework", "Common.Quality"),
+			LOCTABLE("ExtendedFramework", "Common.Balanced"),
+			LOCTABLE("ExtendedFramework", "Common.Performance"),
+			LOCTABLE("ExtendedFramework", "Common.UltraPerformance")
 		};
 
 		SelectedIndex = 0;
 	}
 
 	virtual void Apply_Implementation() override;
+
+	/** Hidden on a machine without DLSS. */
+	virtual bool IsSupportedOnThisMachine() const override;
 
 	/** Convert our index (0-based) to the vendor enum value (1-based for UDLSSMode). */
 	int32 GetDLSSModeValue() const { return SelectedIndex + 1; }
@@ -190,13 +197,16 @@ public:
 	UEFUpscalerDLSSRRSetting()
 	{
 		SettingTag = FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.Upscaler.DLSS.RayReconstruction"));
-		DisplayName = NSLOCTEXT("Settings", "DLSSRR", "DLSS Ray Reconstruction");
+		DisplayName = LOCTABLE("ExtendedFramework", "Settings.DLSSRR");
 		ConfigCategory = TEXT("Graphics");
 		DefaultValue = false;
 		Value = false;
 	}
 
 	virtual void Apply_Implementation() override;
+
+	/** Hidden on a machine without DLSS. This switch also turns DLSS itself on, so it stays while DLSS works. */
+	virtual bool IsSupportedOnThisMachine() const override;
 
 	UFUNCTION(BlueprintPure, Category = "DLSS")
 	static bool IsDLSSRayReconstructionAvailable();
@@ -215,7 +225,7 @@ public:
 	UEFUpscalerFSRModeSetting()
 	{
 		SettingTag = FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.Upscaler.FSR.Mode"));
-		DisplayName = NSLOCTEXT("Settings", "FSRMode", "FSR Mode");
+		DisplayName = LOCTABLE("ExtendedFramework", "Settings.FSRMode");
 		ConfigCategory = TEXT("Graphics");
 		DefaultValue = TEXT("Quality");
 
@@ -229,11 +239,11 @@ public:
 		};
 
 		DisplayNames = {
-			NSLOCTEXT("Settings", "FSRNativeAA", "Native AA"),
-			NSLOCTEXT("Settings", "FSRQuality", "Quality"),
-			NSLOCTEXT("Settings", "FSRBalanced", "Balanced"),
-			NSLOCTEXT("Settings", "FSRPerformance", "Performance"),
-			NSLOCTEXT("Settings", "FSRUltraPerf", "Ultra Performance")
+			LOCTABLE("ExtendedFramework", "Settings.FSRNativeAA"),
+			LOCTABLE("ExtendedFramework", "Common.Quality"),
+			LOCTABLE("ExtendedFramework", "Common.Balanced"),
+			LOCTABLE("ExtendedFramework", "Common.Performance"),
+			LOCTABLE("ExtendedFramework", "Common.UltraPerformance")
 		};
 
 		int32 DefaultIndex = Values.Find(DefaultValue);
@@ -241,6 +251,9 @@ public:
 	}
 
 	virtual void Apply_Implementation() override;
+
+	/** Hidden when the build has no FSR. */
+	virtual bool IsSupportedOnThisMachine() const override;
 };
 
 
@@ -256,7 +269,7 @@ public:
 	UEFUpscalerFSRSharpnessSetting()
 	{
 		SettingTag = FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.Upscaler.FSR.Sharpness"));
-		DisplayName = NSLOCTEXT("Settings", "FSRSharpness", "FSR Sharpness");
+		DisplayName = LOCTABLE("ExtendedFramework", "Settings.FSRSharpness");
 		ConfigCategory = TEXT("Graphics");
 		DefaultValue = 0.0f;
 		Value = 0.0f;
@@ -265,6 +278,9 @@ public:
 	}
 
 	virtual void Apply_Implementation() override;
+
+	/** Hidden when the build has no FSR. */
+	virtual bool IsSupportedOnThisMachine() const override;
 };
 
 
@@ -280,7 +296,7 @@ public:
 	UEFUpscalerXeSSQualityModeSetting()
 	{
 		SettingTag = FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.Upscaler.XeSS.QualityMode"));
-		DisplayName = NSLOCTEXT("Settings", "XeSSQualityMode", "XeSS Quality Mode");
+		DisplayName = LOCTABLE("ExtendedFramework", "Settings.XeSSQualityMode");
 		ConfigCategory = TEXT("Graphics");
 		DefaultValue = TEXT("Quality");
 
@@ -296,13 +312,13 @@ public:
 		};
 
 		DisplayNames = {
-			NSLOCTEXT("Settings", "XeSSUltraPerf", "Ultra Performance"),
-			NSLOCTEXT("Settings", "XeSSPerformance", "Performance"),
-			NSLOCTEXT("Settings", "XeSSBalanced", "Balanced"),
-			NSLOCTEXT("Settings", "XeSSQuality", "Quality"),
-			NSLOCTEXT("Settings", "XeSSUltraQuality", "Ultra Quality"),
-			NSLOCTEXT("Settings", "XeSSUltraQualityPlus", "Ultra Quality+"),
-			NSLOCTEXT("Settings", "XeSSAntiAliasing", "Anti-Aliasing")
+			LOCTABLE("ExtendedFramework", "Common.UltraPerformance"),
+			LOCTABLE("ExtendedFramework", "Common.Performance"),
+			LOCTABLE("ExtendedFramework", "Common.Balanced"),
+			LOCTABLE("ExtendedFramework", "Common.Quality"),
+			LOCTABLE("ExtendedFramework", "Common.UltraQuality"),
+			LOCTABLE("ExtendedFramework", "Settings.XeSSUltraQualityPlus"),
+			LOCTABLE("ExtendedFramework", "Settings.XeSSAntiAliasing")
 		};
 
 		int32 DefaultIndex = Values.Find(DefaultValue);
@@ -310,6 +326,9 @@ public:
 	}
 
 	virtual void Apply_Implementation() override;
+
+	/** Hidden on a machine without XeSS. */
+	virtual bool IsSupportedOnThisMachine() const override;
 
 	/** Convert our 0-based index to vendor enum value (1-based for EXeSSQualityMode). */
 	int32 GetXeSSQualityModeValue() const { return SelectedIndex + 1; }
@@ -328,13 +347,16 @@ public:
 	UEFUpscalerFrameGenSetting()
 	{
 		SettingTag = FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.Upscaler.FrameGeneration"));
-		DisplayName = NSLOCTEXT("Settings", "FrameGeneration", "Frame Generation");
+		DisplayName = LOCTABLE("ExtendedFramework", "Settings.FrameGeneration");
 		ConfigCategory = TEXT("Graphics");
 		DefaultValue = false;
 		Value = false;
 	}
 
 	virtual void Apply_Implementation() override;
+
+	/** Hidden when no upscaler on this machine can generate frames (FSR, or XeSS with XeFG). */
+	virtual bool IsSupportedOnThisMachine() const override;
 
 	/** Check if frame generation is supported with the currently active upscaler. */
 	UFUNCTION(BlueprintPure, Category = "FrameGen")
@@ -354,7 +376,7 @@ public:
 	UEFUpscalerResolutionScaleSetting()
 	{
 		SettingTag = FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.Upscaler.ResolutionScale"));
-		DisplayName = NSLOCTEXT("Settings", "ResolutionScale", "Resolution Scale");
+		DisplayName = LOCTABLE("ExtendedFramework", "Settings.ResolutionScale");
 		ConfigCategory = TEXT("Graphics");
 		DefaultValue = 100.0f;
 		Value = 100.0f;

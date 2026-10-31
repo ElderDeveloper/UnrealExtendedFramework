@@ -200,10 +200,12 @@ public:
 	bool IsLobbyOwner() const;
 
 	/** Kick a member from the lobby (owner only; EOS_Lobby_KickMember).
-	 *  OnLobbyMemberLeft broadcasts on SDK success.
-	 *  @return false if rejected (a kick for the same member is already in flight) or failed
-	 *  pre-flight (EOS unavailable / not in a lobby / not the owner / unparsable ids); no
-	 *  delegate fires for a false return. */
+	 *  OnLobbyMemberLeft broadcasts on SDK success. A lobby attribute/capacity/joinability update
+	 *  in flight does not block a kick.
+	 *  @return false if rejected (shutting down; a create/join/leave/promotion is in flight, reported
+	 *  through OnOperationRejected as Busy; or a kick for the same member is already in flight) or failed
+	 *  pre-flight (EOS unavailable / not in a lobby / not the owner / unparsable ids); OnLobbyMemberLeft
+	 *  never fires for a false return. */
 	UFUNCTION(BlueprintCallable, Category = "EOS|Lobbies")
 	bool KickMember(const FString& MemberId);
 
@@ -304,6 +306,8 @@ private:
 	FEEOSRequestContext UpdateContext;
 	FEEOSLobbyVisibilitySnapshot ConfirmedVisibility;
 	FString LastRemovedLobbyId;
+	/** A lobby we were removed from whose native session is being released; RefreshLobbyState never re-adopts it. */
+	FString ReleasedRemovedLobbyId;
 	FString LastRemovalReason;
 	bool bJoinTargetAuthorizedDetails = false;
 	bool CanDeliverLobbyNotification(FName SessionName, bool bAllowRemoval = false) const;

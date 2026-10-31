@@ -1078,6 +1078,12 @@ void UEEOSAuthSubsystem::HandleLoginComplete(int32 LocalUserNum, bool bWasSucces
 	const auto Local = NativeIdentityContext.Identity.IsValid() ? NativeIdentityContext.Identity->GetUniquePlayerId(0) : FUniqueNetIdPtr();
 	const bool bReady = bCurrent && bWasSuccessful && IsLoggedIn() && UserId.IsValid() && Local.IsValid() && *Local == UserId;
 	CurrentLoginStatus = IsLoggedIn() ? EEOSLoginStatus::LoggedIn : EEOSLoginStatus::Failed;
+	if (CurrentLoginStatus == EEOSLoginStatus::Failed)
+	{
+		// What the next TickNativeIdentity used to do when it moved Failed to NotLoggedIn. It now keeps Failed, so the
+		// Product User ID of an identity that is no longer signed in is dropped here instead.
+		CachedProductUserId.Empty(); bConnectedToGameServices = false;
+	}
 	const FString ResultMessage = !bCurrent ? TEXT("Original identity/platform retired.") : !Error.IsEmpty() ? Error : bReady ? TEXT("Native login completed.") : TEXT("Native login did not leave a usable identity.");
 	const auto Outcome = CompleteOperation(TEXT("Login"), bReady, !bCurrent ? EEOSOperationCode::Canceled : bReady ? EEOSOperationCode::Succeeded : bSubmissionRejected ? EEOSOperationCode::NativeStartRejected : EEOSOperationCode::NativeFailure,
 		ResultMessage, UserId.IsValid() ? UserId.ToString() : FString(), bSubmissionRejected ? FString() : bWasSuccessful ? TEXT("Success") : TEXT("Failure"),
@@ -1197,7 +1203,11 @@ bool UEEOSAuthSubsystem::TickNativeIdentity(float)
 	}
 	if (IdentityLease.IsValid() || ConnectLease.IsValid()) return true;
 	const auto Status = IsLoggedIn() ? EEOSLoginStatus::LoggedIn : EEOSLoginStatus::NotLoggedIn;
-	if (CurrentLoginStatus != Status)
+	// A failed login leaves the native identity where it was (HandleLoginComplete sets Failed only
+	// while it is not logged in). Failed is that attempt's terminal answer: keep it until the native
+	// state actually moves, or this tick would overwrite it and broadcast a second change 0.5 s later.
+	const bool bKeepTerminalFailure = CurrentLoginStatus == EEOSLoginStatus::Failed && Status == EEOSLoginStatus::NotLoggedIn;
+	if (CurrentLoginStatus != Status && !bKeepTerminalFailure)
 	{
 		CurrentLoginStatus = Status;
 		if (Status == EEOSLoginStatus::NotLoggedIn) { CachedProductUserId.Empty(); bConnectedToGameServices = false; }

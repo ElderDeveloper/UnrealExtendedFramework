@@ -210,7 +210,15 @@ public:
 
   // Try to apply pending loaded values to settings that now exist.
   // Called after settings are created via replication or template instantiation.
+  // A value its setting cannot take yet (UEFModularSettingsBase::CanApplyLoadedValue)
+  // stays pending, and is still what SavePlayerSettings writes for that tag.
   void TryApplyPendingValues();
+
+  // Schedules TryApplyPendingValues for the next tick when values are still pending.
+  // Called when a setting's locks change. Deferred rather than inline: on a client the
+  // lock change is forwarded to the server only after it has been announced locally,
+  // and a value sent now would reach the server ahead of the unlock that makes it valid.
+  void RetryPendingLoadedValuesNextTick();
 
 protected:
   UFUNCTION(Server, Reliable, WithValidation)
@@ -254,9 +262,15 @@ private:
   // ---- Load state machine ----
   EPlayerSettingsLoadState LoadState = EPlayerSettingsLoadState::WaitingForOwner;
 
-  // Values loaded from disk, waiting to be applied once their settings exist.
-  // Entries are removed as they are successfully applied.
+  // Values loaded from disk, waiting to be applied once their settings exist and
+  // can take them. Entries are removed as they are applied, or when the player
+  // makes their own choice for that setting.
   TMap<FGameplayTag, FString> PendingLoadedValues;
+
+  // Drops a pending loaded value because the player chose something themselves.
+  void DropPendingLoadedValue(FGameplayTag Tag);
+
+  bool bPendingRetryScheduled = false;
 
   // Timer for retrying IsLocalPlayerComponent() when PlayerState isn't ready yet.
   FTimerHandle OwnerRetryTimer;

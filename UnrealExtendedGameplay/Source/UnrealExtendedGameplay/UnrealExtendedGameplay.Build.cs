@@ -57,7 +57,8 @@ public class UnrealExtendedGameplay : ModuleRules
 				"EngineSettings",
 				"Slate",
 				"SlateCore",
-				"UnrealExtendedFramework"
+				"UnrealExtendedFramework",
+				"ProceduralMeshComponent"
 				// ... add private dependencies that you statically link with here ...	
 			}
 			);

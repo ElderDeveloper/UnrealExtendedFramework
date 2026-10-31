@@ -8,6 +8,7 @@
 #include "Engine/GameViewportClient.h"
 #include "GameFramework/GameUserSettings.h"
 #include "UnrealExtendedFramework/ModularSettings/EFModularSettingsSubsystem.h"
+#include "Internationalization/StringTableRegistry.h"
 #include "EFDisplaySettings.generated.h"
 
 // Display Mode Setting (formerly Fullscreen)
@@ -20,7 +21,7 @@ public:
 	UEFDisplayModeSetting()
 	{
 		SettingTag = FGameplayTag::RequestGameplayTag(TEXT("Settings.Display.DisplayMode"));
-		DisplayName = NSLOCTEXT("Settings", "DisplayMode", "Display Mode");
+		DisplayName = LOCTABLE("ExtendedFramework", "Settings.DisplayMode");
 		ConfigCategory = TEXT("Display");
 		DefaultValue = TEXT("Windowed");
 
@@ -31,9 +32,9 @@ public:
 		};
 
 		DisplayNames = {
-			NSLOCTEXT("Settings", "Windowed", "Windowed"),
-			NSLOCTEXT("Settings", "Borderless", "Borderless Window"),
-			NSLOCTEXT("Settings", "Fullscreen", "Fullscreen")
+			LOCTABLE("ExtendedFramework", "Settings.Windowed"),
+			LOCTABLE("ExtendedFramework", "Settings.Borderless"),
+			LOCTABLE("ExtendedFramework", "Settings.Fullscreen")
 		};
 
 		int32 DefaultIndex = Values.Find(DefaultValue);
@@ -212,7 +213,7 @@ public:
 	UEFDisplayMonitorSetting()
 	{
 		SettingTag = FGameplayTag::RequestGameplayTag(TEXT("Settings.Display.DisplayMonitor"));
-		DisplayName = NSLOCTEXT("Settings", "DisplayMonitor", "Display Monitor");
+		DisplayName = LOCTABLE("ExtendedFramework", "Settings.DisplayMonitor");
 		ConfigCategory = TEXT("Display");
 		DefaultValue = TEXT("Primary");
 		
@@ -224,10 +225,10 @@ public:
 		};
 		
 		DisplayNames = {
-			NSLOCTEXT("Settings", "DisplayPrimary", "Primary Monitor"),
-			NSLOCTEXT("Settings", "DisplaySecondary", "Secondary Monitor"),
-			NSLOCTEXT("Settings", "DisplayExtended", "Extended Display"),
-			NSLOCTEXT("Settings", "DisplayMirrored", "Mirrored Display")
+			LOCTABLE("ExtendedFramework", "Settings.DisplayPrimary"),
+			LOCTABLE("ExtendedFramework", "Settings.DisplaySecondary"),
+			LOCTABLE("ExtendedFramework", "Settings.DisplayExtended"),
+			LOCTABLE("ExtendedFramework", "Settings.DisplayMirrored")
 		};
 		
 		int32 DefaultIndex = Values.Find(DefaultValue);
@@ -257,7 +258,7 @@ public:
 	UEFBrightnessSetting()
 	{
 		SettingTag = FGameplayTag::RequestGameplayTag(TEXT("Settings.Display.Brightness"));
-		DisplayName = NSLOCTEXT("Settings", "Brightness", "Brightness");
+		DisplayName = LOCTABLE("ExtendedFramework", "Settings.Brightness");
 		ConfigCategory = TEXT("Display");
 		DefaultValue = 1.0f;
 		
@@ -292,7 +293,7 @@ public:
 	UEFContrastSetting()
 	{
 		SettingTag = FGameplayTag::RequestGameplayTag(TEXT("Settings.Display.Contrast"));
-		DisplayName = NSLOCTEXT("Settings", "Contrast", "Contrast");
+		DisplayName = LOCTABLE("ExtendedFramework", "Settings.Contrast");
 		ConfigCategory = TEXT("Display");
 		DefaultValue = 1.0f;
 		
@@ -324,7 +325,7 @@ public:
 	UEFSaturationSetting()
 	{
 		SettingTag = FGameplayTag::RequestGameplayTag(TEXT("Settings.Display.Saturation"));
-		DisplayName = NSLOCTEXT("Settings", "Saturation", "Saturation");
+		DisplayName = LOCTABLE("ExtendedFramework", "Settings.Saturation");
 		ConfigCategory = TEXT("Display");
 		DefaultValue = 1.0f;
 		
@@ -356,28 +357,86 @@ public:
 	UEFFrameRateLimitSetting()
 	{
 		SettingTag = FGameplayTag::RequestGameplayTag(TEXT("Settings.Display.FrameRateLimit"));
-		DisplayName = NSLOCTEXT("Settings", "FrameRateLimit", "Frame Rate Limit");
+		DisplayName = LOCTABLE("ExtendedFramework", "Settings.FrameRateLimit");
 		ConfigCategory = TEXT("Display");
 		DefaultValue = TEXT("Unlimited");
 		
-		Values = { 
-			TEXT("30"), 
-			TEXT("60"), 
-			TEXT("120"),
-			TEXT("144"),
-			TEXT("Unlimited")
-		};
-		
-		DisplayNames = {
-			NSLOCTEXT("Settings", "FPS30", "30 FPS"),
-			NSLOCTEXT("Settings", "FPS60", "60 FPS"),
-			NSLOCTEXT("Settings", "FPS120", "120 FPS"),
-			NSLOCTEXT("Settings", "FPS144", "144 FPS"),
-			NSLOCTEXT("Settings", "FPSUnlimited", "Unlimited")
-		};
+		// 40 and 45 are handheld caps (a 40 Hz or 90 Hz screen); device rules decide where they are offered.
+		for (const int32 Cap : GetStandardCaps())
+		{
+			Values.Add(FString::FromInt(Cap));
+			DisplayNames.Add(GetCapDisplayName(Cap));
+		}
+		Values.Add(TEXT("Unlimited"));
+		DisplayNames.Add(LOCTABLE("ExtendedFramework", "Settings.FPSUnlimited"));
 		
 		int32 DefaultIndex = Values.Find(DefaultValue);
 		SelectedIndex = DefaultIndex != INDEX_NONE ? DefaultIndex : 0;
+	}
+
+	/**
+	 * A container asset saves its own copy of the option list, so caps added to the class later would
+	 * never reach it. Missing standard caps are merged in, in ascending order, before "Unlimited".
+	 */
+	virtual void OnRegistered() override
+	{
+		Super::OnRegistered();
+
+		const FString Selected = GetValueAsString();
+		bool bChanged = false;
+		for (const int32 Cap : GetStandardCaps())
+		{
+			const FString CapValue = FString::FromInt(Cap);
+			if (Values.Contains(CapValue))
+			{
+				continue;
+			}
+
+			// Before the first numeric option that is larger, else before the first non-numeric one.
+			int32 InsertAt = Values.Num();
+			for (int32 Index = 0; Index < Values.Num(); ++Index)
+			{
+				if (!Values[Index].IsNumeric() || FCString::Atoi(*Values[Index]) > Cap)
+				{
+					InsertAt = Index;
+					break;
+				}
+			}
+
+			Values.Insert(CapValue, InsertAt);
+			if (DisplayNames.Num() >= InsertAt)
+			{
+				DisplayNames.Insert(GetCapDisplayName(Cap), InsertAt);
+			}
+			bChanged = true;
+		}
+
+		if (bChanged)
+		{
+			const int32 SelectedAgain = Values.Find(Selected);
+			SelectedIndex = SelectedAgain != INDEX_NONE ? SelectedAgain : FMath::Max(0, Values.Find(DefaultValue));
+		}
+	}
+
+	static const TArray<int32>& GetStandardCaps()
+	{
+		static const TArray<int32> Caps = { 30, 40, 45, 60, 90, 120, 144 };
+		return Caps;
+	}
+
+	static FText GetCapDisplayName(int32 Cap)
+	{
+		switch (Cap)
+		{
+		case 30: return LOCTABLE("ExtendedFramework", "Settings.FPS30");
+		case 40: return LOCTABLE("ExtendedFramework", "Settings.FPS40");
+		case 45: return LOCTABLE("ExtendedFramework", "Settings.FPS45");
+		case 60: return LOCTABLE("ExtendedFramework", "Settings.FPS60");
+		case 90: return LOCTABLE("ExtendedFramework", "Settings.FPS90");
+		case 120: return LOCTABLE("ExtendedFramework", "Settings.FPS120");
+		case 144: return LOCTABLE("ExtendedFramework", "Settings.FPS144");
+		default: return FText::AsNumber(Cap);
+		}
 	}
 	
 	virtual void Apply_Implementation() override
@@ -414,7 +473,7 @@ public:
 	UEFAntiAliasingTypeSetting()
 	{
 		SettingTag = FGameplayTag::RequestGameplayTag(TEXT("Settings.Display.AntiAliasingType"));
-		DisplayName = NSLOCTEXT("Settings", "AntiAliasingType", "Anti-Aliasing Method");
+		DisplayName = LOCTABLE("ExtendedFramework", "Settings.AntiAliasingType");
 		ConfigCategory = TEXT("Display");
 		DefaultValue = TEXT("TSR");
 		
@@ -429,12 +488,12 @@ public:
 		};
 		
 		DisplayNames = {
-			NSLOCTEXT("Settings", "AANone", "None"),
-			NSLOCTEXT("Settings", "AAFXAA", "FXAA"),
-			NSLOCTEXT("Settings", "AATAA", "TAA"),
-			NSLOCTEXT("Settings", "AAMSAA", "MSAA"),
-			NSLOCTEXT("Settings", "AATSR", "TSR"),
-			NSLOCTEXT("Settings", "AASMAA", "SMAA")
+			LOCTABLE("ExtendedFramework", "Common.None"),
+			LOCTABLE("ExtendedFramework", "Settings.AAFXAA"),
+			LOCTABLE("ExtendedFramework", "Settings.AATAA"),
+			LOCTABLE("ExtendedFramework", "Settings.AAMSAA"),
+			LOCTABLE("ExtendedFramework", "Settings.AATSR"),
+			LOCTABLE("ExtendedFramework", "Settings.AASMAA")
 		};
 		
 		int32 DefaultIndex = Values.Find(DefaultValue);

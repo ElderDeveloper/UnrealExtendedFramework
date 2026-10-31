@@ -37,6 +37,14 @@
 #include "UnrealExtendedGameplay/Systems/Minigames/Chess/Table/EGChessTableActor.h"
 #include "UnrealExtendedGameplay/Systems/Minigames/Chess/UI/EGChessWidgetBase.h"
 
+namespace EGChessPlayerComponentPrivate
+{
+	/** The pointer goes to the server at most this often while the hand is up (20 Hz)... */
+	constexpr double HandPointerSendInterval = 0.05;
+	/** ...and only once it has moved this far (cm), so a still mouse sends nothing. */
+	constexpr float HandPointerSendDistance = 0.3f;
+}
+
 UEGChessPlayerComponent::UEGChessPlayerComponent()
 {
 	PrimaryComponentTick.bCanEverTick = true;
@@ -145,7 +153,7 @@ bool UEGChessPlayerComponent::CanTakeback() const
 
 bool UEGChessPlayerComponent::CanToggleView() const
 {
-	return ActiveTable && ActiveTable->GetMatchRulesRef().bAllowViewToggle;
+	return ActiveTable && ActiveTable->GetMatchRulesRef().bAllowViewToggle && !UsesFixedCamera();
 }
 
 bool UEGChessPlayerComponent::CanPlayVersusAI() const
@@ -182,6 +190,8 @@ void UEGChessPlayerComponent::SetActiveTable(AEGChessTableActor* Table, EEGChess
 
 void UEGChessPlayerComponent::ServerLeaveSeat_Implementation() { if (ActiveTable) { ActiveTable->HandleLeaveSeat(GetPlayerController()); } }
 void UEGChessPlayerComponent::ServerSubmitMove_Implementation(const FEGChessMove& Move) { if (ActiveTable) { ActiveTable->HandleSubmitMove(GetPlayerController(), Move); } }
+void UEGChessPlayerComponent::ServerSetHandIntent_Implementation(const FEGChessHandIntent& Intent) { if (ActiveTable) { ActiveTable->HandleSetHandIntent(GetPlayerController(), Intent); } }
+void UEGChessPlayerComponent::ServerSetHandPointer_Implementation(FVector_NetQuantize10 Pointer) { if (ActiveTable) { ActiveTable->HandleSetHandPointer(GetPlayerController(), Pointer); } }
 void UEGChessPlayerComponent::ServerResign_Implementation() { if (ActiveTable) { ActiveTable->HandleResign(GetPlayerController()); } }
 void UEGChessPlayerComponent::ServerOfferDraw_Implementation() { if (ActiveTable) { ActiveTable->HandleOfferDraw(GetPlayerController()); } }
 void UEGChessPlayerComponent::ServerRespondDraw_Implementation(bool bAccept) { if (ActiveTable) { ActiveTable->HandleRespondDraw(GetPlayerController(), bAccept); } }
@@ -232,7 +242,12 @@ void UEGChessPlayerComponent::EnterBoardMode(AEGChessTableActor* Table)
 	Controller->SetIgnoreMoveInput(true);
 	Controller->SetIgnoreLookInput(true);
 
-	if (!bViewChosenThisSession)
+	if (UsesFixedCamera())
+	{
+		// The fixed camera is the seat's board camera; the head-following view would move it.
+		CurrentView = EEGChessView::Elevated;
+	}
+	else if (!bViewChosenThisSession)
 	{
 		CurrentView = Table->GetMatchRulesRef().DefaultView;
 	}
@@ -252,6 +267,10 @@ void UEGChessPlayerComponent::EnterBoardMode(AEGChessTableActor* Table)
 	SelectedSquare = INDEX_NONE;
 	SelectedMoves.Reset();
 	bAwaitingServer = false;
+	SentFromSquare = INDEX_NONE;
+	LocalHandIntent = FEGChessHandIntent();
+	SentHandIntent = FEGChessHandIntent();
+	LastHandPointerSendTime = -1.0;
 	bLowTimeWarned = false;
 	LastSeenPly = Table->GetMoveHistoryRef().Num();
 	LastSeenPhase = Table->GetPhase();
@@ -301,6 +320,7 @@ void UEGChessPlayerComponent::ExitBoardMode()
 	ApplyBoardInputMode(false);
 	SetWorldInteractionBlocked(false);
 	SetCentreDotVisible(false);
+	SetCameraFollowsPawnMesh(false);
 
 	if (Controller)
 	{
@@ -333,6 +353,16 @@ void UEGChessPlayerComponent::ExitBoardMode()
 	CursorSquare = INDEX_NONE;
 	PendingPromotionFrom = PendingPromotionTo = INDEX_NONE;
 	CursorAxis = FVector2D::ZeroVector;
+	bCarryActive = false;
+	bSelectedByHeldPress = false;
+	SentToSquare = INDEX_NONE;
+	SentFromSquare = INDEX_NONE;
+	LocalHandIntent = FEGChessHandIntent();
+	if (!SentHandIntent.HasSameState(LocalHandIntent))
+	{
+		ServerSetHandIntent(LocalHandIntent);
+	}
+	SentHandIntent = LocalHandIntent;
 	SetComponentTickEnabled(false);
 }
 
@@ -342,12 +372,14 @@ void UEGChessPlayerComponent::ExitBoardMode()
 
 void UEGChessPlayerComponent::BuildDefaultInput()
 {
-	const bool bViewCentre = UsesViewCentreAim();
-	if (DefaultMappingContext && bDefaultInputForViewCentre == bViewCentre)
+	const EEGChessAimMode AimMode = GetLookSettings()->AimMode;
+	if (DefaultMappingContext && DefaultInputAimMode == AimMode)
 	{
 		return;
 	}
-	bDefaultInputForViewCentre = bViewCentre;
+	DefaultInputAimMode = AimMode;
+	const bool bViewCentre = AimMode == EEGChessAimMode::ViewCentre;
+	const bool bFixed = AimMode == EEGChessAimMode::FixedCursor;
 
 	auto MakeAction = [this](EInputActionValueType Type)
 	{
@@ -407,9 +439,9 @@ void UEGChessPlayerComponent::BuildDefaultInput()
 	}
 
 	const UEGChessInputConfig* Look = GetLookSettings();
-	if (bViewCentre)
+	if (bViewCentre || bFixed)
 	{
-		// No cursor: the mouse always turns the camera, and right mouse is a plain cancel.
+		// No look drag to share it with: right mouse is a plain cancel.
 		Context->MapKey(DefaultCancelAction, EKeys::RightMouseButton);
 	}
 	else
@@ -419,6 +451,8 @@ void UEGChessPlayerComponent::BuildDefaultInput()
 		Tap.Triggers.Add(NewObject<UInputTriggerTap>(Context));
 		Context->MapKey(DefaultLookHoldAction, EKeys::RightMouseButton);
 	}
+	// The fixed camera has no look at all, from the mouse or the stick.
+	if (!bFixed)
 	{
 		FEnhancedActionKeyMapping& Mouse = Context->MapKey(DefaultLookAction, EKeys::Mouse2D);
 		if (!bViewCentre)
@@ -431,6 +465,7 @@ void UEGChessPlayerComponent::BuildDefaultInput()
 		Scale->Scalar = FVector(Look->MouseLookDegreesPerUnit, Look->MouseLookDegreesPerUnit, 1.0);
 		Mouse.Modifiers.Add(Scale);
 	}
+	if (!bFixed)
 	{
 		FEnhancedActionKeyMapping& Stick = Context->MapKey(DefaultLookAction, EKeys::Gamepad_Right2D);
 		Stick.Modifiers.Add(NewObject<UInputModifierDeadZone>(Context));
@@ -465,6 +500,29 @@ UInputMappingContext* UEGChessPlayerComponent::GetActiveMappingContext() const
 	return (Config && Config->MappingContext) ? Config->MappingContext.Get() : DefaultMappingContext.Get();
 }
 
+UInputAction* UEGChessPlayerComponent::GetControlAction(const EControl Control) const
+{
+	// The same choice BindInput makes, so a hint never names an action nothing is bound to.
+	const AEGChessTableActor* Table = BoardTable.Get();
+	const UEGChessInputConfig* Config = Table ? Table->GetInputConfig() : nullptr;
+	const bool bUseConfig = Config && Config->MappingContext;
+	auto Pick = [&](UInputAction* Configured, UInputAction* Default)
+	{
+		return bUseConfig ? Configured : ResolveAction(Configured, Default);
+	};
+
+	switch (Control)
+	{
+	case EControl::Select:      return Pick(Config ? Config->Select.Get() : nullptr, DefaultSelectAction);
+	case EControl::Cancel:      return Pick(Config ? Config->Cancel.Get() : nullptr, DefaultCancelAction);
+	case EControl::CancelMouse: return bUseConfig ? nullptr : DefaultCancelMouseAction.Get();
+	case EControl::ToggleView:  return Pick(Config ? Config->ToggleView.Get() : nullptr, DefaultToggleViewAction);
+	case EControl::Menu:        return Pick(Config ? Config->Menu.Get() : nullptr, DefaultMenuAction);
+	case EControl::Leave:       return Pick(Config ? Config->Leave.Get() : nullptr, DefaultLeaveAction);
+	}
+	return nullptr;
+}
+
 void UEGChessPlayerComponent::BindInput()
 {
 	UnbindInput();
@@ -493,6 +551,7 @@ void UEGChessPlayerComponent::BindInput()
 	if (UInputAction* Action = Pick(Config ? Config->Select.Get() : nullptr, DefaultSelectAction))
 	{
 		BindingHandles.Add(Input->BindAction(Action, ETriggerEvent::Started, this, &UEGChessPlayerComponent::HandleSelectAction).GetHandle());
+		BindingHandles.Add(Input->BindAction(Action, ETriggerEvent::Completed, this, &UEGChessPlayerComponent::HandleSelectReleased).GetHandle());
 	}
 	if (UInputAction* Action = Pick(Config ? Config->Cancel.Get() : nullptr, DefaultCancelAction))
 	{
@@ -565,14 +624,18 @@ void UEGChessPlayerComponent::ApplyBoardInputMode_Implementation(bool bSeated)
 		}
 		Controller->SetShowMouseCursor(true);
 		FInputModeGameAndUI Mode;
-		Mode.SetHideCursorDuringCapture(true);
+		// A click never blinks the cursor, and a piece dragged with the left button keeps it in sight.
+		Mode.SetHideCursorDuringCapture(false);
 		Mode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
 		Controller->SetInputMode(Mode);
-		// Mouse movement only reaches input while the viewport holds the capture, so capture exactly
-		// while the right button is down: that is the look drag, and left clicks stay plain clicks.
+		// Capture during any press: a game viewport hands a mouse press to input only when it captures
+		// (FSceneViewport::OnMouseButtonDown), so capturing for the right button alone dropped every
+		// plain left press and only a double click (IE_DoubleClick counts as a press) selected. Mouse
+		// movement reaches input only under capture too; the look still needs the right button held,
+		// which the default mapping chords.
 		if (UGameViewportClient* Viewport = Controller->GetLocalPlayer() ? Controller->GetLocalPlayer()->ViewportClient.Get() : nullptr)
 		{
-			Viewport->SetMouseCaptureMode(EMouseCaptureMode::CaptureDuringRightMouseDown);
+			Viewport->SetMouseCaptureMode(EMouseCaptureMode::CaptureDuringMouseDown);
 		}
 	}
 	else
@@ -609,7 +672,35 @@ void UEGChessPlayerComponent::HandleSelectAction(const FInputActionValue& Value)
 		LastAimSquare = -2;
 		UpdateMouseCursor();
 	}
+	const int32 Before = SelectedSquare;
 	ConfirmAt(CursorSquare);
+	bSelectedByHeldPress = EGChess::IsValidSquare(SelectedSquare) && SelectedSquare != Before;
+}
+
+void UEGChessPlayerComponent::HandleSelectReleased(const FInputActionValue& Value)
+{
+	const bool bPickedByThisPress = bSelectedByHeldPress;
+	bSelectedByHeldPress = false;
+	const UEGChessInputConfig* Settings = GetLookSettings();
+	// A hand picks a piece up on one click and sets it down on the next; it is never dragged.
+	if (!bPickedByThisPress || IsBoardInputBlocked() || bAwaitingServer || !Settings->bCarrySelectedPiece || !Settings->bDropOnRelease
+		|| !EGChess::IsValidSquare(SelectedSquare) || UsesHandCarry())
+	{
+		return;
+	}
+	if (bMouseDriving)
+	{
+		LastMousePosition = FVector2D(-1.0, -1.0);
+		LastAimSquare = -2;
+		UpdateMouseCursor();
+	}
+	// Released where it was picked up: it stays carried and the next click places it. Released over
+	// a legal square: that is a drag, so place it. Anywhere else it stays carried too.
+	const int32 Square = CursorSquare;
+	if (Square != SelectedSquare && SelectedMoves.ContainsByPredicate([Square](const FEGChessMove& Move) { return Move.To == Square; }))
+	{
+		ConfirmAt(Square);
+	}
 }
 
 void UEGChessPlayerComponent::HandleCancelAction(const FInputActionValue& Value)
@@ -634,6 +725,10 @@ void UEGChessPlayerComponent::HandleCancelAction(const FInputActionValue& Value)
 
 void UEGChessPlayerComponent::HandleLookAction(const FInputActionValue& Value)
 {
+	if (UsesFixedCamera())
+	{
+		return; // an authored mapping may still carry a look action
+	}
 	const UEGChessInputConfig* Look = GetLookSettings();
 	const FVector2D Delta = AdjustLookInput(Value.Get<FVector2D>());
 	LookYaw = FMath::Clamp(LookYaw + static_cast<float>(Delta.X), -Look->MaxLookYaw, Look->MaxLookYaw);
@@ -650,6 +745,11 @@ const UEGChessInputConfig* UEGChessPlayerComponent::GetLookSettings() const
 bool UEGChessPlayerComponent::UsesViewCentreAim() const
 {
 	return GetLookSettings()->AimMode == EEGChessAimMode::ViewCentre;
+}
+
+bool UEGChessPlayerComponent::UsesFixedCamera() const
+{
+	return GetLookSettings()->AimMode == EEGChessAimMode::FixedCursor;
 }
 
 FQuat UEGChessPlayerComponent::ApplyLookOffset(const FQuat& ViewRotation) const
@@ -759,6 +859,8 @@ void UEGChessPlayerComponent::TickComponent(float DeltaTime, ELevelTick TickType
 		}
 	}
 
+	UpdateHandIntent();
+	UpdateCarry(DeltaTime);
 	UpdateBoardCamera(DeltaTime);
 }
 
@@ -855,6 +957,184 @@ int32 UEGChessPlayerComponent::ResolvePickedSquare(const FVector& Origin, const 
 		}
 	}
 	return PieceSquare != INDEX_NONE ? PieceSquare : PlaneSquare;
+}
+
+bool UEGChessPlayerComponent::GetAimRay(FVector& OutOrigin, FVector& OutDirection) const
+{
+	const APlayerController* Controller = GetPlayerController();
+	if (!Controller)
+	{
+		return false;
+	}
+	if (UsesViewCentreAim())
+	{
+		if (!Controller->PlayerCameraManager)
+		{
+			return false;
+		}
+		OutOrigin = Controller->PlayerCameraManager->GetCameraLocation();
+		OutDirection = Controller->PlayerCameraManager->GetCameraRotation().Vector();
+		return true;
+	}
+	float X = 0.0f;
+	float Y = 0.0f;
+	return Controller->GetMousePosition(X, Y) && Controller->DeprojectScreenPositionToWorld(X, Y, OutOrigin, OutDirection);
+}
+
+void UEGChessPlayerComponent::UpdateCarry(float DeltaTime)
+{
+	AEGChessTableActor* Table = BoardTable.Get();
+	const UEGChessInputConfig* Settings = GetLookSettings();
+	// Same conditions under which the selection is shown at all (RefreshLocalPresentation).
+	// With a live hand the character's own hand carries the piece (UEGChessPieceVisuals).
+	const bool bWanted = Table && Table->IsVisualContentReady() && Settings->bCarrySelectedPiece
+		&& EGChess::IsValidSquare(SelectedSquare)
+		&& Table->GetPhase() == EEGChessPhase::Playing && !FeedbackOptions.bHardcore
+		&& !UsesHandCarry();
+	if (!bWanted)
+	{
+		if (bCarryActive && Table)
+		{
+			Table->PieceVisuals->SetCarry(false);
+		}
+		bCarryActive = false;
+		return;
+	}
+
+	const FEGChessBoardGeometry Geometry = Table->GetBoardGeometry();
+	if (!bCarryActive || CarrySquare != SelectedSquare)
+	{
+		// Picked up from its own square, then it travels.
+		CarryLocal = Geometry.SquareToLocal(SelectedSquare);
+		CarrySquare = SelectedSquare;
+		bCarryActive = true;
+	}
+
+	FVector Target = CarryLocal;
+	if (bAwaitingServer && EGChess::IsValidSquare(SentToSquare))
+	{
+		// Placed: it waits over its destination until the move lands.
+		Target = Geometry.SquareToLocal(SentToSquare);
+	}
+	else if (EGChess::IsValidSquare(PendingPromotionTo))
+	{
+		Target = Geometry.SquareToLocal(PendingPromotionTo);
+	}
+	else
+	{
+		// The pointer, or on keyboard or pad the square cursor.
+		GetPointerOnBoard(Target);
+	}
+
+	CarryLocal = Settings->CarryFollowSpeed > 0.0f ? FMath::VInterpTo(CarryLocal, Target, DeltaTime, Settings->CarryFollowSpeed) : Target;
+	Table->PieceVisuals->SetCarry(true, CarryLocal);
+}
+
+bool UEGChessPlayerComponent::GetPointerOnBoard(FVector& OutLocal) const
+{
+	const AEGChessTableActor* Table = BoardTable.Get();
+	if (!Table)
+	{
+		return false;
+	}
+	const FEGChessBoardGeometry Geometry = Table->GetBoardGeometry();
+	if (!bMouseDriving)
+	{
+		// Keyboard or pad: the square cursor.
+		if (!EGChess::IsValidSquare(CursorSquare))
+		{
+			return false;
+		}
+		OutLocal = Geometry.SquareToLocal(CursorSquare);
+		OutLocal.Z = 0.0f;
+		return true;
+	}
+	FVector Origin;
+	FVector Direction;
+	if (!GetAimRay(Origin, Direction))
+	{
+		return false;
+	}
+	const FVector LocalOrigin = Geometry.SurfaceToWorld.InverseTransformPosition(Origin);
+	const FVector LocalDir = Geometry.SurfaceToWorld.InverseTransformVector(Direction);
+	if (LocalDir.Z >= -UE_KINDA_SMALL_NUMBER)
+	{
+		return false;
+	}
+	const FVector Hit = LocalOrigin + LocalDir * (-LocalOrigin.Z / LocalDir.Z);
+	// Square centres run 0..7 squares; keep the pointer over the playing area.
+	const float Min = -0.5f * Geometry.SquareSize;
+	const float Max = 7.5f * Geometry.SquareSize;
+	OutLocal = FVector(FMath::Clamp(Hit.X, Min, Max), FMath::Clamp(Hit.Y, Min, Max), 0.0f);
+	return true;
+}
+
+bool UEGChessPlayerComponent::UsesHandCarry() const
+{
+	const AEGChessTableActor* Table = BoardTable.Get();
+	return Table && Table->UsesLiveHand(ActiveSeat);
+}
+
+void UEGChessPlayerComponent::UpdateHandIntent()
+{
+	AEGChessTableActor* Table = BoardTable.Get();
+	FEGChessHandIntent Intent;
+	Intent.Pointer = LocalHandIntent.Pointer;
+	if (Table && Table->IsVisualContentReady() && UsesHandCarry())
+	{
+		// The turn as the board shows it, not as it replicated: a hand setting a piece down keeps it
+		// until that move has been shown, even when the new position arrives first.
+		const bool bPresentedTurn = Table->PieceVisuals->GetPresentedSideToMove() == GetLocalColor();
+		Intent.bRaised = bPresentedTurn && (Table->GetPhase() == EEGChessPhase::Playing || bAwaitingServer);
+		if (Intent.bRaised)
+		{
+			FVector Pointer;
+			if (GetPointerOnBoard(Pointer))
+			{
+				Intent.Pointer = Pointer;
+			}
+			else if (!LocalHandIntent.bRaised && EGChess::IsValidSquare(CursorSquare))
+			{
+				// Rising while the pointer is off the board: over the square cursor.
+				Intent.Pointer = Table->GetBoardGeometry().SquareToLocal(CursorSquare);
+				Intent.Pointer.Z = 0.0f;
+			}
+
+			if (bAwaitingServer && EGChess::IsValidSquare(SentFromSquare) && EGChess::IsValidSquare(SentToSquare))
+			{
+				// Sent: the piece goes down on its square and the hand waits there for the move to land.
+				Intent.HeldSquare = static_cast<int8>(SentFromSquare);
+				Intent.PlaceSquare = static_cast<int8>(SentToSquare);
+			}
+			else if (EGChess::IsValidSquare(SelectedSquare) && Table->GetPosition().HasColorAt(SelectedSquare, GetLocalColor()))
+			{
+				Intent.HeldSquare = static_cast<int8>(SelectedSquare);
+				if (EGChess::IsValidSquare(PendingPromotionTo))
+				{
+					// Choosing a promotion: the pawn waits on its square.
+					Intent.PlaceSquare = static_cast<int8>(PendingPromotionTo);
+				}
+			}
+		}
+	}
+	LocalHandIntent = Intent;
+
+	// The server hears changes only: the state reliably, the pointer streamed at a capped rate.
+	const UWorld* World = GetWorld();
+	const double Now = World ? World->GetTimeSeconds() : 0.0;
+	if (!LocalHandIntent.HasSameState(SentHandIntent))
+	{
+		ServerSetHandIntent(LocalHandIntent);
+		SentHandIntent = LocalHandIntent;
+		LastHandPointerSendTime = Now;
+	}
+	else if (LocalHandIntent.bRaised && Now - LastHandPointerSendTime >= EGChessPlayerComponentPrivate::HandPointerSendInterval
+		&& FVector::DistSquared2D(LocalHandIntent.Pointer, SentHandIntent.Pointer) > FMath::Square(EGChessPlayerComponentPrivate::HandPointerSendDistance))
+	{
+		ServerSetHandPointer(LocalHandIntent.Pointer);
+		SentHandIntent.Pointer = LocalHandIntent.Pointer;
+		LastHandPointerSendTime = Now;
+	}
 }
 
 void UEGChessPlayerComponent::SetWorldInteractionBlocked(bool bBlocked)
@@ -1071,6 +1351,8 @@ void UEGChessPlayerComponent::ClearSelection(bool bPlaySound)
 void UEGChessPlayerComponent::SendMove(const FEGChessMove& Move)
 {
 	bAwaitingServer = true;
+	SentToSquare = Move.To;
+	SentFromSquare = Move.From;
 	AwaitingSince = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0;
 	ServerSubmitMove(Move);
 }
@@ -1105,7 +1387,8 @@ void UEGChessPlayerComponent::RefreshLocalPresentation()
 	const FEGChessPosition& Position = Table->GetPosition();
 	const bool bPlaying = Table->GetPhase() == EEGChessPhase::Playing && !FeedbackOptions.bHardcore;
 
-	Visuals->SetSelection(bPlaying ? SelectedSquare : INDEX_NONE);
+	// A live hand holds the selected piece itself; without one it lifts on its square.
+	Visuals->SetSelection(bPlaying && !UsesHandCarry() ? SelectedSquare : INDEX_NONE);
 
 	// Outline the hovered piece of ours and every piece a capture would take.
 	TArray<int32> Outlined;
@@ -1415,7 +1698,7 @@ void UEGChessPlayerComponent::SetView(EEGChessView View)
 	bViewChosenThisSession = true;
 	LookYaw = 0.0f;
 	LookPitch = 0.0f;
-	bEyeLagInitialized = false;
+	bViewHasHistory = false;
 
 	const APlayerController* Controller = GetPlayerController();
 	if (APawn* Pawn = Controller ? Controller->GetPawn() : nullptr)
@@ -1458,12 +1741,53 @@ void UEGChessPlayerComponent::SpawnBoardCamera(float BlendTime)
 		BoardCamera->GetCameraComponent()->bConstrainAspectRatio = false;
 	}
 
-	bEyeLagInitialized = false;
 	ViewBlendStart = -1.0;
 	float FOV = 60.0f;
-	BoardCamera->SetActorTransform(ComputeViewTransform(CurrentView, FOV));
+	BoardCamera->SetActorTransform(ComputeViewTransform(CurrentView, 0.0f, FOV));
+	bViewHasHistory = true;
 	BoardCamera->GetCameraComponent()->SetFieldOfView(FOV);
 	Controller->SetViewTargetWithBlend(BoardCamera, BlendTime, VTBlend_EaseInOut, 2.0f);
+	SetCameraFollowsPawnMesh(true);
+}
+
+USkeletalMeshComponent* UEGChessPlayerComponent::GetLocalPawnMesh() const
+{
+	const APlayerController* Controller = GetPlayerController();
+	APawn* Pawn = Controller ? Controller->GetPawn() : nullptr;
+	if (!Pawn)
+	{
+		return nullptr;
+	}
+	if (Pawn->Implements<UEGChessCharacterInterface>())
+	{
+		if (USkeletalMeshComponent* Mesh = IEGChessCharacterInterface::Execute_GetChessMesh(Pawn))
+		{
+			return Mesh;
+		}
+	}
+	const ACharacter* Character = Cast<ACharacter>(Pawn);
+	return Character ? Character->GetMesh() : Pawn->FindComponentByClass<USkeletalMeshComponent>();
+}
+
+void UEGChessPlayerComponent::SetCameraFollowsPawnMesh(bool bFollow)
+{
+	// The component ticks with its controller, before the pawn animates. A view that follows a bone
+	// would then read last frame's pose: one frame behind a body that leans in, enough to put the lens
+	// inside it. Waiting on the mesh's tick, which completes only once its pose is evaluated, fixes that.
+	if (USkeletalMeshComponent* Previous = CameraPrerequisiteMesh.Get())
+	{
+		RemoveTickPrerequisiteComponent(Previous);
+	}
+	CameraPrerequisiteMesh.Reset();
+
+	if (bFollow)
+	{
+		if (USkeletalMeshComponent* Mesh = GetLocalPawnMesh())
+		{
+			AddTickPrerequisiteComponent(Mesh);
+			CameraPrerequisiteMesh = Mesh;
+		}
+	}
 }
 
 void UEGChessPlayerComponent::DestroyBoardCamera()
@@ -1475,7 +1799,7 @@ void UEGChessPlayerComponent::DestroyBoardCamera()
 	}
 }
 
-FTransform UEGChessPlayerComponent::ComputeViewTransform(EEGChessView View, float& OutFOV) const
+FTransform UEGChessPlayerComponent::ComputeViewTransform(EEGChessView View, float DeltaTime, float& OutFOV)
 {
 	const AEGChessTableActor* Table = BoardTable.Get();
 	OutFOV = 60.0f;
@@ -1485,8 +1809,24 @@ FTransform UEGChessPlayerComponent::ComputeViewTransform(EEGChessView View, floa
 	}
 	const UEGChessSeatComponent* Seat = Table->GetSeat(ActiveSeat);
 
-	if (View == EEGChessView::Eye && bEyeLagInitialized)
+	if (View == EEGChessView::Eye)
 	{
+		const APawn* Pawn = Seat->GetSeatedPawn();
+		const UEGChessAnimationSet* Set = Table->GetAnimationSetFor(Pawn);
+		FVector Eye = Seat->GetComponentLocation() + FVector(0.0f, 0.0f, 120.0f);
+		if (Pawn)
+		{
+			const ACharacter* Character = Cast<ACharacter>(Pawn);
+			const USkeletalMeshComponent* Mesh = Character ? Character->GetMesh() : Pawn->FindComponentByClass<USkeletalMeshComponent>();
+			const FName Socket = Set ? Set->EyeSocket : FName(TEXT("head"));
+			if (Mesh && Mesh->DoesSocketExist(Socket))
+			{
+				Eye = Mesh->GetSocketLocation(Socket);
+			}
+			Eye += Pawn->GetActorQuat().RotateVector(Set ? Set->EyeOffset : FVector(10.0f, 0.0f, 5.0f));
+		}
+		EyeLagLocation = DeltaTime > 0.0f ? FMath::VInterpTo(EyeLagLocation, Eye, DeltaTime, 10.0f) : Eye;
+
 		// Aim at the board, a little towards the player's own half, so a moving head never shakes it.
 		const FEGChessBoardGeometry Geometry = Table->GetBoardGeometry();
 		const FVector Toward = (Seat->GetComponentLocation() - Geometry.GetCenterWorld()).GetSafeNormal2D();
@@ -1512,29 +1852,9 @@ void UEGChessPlayerComponent::UpdateBoardCamera(float DeltaTime)
 		return;
 	}
 
-	if (CurrentView == EEGChessView::Eye)
-	{
-		const UEGChessSeatComponent* Seat = Table->GetSeat(ActiveSeat);
-		const APawn* Pawn = Seat->GetSeatedPawn();
-		const UEGChessAnimationSet* Set = Table->GetAnimationSetFor(Pawn);
-		FVector Eye = Seat->GetComponentLocation() + FVector(0.0f, 0.0f, 120.0f);
-		if (Pawn)
-		{
-			const ACharacter* Character = Cast<ACharacter>(Pawn);
-			const USkeletalMeshComponent* Mesh = Character ? Character->GetMesh() : Pawn->FindComponentByClass<USkeletalMeshComponent>();
-			const FName Socket = Set ? Set->EyeSocket : FName(TEXT("head"));
-			if (Mesh && Mesh->DoesSocketExist(Socket))
-			{
-				Eye = Mesh->GetSocketLocation(Socket);
-			}
-			Eye += Pawn->GetActorQuat().RotateVector(Set ? Set->EyeOffset : FVector(10.0f, 0.0f, 5.0f));
-		}
-		EyeLagLocation = bEyeLagInitialized ? FMath::VInterpTo(EyeLagLocation, Eye, DeltaTime, 10.0f) : Eye;
-		bEyeLagInitialized = true;
-	}
-
 	float FOV = 60.0f;
-	FTransform Desired = ComputeViewTransform(CurrentView, FOV);
+	FTransform Desired = ComputeViewTransform(CurrentView, bViewHasHistory ? DeltaTime : 0.0f, FOV);
+	bViewHasHistory = true;
 	if (ViewBlendStart >= 0.0)
 	{
 		const float Alpha = FMath::Clamp(static_cast<float>((World->GetTimeSeconds() - ViewBlendStart) / 0.3), 0.0f, 1.0f);

@@ -328,6 +328,16 @@ public:
 	/** True when the seat's player is controlled on this machine. */
 	bool IsSeatLocallyControlled(EEGChessSeat Seat) const;
 
+	/**
+	 * True when the seat's character moves pieces by hand and its hand follows its player's pointer
+	 * between moves (UEGChessAnimationSet::bHandFollowsPointer): pieces are then picked up and set
+	 * down by that hand, not carried by the cursor.
+	 */
+	bool UsesLiveHand(EEGChessSeat Seat) const;
+
+	/** The seat's hand intent: this machine's own player's straight from their component, everyone else's from the seat. */
+	FEGChessHandIntent GetSeatHandIntent(EEGChessSeat Seat) const;
+
 	double GetServerTime() const;
 
 	// -----------------------------------------------------------------
@@ -359,6 +369,8 @@ public:
 
 	void HandleLeaveSeat(APlayerController* Controller);
 	void HandleSubmitMove(APlayerController* Controller, const FEGChessMove& Move);
+	void HandleSetHandIntent(APlayerController* Controller, const FEGChessHandIntent& Intent);
+	void HandleSetHandPointer(APlayerController* Controller, const FVector& Pointer);
 	void HandleResign(APlayerController* Controller);
 	void HandleOfferDraw(APlayerController* Controller);
 	void HandleRespondDraw(APlayerController* Controller, bool bAccept);
@@ -538,6 +550,8 @@ private:
 	void ScheduleThinkingIdle();
 	void PlayThinkingIdle();
 	float EstimateLastMovePresentation() const;
+	/** How a move by this seat is presented: by the seated character's hand, or by the pieces themselves. */
+	FEGChessMoveTiming MakeMoveTiming(EEGChessSeat MoverSeat) const;
 	UEGChessAIProfile* GetEffectiveAIProfile() const;
 	UEGChessAI* GetOrCreateAI();
 	bool ResolveRequester(APlayerController* Controller, EEGChessSeat& OutSeat) const;

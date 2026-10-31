@@ -25,6 +25,8 @@ void UEEOSSettings::PostEditChangeProperty(FPropertyChangedEvent& PropertyChange
 
 void UEEOSSettings::ApplyLogVerbosity() const
 {
+	// With logging compiled out (Shipping's default) the category has no verbosity to set.
+#if !NO_LOGGING
 	// LogExtendedEOS is declared DefaultVerbosity=Log / CompileTimeVerbosity=All, so Verbose
 	// output is compiled in on every configuration but suppressed until raised here. This
 	// setting is the single owner of the category's runtime verbosity (see the property
@@ -39,4 +41,5 @@ void UEEOSSettings::ApplyLogVerbosity() const
 		UE_LOG(LogExtendedEOS, Log, TEXT("Extended EOS: LogExtendedEOS verbosity set to %s (Verbose=%d DetailedOperations=%d)"),
 			ToString(Target), bEnableVerboseLogging, bEnableDetailedOperationLogging);
 	}
+#endif
 }

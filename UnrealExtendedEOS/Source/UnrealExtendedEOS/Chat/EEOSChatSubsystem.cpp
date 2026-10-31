@@ -147,7 +147,16 @@ void UEEOSChatSubsystem::BindNativeChat()
 		else
 		{
 			bUsingOnlineChat = false;
-			FEEOSNativeOperationLease::ReportRepeated(GetOwningEOSInstanceName(), TEXT("Chat"), TEXT("UnsupportedChatCapability"));
+			// An OSS without IOnlineChat is configuration, not a failure (the EOS OSS's
+			// GetChatInterface returns nullptr unconditionally), so say it once per process.
+			// JoinChannel/SendMessage/SendDirectMessage still warn when a caller needs native chat.
+			static bool bReportedNoNativeChat = false;
+			if (!bReportedNoNativeChat)
+			{
+				bReportedNoNativeChat = true;
+				UE_LOG(LogExtendedEOS, Log, TEXT("EEOSChatSubsystem: OSS '%s' has no IOnlineChat; chat channels are local-only"),
+					*FEEOSNativeOperationLease::SafeField(GetOwningEOSInstanceName().ToString()));
+			}
 		}
 	}
 }
@@ -169,10 +178,24 @@ bool UEEOSChatSubsystem::TickNativeChat(float)
 	if (bShuttingDown) return false;
 	IOnlineSubsystem* OSS = GetExistingEOSOnlineSubsystem();
 	const auto Current = OSS ? OSS->GetChatInterface() : IOnlineChatPtr();
-	if (Current != BoundChat || !IsEOSContextCurrent(ChatBindingContext))
+	// Rebind (and drop the binding's channels/history) only when the binding itself went stale:
+	// a different chat interface, or the bound one's identity/platform context retired. With
+	// nothing bound, a login merely advances the context generation; rebinding then would wipe
+	// the local-only channels for nothing.
+	const bool bInterfaceChanged = Current != BoundChat;
+	const bool bBindingRetired = BoundChat.IsValid() && !IsEOSContextCurrent(ChatBindingContext);
+	// Local-only channels still belong to whoever was signed in: a logout or an account switch must not hand one
+	// player's channels, DM history and unread counts to the next. Only a first sign-in (no previous user) keeps them.
+	const FEEOSRequestContext Now = BoundChat.IsValid() ? ChatBindingContext : CaptureEOSContext();
+	const bool bLocalUserChanged = !BoundChat.IsValid() && Now.LocalId != ChatBindingContext.LocalId;
+	if (bInterfaceChanged || bBindingRetired || (bLocalUserChanged && !ChatBindingContext.LocalId.IsEmpty()))
 	{
 		UnbindNativeChat(); JoinedChannels.Empty(); ChannelHistory.Empty(); UnreadCounts.Empty();
 		BindNativeChat();
+	}
+	else if (bLocalUserChanged)
+	{
+		ChatBindingContext = Now;
 	}
 	return true;
 }

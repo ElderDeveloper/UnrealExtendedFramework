@@ -1,6 +1,7 @@
 // Copyright Kemal Erdem YILMAZ. All Rights Reserved.
 
 #include "EGInteractionComponent.h"
+#include "Internationalization/StringTableRegistry.h"
 
 #include "Blueprint/UserWidget.h"
 #include "Components/PrimitiveComponent.h"
@@ -20,8 +21,18 @@ DEFINE_LOG_CATEGORY_STATIC(LogEGInteraction, Log, All);
 
 namespace EGInteraction
 {
-	const FText NoTargetReason = NSLOCTEXT("EGInteraction", "NoTarget", "No interactable target");
-	const FText RejectedReason = NSLOCTEXT("EGInteraction", "Rejected", "Interaction was rejected by the server");
+	// Functions, not namespace-scope constants: LOCTABLE resolves the string table entry as soon as it is
+	// built, which starts ICU. At static-init time in a packaged (monolithic) game the pak holding the ICU
+	// data is not mounted yet, so a namespace-scope LOCTABLE kills the exe before main (exit 777006).
+	FText NoTargetReason() { return LOCTABLE("ExtendedFramework", "EGInteraction.NoTarget"); }
+	FText RejectedReason() { return LOCTABLE("ExtendedFramework", "EGInteraction.Rejected"); }
+	FText NotAllowedReason() { return LOCTABLE("ExtendedFramework", "EGInteraction.NotAllowed"); }
+	FText NotInteractableReason() { return LOCTABLE("ExtendedFramework", "EGInteraction.NotInteractable"); }
+	FText TargetMismatchReason() { return LOCTABLE("ExtendedFramework", "EGInteraction.TargetMismatch"); }
+	FText OutOfRangeReason() { return LOCTABLE("ExtendedFramework", "EGInteraction.OutOfRange"); }
+	FText NotFacingReason() { return LOCTABLE("ExtendedFramework", "EGInteraction.NotFacing"); }
+	FText RefusedReason() { return LOCTABLE("ExtendedFramework", "EGInteraction.Refused"); }
+	FText BusyReason() { return LOCTABLE("ExtendedFramework", "EGInteraction.Busy"); }
 }
 
 UEGInteractionComponent::UEGInteractionComponent()
@@ -249,7 +260,7 @@ bool UEGInteractionComponent::TryInteract()
 {
 	if (!FocusedActor.IsValid())
 	{
-		OnInteractionFailed.Broadcast(nullptr, EGInteraction::NoTargetReason);
+		NotifyInteractionFailed(nullptr, EGInteraction::NoTargetReason(), TEXT("nothing is focused"));
 		return false;
 	}
 
@@ -268,13 +279,16 @@ void UEGInteractionComponent::InteractionStart()
 
 	if (!IsInteractionAllowed())
 	{
-		OnInteractionFailed.Broadcast(TargetActor, EGInteraction::RejectedReason);
+		// Refused here, before anything is sent: the server never sees this request.
+		NotifyInteractionFailed(TargetActor, EGInteraction::NotAllowedReason(), DescribeOwnerGate());
 		return;
 	}
 
 	if (GetOwner() && GetOwner()->HasAuthority())
 	{
-		BeginInteractionOnServer(TargetActor, LastHitResult);
+		// The authority's own request: BeginInteractionOnServer logs any refusal itself.
+		FRejection Rejection;
+		BeginInteractionOnServer(TargetActor, LastHitResult, Rejection);
 		return;
 	}
 
@@ -378,6 +392,16 @@ bool UEGInteractionComponent::IsInteractionAllowed() const
 	return CanOwnerInteract();
 }
 
+FString UEGInteractionComponent::DescribeOwnerGate() const
+{
+	// Mirrors IsInteractionAllowed, for the logs.
+	if (bInteractionBlocked && !(bUseMouseTrace && bMouseTraceIgnoresBlocking))
+	{
+		return TEXT("blocked by game code (SetInteractionBlocked)");
+	}
+	return CanOwnerInteract() ? TEXT("allowed") : TEXT("CanOwnerInteract returned false");
+}
+
 FHitResult UEGInteractionComponent::GetInteractionHit(const AActor* Interactor)
 {
 	const UEGInteractionComponent* Component = Interactor ? Interactor->FindComponentByClass<UEGInteractionComponent>() : nullptr;
@@ -398,13 +422,13 @@ void UEGInteractionComponent::ServerInteractionStart_Implementation(int64 Attemp
 	// Newer input supersedes an abandoned hold; a delayed old end cannot end the new one.
 	EndInteractionOnServer(ActiveInteractionActor.Get());
 	ServerInteractionAttemptId = 0;
-	const bool bSuccess = BeginInteractionOnServer(TargetActor, ClientHitResult);
+	FRejection Rejection;
+	const bool bSuccess = BeginInteractionOnServer(TargetActor, ClientHitResult, Rejection);
 	if (bSuccess)
 	{
 		ServerInteractionAttemptId = AttemptId;
 	}
-	ClientInteractionResult(AttemptId, bSuccess, !bSuccess, TargetActor,
-		bSuccess ? FText::GetEmpty() : EGInteraction::RejectedReason);
+	ClientInteractionResult(AttemptId, bSuccess, !bSuccess, TargetActor, Rejection.Reason, Rejection.Detail);
 }
 
 void UEGInteractionComponent::ServerInteractionEnd_Implementation(int64 AttemptId)
@@ -416,13 +440,16 @@ void UEGInteractionComponent::ServerInteractionEnd_Implementation(int64 AttemptI
 	AActor* TargetActor = ActiveInteractionActor.Get();
 	EndInteractionOnServer(TargetActor);
 	ServerInteractionAttemptId = 0;
-	ClientInteractionResult(AttemptId, true, true, TargetActor, FText::GetEmpty());
+	ClientInteractionResult(AttemptId, true, true, TargetActor, FText::GetEmpty(), FString());
 }
 
-void UEGInteractionComponent::ClientInteractionResult_Implementation(int64 AttemptId, bool bSuccess, bool bFinished, AActor* TargetActor, const FText& FailureReason)
+void UEGInteractionComponent::ClientInteractionResult_Implementation(int64 AttemptId, bool bSuccess, bool bFinished, AActor* TargetActor, const FText& FailureReason, const FString& FailureDetail)
 {
 	if (AttemptId != NextInteractionAttemptId)
 	{
+		// A newer press superseded this attempt, so nothing is shown for it, but the reason is kept.
+		UE_CLOG(!bSuccess, LogEGInteraction, Log, TEXT("[%s] Server rejected superseded attempt %lld on %s: %s (%s)"),
+			*GetNameSafe(GetOwner()), AttemptId, *GetNameSafe(TargetActor), *FailureReason.ToString(), *FailureDetail);
 		return;
 	}
 	if ((!bSuccess || bFinished) && RequestedInteractionAttemptId == AttemptId)
@@ -431,27 +458,43 @@ void UEGInteractionComponent::ClientInteractionResult_Implementation(int64 Attem
 	}
 	if (!bSuccess)
 	{
-		OnInteractionFailed.Broadcast(TargetActor, FailureReason);
+		NotifyInteractionFailed(TargetActor, FailureReason,
+			FString::Printf(TEXT("rejected by the server, attempt %lld: %s"), AttemptId, *FailureDetail));
 	}
 }
 
-bool UEGInteractionComponent::BeginInteractionOnServer(AActor* TargetActor, const FHitResult& HitResult)
+void UEGInteractionComponent::NotifyInteractionFailed(AActor* TargetActor, const FText& Reason, const FString& Detail)
 {
-	if (!GetOwner() || !GetOwner()->HasAuthority() || ActiveInteractionActor.IsValid())
+	// Logged regardless of the debug flags: refusals are rare, and the on-screen notice is gone in seconds.
+	UE_LOG(LogEGInteraction, Warning, TEXT("[%s] Interaction with %s failed: %s (%s)"),
+		*GetNameSafe(GetOwner()), *GetNameSafe(TargetActor), *Reason.ToString(), *Detail);
+	OnInteractionFailed.Broadcast(TargetActor, Reason);
+}
+
+bool UEGInteractionComponent::BeginInteractionOnServer(AActor* TargetActor, const FHitResult& HitResult, FRejection& OutRejection)
+{
+	if (!GetOwner() || !GetOwner()->HasAuthority())
 	{
-		return false;
+		OutRejection = FRejection{ EGInteraction::RejectedReason(), TEXT("no authority over the interactor") };
+	}
+	else if (ActiveInteractionActor.IsValid())
+	{
+		OutRejection = FRejection{ EGInteraction::BusyReason(),
+			FString::Printf(TEXT("already interacting with %s"), *GetNameSafe(ActiveInteractionActor.Get())) };
+	}
+	else if (IsServerInteractionValid(TargetActor, HitResult, OutRejection))
+	{
+		// Publish the validated hit so the interactable can read it back with GetInteractionHit().
+		LastHitResult = HitResult;
+		ActiveInteractionActor = TargetActor;
+		IEGInteractableInterface::Execute_InteractionStart(TargetActor, GetOwner());
+		return true;
 	}
 
-	if (!IsServerInteractionValid(TargetActor, HitResult))
-	{
-		return false;
-	}
-
-	// Publish the validated hit so the interactable can read it back with GetInteractionHit().
-	LastHitResult = HitResult;
-	ActiveInteractionActor = TargetActor;
-	IEGInteractableInterface::Execute_InteractionStart(TargetActor, GetOwner());
-	return true;
+	// Logged regardless of the debug flags: this is the only place the server's reason is written down.
+	UE_LOG(LogEGInteraction, Warning, TEXT("[%s] Server rejected interaction with %s: %s (%s)"),
+		*GetNameSafe(GetOwner()), *GetNameSafe(TargetActor), *OutRejection.Reason.ToString(), *OutRejection.Detail);
+	return false;
 }
 
 void UEGInteractionComponent::EndInteractionOnServer(AActor* TargetActor)
@@ -470,23 +513,34 @@ void UEGInteractionComponent::EndInteractionOnServer(AActor* TargetActor)
 	}
 }
 
-bool UEGInteractionComponent::IsServerInteractionValid(AActor* TargetActor, const FHitResult& HitResult) const
+bool UEGInteractionComponent::IsServerInteractionValid(AActor* TargetActor, const FHitResult& HitResult, FRejection& OutRejection) const
 {
-	if (!TargetActor || !TargetActor->GetClass()->ImplementsInterface(UEGInteractableInterface::StaticClass()))
+	if (!TargetActor)
 	{
-		UE_CLOG(bDebugLogTraceResults, LogEGInteraction, Warning, TEXT("[%s] Rejected: target is not interactable"), *GetNameSafe(GetOwner()));
+		// The client names its target by network reference, so an actor the server does not know
+		// (destroyed meanwhile, or one that only ever existed on the client) arrives as null.
+		OutRejection = FRejection{ EGInteraction::NotInteractableReason(),
+			TEXT("the target did not resolve on the server (destroyed, or never known to it)") };
+		return false;
+	}
+
+	if (!TargetActor->GetClass()->ImplementsInterface(UEGInteractableInterface::StaticClass()))
+	{
+		OutRejection = FRejection{ EGInteraction::NotInteractableReason(),
+			FString::Printf(TEXT("%s does not implement the interactable interface"), *TargetActor->GetClass()->GetName()) };
 		return false;
 	}
 
 	if (!IsInteractionAllowed())
 	{
-		UE_CLOG(bDebugLogTraceResults, LogEGInteraction, Warning, TEXT("[%s] Rejected: interaction is gated"), *GetNameSafe(GetOwner()));
+		OutRejection = FRejection{ EGInteraction::NotAllowedReason(), DescribeOwnerGate() };
 		return false;
 	}
 
 	if (HitResult.GetActor() && HitResult.GetActor() != TargetActor)
 	{
-		UE_CLOG(bDebugLogTraceResults, LogEGInteraction, Warning, TEXT("[%s] Rejected: hit actor does not match the requested target"), *GetNameSafe(GetOwner()));
+		OutRejection = FRejection{ EGInteraction::TargetMismatchReason(),
+			FString::Printf(TEXT("the client's hit is on %s, not on the requested target"), *GetNameSafe(HitResult.GetActor())) };
 		return false;
 	}
 
@@ -496,6 +550,9 @@ bool UEGInteractionComponent::IsServerInteractionValid(AActor* TargetActor, cons
 	const UPrimitiveComponent* HitComponent = HitResult.GetComponent();
 	if (HitComponent && HitComponent->GetOwner() != TargetActor)
 	{
+		OutRejection = FRejection{ EGInteraction::TargetMismatchReason(),
+			FString::Printf(TEXT("the client's hit component %s belongs to %s, not to the requested target"),
+				*HitComponent->GetName(), *GetNameSafe(HitComponent->GetOwner())) };
 		return false;
 	}
 	float DistanceToTarget = HitComponent ? HitComponent->GetClosestPointOnCollision(OwnerLocation, ClosestPoint) : -1.0f;
@@ -509,24 +566,33 @@ bool UEGInteractionComponent::IsServerInteractionValid(AActor* TargetActor, cons
 		DistanceToTarget = Bounds.IsValid ? FVector::Dist(OwnerLocation, Bounds.GetClosestPointTo(OwnerLocation))
 			: FVector::Dist(OwnerLocation, TargetActor->GetActorLocation());
 	}
-	if (DistanceToTarget > ValidationDistance)
-	{
-		UE_CLOG(bDebugLogTraceResults, LogEGInteraction, Warning, TEXT("[%s] Rejected: %s is out of range"), *GetNameSafe(GetOwner()), *GetNameSafe(TargetActor));
-		return false;
-	}
-
 	FVector ViewLocation;
 	FRotator ViewRotation;
 	GetViewPoint(ViewLocation, ViewRotation);
-	if (!IsCandidateValid(TargetActor, HitResult, ViewLocation, true))
+	if (DistanceToTarget > ValidationDistance)
 	{
-		UE_CLOG(bDebugLogTraceResults, LogEGInteraction, Warning, TEXT("[%s] Rejected: %s failed facing/line-of-sight/tag filtering"), *GetNameSafe(GetOwner()), *GetNameSafe(TargetActor));
+		// TraceStart and ImpactPoint replicate with the hit, so the client's own view of the request is
+		// available here; a large gap between its camera and the server's is movement the server has
+		// not caught up with yet.
+		OutRejection = FRejection{ EGInteraction::OutOfRangeReason(), FString::Printf(
+			TEXT("%.0f cm from the interactor at %s, allowed %.0f (range %.0f + trace radius %.0f + slack %.0f), measured to %s. ")
+			TEXT("The client's camera at %s hit at %.0f cm; the server places that camera %.0f cm away"),
+			DistanceToTarget, *OwnerLocation.ToCompactString(), ValidationDistance, InteractionRange, TraceRadius, ValidationSlack,
+			HitComponent ? *HitComponent->GetName() : TEXT("the actor's collision (no hit component)"),
+			*HitResult.TraceStart.ToCompactString(), FVector::Dist(HitResult.TraceStart, HitResult.ImpactPoint),
+			FVector::Dist(ViewLocation, HitResult.TraceStart)) };
+		return false;
+	}
+
+	if (!IsCandidateValid(TargetActor, HitResult, ViewLocation, true, &OutRejection))
+	{
 		return false;
 	}
 
 	if (!IEGInteractableInterface::Execute_CanInteract(TargetActor, GetOwner(), HitResult))
 	{
-		UE_CLOG(bDebugLogTraceResults, LogEGInteraction, Warning, TEXT("[%s] Rejected: %s refused via CanInteract"), *GetNameSafe(GetOwner()), *GetNameSafe(TargetActor));
+		OutRejection = FRejection{ EGInteraction::RefusedReason(),
+			FString::Printf(TEXT("%s refused via CanInteract"), *TargetActor->GetName()) };
 		return false;
 	}
 
@@ -536,12 +602,6 @@ bool UEGInteractionComponent::IsServerInteractionValid(AActor* TargetActor, cons
 // =====================================================================
 // Trace
 // =====================================================================
-
-bool UEGInteractionComponent::TraceFocusLine(FHitResult& OutHit, const FVector& Start, const FVector& End, ECollisionChannel Channel, const FCollisionQueryParams& Params) const
-{
-	const UWorld* World = GetWorld();
-	return World && World->LineTraceSingleByChannel(OutHit, Start, End, Channel, Params);
-}
 
 void UEGInteractionComponent::PerformTrace()
 {
@@ -645,7 +705,7 @@ bool UEGInteractionComponent::GatherTraceHits(const FVector& Start, const FVecto
 	FHitResult LineHit;
 	const bool bLineHit = bByObjectType
 		? GetWorld()->LineTraceSingleByObjectType(LineHit, Start, End, ObjectParams, QueryParams)
-		: TraceFocusLine(LineHit, Start, End, TraceChannel, QueryParams);
+		: GetWorld()->LineTraceSingleByChannel(LineHit, Start, End, TraceChannel, QueryParams);
 	if (bLineHit)
 	{
 		OutHits.Add(LineHit);
@@ -680,28 +740,55 @@ bool UEGInteractionComponent::PassesTagFilter(const AActor* Candidate) const
 	return !ActorTags.HasAny(BlockedTags);
 }
 
-bool UEGInteractionComponent::IsCandidateValid(AActor* Candidate, const FHitResult& HitResult, const FVector& ViewLocation, bool bServerValidation) const
+bool UEGInteractionComponent::IsCandidateValid(AActor* Candidate, const FHitResult& HitResult, const FVector& ViewLocation, bool bServerValidation, FRejection* OutRejection) const
 {
 	if (!Candidate || !Candidate->GetClass()->ImplementsInterface(UEGInteractableInterface::StaticClass()))
 	{
+		if (OutRejection)
+		{
+			*OutRejection = FRejection{ EGInteraction::NotInteractableReason(), TEXT("the target is not interactable") };
+		}
 		return false;
 	}
 
 	if (!PassesTagFilter(Candidate))
 	{
+		if (OutRejection)
+		{
+			*OutRejection = FRejection{ EGInteraction::RefusedReason(), TEXT("the target carries one of BlockedTags") };
+		}
+		return false;
+	}
+
+	if (!CanOwnerInteractWith(Candidate))
+	{
+		if (OutRejection)
+		{
+			*OutRejection = FRejection{ EGInteraction::RefusedReason(), TEXT("CanOwnerInteractWith refused this target") };
+		}
 		return false;
 	}
 
 	if (bMustBeFacing)
 	{
 		const FVector Direction = (Candidate->GetActorLocation() - GetOwner()->GetActorLocation()).GetSafeNormal();
-		if (FVector::DotProduct(GetOwner()->GetActorForwardVector(), Direction) < FMath::Cos(FMath::DegreesToRadians(FacingHalfAngle)))
+		const float FacingDot = FVector::DotProduct(GetOwner()->GetActorForwardVector(), Direction);
+		if (FacingDot < FMath::Cos(FMath::DegreesToRadians(FacingHalfAngle)))
 		{
+			if (OutRejection)
+			{
+				*OutRejection = FRejection{ EGInteraction::NotFacingReason(),
+					FString::Printf(TEXT("the interactor faces %.0f degrees away from the target, allowed %.0f"),
+						FMath::RadiansToDegrees(FMath::Acos(FMath::Clamp(FacingDot, -1.0f, 1.0f))), FacingHalfAngle) };
+			}
 			return false;
 		}
 	}
 
-	if (bRequiresLineOfSight && GetWorld())
+	// Line of sight decides focus only. The server does not trace it again: a target the player sees a
+	// prompt for must not be refused afterwards by geometry that exists only on the server (a sensing
+	// volume whose collision is authority-only).
+	if (bRequiresLineOfSight && !bServerValidation && GetWorld())
 	{
 		FCollisionQueryParams Params(SCENE_QUERY_STAT(EGInteractionLineOfSight), bTraceComplex, GetOwner());
 		Params.AddIgnoredActor(Candidate);
@@ -775,8 +862,12 @@ void UEGInteractionComponent::SetFocusedActor(AActor* NewFocusedActor, const FHi
 		IEGInteractableInterface::Execute_GetInteractionPresentation(NewFocusedActor, GetOwner(), HitResult);
 	const bool bActorChanged = FocusedActor.Get() != NewFocusedActor;
 	const bool bContextChanged = LastHitResult.GetComponent() != HitResult.GetComponent() || LastHitResult.BoneName != HitResult.BoneName;
-	const bool bTextChanged = !FocusedPresentation.Text.EqualTo(NewPresentation.Text);
+	// The hint counts too: it can come and go on a target whose line stays the same (a wardrobe's
+	// hiding line appears when its doors finish opening, long after "Open" became "Close").
+	const bool bTextChanged = !FocusedPresentation.Text.EqualTo(NewPresentation.Text)
+		|| !FocusedPresentation.HintText.EqualTo(NewPresentation.HintText);
 	const bool bIconChanged = FocusedPresentation.Icon != NewPresentation.Icon
+		|| FocusedPresentation.StaticIcon != NewPresentation.StaticIcon
 		|| FocusedPresentation.bOverrideStaticIcon != NewPresentation.bOverrideStaticIcon;
 
 	if (bActorChanged && FocusedActor.IsValid())

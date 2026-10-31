@@ -6,9 +6,12 @@
 #include "UnrealExtendedFramework/ModularSettings/EFModularSettingsLibrary.h"
 #include "UnrealExtendedFramework/Libraries/Monitor/EFMonitorLibrary.h"
 #include "Engine/Engine.h"
+#include "Engine/GameViewportClient.h"
 #include "GameFramework/GameUserSettings.h"
+#include "Widgets/SWindow.h"
 #include "HAL/IConsoleManager.h"
 #include "HAL/ThreadingBase.h"
+#include "Internationalization/StringTableRegistry.h"
 #include "EFGraphicsSettings.generated.h"
 
 namespace EFGraphicsSettingsInternal
@@ -64,6 +67,41 @@ namespace EFGraphicsSettingsInternal
 		return FMath::Clamp(SSRQuality, 0, 4);
 	}
 
+	/** Sets one scalability group by its console variable name (sg.ShadowQuality). False for an unknown group. */
+	inline bool SetScalabilityGroupLevel(UGameUserSettings* UserSettings, FName Group, int32 Level)
+	{
+		if (!UserSettings)
+		{
+			return false;
+		}
+
+		static const FName ViewDistance(TEXT("sg.ViewDistanceQuality"));
+		static const FName AntiAliasing(TEXT("sg.AntiAliasingQuality"));
+		static const FName Shadow(TEXT("sg.ShadowQuality"));
+		static const FName GlobalIllumination(TEXT("sg.GlobalIlluminationQuality"));
+		static const FName Reflection(TEXT("sg.ReflectionQuality"));
+		static const FName PostProcess(TEXT("sg.PostProcessQuality"));
+		static const FName Texture(TEXT("sg.TextureQuality"));
+		static const FName Effects(TEXT("sg.EffectsQuality"));
+		static const FName Foliage(TEXT("sg.FoliageQuality"));
+		static const FName Shading(TEXT("sg.ShadingQuality"));
+		static const FName Landscape(TEXT("sg.LandscapeQuality"));
+
+		if (Group == ViewDistance) { UserSettings->SetViewDistanceQuality(Level); }
+		else if (Group == AntiAliasing) { UserSettings->SetAntiAliasingQuality(Level); }
+		else if (Group == Shadow) { UserSettings->SetShadowQuality(Level); }
+		else if (Group == GlobalIllumination) { UserSettings->SetGlobalIlluminationQuality(Level); }
+		else if (Group == Reflection) { UserSettings->SetReflectionQuality(Level); }
+		else if (Group == PostProcess) { UserSettings->SetPostProcessingQuality(Level); }
+		else if (Group == Texture) { UserSettings->SetTextureQuality(Level); }
+		else if (Group == Effects) { UserSettings->SetVisualEffectQuality(Level); }
+		else if (Group == Foliage) { UserSettings->SetFoliageQuality(Level); }
+		else if (Group == Shading) { UserSettings->SetShadingQuality(Level); }
+		else if (Group == Landscape) { UserSettings->SetLandscapeQuality(Level); }
+		else { return false; }
+		return true;
+	}
+
 	inline int32 MapBloomQualityToIndex(int32 BloomQuality)
 	{
 		if (BloomQuality <= 0)
@@ -97,7 +135,7 @@ public:
 	UEFResolutionSetting()
 	{
 		SettingTag = FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.Resolution"));
-		DisplayName = NSLOCTEXT("Settings", "Resolution", "Screen Resolution");
+		DisplayName = LOCTABLE("ExtendedFramework", "Settings.Resolution");
 		ConfigCategory = TEXT("Graphics");
 		DefaultValue = TEXT("1920x1080");
 		bRefreshBeforeApply = true;
@@ -115,6 +153,21 @@ public:
 	virtual void RefreshValues_Implementation() override
 	{
 		PopulateResolutionOptions();
+	}
+
+	/** The monitor's native resolution, when the list offers it: the sensible start on any device. */
+	virtual FString ComputeDeviceDefault() const override
+	{
+		int32 MonitorWidth = 0;
+		int32 MonitorHeight = 0;
+		UEFMonitorLibrary::GetCurrentMonitorResolution(MonitorWidth, MonitorHeight);
+		if (MonitorWidth <= 0 || MonitorHeight <= 0)
+		{
+			return FString();
+		}
+
+		const FString Native = FString::Printf(TEXT("%dx%d"), MonitorWidth, MonitorHeight);
+		return Values.Contains(Native) ? Native : FString();
 	}
 
 	virtual void Apply_Implementation() override
@@ -328,7 +381,7 @@ public:
 	UEFVSyncSetting()
 	{
 		SettingTag = FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.VSync"));
-		DisplayName = NSLOCTEXT("Settings", "VSync", "Vertical Sync");
+		DisplayName = LOCTABLE("ExtendedFramework", "Settings.VSync");
 		ConfigCategory = TEXT("Graphics");
 		DefaultValue = true;
 		Value = true;
@@ -370,16 +423,17 @@ public:
 	UEFAntiAliasingQualitySetting()
 	{
 		SettingTag = FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.AntiAliasingQuality"));
-		DisplayName = NSLOCTEXT("Settings", "AntiAliasingQuality", "Anti-Aliasing Quality");
+		ScalabilityGroup = TEXT("sg.AntiAliasingQuality");
+		DisplayName = LOCTABLE("ExtendedFramework", "Settings.AntiAliasingQuality");
 		ConfigCategory = TEXT("Graphics");
 		DefaultValue = TEXT("High");
 
 		Values = { TEXT("Low"), TEXT("Medium"), TEXT("High"), TEXT("Ultra") };
 		DisplayNames = {
-			NSLOCTEXT("Settings", "AALow", "Low"),
-			NSLOCTEXT("Settings", "AAMedium", "Medium"),
-			NSLOCTEXT("Settings", "AAHigh", "High"),
-			NSLOCTEXT("Settings", "AAUltra", "Ultra")
+			LOCTABLE("ExtendedFramework", "Common.Low"),
+			LOCTABLE("ExtendedFramework", "Common.Medium"),
+			LOCTABLE("ExtendedFramework", "Common.High"),
+			LOCTABLE("ExtendedFramework", "Common.Ultra")
 		};
 
 		int32 DefaultIndex = Values.Find(DefaultValue);
@@ -425,16 +479,17 @@ public:
 	UEFTextureQualitySetting()
 	{
 		SettingTag = FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.TextureQuality"));
-		DisplayName = NSLOCTEXT("Settings", "TextureQuality", "Texture Quality");
+		ScalabilityGroup = TEXT("sg.TextureQuality");
+		DisplayName = LOCTABLE("ExtendedFramework", "Settings.TextureQuality");
 		ConfigCategory = TEXT("Graphics");
 		DefaultValue = TEXT("High");
 
 		Values = { TEXT("Low"), TEXT("Medium"), TEXT("High"), TEXT("Ultra") };
 		DisplayNames = {
-			NSLOCTEXT("Settings", "TextureLow", "Low"),
-			NSLOCTEXT("Settings", "TextureMedium", "Medium"),
-			NSLOCTEXT("Settings", "TextureHigh", "High"),
-			NSLOCTEXT("Settings", "TextureUltra", "Ultra")
+			LOCTABLE("ExtendedFramework", "Common.Low"),
+			LOCTABLE("ExtendedFramework", "Common.Medium"),
+			LOCTABLE("ExtendedFramework", "Common.High"),
+			LOCTABLE("ExtendedFramework", "Common.Ultra")
 		};
 
 		int32 DefaultIndex = Values.Find(DefaultValue);
@@ -480,18 +535,18 @@ public:
 	UEFTextureFilteringQualitySetting()
 	{
 		SettingTag = FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.TextureFilteringQuality"));
-		DisplayName = NSLOCTEXT("Settings", "TextureFilteringQuality", "Texture Filtering Quality");
+		DisplayName = LOCTABLE("ExtendedFramework", "Settings.TextureFilteringQuality");
 		ConfigCategory = TEXT("Graphics");
 		DefaultValue = TEXT("8x");
 		
 		Values = { TEXT("Trilinear"), TEXT("1x"), TEXT("2x"), TEXT("4x"), TEXT("8x"), TEXT("16x") };
 		DisplayNames = {
-			NSLOCTEXT("Settings", "TextureFilteringTrilinear", "Trilinear"),
-			NSLOCTEXT("Settings", "TextureFiltering1x", "1x Anisotropic"),
-			NSLOCTEXT("Settings", "TextureFiltering2x", "2x Anisotropic"),
-			NSLOCTEXT("Settings", "TextureFiltering4x", "4x Anisotropic"),
-			NSLOCTEXT("Settings", "TextureFiltering8x", "8x Anisotropic"),
-			NSLOCTEXT("Settings", "TextureFiltering16x", "16x Anisotropic")
+			LOCTABLE("ExtendedFramework", "Settings.TextureFilteringTrilinear"),
+			LOCTABLE("ExtendedFramework", "Settings.TextureFiltering1x"),
+			LOCTABLE("ExtendedFramework", "Settings.TextureFiltering2x"),
+			LOCTABLE("ExtendedFramework", "Settings.TextureFiltering4x"),
+			LOCTABLE("ExtendedFramework", "Settings.TextureFiltering8x"),
+			LOCTABLE("ExtendedFramework", "Settings.TextureFiltering16x")
 		};
 		
 		int32 DefaultIndex = Values.Find(DefaultValue);
@@ -540,16 +595,17 @@ public:
 	UEFFoliageQualitySetting()
 	{
 		SettingTag = FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.FoliageQuality"));
-		DisplayName = NSLOCTEXT("Settings", "FoliageQuality", "Foliage Quality");
+		ScalabilityGroup = TEXT("sg.FoliageQuality");
+		DisplayName = LOCTABLE("ExtendedFramework", "Settings.FoliageQuality");
 		ConfigCategory = TEXT("Graphics");
 		DefaultValue = TEXT("Medium");
 		
 		Values = { TEXT("Low"), TEXT("Medium"), TEXT("High"), TEXT("Ultra") };
 		DisplayNames = {
-			NSLOCTEXT("Settings", "FoliageLow", "Low"),
-			NSLOCTEXT("Settings", "FoliageMedium", "Medium"),
-			NSLOCTEXT("Settings", "FoliageHigh", "High"),
-			NSLOCTEXT("Settings", "FoliageUltra", "Ultra")
+			LOCTABLE("ExtendedFramework", "Common.Low"),
+			LOCTABLE("ExtendedFramework", "Common.Medium"),
+			LOCTABLE("ExtendedFramework", "Common.High"),
+			LOCTABLE("ExtendedFramework", "Common.Ultra")
 		};
 		
 		int32 DefaultIndex = Values.Find(DefaultValue);
@@ -592,16 +648,17 @@ public:
 	UEFShadowQualitySetting()
 	{
 		SettingTag = FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.ShadowQuality"));
-		DisplayName = NSLOCTEXT("Settings", "ShadowQuality", "Shadow Quality");
+		ScalabilityGroup = TEXT("sg.ShadowQuality");
+		DisplayName = LOCTABLE("ExtendedFramework", "Settings.ShadowQuality");
 		ConfigCategory = TEXT("Graphics");
 		DefaultValue = TEXT("Medium");
 		
 		Values = { TEXT("Low"), TEXT("Medium"), TEXT("High"), TEXT("Ultra") };
 		DisplayNames = {
-			NSLOCTEXT("Settings", "ShadowLow", "Low"),
-			NSLOCTEXT("Settings", "ShadowMedium", "Medium"),
-			NSLOCTEXT("Settings", "ShadowHigh", "High"),
-			NSLOCTEXT("Settings", "ShadowUltra", "Ultra")
+			LOCTABLE("ExtendedFramework", "Common.Low"),
+			LOCTABLE("ExtendedFramework", "Common.Medium"),
+			LOCTABLE("ExtendedFramework", "Common.High"),
+			LOCTABLE("ExtendedFramework", "Common.Ultra")
 		};
 		
 		int32 DefaultIndex = Values.Find(DefaultValue);
@@ -644,16 +701,17 @@ public:
 	UEFShadingQualitySetting()
 	{
 		SettingTag = FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.ShadingQuality"));
-		DisplayName = NSLOCTEXT("Settings", "ShadingQuality", "Shading Quality");
+		ScalabilityGroup = TEXT("sg.ShadingQuality");
+		DisplayName = LOCTABLE("ExtendedFramework", "Settings.ShadingQuality");
 		ConfigCategory = TEXT("Graphics");
 		DefaultValue = TEXT("Medium");
 		
 		Values = { TEXT("Low"), TEXT("Medium"), TEXT("High"), TEXT("Ultra") };
 		DisplayNames = {
-			NSLOCTEXT("Settings", "ShadingLow", "Low"),
-			NSLOCTEXT("Settings", "ShadingMedium", "Medium"),
-			NSLOCTEXT("Settings", "ShadingHigh", "High"),
-			NSLOCTEXT("Settings", "ShadingUltra", "Ultra")
+			LOCTABLE("ExtendedFramework", "Common.Low"),
+			LOCTABLE("ExtendedFramework", "Common.Medium"),
+			LOCTABLE("ExtendedFramework", "Common.High"),
+			LOCTABLE("ExtendedFramework", "Common.Ultra")
 		};
 		
 		int32 DefaultIndex = Values.Find(DefaultValue);
@@ -696,16 +754,17 @@ public:
 	UEFVFXQualitySetting()
 	{
 		SettingTag = FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.VFXQuality"));
-		DisplayName = NSLOCTEXT("Settings", "VFXQuality", "VFX Quality");
+		ScalabilityGroup = TEXT("sg.EffectsQuality");
+		DisplayName = LOCTABLE("ExtendedFramework", "Settings.VFXQuality");
 		ConfigCategory = TEXT("Graphics");
 		DefaultValue = TEXT("Medium");
 		
 		Values = { TEXT("Low"), TEXT("Medium"), TEXT("High"), TEXT("Ultra") };
 		DisplayNames = {
-			NSLOCTEXT("Settings", "VFXLow", "Low"),
-			NSLOCTEXT("Settings", "VFXMedium", "Medium"),
-			NSLOCTEXT("Settings", "VFXHigh", "High"),
-			NSLOCTEXT("Settings", "VFXUltra", "Ultra")
+			LOCTABLE("ExtendedFramework", "Common.Low"),
+			LOCTABLE("ExtendedFramework", "Common.Medium"),
+			LOCTABLE("ExtendedFramework", "Common.High"),
+			LOCTABLE("ExtendedFramework", "Common.Ultra")
 		};
 		
 		int32 DefaultIndex = Values.Find(DefaultValue);
@@ -748,16 +807,17 @@ public:
 	UEFPostProcessQualitySetting()
 	{
 		SettingTag = FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.PostProcessQuality"));
-		DisplayName = NSLOCTEXT("Settings", "PostProcessQuality", "Post-Processing Quality");
+		ScalabilityGroup = TEXT("sg.PostProcessQuality");
+		DisplayName = LOCTABLE("ExtendedFramework", "Settings.PostProcessQuality");
 		ConfigCategory = TEXT("Graphics");
 		DefaultValue = TEXT("Medium");
 		
 		Values = { TEXT("Low"), TEXT("Medium"), TEXT("High"), TEXT("Ultra") };
 		DisplayNames = {
-			NSLOCTEXT("Settings", "PostProcessLow", "Low"),
-			NSLOCTEXT("Settings", "PostProcessMedium", "Medium"),
-			NSLOCTEXT("Settings", "PostProcessHigh", "High"),
-			NSLOCTEXT("Settings", "PostProcessUltra", "Ultra")
+			LOCTABLE("ExtendedFramework", "Common.Low"),
+			LOCTABLE("ExtendedFramework", "Common.Medium"),
+			LOCTABLE("ExtendedFramework", "Common.High"),
+			LOCTABLE("ExtendedFramework", "Common.Ultra")
 		};
 		
 		int32 DefaultIndex = Values.Find(DefaultValue);
@@ -800,16 +860,17 @@ public:
 	UEFViewDistanceSetting()
 	{
 		SettingTag = FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.ViewDistance"));
-		DisplayName = NSLOCTEXT("Settings", "ViewDistance", "View Distance");
+		ScalabilityGroup = TEXT("sg.ViewDistanceQuality");
+		DisplayName = LOCTABLE("ExtendedFramework", "Settings.ViewDistance");
 		ConfigCategory = TEXT("Graphics");
 		DefaultValue = TEXT("Medium");
 		
 		Values = { TEXT("Near"), TEXT("Medium"), TEXT("Far"), TEXT("Ultra") };
 		DisplayNames = {
-			NSLOCTEXT("Settings", "ViewDistanceNear", "Near"),
-			NSLOCTEXT("Settings", "ViewDistanceMedium", "Medium"),
-			NSLOCTEXT("Settings", "ViewDistanceFar", "Far"),
-			NSLOCTEXT("Settings", "ViewDistanceUltra", "Ultra")
+			LOCTABLE("ExtendedFramework", "Settings.ViewDistanceNear"),
+			LOCTABLE("ExtendedFramework", "Common.Medium"),
+			LOCTABLE("ExtendedFramework", "Settings.ViewDistanceFar"),
+			LOCTABLE("ExtendedFramework", "Common.Ultra")
 		};
 		
 		int32 DefaultIndex = Values.Find(DefaultValue);
@@ -852,17 +913,17 @@ public:
 	UEFScreenSpaceReflectionSetting()
 	{
 		SettingTag = FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.ScreenSpaceReflection"));
-		DisplayName = NSLOCTEXT("Settings", "ScreenSpaceReflection", "Screen Space Reflections");
+		DisplayName = LOCTABLE("ExtendedFramework", "Settings.ScreenSpaceReflection");
 		ConfigCategory = TEXT("Graphics");
 		DefaultValue = TEXT("Medium");
 		
 		Values = { TEXT("Off"), TEXT("Low"), TEXT("Medium"), TEXT("High"), TEXT("Ultra") };
 		DisplayNames = {
-			NSLOCTEXT("Settings", "SSROff", "Off"),
-			NSLOCTEXT("Settings", "SSRLow", "Low"),
-			NSLOCTEXT("Settings", "SSRMedium", "Medium"),
-			NSLOCTEXT("Settings", "SSRHigh", "High"),
-			NSLOCTEXT("Settings", "SSRUltra", "Ultra")
+			LOCTABLE("ExtendedFramework", "Common.Off"),
+			LOCTABLE("ExtendedFramework", "Common.Low"),
+			LOCTABLE("ExtendedFramework", "Common.Medium"),
+			LOCTABLE("ExtendedFramework", "Common.High"),
+			LOCTABLE("ExtendedFramework", "Common.Ultra")
 		};
 		
 		int32 DefaultIndex = Values.Find(DefaultValue);
@@ -898,17 +959,17 @@ public:
 	UEFBloomSetting()
 	{
 		SettingTag = FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.Bloom"));
-		DisplayName = NSLOCTEXT("Settings", "Bloom", "Bloom");
+		DisplayName = LOCTABLE("ExtendedFramework", "Settings.Bloom");
 		ConfigCategory = TEXT("Graphics");
 		DefaultValue = TEXT("Medium");
 		
 		Values = { TEXT("Off"), TEXT("Low"), TEXT("Medium"), TEXT("High"), TEXT("Ultra") };
 		DisplayNames = {
-			NSLOCTEXT("Settings", "BloomOff", "Off"),
-			NSLOCTEXT("Settings", "BloomLow", "Low"),
-			NSLOCTEXT("Settings", "BloomMedium", "Medium"),
-			NSLOCTEXT("Settings", "BloomHigh", "High"),
-			NSLOCTEXT("Settings", "BloomUltra", "Ultra")
+			LOCTABLE("ExtendedFramework", "Common.Off"),
+			LOCTABLE("ExtendedFramework", "Common.Low"),
+			LOCTABLE("ExtendedFramework", "Common.Medium"),
+			LOCTABLE("ExtendedFramework", "Common.High"),
+			LOCTABLE("ExtendedFramework", "Common.Ultra")
 		};
 		
 		int32 DefaultIndex = Values.Find(DefaultValue);
@@ -943,7 +1004,7 @@ public:
 	UEFMotionBlurAmountSetting()
 	{
 		SettingTag = FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.MotionBlurAmount"));
-		DisplayName = NSLOCTEXT("Settings", "MotionBlurAmount", "Motion Blur Amount");
+		DisplayName = LOCTABLE("ExtendedFramework", "Settings.MotionBlurAmount");
 		ConfigCategory = TEXT("Graphics");
 		DefaultValue = 0.5f;
 		
@@ -974,17 +1035,17 @@ public:
 	UEFOverallQualitySetting()
 	{
 		SettingTag = FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.OverallQuality"));
-		DisplayName = NSLOCTEXT("Settings", "OverallGraphicsQuality", "Overall Graphics Quality");
+		DisplayName = LOCTABLE("ExtendedFramework", "Settings.OverallGraphicsQuality");
 		ConfigCategory = TEXT("Graphics");
 		DefaultValue = TEXT("Medium");
 		
 		Values = { TEXT("Low"), TEXT("Medium"), TEXT("High"), TEXT("Ultra"), TEXT("Custom") };
 		DisplayNames = {
-			NSLOCTEXT("Settings", "OverallQualityLow", "Low"),
-			NSLOCTEXT("Settings", "OverallQualityMedium", "Medium"),
-			NSLOCTEXT("Settings", "OverallQualityHigh", "High"),
-			NSLOCTEXT("Settings", "OverallQualityUltra", "Ultra"),
-			NSLOCTEXT("Settings", "OverallQualityCustom", "Custom")
+			LOCTABLE("ExtendedFramework", "Common.Low"),
+			LOCTABLE("ExtendedFramework", "Common.Medium"),
+			LOCTABLE("ExtendedFramework", "Common.High"),
+			LOCTABLE("ExtendedFramework", "Common.Ultra"),
+			LOCTABLE("ExtendedFramework", "Settings.OverallQualityCustom")
 		};
 		
 		int32 DefaultIndex = Values.Find(DefaultValue);
@@ -1036,17 +1097,141 @@ public:
 			if (UGameUserSettings* UserSettings = GEngine->GetGameUserSettings())
 			{
 				UserSettings->SetOverallScalabilityLevel(SelectedIndex);
+
+				// A device that hides an option of a group (a Steam Deck without Low textures) means "this
+				// preset with that group on its nearest offered option". SetOverallScalabilityLevel alone
+				// would put the hidden level back, so every group whose adjusted level differs is set again
+				// before anything is applied.
+				const int32 AdjustedGroups = ApplyAdjustedGroupLevels(UserSettings, SelectedIndex);
+
 				UserSettings->ApplySettings(false);
 				UserSettings->SaveSettings();
 				CaptureResolvedPresetSnapshotFromEngine(SelectedIndex);
-				UE_LOG(LogTemp, Log, TEXT("Applied & saved Overall Scalability Level via GameUserSettings: %s (Level %d)"), *Values[SelectedIndex], SelectedIndex);
+				UE_LOG(LogTemp, Log, TEXT("Applied & saved Overall Scalability Level via GameUserSettings: %s (Level %d, %d group(s) adjusted to this device)"), *Values[SelectedIndex], SelectedIndex, AdjustedGroups);
 			}
 
 			// Sync modular sub-setting objects to match the engine state.
 			// Without this, the UI keeps showing stale values and saving
 			// those stale values later overwrites the engine state.
-			RefreshSubSettingsFromEngine();
+			// Skipped while the subsystem applies every setting in order: the
+			// sub-settings then apply their own (saved or default) values next.
+			if (!bSuppressSubSettingSync)
+			{
+				RefreshSubSettingsFromEngine();
+			}
 		}
+	}
+
+	/** Runs first: its preset writes the individual quality settings, which then apply their own values. */
+	virtual int32 GetApplyPriority() const override { return -100; }
+
+	/** "Custom" is locked against the player, so a Custom default is assigned directly. */
+	virtual void ResetToDefault() override
+	{
+		const int32 CustomIndex = GetCustomQualityIndex();
+		if (CustomIndex != INDEX_NONE && DefaultValue.Equals(Values[CustomIndex], ESearchCase::IgnoreCase))
+		{
+			SetSelectedIndexDirect(CustomIndex);
+			return;
+		}
+		Super::ResetToDefault();
+	}
+
+	/** Set by the subsystem around its ordered startup apply; see Apply_Implementation. */
+	void SetSubSettingSyncSuppressed(bool bSuppressed) { bSuppressSubSettingSync = bSuppressed; }
+
+	/** The preset index (0 Low .. 3 Ultra) of an option id, or INDEX_NONE for Custom or an unknown id. */
+	int32 FindPresetIndex(const FString& PresetValue) const
+	{
+		for (int32 PresetIndex = 0; PresetIndex < 4 && PresetIndex < Values.Num(); ++PresetIndex)
+		{
+			if (Values[PresetIndex].Equals(PresetValue, ESearchCase::IgnoreCase))
+			{
+				return PresetIndex;
+			}
+		}
+		return INDEX_NONE;
+	}
+
+	/**
+	 * The preset whose (device-adjusted) values equal every registered sub-setting's default, or Custom.
+	 * This is Overall Quality's own device default unless a device rule names one.
+	 */
+	FString DeriveDefaultFromSubSettings() const
+	{
+		for (int32 PresetIndex = 0; PresetIndex < 4 && PresetIndex < Values.Num(); ++PresetIndex)
+		{
+			bool bMatches = true;
+			for (const FGameplayTag& Tag : GetGraphicsSettingTags())
+			{
+				const UEFModularSettingsMultiSelect* Setting = Cast<UEFModularSettingsMultiSelect>(
+					UEFModularSettingsLibrary::GetModularSetting(this, Tag, EEFSettingsSource::Local));
+				if (!Setting)
+				{
+					continue;
+				}
+
+				const int32 Expected = GetExpectedSubSettingIndex(Tag, PresetIndex);
+				if (!Setting->Values.IsValidIndex(Expected) || !Setting->Values[Expected].Equals(Setting->DefaultValue, ESearchCase::IgnoreCase))
+				{
+					bMatches = false;
+					break;
+				}
+			}
+			if (bMatches)
+			{
+				return Values[PresetIndex];
+			}
+		}
+
+		const int32 CustomIndex = GetCustomQualityIndex();
+		return CustomIndex != INDEX_NONE ? Values[CustomIndex] : DefaultValue;
+	}
+
+	// Centralised list of all sub-settings managed by the overall preset.
+	static const TArray<FGameplayTag>& GetGraphicsSettingTags()
+	{
+		static const TArray<FGameplayTag> Tags = {
+			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.AntiAliasingQuality")),
+			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.TextureQuality")),
+			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.TextureFilteringQuality")),
+			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.FoliageQuality")),
+			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.ShadowQuality")),
+			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.ShadingQuality")),
+			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.VFXQuality")),
+			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.PostProcessQuality")),
+			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.ViewDistance")),
+			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.ScreenSpaceReflection")),
+			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.Bloom"))
+		};
+		return Tags;
+	}
+
+	// Maps a preset level (0=Low..3=Ultra) to the expected sub-setting index,
+	// accounting for settings with non-standard option layouts, and for this
+	// device: an option the device hides becomes its nearest offered one, and a
+	// setting the device fixes (Locked/Hidden) is expected to stay where it is.
+	int32 GetExpectedSubSettingIndex(const FGameplayTag& Tag, int32 PresetIndex) const
+	{
+		const int32 RawIndex = GetRawExpectedSubSettingIndex(Tag, PresetIndex);
+
+		if (const UEFModularSettingsMultiSelect* Setting = Cast<UEFModularSettingsMultiSelect>(
+			UEFModularSettingsLibrary::GetModularSetting(this, Tag, EEFSettingsSource::Local)))
+		{
+			if (!Setting->IsEditableOnThisDevice())
+			{
+				const int32 FixedIndex = Setting->Values.Find(Setting->DefaultValue);
+				return FixedIndex != INDEX_NONE ? FixedIndex : Setting->SelectedIndex;
+			}
+
+			const int32 Nearest = Setting->FindNearestOfferedIndex(RawIndex);
+			if (Nearest != INDEX_NONE)
+			{
+				return Nearest;
+			}
+		}
+
+		return RawIndex;
 	}
 	
 	virtual void SetSelectedIndex_Implementation(int32 Index) override
@@ -1164,25 +1349,38 @@ private:
 	};
 
 	bool bIsUpdating = false;
+	bool bSuppressSubSettingSync = false;
 	TMap<int32, FResolvedPresetSnapshot> ResolvedPresetSnapshots;
 
-	// Centralised list of all sub-settings managed by the overall preset.
-	static const TArray<FGameplayTag>& GetGraphicsSettingTags()
+	/**
+	 * Sets every scalability group whose device-adjusted level for the preset differs from the preset
+	 * itself, through the per-group setters. Returns how many groups were adjusted.
+	 */
+	int32 ApplyAdjustedGroupLevels(UGameUserSettings* UserSettings, int32 PresetIndex) const
 	{
-		static const TArray<FGameplayTag> Tags = {
-			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.AntiAliasingQuality")),
-			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.TextureQuality")),
-			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.TextureFilteringQuality")),
-			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.FoliageQuality")),
-			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.ShadowQuality")),
-			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.ShadingQuality")),
-			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.VFXQuality")),
-			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.PostProcessQuality")),
-			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.ViewDistance")),
-			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.ScreenSpaceReflection")),
-			FGameplayTag::RequestGameplayTag(TEXT("Settings.Graphics.Bloom"))
-		};
-		return Tags;
+		int32 Adjusted = 0;
+		for (const FGameplayTag& Tag : GetGraphicsSettingTags())
+		{
+			const UEFModularSettingsBase* Setting = UEFModularSettingsLibrary::GetModularSetting(this, Tag, EEFSettingsSource::Local);
+			const FName Group = Setting ? Setting->GetEffectiveScalabilityGroup() : NAME_None;
+			if (Group.IsNone())
+			{
+				continue;
+			}
+
+			// Quality groups use the option index as the engine level.
+			const int32 Level = FMath::Clamp(GetExpectedSubSettingIndex(Tag, PresetIndex), 0, 3);
+			if (Level == PresetIndex)
+			{
+				continue;
+			}
+
+			if (EFGraphicsSettingsInternal::SetScalabilityGroupLevel(UserSettings, Group, Level))
+			{
+				++Adjusted;
+			}
+		}
+		return Adjusted;
 	}
 
 	static FGameplayTag GetTextureFilteringTag()
@@ -1297,9 +1495,8 @@ private:
 		return ResolvedPresetSnapshots.Find(PresetIndex);
 	}
 
-	// Maps a preset level (0=Low..3=Ultra) to the expected sub-setting index,
-	// accounting for settings with non-standard option layouts.
-	int32 GetExpectedSubSettingIndex(const FGameplayTag& Tag, int32 PresetIndex) const
+	// The preset's index for a sub-setting before this device's mask is applied.
+	int32 GetRawExpectedSubSettingIndex(const FGameplayTag& Tag, int32 PresetIndex) const
 	{
 		if (const FResolvedPresetSnapshot* Snapshot = GetResolvedPresetSnapshot(PresetIndex))
 		{

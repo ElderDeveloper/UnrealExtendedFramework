@@ -1,6 +1,7 @@
 // Copyright Kemal Erdem YILMAZ. All Rights Reserved.
 
 #include "EEOSBlueprintLibrary.h"
+#include "Shared/EEOSIdentityUtils.h"
 #include "OnlineSubsystem.h"
 #include "OnlineSubsystemUtils.h"
 #include "Interfaces/OnlineIdentityInterface.h"
@@ -93,13 +94,38 @@ FString UEEOSBlueprintLibrary::GetLocalEpicAccountId(const UObject* WorldContext
 
 FString UEEOSBlueprintLibrary::GetLocalDisplayName(const UObject* WorldContextObject, int32 LocalUserNum)
 {
+	// The default user is what UEEOSAuthSubsystem::GetDisplayName answers (Epic nickname when
+	// there is an Epic account, otherwise the native platform's), so ask it when reachable.
+	const UWorld* World = WorldContextObject && GEngine ? GEngine->GetWorldFromContextObject(WorldContextObject, EGetWorldErrorMode::ReturnNull) : nullptr;
+	const UGameInstance* GameInstance = World ? World->GetGameInstance() : nullptr;
+	if (const UEEOSAuthSubsystem* Auth = LocalUserNum == 0 && GameInstance ? GameInstance->GetSubsystem<UEEOSAuthSubsystem>() : nullptr)
+	{
+		return Auth->GetDisplayName();
+	}
+
+	// Same guard as EEOSIdentity::SafeLocalNickname: the engine resolves a nickname with
+	// EOS_UserInfo_CopyBestDisplayName using the default local user's Epic account as LocalUserId,
+	// so without an Epic account (Connect-only) the SDK gets a null id, warns, and returns nothing.
 	IOnlineSubsystem* EOSSub = GetEOS(WorldContextObject);
-	if (!EOSSub) return FString();
+	const IOnlineIdentityPtr Identity = EOSSub ? EOSSub->GetIdentityInterface() : IOnlineIdentityPtr();
+	FString EpicName;
+	if (LocalUserNum == 0)
+	{
+		EpicName = EEOSIdentity::SafeLocalNickname(Identity);
+	}
+	else if (const FUniqueNetIdPtr Local = Identity.IsValid() ? Identity->GetUniquePlayerId(LocalUserNum) : FUniqueNetIdPtr();
+		Local.IsValid() && Local->IsValid() && Identity->GetLoginStatus(LocalUserNum) == ELoginStatus::LoggedIn
+		&& !ExtractEpicAccountId(Local->ToString()).IsEmpty())
+	{
+		EpicName = EEOSIdentity::SafeNickname(Identity, *Local);
+	}
+	if (!EpicName.IsEmpty()) return EpicName;
 
-	IOnlineIdentityPtr Identity = EOSSub->GetIdentityInterface();
-	if (!Identity.IsValid()) return FString();
-
-	return Identity->GetPlayerNickname(LocalUserNum);
+	// No Epic account: the native platform identity owns the display name.
+	IOnlineSubsystem* Platform = IOnlineSubsystem::GetByPlatform();
+	const IOnlineIdentityPtr PlatformIdentity = Platform && Platform != EOSSub ? Platform->GetIdentityInterface() : IOnlineIdentityPtr();
+	return PlatformIdentity.IsValid() && PlatformIdentity->GetLoginStatus(LocalUserNum) == ELoginStatus::LoggedIn
+		? PlatformIdentity->GetPlayerNickname(LocalUserNum) : FString();
 }
 
 FString UEEOSBlueprintLibrary::GetLocalProductUserId(const UObject* WorldContextObject, int32 LocalUserNum)

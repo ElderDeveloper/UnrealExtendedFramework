@@ -61,7 +61,11 @@ public class UnrealExtendedFramework : ModuleRules
 	public UnrealExtendedFramework(ReadOnlyTargetRules Target) : base(Target)
 	{
 		PCHUsage = ModuleRules.PCHUsageMode.UseExplicitOrSharedPCHs;
-		
+
+		// The plugin's player-facing text lives in the "ExtendedFramework" string table, a CSV read at
+		// module startup. It is not an asset, so a packaged build must stage the file explicitly.
+		RuntimeDependencies.Add(Path.Combine(PluginDirectory, "Localization", "ExtendedFramework.csv"), StagedFileType.UFS);
+
 		PublicIncludePaths.AddRange(
 			new string[] {
 				Path.Combine(ModuleDirectory),

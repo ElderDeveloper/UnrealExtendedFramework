@@ -41,6 +41,7 @@ public:
 	const FEGChessSquareMarks& GetCurrentMarks() const { return CurrentMarks; }
 
 	virtual void OnUnregister() override;
+	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 
 private:
 	UPROPERTY(Transient)

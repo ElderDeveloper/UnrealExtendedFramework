@@ -13,7 +13,12 @@
 #include "OnlineSessionSettings.h"
 #include "IOnlineSubsystemEOS.h"
 #include "VoiceChat.h"
+// Unconditional: this header is what defines WITH_EOSVOICECHAT (the engine's own pattern, OnlineSubsystemEOS.cpp).
+#include "EOSVoiceChat.h"
 #include "Async/Async.h"
+#include "Engine/GameInstance.h"
+#include "Misc/App.h"
+#include "UObject/UObjectGlobals.h"
 #include "UObject/UnrealType.h"
 #include "UnrealExtendedEOS.h"
 
@@ -40,11 +45,17 @@ struct FEEOSVoiceLobbyRTCCallbacks
 			LocalUserId = UTF8_TO_TCHAR(Buffer);
 		}
 		auto* Self = static_cast<UEEOSVoiceSubsystem*>(Data->ClientData);
+		// A platform-scoped notification, not a one-shot request. Its context is captured inside the identity
+		// LoggedIn broadcast, and the base class's own login-status lambda runs after that capture and advances the
+		// generation once more, so a same-identity check rejected every callback and the transmit correction below
+		// never ran. The local user is matched by PUID (bLocal), and logout removes the notification
+		// (TearDownVoiceUser -> UnbindLobbyRTCNotification).
+		if (!Self->IsEOSContextCurrent(Self->RTCNotificationContext, /*bRequireSameIdentity*/ false))
+		{ Self->LogCallbackDisposition(TEXT("LobbyRTC"), 0, TEXT("StaleGeneration"), Self->RTCNotificationContext.Generation); return; }
+		// Only past the context check: a retired platform must not reach the voice user it outlived.
 		const bool bLocal = Self->CachedVoiceChatUser && Self->bVoiceUserLoggedIn && !LocalUserId.IsEmpty()
 			&& LocalUserId.Equals(Self->CachedVoiceChatUser->GetLoggedInPlayerName(), ESearchCase::IgnoreCase);
 		const auto* Lobby = Self->GetGameInstance() ? Self->GetGameInstance()->GetSubsystem<UEEOSLobbySubsystem>() : nullptr;
-		if (!Self->IsEOSContextCurrent(Self->RTCNotificationContext))
-		{ Self->LogCallbackDisposition(TEXT("LobbyRTC"), 0, TEXT("StaleGeneration"), Self->RTCNotificationContext.Generation); return; }
 		const bool bLeaving = Lobby && Lobby->IsLobbyExitInProgress();
 		const FString LobbyId = Data->LobbyId ? UTF8_TO_TCHAR(Data->LobbyId) : FString();
 		const bool bMember = Lobby && Lobby->IsInLobby() && Lobby->GetCurrentLobbyId() == LobbyId;
@@ -73,6 +84,49 @@ namespace
 {
 	/** Must match LOBBY_SESSION_NAME in Sessions/EEOSLobbySubsystem.cpp. */
 	const FName GVoiceLobbySessionName(TEXT("EOS_Lobby"));
+
+	/**
+	 * Whether an aggregate is worth pushing over the one last pushed. The engine logs every SetPlayerVolume at Log level
+	 * and re-issues the player's receive state and volume in each channel, while a proximity source recomputes several
+	 * times a second. Steps under MinimumStep are skipped; the endpoints always land exactly, so a fade still ends in
+	 * silence or at full volume.
+	 */
+	bool IsPlayerVolumePushNeeded(const float* Applied, const float Target, const bool bEndpoint)
+	{
+		static constexpr float MinimumStep = 0.02f;
+		if (!Applied)
+		{
+			return true;
+		}
+		if (*Applied == Target)
+		{
+			return false;
+		}
+		return bEndpoint || Target == 0.0f || Target == 1.0f || FMath::Abs(Target - *Applied) >= MinimumStep;
+	}
+
+	/**
+	 * The editor's "use less CPU when in background" setting, which is what stretches ticks in an unfocused editor.
+	 * Only an editor session applies it: "UnrealEditor -game" is built WITH_EDITOR but runs with GIsEditor false.
+	 */
+	void ReadEditorThrottle(bool& bOutKnown, bool& bOutThrottle)
+	{
+		bOutKnown = bOutThrottle = false;
+#if WITH_EDITOR
+		if (!GIsEditor)
+		{
+			return;
+		}
+		if (const UClass* Class = FindObject<UClass>(nullptr, TEXT("/Script/UnrealEd.EditorPerformanceSettings")))
+		{
+			if (const FBoolProperty* Property = FindFProperty<FBoolProperty>(Class, TEXT("bThrottleCPUWhenNotForeground")))
+			{
+				bOutKnown = true;
+				bOutThrottle = Property->GetPropertyValue_InContainer(Class->GetDefaultObject());
+			}
+		}
+#endif
+	}
 }
 
 // ── Lifecycle ────────────────────────────────────────────────────────────────
@@ -88,6 +142,28 @@ void UEEOSVoiceSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 		return;
 	}
 	CadenceTicker = FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateUObject(this, &UEEOSVoiceSubsystem::TickCadence), 0.0f);
+	FCoreUObjectDelegates::PreLoadMap.AddUObject(this, &UEEOSVoiceSubsystem::HandlePreLoadMap);
+	FCoreUObjectDelegates::PostLoadMapWithWorld.AddUObject(this, &UEEOSVoiceSubsystem::HandlePostLoadMapWithWorld);
+
+#if WITH_EOSVOICECHAT
+	// The only place EOS reports a broken capture. Process-wide (every PIE client's voice user fires it), so
+	// HandleMicrophoneStatus keeps only this subsystem's own player.
+	MicrophoneStatusHandle = FEOSVoiceChatDelegates::OnAudioInputDeviceStatusChanged.AddWeakLambda(this,
+		[this](FString PlayerName, EOS_ERTCAudioInputStatus Status)
+		{
+			EEOSMicrophoneState State;
+			switch (Status)
+			{
+			case EOS_ERTCAudioInputStatus::EOS_RTCAIS_Idle:                  State = EEOSMicrophoneState::Idle; break;
+			case EOS_ERTCAudioInputStatus::EOS_RTCAIS_Recording:             State = EEOSMicrophoneState::Recording; break;
+			case EOS_ERTCAudioInputStatus::EOS_RTCAIS_RecordingSilent:       State = EEOSMicrophoneState::Silent; break;
+			case EOS_ERTCAudioInputStatus::EOS_RTCAIS_RecordingDisconnected: State = EEOSMicrophoneState::Disconnected; break;
+			case EOS_ERTCAudioInputStatus::EOS_RTCAIS_Failed:                State = EEOSMicrophoneState::Failed; break;
+			default: return;
+			}
+			HandleMicrophoneStatus(PlayerName, State);
+		});
+#endif
 
 	// Watch identity login status: the voice user can only be resolved once the local player
 	// has a logged-in EOS identity (the OSS logs the voice user in with the Product User Id),
@@ -120,6 +196,17 @@ void UEEOSVoiceSubsystem::Deinitialize()
 	BeginEOSShutdown();
 	if (CadenceTicker.IsValid()) FTSTicker::GetCoreTicker().RemoveTicker(CadenceTicker);
 	CadenceTicker.Reset(); DisconnectedRTCLobby.Empty();
+	FCoreUObjectDelegates::PreLoadMap.RemoveAll(this);
+	FCoreUObjectDelegates::PostLoadMapWithWorld.RemoveAll(this);
+	bInMapLoad = bMapLoadSinceCadenceTick = false;
+#if WITH_EOSVOICECHAT
+	FEOSVoiceChatDelegates::OnAudioInputDeviceStatusChanged.Remove(MicrophoneStatusHandle);
+#endif
+	MicrophoneStatusHandle.Reset();
+	// Quietly: the teardown below would otherwise broadcast the reset into a subsystem being destroyed.
+	ResetMicrophoneRecovery();
+	bMicrophoneCaptureFailed = false;
+	MicrophoneState = EEOSMicrophoneState::Unknown;
 	if (StaleContributionSweepHandle.IsValid())
 	{
 		FTSTicker::GetCoreTicker().RemoveTicker(StaleContributionSweepHandle);
@@ -154,6 +241,7 @@ void UEEOSVoiceSubsystem::Deinitialize()
 	VolumeContributions.Empty();
 	PlayerVolumeScales.Empty();
 	AppliedPlayerVolumes.Empty();
+	PendingPlayerVolumes.Empty();
 
 	Super::Deinitialize();
 }
@@ -539,6 +627,9 @@ void UEEOSVoiceSubsystem::TearDownVoiceUser()
 	UnbindLobbyRTCNotification();
 
 	TGuardValue<bool> TeardownGuard(bTearingDownVoiceUser, true);
+	// Inside the guard: a listener reacting to the broadcast must not start room work mid-teardown.
+	ForgetMicrophoneState();
+	LastSubmittedInputDevice.Reset();
 	bLocalMuteApplied = false;
 	AppliedInputVolume.Reset(); AppliedOutputVolume.Reset();
 	bInputDevicesCached = bOutputDevicesCached = false; CachedInputDevices.Empty(); CachedOutputDevices.Empty();
@@ -566,6 +657,7 @@ void UEEOSVoiceSubsystem::TearDownVoiceUser()
 	IVoiceChatUser* UserToRelease = CachedVoiceChatUser;
 	CachedVoiceChatUser = nullptr;
 	AppliedPlayerVolumes.Empty();
+	PendingPlayerVolumes.Empty();
 	bDefaultsApplied = false;
 
 	if (!bOwnsVoiceUser)
@@ -665,6 +757,7 @@ void UEEOSVoiceSubsystem::HandleVoiceChatLoggedIn(const FString& PlayerName)
 	bInputDevicesCached = bOutputDevicesCached = false; CachedInputDevices.Empty(); CachedOutputDevices.Empty();
 	RequestedInputDevice.Reset(); RequestedOutputDevice.Reset();
 
+	LastSubmittedInputDevice.Reset();
 	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSVoiceSubsystem: Voice chat user logged in as '%s'"), *FEEOSNativeOperationLease::SafeField(PlayerName));
 	ApplyVoiceDefaults();
 
@@ -674,6 +767,27 @@ void UEEOSVoiceSubsystem::HandleVoiceChatLoggedIn(const FString& PlayerName)
 			FOnVoiceChatAfterCaptureAudioReadDelegate2::FDelegate::CreateUObject(this, &UEEOSVoiceSubsystem::HandleCapturedAudio));
 		CaptureSentHandle = CachedVoiceChatUser->RegisterOnVoiceChatBeforeCaptureAudioSentDelegate(
 			FOnVoiceChatBeforeCaptureAudioSentDelegate2::FDelegate::CreateUObject(this, &UEEOSVoiceSubsystem::HandleAudioAboutToSend));
+	}
+
+	// Volumes reported before the login completed were held back (the engine cannot take them yet); push them now,
+	// from scratch, since nothing was applied to this login.
+	AppliedPlayerVolumes.Empty();
+	PendingPlayerVolumes.Empty();
+	TSet<FString> PlayersWithVolume;
+	for (const TPair<FObjectKey, TMap<FString, float>>& SourcePair : VolumeContributions)
+	{
+		for (const TPair<FString, float>& Contribution : SourcePair.Value)
+		{
+			PlayersWithVolume.Add(Contribution.Key);
+		}
+	}
+	for (const TPair<FString, float>& PlayerScale : PlayerVolumeScales)
+	{
+		PlayersWithVolume.Add(PlayerScale.Key);
+	}
+	for (const FString& UserId : PlayersWithVolume)
+	{
+		ApplyAggregatedVolumeForPlayerInternal(UserId);
 	}
 }
 
@@ -685,6 +799,8 @@ void UEEOSVoiceSubsystem::HandleVoiceChatLoggedOut(const FString& PlayerName)
 	AppliedInputVolume.Reset(); AppliedOutputVolume.Reset();
 	bInputDevicesCached = bOutputDevicesCached = false; CachedInputDevices.Empty(); CachedOutputDevices.Empty();
 	RequestedInputDevice.Reset(); RequestedOutputDevice.Reset();
+	LastSubmittedInputDevice.Reset();
+	ForgetMicrophoneState();
 	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSVoiceSubsystem: Voice chat user '%s' logged out"), *FEEOSNativeOperationLease::SafeField(PlayerName));
 }
 
@@ -712,6 +828,13 @@ void UEEOSVoiceSubsystem::HandleChannelExited(const FString& ChannelName, const 
 		Reason.IsSuccess() ? TEXT("") : TEXT(" — "), Reason.IsSuccess() ? TEXT("") : *FEEOSNativeOperationLease::SafeField(Reason.ErrorDesc));
 
 	RecomputeTransmitChannels();
+
+	// The engine drops a room's input-state notification with the room, so a Failed report from the last room
+	// must not outlive it into the next one.
+	if (CachedVoiceChatUser && CachedVoiceChatUser->GetChannels().IsEmpty())
+	{
+		ForgetMicrophoneState();
+	}
 
 	OnVoiceRoomLeft.Broadcast(ChannelName);
 }
@@ -760,6 +883,14 @@ void UEEOSVoiceSubsystem::HandleAvailableAudioDevicesChanged()
 	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSVoiceSubsystem: Audio devices changed (%d input, %d output)"),
 		GetInputDevices().Num(), GetOutputDevices().Num());
 	OnAudioDevicesChanged.Broadcast();
+
+	// A new device list is a fresh chance for a failed capture; the listeners above have just re-applied the
+	// selection, so a still-failed microphone gets a new round of re-arms.
+	ResetMicrophoneRecovery();
+	if (bMicrophoneCaptureFailed)
+	{
+		ScheduleMicrophoneRecovery();
+	}
 }
 
 void UEEOSVoiceSubsystem::ApplyVoiceDefaults()
@@ -1026,9 +1157,12 @@ void UEEOSVoiceSubsystem::ApplyAggregatedVolumeForPlayer(const FString& UserId)
 	ApplyAggregatedVolumeForPlayerInternal(UserId);
 }
 
-void UEEOSVoiceSubsystem::ApplyAggregatedVolumeForPlayerInternal(const FString& UserId)
+void UEEOSVoiceSubsystem::ApplyAggregatedVolumeForPlayerInternal(const FString& UserId, const bool bIgnoreMute)
 {
-	if (!CachedVoiceChatUser)
+	// The voice user exists a frame before it is logged in, and FEOSVoiceChatUser::SetPlayerVolume ends in
+	// check(IsLoggedIn()). The contributions stay recorded; HandleVoiceChatLoggedIn applies them. The engine's own state
+	// is asked too: during an engine-driven logout it is already LoggingOut while it still broadcasts room exits.
+	if (!CachedVoiceChatUser || !bVoiceUserLoggedIn || !CachedVoiceChatUser->IsLoggedIn())
 	{
 		return;
 	}
@@ -1047,25 +1181,49 @@ void UEEOSVoiceSubsystem::ApplyAggregatedVolumeForPlayerInternal(const FString& 
 
 	const float* Scale = PlayerVolumeScales.Find(UserId);
 	const float* Applied = AppliedPlayerVolumes.Find(UserId);
-	if (MaxVolume < 0.f && !Scale)
+	// No contributions or scale left — restore 1.0, but only if we ever overrode this player.
+	const bool bRestore = MaxVolume < 0.f && !Scale;
+	if (bRestore && !Applied)
 	{
-		// No contributions or scale left — restore 1.0, but only if we ever overrode this player.
-		if (Applied)
+		PendingPlayerVolumes.Remove(UserId);
+		return;
+	}
+
+	const float Unscaled = MaxVolume < 0.f ? 1.0f : MaxVolume;
+	const float Target = bRestore ? 1.0f : FMath::Clamp(Unscaled * (Scale ? *Scale : 1.0f), 0.f, 2.f);
+	// The end of a fade (silent, or full before the listener's own scale) always lands exactly, even with a scale.
+	const bool bEndpoint = bRestore || Unscaled == 0.0f || Unscaled == 1.0f;
+	if (!IsPlayerVolumePushNeeded(Applied, Target, bEndpoint))
+	{
+		// Unchanged, or a step too small to hear: skip the SDK call (proximity timers tick frequently). A value held
+		// for a muted player is superseded by this one.
+		PendingPlayerVolumes.Remove(UserId);
+		if (bRestore)
 		{
-			CachedVoiceChatUser->SetPlayerVolume(UserId, 1.0f);
-			AppliedPlayerVolumes.Remove(UserId);
+			AppliedPlayerVolumes.Remove(UserId); // already exactly 1.0
 		}
 		return;
 	}
 
-	const float Target = FMath::Clamp((MaxVolume < 0.f ? 1.0f : MaxVolume) * (Scale ? *Scale : 1.0f), 0.f, 2.f);
-	if (Applied && FMath::IsNearlyEqual(*Applied, Target, 0.001f))
+	// A muted player is not received, so a push changes nothing audible, yet the engine re-issues the player's receive
+	// state with it. A push just after an unmute races the unmute's own subscribe, which the SDK refuses (EOS_NoChange).
+	// Hold the value instead; SetPlayerMutedIfChanged lands it just before the unmute. (IsPlayerMuted warns while logged out.)
+	if (!bIgnoreMute && bVoiceUserLoggedIn && CachedVoiceChatUser->IsPlayerMuted(UserId))
 	{
-		return; // unchanged — skip the SDK call (proximity timers tick frequently)
+		PendingPlayerVolumes.Add(UserId, Target);
+		return;
 	}
 
+	PendingPlayerVolumes.Remove(UserId);
 	CachedVoiceChatUser->SetPlayerVolume(UserId, Target);
-	AppliedPlayerVolumes.Add(UserId, Target);
+	if (bRestore)
+	{
+		AppliedPlayerVolumes.Remove(UserId);
+	}
+	else
+	{
+		AppliedPlayerVolumes.Add(UserId, Target);
+	}
 }
 
 void UEEOSVoiceSubsystem::SetPlayerVolumeScale(const FString& UserId, float Scale)
@@ -1125,6 +1283,7 @@ void UEEOSVoiceSubsystem::RecomputeTransmitChannels()
 
 	CachedVoiceChatUser->TransmitToSpecificChannels(TransmitUnion);
 	UE_LOG(LogExtendedEOS, Verbose, TEXT("EEOSVoiceSubsystem: Transmit set recomposed (%d room(s))"), TransmitUnion.Num());
+	ReArmMicrophoneOnTransmit(!TransmitUnion.IsEmpty());
 }
 
 void UEEOSVoiceSubsystem::ReapplyTransmitState()
@@ -1186,7 +1345,8 @@ void UEEOSVoiceSubsystem::BindLobbyRTCNotification()
 	if (bOwnsVoiceUser) return;
 	if (LobbyRTCConnectionNotifyId != 0)
 	{
-		if (IsEOSContextCurrent(RTCNotificationContext)) return;
+		// Same scope as the callback's own check (see OnRoomConnectionChanged).
+		if (IsEOSContextCurrent(RTCNotificationContext, /*bRequireSameIdentity*/ false)) return;
 		UnbindLobbyRTCNotification();
 	}
 
@@ -1275,6 +1435,14 @@ void UEEOSVoiceSubsystem::SetPlayerMutedIfChanged(const FString& UserId, const b
 		return;
 	}
 
+	// The unmute re-issues the player's receive state (UpdateReceiving enabled) with whatever volume the engine holds.
+	// A volume held back while muted lands first, so the unmute is the last receive call for this player and carries
+	// the current volume; pushed after it, it would race the unmute's subscribe.
+	if (!bMuted && PendingPlayerVolumes.Contains(UserId))
+	{
+		ApplyAggregatedVolumeForPlayerInternal(UserId, /*bIgnoreMute*/ true);
+	}
+
 	CachedVoiceChatUser->SetPlayerMuted(UserId, bMuted);
 	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSVoiceSubsystem: %s '%s'"), bMuted ? TEXT("Muted") : TEXT("Unmuted"), *FEEOSNativeOperationLease::SafeField(UserId));
 }
@@ -1282,7 +1450,8 @@ void UEEOSVoiceSubsystem::SetPlayerMutedIfChanged(const FString& UserId, const b
 void UEEOSVoiceSubsystem::SetPlayerVolume(const FString& UserId, float Volume)
 {
 	Volume = FMath::Clamp(Volume, 0.f, 2.f);
-	if (CachedVoiceChatUser)
+	// The engine asserts (check(IsLoggedIn())) on a volume set before the voice user's login completes.
+	if (CachedVoiceChatUser && bVoiceUserLoggedIn && CachedVoiceChatUser->IsLoggedIn())
 	{
 		CachedVoiceChatUser->SetPlayerVolume(UserId, Volume);
 	}
@@ -1379,6 +1548,7 @@ void UEEOSVoiceSubsystem::TransmitToAllRooms()
 		}
 		CachedVoiceChatUser->TransmitToAllChannels();
 		UE_LOG(LogExtendedEOS, Log, TEXT("EEOSVoiceSubsystem: Transmitting to all rooms"));
+		ReArmMicrophoneOnTransmit(true);
 	}
 }
 
@@ -1394,6 +1564,7 @@ void UEEOSVoiceSubsystem::TransmitToSelectedRoom(const FString& RoomName)
 		Channels.Add(RoomName);
 		CachedVoiceChatUser->TransmitToSpecificChannels(Channels);
 		UE_LOG(LogExtendedEOS, Log, TEXT("EEOSVoiceSubsystem: Transmitting to '%s'"), *FEEOSNativeOperationLease::SafeField(RoomName));
+		ReArmMicrophoneOnTransmit(true);
 	}
 }
 
@@ -1459,6 +1630,7 @@ void UEEOSVoiceSubsystem::SetInputDevice(const FString& DeviceId)
 	if (CachedVoiceChatUser && bVoiceUserLoggedIn && (!RequestedInputDevice.IsSet() || RequestedInputDevice.GetValue() != DeviceId))
 	{
 		RequestedInputDevice = DeviceId;
+		LastSubmittedInputDevice = DeviceId;
 		CachedVoiceChatUser->SetInputDeviceId(DeviceId);
 		UE_LOG(LogExtendedEOS, Log, TEXT("EOSVoiceAudio InputDeviceSelectionSubmitted=1 RequestedDefaultDevice=%d AcceptedKnown=0 EffectiveSampleRateKnown=0 Adapter=IVoiceChatUser"), DeviceId.IsEmpty());
 	}
@@ -1471,6 +1643,156 @@ void UEEOSVoiceSubsystem::SetOutputDevice(const FString& DeviceId)
 		RequestedOutputDevice = DeviceId;
 		CachedVoiceChatUser->SetOutputDeviceId(DeviceId);
 		UE_LOG(LogExtendedEOS, Log, TEXT("EOSVoiceAudio OutputDeviceSelectionSubmitted=1 RequestedDefaultDevice=%d AcceptedKnown=0 EffectiveSampleRateKnown=0 Adapter=IVoiceChatUser"), DeviceId.IsEmpty());
+	}
+}
+
+// ── Microphone capture state ─────────────────────────────────────────────────
+
+void UEEOSVoiceSubsystem::HandleMicrophoneStatus(const FString& PlayerName, const EEOSMicrophoneState NewState)
+{
+	if (!IsInGameThread())
+	{
+		AsyncTask(ENamedThreads::GameThread, [WeakThis = TWeakObjectPtr<UEEOSVoiceSubsystem>(this), PlayerName, NewState]()
+		{
+			if (UEEOSVoiceSubsystem* Self = WeakThis.Get())
+			{
+				Self->HandleMicrophoneStatus(PlayerName, NewState);
+			}
+		});
+		return;
+	}
+
+	if (bTearingDownVoiceUser || !CachedVoiceChatUser || !bVoiceUserLoggedIn
+		|| !PlayerName.Equals(CachedVoiceChatUser->GetLoggedInPlayerName(), ESearchCase::IgnoreCase))
+	{
+		return;
+	}
+
+	SetMicrophoneState(NewState);
+	if (NewState == EEOSMicrophoneState::Failed)
+	{
+		bMicrophoneCaptureFailed = true;
+		if (!MicrophoneRecoveryTicker.IsValid())
+		{
+			ScheduleMicrophoneRecovery();
+		}
+	}
+	else if (NewState == EEOSMicrophoneState::Recording || NewState == EEOSMicrophoneState::Silent)
+	{
+		// Capturing again. A capture that keeps working well after the last re-arm earns a fresh budget; one that
+		// fails again right after a re-arm (a flapping device) keeps counting toward the cap.
+		bMicrophoneCaptureFailed = false;
+		CancelMicrophoneRecoveryTicker();
+		static constexpr double SecondsBeforeBudgetResets = 30.0;
+		if (FPlatformTime::Seconds() - LastMicrophoneReArmSeconds > SecondsBeforeBudgetResets)
+		{
+			MicrophoneRecoveryAttempts = 0;
+		}
+	}
+	// Idle and Disconnected leave recovery as it is. The engine drops the room name, so an Idle may come from another
+	// room while this one is still broken; an unplug is re-applied by the device-list change that follows.
+}
+
+void UEEOSVoiceSubsystem::SetMicrophoneState(const EEOSMicrophoneState NewState)
+{
+	if (MicrophoneState == NewState)
+	{
+		return;
+	}
+	MicrophoneState = NewState;
+	if (NewState == EEOSMicrophoneState::Failed)
+	{
+		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSVoiceSubsystem: Microphone state -> %s"), *UEnum::GetValueAsString(NewState));
+	}
+	else
+	{
+		UE_LOG(LogExtendedEOS, Log, TEXT("EEOSVoiceSubsystem: Microphone state -> %s"), *UEnum::GetValueAsString(NewState));
+	}
+	OnMicrophoneStateChanged.Broadcast(NewState);
+}
+
+void UEEOSVoiceSubsystem::ScheduleMicrophoneRecovery()
+{
+	static constexpr float RecoveryDelays[] = { 1.0f, 3.0f, 10.0f };
+	if (MicrophoneRecoveryAttempts >= UE_ARRAY_COUNT(RecoveryDelays))
+	{
+		// The Failed state stays, so the next push-to-talk or device change still re-arms it.
+		UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSVoiceSubsystem: Microphone still failed after %d re-arm(s); the next transmit or device change tries again"),
+			MicrophoneRecoveryAttempts);
+		return;
+	}
+
+	MicrophoneRecoveryTicker = FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateWeakLambda(this, [this](float)
+	{
+		MicrophoneRecoveryTicker.Reset();
+		if (bMicrophoneCaptureFailed)
+		{
+			// An identical submission may change nothing inside the SDK, so later attempts detour through another id.
+			ReArmInputDevice(/*bDetour*/ MicrophoneRecoveryAttempts > 0);
+			++MicrophoneRecoveryAttempts;
+			ScheduleMicrophoneRecovery();
+		}
+		return false;
+	}), RecoveryDelays[MicrophoneRecoveryAttempts]);
+}
+
+void UEEOSVoiceSubsystem::ReArmInputDevice(const bool bDetour)
+{
+	if (!CachedVoiceChatUser || !bVoiceUserLoggedIn)
+	{
+		return;
+	}
+
+	// The engine sends EOS_RTCAudio_SetAudioInputSettings on every SetInputDeviceId (it has no change check), which
+	// is what restarts the SDK's recorder. The last submission is used, not RequestedInputDevice: that is only a
+	// dedup cache, cleared on every device-list change, and re-arming from it could move the player to the default.
+	const FString Requested = LastSubmittedInputDevice.Get(FString());
+	if (bDetour)
+	{
+		// Step through another id and back in one go, so the device always ends where it was requested.
+		const FString Other = Requested.IsEmpty() ? CachedVoiceChatUser->GetInputDeviceInfo().Id : FString();
+		if (!Other.Equals(Requested))
+		{
+			CachedVoiceChatUser->SetInputDeviceId(Other);
+		}
+	}
+	CachedVoiceChatUser->SetInputDeviceId(Requested);
+	LastMicrophoneReArmSeconds = FPlatformTime::Seconds();
+	UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSVoiceSubsystem: Microphone capture failed - re-armed the input device (attempt %d%s)"),
+		MicrophoneRecoveryAttempts + 1, bDetour ? TEXT(", through another device id") : TEXT(""));
+}
+
+void UEEOSVoiceSubsystem::CancelMicrophoneRecoveryTicker()
+{
+	if (MicrophoneRecoveryTicker.IsValid())
+	{
+		FTSTicker::GetCoreTicker().RemoveTicker(MicrophoneRecoveryTicker);
+		MicrophoneRecoveryTicker.Reset();
+	}
+}
+
+void UEEOSVoiceSubsystem::ResetMicrophoneRecovery()
+{
+	CancelMicrophoneRecoveryTicker();
+	MicrophoneRecoveryAttempts = 0;
+}
+
+void UEEOSVoiceSubsystem::ForgetMicrophoneState()
+{
+	ResetMicrophoneRecovery();
+	bMicrophoneCaptureFailed = false;
+	SetMicrophoneState(EEOSMicrophoneState::Unknown);
+}
+
+void UEEOSVoiceSubsystem::ReArmMicrophoneOnTransmit(const bool bTransmitting)
+{
+	// The SDK may restart capture only when sending resumes, so the player starting to talk is the moment that
+	// matters most once the timed attempts are spent. Rate-limited: a transmit set can be recomposed often.
+	static constexpr double MinimumSecondsBetweenReArms = 2.0;
+	if (bTransmitting && bMicrophoneCaptureFailed
+		&& FPlatformTime::Seconds() - LastMicrophoneReArmSeconds > MinimumSecondsBetweenReArms)
+	{
+		ReArmInputDevice(/*bDetour*/ true);
 	}
 }
 
@@ -1587,11 +1909,34 @@ FEEOSAudioSettingsSnapshot UEEOSVoiceSubsystem::GetAudioSettingsSnapshot() const
 	Result.bInputDeviceSubmissionMade = RequestedInputDevice.IsSet(); Result.bOutputDeviceSubmissionMade = RequestedOutputDevice.IsSet();
 	return Result;
 }
+void UEEOSVoiceSubsystem::HandlePreLoadMap(const FString& /*MapName*/)
+{
+	bInMapLoad = bMapLoadSinceCadenceTick = true;
+}
+
+void UEEOSVoiceSubsystem::HandlePostLoadMapWithWorld(UWorld* /*LoadedWorld*/)
+{
+	// The engine pairs this with every PreLoadMap, failed loads included (UEngine::LoadMap's FPostLoadMapCaller).
+	bInMapLoad = false;
+}
+
 bool UEEOSVoiceSubsystem::TickCadence(float)
 {
 	const double Now = FPlatformTime::Seconds();
 	const double Gap = LastCadenceTick > 0 ? Now - LastCadenceTick : 0; LastCadenceTick = Now;
-	if (Gap > 0.25)
+	const bool bMapLoadGap = bInMapLoad || bMapLoadSinceCadenceTick;
+	bMapLoadSinceCadenceTick = false;
+	if (Gap > 0.25 && bMapLoadGap)
+	{
+		// A blocking map load stalls the game thread by design and the RTC rides it out. Logged for the timeline but kept
+		// out of the delay episode below, so it neither inflates that episode's maximum nor spends its summary interval.
+		CadenceRecoveryStart = 0;
+		bool bThrottleKnown = false, bThrottle = false;
+		ReadEditorThrottle(bThrottleKnown, bThrottle);
+		UE_LOG(LogExtendedEOS, Log, TEXT("EOSVoiceCadence Instance=%s Phase=MapLoad MeasuredInterval=CoreTicker DelayedTicks=1 MaximumGapMs=%.0f DurationSeconds=%.1f EditorThrottleKnown=%d EditorThrottle=%d ForegroundKnown=1 Foreground=%d SDKRTCIntervalKnown=0"),
+			*GetOwningEOSInstanceName().ToString(), Gap * 1000, Gap, bThrottleKnown, bThrottle, FApp::HasFocus());
+	}
+	else if (Gap > 0.25)
 	{
 		++DelayedCadenceTicks; MaximumCadenceGap = FMath::Max(MaximumCadenceGap, Gap); CadenceRecoveryStart = 0;
 		if (CadenceDelayStart == 0) CadenceDelayStart = Now;
@@ -1599,13 +1944,9 @@ bool UEEOSVoiceSubsystem::TickCadence(float)
 		if (LastCadenceSummary == 0 || Now - LastCadenceSummary >= Interval)
 		{
 			bool bThrottleKnown = false, bThrottle = false;
-#if WITH_EDITOR
-			if (auto* Class = FindObject<UClass>(nullptr, TEXT("/Script/UnrealEd.EditorPerformanceSettings")))
-				if (const auto* Property = FindFProperty<FBoolProperty>(Class, TEXT("bThrottleCPUWhenNotForeground")))
-				{ bThrottleKnown = true; bThrottle = Property->GetPropertyValue_InContainer(Class->GetDefaultObject()); }
-#endif
-			UE_LOG(LogExtendedEOS, Warning, TEXT("EOSVoiceCadence Instance=%s Phase=GameThreadDelay MeasuredInterval=CoreTicker DelayedTicks=%d MaximumGapMs=%.0f DurationSeconds=%.1f EditorThrottleKnown=%d EditorThrottle=%d ForegroundKnown=0 SDKRTCIntervalKnown=0"),
-				*GetOwningEOSInstanceName().ToString(), DelayedCadenceTicks, MaximumCadenceGap * 1000, Now - CadenceDelayStart, bThrottleKnown, bThrottle);
+			ReadEditorThrottle(bThrottleKnown, bThrottle);
+			UE_LOG(LogExtendedEOS, Warning, TEXT("EOSVoiceCadence Instance=%s Phase=GameThreadDelay MeasuredInterval=CoreTicker DelayedTicks=%d MaximumGapMs=%.0f DurationSeconds=%.1f EditorThrottleKnown=%d EditorThrottle=%d ForegroundKnown=1 Foreground=%d SDKRTCIntervalKnown=0"),
+				*GetOwningEOSInstanceName().ToString(), DelayedCadenceTicks, MaximumCadenceGap * 1000, Now - CadenceDelayStart, bThrottleKnown, bThrottle, FApp::HasFocus());
 			LastCadenceSummary = Now;
 		}
 	}

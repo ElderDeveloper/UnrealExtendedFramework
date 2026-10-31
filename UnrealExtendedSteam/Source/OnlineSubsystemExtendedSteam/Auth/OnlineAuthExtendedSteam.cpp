@@ -93,12 +93,23 @@ FOnlineAuthExtendedSteam::FOnlineAuthExtendedSteam(FOnlineSubsystemExtendedSteam
 
 FOnlineAuthExtendedSteam::~FOnlineAuthExtendedSteam()
 {
-	// Fail any web-API ticket requests still in flight so callers are never left hanging.
+	if (DeferredWebApiTimeoutHandle.IsValid())
+	{
+		FTSTicker::RemoveTicker(DeferredWebApiTimeoutHandle);
+		DeferredWebApiTimeoutHandle.Reset();
+	}
+
+	// Fail any web-API ticket requests still in flight or held so callers are never left hanging.
 	TArray<FOnExtendedSteamWebApiTicket> Orphaned;
 	{
 		FScopeLock Lock(&AuthLock);
 		PendingWebApiTickets.GenerateValueArray(Orphaned);
 		PendingWebApiTickets.Empty();
+		for (FDeferredWebApiRequest& Request : DeferredWebApiRequests)
+		{
+			Orphaned.Add(MoveTemp(Request.Delegate));
+		}
+		DeferredWebApiRequests.Empty();
 	}
 	for (const FOnExtendedSteamWebApiTicket& Delegate : Orphaned)
 	{
@@ -151,23 +162,31 @@ uint32 FOnlineAuthExtendedSteam::GetAuthSessionTicket(TArray<uint8>& OutTicket, 
 uint32 FOnlineAuthExtendedSteam::GetAuthTicketForWebApi(const FString& ServiceIdentity, const FOnExtendedSteamWebApiTicket& Delegate)
 {
 #if ESTEAM_SDK_AT_LEAST(157)
-	if (IsSteamAvailableForAuth() && SteamUser()->BLoggedOn())
+	if (!IsSteamAvailableForAuth())
 	{
-		// A null identity requests a generic web ticket; a service string binds it to that identity.
-		// TCHAR_TO_UTF8's temporary dies at the semicolon. Keep the conversion alive through the SDK call.
-		const FTCHARToUTF8 IdentityUtf8(*ServiceIdentity);
-		const char* IdentityArg = ServiceIdentity.IsEmpty() ? nullptr : IdentityUtf8.Get();
-		const HAuthTicket TicketHandle = SteamUser()->GetAuthTicketForWebApi(IdentityArg);
-		if (TicketHandle != k_HAuthTicketInvalid)
+		UE_LOG(LogExtendedSteam, Warning, TEXT("GetAuthTicketForWebApi: the Steam client API is not up"));
+	}
+	else if (!SteamUser()->BLoggedOn())
+	{
+		UE_LOG(LogExtendedSteam, Warning, TEXT("GetAuthTicketForWebApi: the Steam user is not logged on"));
+	}
+	else
+	{
+		uint32 TicketHandle = 0;
+		if (TryStartWebApiTicket(ServiceIdentity, Delegate, TicketHandle))
 		{
-			{
-				FScopeLock Lock(&AuthLock);
-				PendingWebApiTickets.Add(static_cast<uint32>(TicketHandle), Delegate);
-			}
-			return static_cast<uint32>(TicketHandle);
+			return TicketHandle;
 		}
 
-		UE_LOG(LogExtendedSteam, Warning, TEXT("GetAuthTicketForWebApi: Steam refused the request"));
+		// Steam refuses while another web-API ticket is pending, and the GetTicketForWebApiResponse_t
+		// that ends that one reaches this object too, so the request is sent again from there.
+		UE_LOG(LogExtendedSteam, Log, TEXT("GetAuthTicketForWebApi: Steam refused the request while another ticket is pending; retrying when it completes"));
+		{
+			FScopeLock Lock(&AuthLock);
+			DeferredWebApiRequests.Add({ ServiceIdentity, Delegate });
+		}
+		RefreshDeferredWebApiTimeout();
+		return 0;
 	}
 #else
 	UE_LOG(LogExtendedSteam, Verbose, TEXT("GetAuthTicketForWebApi: requires Steamworks SDK >= 1.57"));
@@ -176,6 +195,127 @@ uint32 FOnlineAuthExtendedSteam::GetAuthTicketForWebApi(const FString& ServiceId
 	// Unavailable: honour the delegate contract with an immediate failure and an invalid handle.
 	Delegate.ExecuteIfBound(false, FString());
 	return 0;
+}
+
+bool FOnlineAuthExtendedSteam::TryStartWebApiTicket(const FString& ServiceIdentity, const FOnExtendedSteamWebApiTicket& Delegate, uint32& OutHandle)
+{
+	OutHandle = 0;
+#if ESTEAM_SDK_AT_LEAST(157)
+	if (!IsSteamAvailableForAuth())
+	{
+		return false;
+	}
+
+	// A null identity requests a generic web ticket; a service string binds it to that identity.
+	// TCHAR_TO_UTF8's temporary dies at the semicolon. Keep the conversion alive through the SDK call.
+	const FTCHARToUTF8 IdentityUtf8(*ServiceIdentity);
+	const char* IdentityArg = ServiceIdentity.IsEmpty() ? nullptr : IdentityUtf8.Get();
+	const HAuthTicket TicketHandle = SteamUser()->GetAuthTicketForWebApi(IdentityArg);
+	if (TicketHandle == k_HAuthTicketInvalid)
+	{
+		return false;
+	}
+
+	{
+		FScopeLock Lock(&AuthLock);
+		PendingWebApiTickets.Add(static_cast<uint32>(TicketHandle), Delegate);
+	}
+	OutHandle = static_cast<uint32>(TicketHandle);
+	return true;
+#else
+	return false;
+#endif
+}
+
+void FOnlineAuthExtendedSteam::RetryDeferredWebApiRequests()
+{
+	TArray<FDeferredWebApiRequest> Waiting;
+	{
+		FScopeLock Lock(&AuthLock);
+		Waiting = MoveTemp(DeferredWebApiRequests);
+		DeferredWebApiRequests.Reset();
+	}
+	if (Waiting.IsEmpty())
+	{
+		return;
+	}
+
+	// Oldest first. Once one gets through it is the pending ticket, so the rest wait for its response.
+	bool bStartedOne = false;
+	TArray<FDeferredWebApiRequest> StillWaiting;
+	for (FDeferredWebApiRequest& Request : Waiting)
+	{
+		uint32 TicketHandle = 0;
+		if (!bStartedOne && TryStartWebApiTicket(Request.ServiceIdentity, Request.Delegate, TicketHandle))
+		{
+			bStartedOne = true;
+			UE_LOG(LogExtendedSteam, Log, TEXT("GetAuthTicketForWebApi: held request sent again (handle %u)"), TicketHandle);
+			continue;
+		}
+		StillWaiting.Add(MoveTemp(Request));
+	}
+
+	{
+		FScopeLock Lock(&AuthLock);
+		// Requests held while this ran go after the older ones.
+		StillWaiting.Append(MoveTemp(DeferredWebApiRequests));
+		DeferredWebApiRequests = MoveTemp(StillWaiting);
+	}
+
+	// The deadline measures time without progress, so it restarts when a request got through.
+	if (bStartedOne)
+	{
+		RefreshDeferredWebApiTimeout();
+	}
+}
+
+void FOnlineAuthExtendedSteam::RefreshDeferredWebApiTimeout()
+{
+	if (DeferredWebApiTimeoutHandle.IsValid())
+	{
+		FTSTicker::RemoveTicker(DeferredWebApiTimeoutHandle);
+		DeferredWebApiTimeoutHandle.Reset();
+	}
+
+	bool bAnyHeld = false;
+	{
+		FScopeLock Lock(&AuthLock);
+		bAnyHeld = !DeferredWebApiRequests.IsEmpty();
+	}
+
+	// A one-shot deadline, not a retry loop: retries come from ticket responses. It exists because a
+	// refusal with no pending ticket behind it would otherwise never be answered.
+	if (bAnyHeld)
+	{
+		DeferredWebApiTimeoutHandle = FTSTicker::GetCoreTicker().AddTicker(
+			FTickerDelegate::CreateRaw(this, &FOnlineAuthExtendedSteam::HandleDeferredWebApiTimeout),
+			DeferredWebApiTimeoutSeconds);
+	}
+}
+
+bool FOnlineAuthExtendedSteam::HandleDeferredWebApiTimeout(float DeltaTime)
+{
+	DeferredWebApiTimeoutHandle.Reset();
+
+	TArray<FDeferredWebApiRequest> Expired;
+	{
+		FScopeLock Lock(&AuthLock);
+		Expired = MoveTemp(DeferredWebApiRequests);
+		DeferredWebApiRequests.Reset();
+	}
+
+	if (!Expired.IsEmpty())
+	{
+		UE_LOG(LogExtendedSteam, Warning, TEXT("GetAuthTicketForWebApi: Steam kept refusing for %.0f s with no ticket completing; failing %d held request(s)"),
+			DeferredWebApiTimeoutSeconds, Expired.Num());
+	}
+	for (const FDeferredWebApiRequest& Request : Expired)
+	{
+		Request.Delegate.ExecuteIfBound(false, FString());
+	}
+
+	// One-shot.
+	return false;
 }
 
 void FOnlineAuthExtendedSteam::CancelAuthTicket(uint32 AuthTicketHandle)
@@ -251,4 +391,7 @@ void FOnlineAuthExtendedSteam::HandleWebApiTicketResponse(uint32 AuthTicketHandl
 	{
 		Delegate.ExecuteIfBound(bSuccess, HexTicket);
 	}
+
+	// Whoever's ticket this was, it is no longer pending, so a held request can go now.
+	RetryDeferredWebApiRequests();
 }
