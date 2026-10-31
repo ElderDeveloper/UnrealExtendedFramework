@@ -23,8 +23,9 @@ class UEGTurnInPlaceComponent;
  * computed in NativeThreadSafeUpdateAnimation, off the game thread, so the AnimBP can use
  * Thread Safe Update Animation and property access without casts in its event graph.
  *
- * With a UEGTurnInPlaceComponent on the owner it also runs turn in place's anim side and serves its
- * curves (IEGTurnInPlaceAnimSource); the graph then only needs the state machine (TurnInPlace.md).
+ * With a UEGTurnInPlaceComponent on the owner it also runs turn in place's anim side for the state
+ * machine recipe and serves its curves (IEGTurnInPlaceAnimSource). The Turn In Place node needs
+ * none of this and works in any anim instance (TurnInPlace.md).
  */
 UCLASS(Abstract, Blueprintable)
 class UNREALEXTENDEDGAMEPLAY_API UEGAnimInstance : public UAnimInstance, public IEGTurnInPlaceAnimSource
@@ -142,6 +143,7 @@ protected:
 
 private:
 	TArray<TWeakObjectPtr<UObject>> StateProviders;
+	int32 ProviderComponentCount = INDEX_NONE;
 	float PreviousYaw = 0.0f;
 	bool bHasPreviousYaw = false;
 };

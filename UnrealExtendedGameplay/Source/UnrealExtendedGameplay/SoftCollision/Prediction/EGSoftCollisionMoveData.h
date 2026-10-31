@@ -10,7 +10,8 @@
 
 /**
  * Soft Collision move-data transport. Opt-in, for projects that already have their own
- * CharacterMovementComponent (turn in place asks for one too).
+ * CharacterMovementComponent (turn in place's hooks, recommended for multiplayer player characters,
+ * use one too).
  *
  * By default a predicted push reaches the server as an RPC sent just before the move it starts on.
  * That needs no movement subclass, but the server can only guess when a lost request would have

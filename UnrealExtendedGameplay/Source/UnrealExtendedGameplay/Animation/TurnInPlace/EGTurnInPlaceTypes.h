@@ -10,6 +10,7 @@
 class UAnimMontage;
 class UAnimSequence;
 class UEGTurnInPlaceSet;
+class UPrimitiveComponent;
 
 /** Whether turn in place runs, holds the character still, or steps aside. */
 UENUM(BlueprintType)
@@ -63,6 +64,21 @@ enum class EEGTurnMethod : uint8
 	FaceRotation,
 	/** UCharacterMovementComponent::PhysicsRotation (OrientToMovement, StrafeDesired). */
 	PhysicsRotation
+};
+
+/** What applies turn in place's rotation. */
+UENUM(BlueprintType)
+enum class EEGTurnRotationDriver : uint8
+{
+	/** The hooks once the project forwards them, otherwise the component. */
+	Auto,
+	/** Only the forwarded hooks. Predicted: player characters in multiplayer need this. */
+	Hooks,
+	/**
+	 * The component, after the movement component each frame. Needs no code (Blueprint-only,
+	 * single player, AI, any pawn), but is not predicted.
+	 */
+	Component
 };
 
 /** How a dedicated server produces the turn curves. */
@@ -163,6 +179,35 @@ struct UNREALEXTENDEDGAMEPLAY_API FEGTurnInPlaceCurveNames
 	FName LockTurnInPlace = TEXT("LockTurnInPlace");
 };
 
+/** Turning without a turn animation: the pose stays idle and the capsule turns at a set rate. Pair it with the Foot Lock node. */
+USTRUCT(BlueprintType)
+struct UNREALEXTENDEDGAMEPLAY_API FEGTurnInPlaceProcedural
+{
+	GENERATED_BODY()
+
+	/** A step with no sequence for its side turns procedurally instead of not at all. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Turn In Place")
+	bool bTurnWithoutAnimation = true;
+
+	/** Average turn speed of a procedural turn (it eases in and out). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Turn In Place", meta = (ClampMin = "1", Units = "DegreesPerSecond"))
+	float TurnRate = 180.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Turn In Place", meta = (ClampMin = "0.05", Units = "Seconds"))
+	float MinDuration = 0.25f;
+
+	/** Close an offset below the min turn angle procedurally once the character has stood still for SettleDelay. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Turn In Place|Settle")
+	bool bSettle = false;
+
+	/** Offsets smaller than this are left alone. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Turn In Place|Settle", meta = (EditCondition = "bSettle", ClampMin = "1", ClampMax = "180", Units = "Degrees"))
+	float SettleAngle = 15.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Turn In Place|Settle", meta = (EditCondition = "bSettle", ClampMin = "0", Units = "Seconds"))
+	float SettleDelay = 1.0f;
+};
+
 /** One stance's turn animations and settings. */
 USTRUCT(BlueprintType)
 struct UNREALEXTENDEDGAMEPLAY_API FEGTurnInPlaceEntry
@@ -195,7 +240,11 @@ struct UNREALEXTENDEDGAMEPLAY_API FEGTurnInPlaceEntry
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Turn In Place|Steps", meta = (ClampMin = "-180", ClampMax = "180", Units = "Degrees"))
 	float SelectOffset = 0.0f;
 
-	/** Index = step. Each needs the RemainingTurnYaw and TurnYawWeight curves (UEGTurnInPlaceCurveModifier). */
+	/**
+	 * Index = step. The Turn In Place node reads the turn from a clip's root track when it has no
+	 * RemainingTurnYaw / TurnYawWeight curves; the state machine recipe and Pseudo servers need the
+	 * curves (UEGTurnInPlaceCurveModifier). A missing clip turns procedurally (Procedural).
+	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Turn In Place|Steps")
 	TArray<TObjectPtr<UAnimSequence>> LeftTurns;
 
@@ -221,11 +270,96 @@ struct UNREALEXTENDEDGAMEPLAY_API FEGTurnInPlaceEntry
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Turn In Place")
 	FEGTurnInPlaceMontageRules Montages;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Turn In Place")
+	FEGTurnInPlaceProcedural Procedural;
+
 	/** Angles for a turn mode tag; null when the mode has none. */
 	const FEGTurnAngles* GetAngles(const FGameplayTag& ModeTag) const;
 
 	/** The sequence for a step and side, or null. */
 	UAnimSequence* GetTurnSequence(int32 StepIndex, bool bRight) const;
+};
+
+/**
+ * What turn in place reads from the owner's movement. Filled by a UEGTurnInPlaceMovementSource, so
+ * the component works with any movement system, not only the character movement component.
+ */
+USTRUCT(BlueprintType)
+struct UNREALEXTENDEDGAMEPLAY_API FEGTurnInPlaceMovementInfo
+{
+	GENERATED_BODY()
+
+	/** False: the owner cannot turn in place this frame (missing or dead movement). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Turn In Place")
+	bool bValid = false;
+
+	/** The owner may rotate now (has a controller or runs without one, movement is active). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Turn In Place")
+	bool bCanRotate = true;
+
+	/** The rotation of the moved component (the capsule). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Turn In Place")
+	FRotator Rotation = FRotator::ZeroRotator;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Turn In Place")
+	FVector Velocity = FVector::ZeroVector;
+
+	/** Input acceleration, for the last input direction. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Turn In Place")
+	FVector Acceleration = FVector::ZeroVector;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Turn In Place")
+	float MaxSpeed = 600.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Turn In Place")
+	float MaxAcceleration = 2048.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Turn In Place")
+	bool bMovingOnGround = true;
+
+	/** Away from gravity. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Turn In Place")
+	FVector Up = FVector::UpVector;
+
+	/** Faces its movement (Mode.Movement angles, turns to the last input direction when stopped). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Turn In Place")
+	bool bOrientToMovement = false;
+
+	/** The engine function that rotates the owner; None for pawns without a character movement component. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Turn In Place")
+	EEGTurnMethod TurnMethod = EEGTurnMethod::None;
+
+	/** While strafing: the facing the owner wants (control rotation, controller desired rotation). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Turn In Place")
+	bool bHasDesiredRotation = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Turn In Place")
+	FRotator DesiredRotation = FRotator::ZeroRotator;
+
+	/** Animation root motion (a root-motion montage) is moving the owner. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Turn In Place")
+	bool bAnimRootMotion = false;
+
+	/** Gameplay root motion sources (soft collision pushes do not count). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Turn In Place")
+	bool bHasRootMotionSources = false;
+
+	/** The playing networked root-motion montage, checked against the stance's montage rules. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Turn In Place")
+	TObjectPtr<UAnimMontage> RootMotionMontage = nullptr;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Turn In Place")
+	bool bBotControlled = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Turn In Place")
+	FRotator ControlRotation = FRotator::ZeroRotator;
+
+	/** What the owner stands on. Its rotation is passed on while the component drives rotation. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Turn In Place")
+	TObjectPtr<UPrimitiveComponent> Base = nullptr;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Turn In Place")
+	FRotator BaseRotation = FRotator::ZeroRotator;
 };
 
 /** Curve values cached on the worker thread at the point the turn states are decided. */
@@ -329,6 +463,14 @@ struct UNREALEXTENDEDGAMEPLAY_API FEGTurnInPlaceGraphInput
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Turn In Place")
 	FEGTurnAngles Angles;
 
+	/** The owner is moving: a turn in progress gives way to locomotion (the Turn In Place node). */
+	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Turn In Place")
+	bool bIsMoving = false;
+
+	/** A small offset has been held long enough to close procedurally (Procedural.bSettle). */
+	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Turn In Place")
+	bool bWantsSettle = false;
+
 	/** A dedicated server in Pseudo mode: the graph plays nothing and the component tracks the states. */
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Turn In Place")
 	bool bPseudo = false;
@@ -346,7 +488,7 @@ struct UNREALEXTENDEDGAMEPLAY_API FEGTurnInPlaceGraphOutput
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Turn In Place")
 	float TurnOffset = 0.0f;
 
-	/** Idle -> Turn, Recovery -> Turn. */
+	/** Idle -> Turn, Recovery -> Turn. Also true for a settle turn. */
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Turn In Place")
 	bool bWantsToTurn = false;
 
@@ -404,6 +546,32 @@ struct UNREALEXTENDEDGAMEPLAY_API FEGTurnInPlaceNodeState
 	/** Recovery has played the rest of the clip: Recovery -> Idle. */
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadWrite, Category = "Turn In Place")
 	bool bRecoveryFinished = false;
+
+	/** The playing turn has no clip: its curves are computed (FEGTurnInPlaceSolver::EvaluateProceduralTurn). */
+	UPROPERTY(VisibleInstanceOnly, BlueprintReadWrite, Category = "Turn In Place")
+	bool bProcedural = false;
+
+	/** The yaw a procedural turn closes (the offset when it started). */
+	UPROPERTY(VisibleInstanceOnly, BlueprintReadWrite, Category = "Turn In Place")
+	float ProceduralYaw = 0.0f;
+};
+
+/**
+ * A turn clip's yaw read from its root track, for clips without the turn curves. Built once per
+ * clip (FEGTurnInPlaceSolver::BuildYawTrack) and evaluated like the curves the modifier writes.
+ */
+struct UNREALEXTENDEDGAMEPLAY_API FEGTurnYawTrack
+{
+	/** Sample times, ascending from 0 to Length. */
+	TArray<float> Times;
+	/** Root yaw turned since the start, at each sample. */
+	TArray<float> CumulativeYaw;
+	float Length = 0.0f;
+	float TotalYaw = 0.0f;
+	/** TurnYawWeight drops to 0 here. */
+	float WeightEndTime = 0.0f;
+
+	bool IsValid() const { return CumulativeYaw.Num() >= 2 && CumulativeYaw.Num() == Times.Num() && Length > 0.0f; }
 };
 
 /** Everything the anim instance keeps for turn in place. Pass it by reference to UEGTurnInPlaceAnimLibrary. */

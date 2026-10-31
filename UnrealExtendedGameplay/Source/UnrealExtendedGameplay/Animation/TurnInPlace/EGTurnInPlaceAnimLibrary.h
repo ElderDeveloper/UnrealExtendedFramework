@@ -16,7 +16,10 @@ class UEGTurnInPlaceComponent;
  * The anim instance's half of turn in place. UEGAnimInstance calls the first two itself; a custom
  * anim instance calls GatherTurnInPlace on the game thread and ThreadSafeUpdateTurnInPlace on the
  * worker thread, keeps the FEGTurnInPlaceAnimData, and returns its Curves from
- * IEGTurnInPlaceAnimSource. The rest are the anim graph's node functions (Docs/TurnInPlace.md §9).
+ * IEGTurnInPlaceAnimSource. The rest are the anim graph's node functions (Docs/TurnInPlace.md).
+ *
+ * The Turn In Place anim node (FAnimNode_EGTurnInPlace) does all of this by itself; these are for
+ * a project that builds its own state machine.
  */
 UCLASS()
 class UNREALEXTENDEDGAMEPLAY_API UEGTurnInPlaceAnimLibrary : public UBlueprintFunctionLibrary
@@ -42,7 +45,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Extended|Turn In Place|Graph", meta = (BlueprintThreadSafe))
 	static void SetupIdle(UPARAM(ref) FEGTurnInPlaceAnimData& Data);
 
-	/** Turn state's output pose: On Become Relevant. Runs before the evaluator's own setup. */
+	/**
+	 * Turn state's output pose: On Become Relevant. Runs before the evaluator's own setup. Picks the
+	 * step and whether it is procedural (TurnInPlace.Node.bProcedural: no clip, blend in the idle pose).
+	 */
 	UFUNCTION(BlueprintCallable, Category = "Extended|Turn In Place|Graph", meta = (BlueprintThreadSafe))
 	static void SetupTurnPose(UPARAM(ref) FEGTurnInPlaceAnimData& Data);
 

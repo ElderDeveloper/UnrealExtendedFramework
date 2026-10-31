@@ -35,6 +35,8 @@ public class UnrealExtendedGameplay : ModuleRules
 				"UMG",
 				"Niagara",
 				"MotionWarping",
+				// Anim nodes (Turn In Place, Foot Lock) derive from its node types.
+				"AnimGraphRuntime",
 				"PhysicsCore",
 				"AIModule",
 				"GameplayTags",
@@ -51,6 +53,8 @@ public class UnrealExtendedGameplay : ModuleRules
 				"CoreUObject",
 				"Engine",
 				"NetCore",
+				// Two-bone IK (Foot Lock).
+				"AnimationCore",
 				"EngineSettings",
 				"Slate",
 				"SlateCore",

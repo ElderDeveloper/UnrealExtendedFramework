@@ -8,6 +8,8 @@
 
 #include "EGTurnInPlaceSet.generated.h"
 
+class UAnimSequenceBase;
+
 /**
  * UEGTurnInPlaceSet
  *
@@ -41,6 +43,9 @@ public:
 
 	/** An entry with defaults and no animations, for code paths without a set. */
 	static const FEGTurnInPlaceEntry& GetEmptyEntry();
+
+	/** The clip has the RemainingTurnYaw and TurnYawWeight curves (from the curve modifier). */
+	static bool HasTurnCurves(const UAnimSequenceBase* Sequence, const FEGTurnInPlaceCurveNames& Names);
 
 #if WITH_EDITOR
 	virtual EDataValidationResult IsDataValid(class FDataValidationContext& Context) const override;

@@ -29,6 +29,14 @@ void UEGTurnInPlaceAnimLibrary::ThreadSafeUpdateTurnInPlace(const UAnimInstance*
 	Data.Curves.PauseTurnInPlace = AnimInstance->GetCurveValue(Names.PauseTurnInPlace);
 	Data.Curves.LockTurnInPlace = AnimInstance->GetCurveValue(Names.LockTurnInPlace);
 
+	// A procedural turn has no clip to carry its curves: compute them at the turn's time.
+	if (Data.Node.bProcedural)
+	{
+		const FEGTurnInPlaceCurves Procedural = FEGTurnInPlaceSolver::EvaluateProceduralTurn(Data.Node.ProceduralYaw, Data.Node.AnimTime, Data.Input.GetEntry().Procedural);
+		Data.Curves.RemainingTurnYaw = Procedural.RemainingTurnYaw;
+		Data.Curves.TurnYawWeight = Procedural.TurnYawWeight;
+	}
+
 	// The game thread's copy lags the pose; refresh it before the transitions read it.
 	Data.Input.bIsTurning = Data.Curves.IsTurning();
 	if (Data.Input.bIsTurning)
@@ -54,12 +62,13 @@ void UEGTurnInPlaceAnimLibrary::SetupIdle(FEGTurnInPlaceAnimData& Data)
 	Data.bTurnedThisEntry = false;
 	Data.Node.bReachedAnimEnd = false;
 	Data.Node.bRecoveryFinished = false;
+	Data.Node.bProcedural = false;
 }
 
 void UEGTurnInPlaceAnimLibrary::SetupTurnPose(FEGTurnInPlaceAnimData& Data)
 {
-	Data.Node.StepIndex = Data.Input.StepIndex;
-	Data.Node.bTurningRight = Data.Input.bTurnRight;
+	// Step, side, time and whether the turn is procedural, from this frame's input.
+	FEGTurnInPlaceSolver::BeginTurn(Data.Node, Data.Input);
 
 	// The next worker pass latches it again from this turn's own curves.
 	Data.bTurnedThisEntry = false;
@@ -76,17 +85,9 @@ UAnimSequence* UEGTurnInPlaceAnimLibrary::SetupTurnAnim(FEGTurnInPlaceAnimData& 
 
 float UEGTurnInPlaceAnimLibrary::UpdateTurnAnim(FEGTurnInPlaceAnimData& Data, float DeltaTime, UAnimSequence*& OutSequence)
 {
+	// Null for a procedural turn (and for a missing clip, which counts as played out).
 	OutSequence = GetTurnAnimation(Data, false);
-	if (!OutSequence)
-	{
-		// Nothing to play: count it as played out so recovery can fire.
-		Data.Node.AnimTime = 0.0;
-		Data.Node.bReachedAnimEnd = true;
-		return 0.0f;
-	}
-
-	Data.Node.AnimTime = FEGTurnInPlaceSolver::AdvanceAnimTime(OutSequence, Data.Node.AnimTime, DeltaTime, Data.Node.PlayRate);
-	Data.Node.bReachedAnimEnd = Data.Node.AnimTime >= OutSequence->GetPlayLength() - UE_KINDA_SMALL_NUMBER;
+	Data.Node.bReachedAnimEnd = FEGTurnInPlaceSolver::AdvanceTurnTime(Data.Input.GetEntry(), Data.Node, DeltaTime, Data.Node.PlayRate, false);
 	FEGTurnInPlaceSolver::UpdateNodePlayRate(Data.Node, Data.Input);
 	return static_cast<float>(Data.Node.AnimTime);
 }
@@ -104,14 +105,7 @@ void UEGTurnInPlaceAnimLibrary::SetupRecoveryPose(FEGTurnInPlaceAnimData& Data)
 float UEGTurnInPlaceAnimLibrary::UpdateRecoveryAnim(FEGTurnInPlaceAnimData& Data, float DeltaTime, UAnimSequence*& OutSequence)
 {
 	OutSequence = GetTurnAnimation(Data, true);
-	if (!OutSequence)
-	{
-		Data.Node.bRecoveryFinished = true;
-		return static_cast<float>(Data.Node.AnimTime);
-	}
-
-	Data.Node.AnimTime = FEGTurnInPlaceSolver::AdvanceAnimTime(OutSequence, Data.Node.AnimTime, DeltaTime, 1.0f);
-	Data.Node.bRecoveryFinished = Data.Node.AnimTime >= OutSequence->GetPlayLength() - UE_KINDA_SMALL_NUMBER;
+	Data.Node.bRecoveryFinished = FEGTurnInPlaceSolver::AdvanceTurnTime(Data.Input.GetEntry(), Data.Node, DeltaTime, 1.0f, true);
 	return static_cast<float>(Data.Node.AnimTime);
 }
 

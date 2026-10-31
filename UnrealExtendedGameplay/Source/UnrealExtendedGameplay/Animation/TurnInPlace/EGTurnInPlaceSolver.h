@@ -26,6 +26,15 @@ struct UNREALEXTENDEDGAMEPLAY_API FEGTurnInPlaceSolver
 	 */
 	static float YawDeltaAroundUp(const FRotator& From, const FRotator& To, const FVector& Up = FVector::UpVector);
 
+	/** The rotation's heading in the plane normal to Up (unit length; zero only for a degenerate rotation). */
+	static FVector HeadingAroundUp(const FRotator& Rotation, const FVector& Up = FVector::UpVector);
+
+	/**
+	 * Upright to Up, at Base's heading turned by AddYaw about Up. Under normal gravity this is
+	 * (0, Base.Yaw + AddYaw, 0), which also clears pitch or roll left from a tilted base.
+	 */
+	static FRotator MakeUprightRotation(const FRotator& Base, float AddYaw, const FVector& Up = FVector::UpVector);
+
 	struct FOffsetInputs
 	{
 		FRotator Current = FRotator::ZeroRotator;
@@ -100,8 +109,52 @@ struct UNREALEXTENDEDGAMEPLAY_API FEGTurnInPlaceSolver
 	/** Refresh the node's play rate and max-angle latch. */
 	static void UpdateNodePlayRate(FEGTurnInPlaceNodeState& Node, const FEGTurnInPlaceGraphInput& Input);
 
-	/** The turn (or recovery) sequence for the node's step and side. */
+	/** The turn (or recovery) sequence for the node's step and side. Null for a procedural turn. */
 	static UAnimSequence* GetTurnAnimation(const FEGTurnInPlaceEntry& Entry, const FEGTurnInPlaceNodeState& Node, bool bRecovery);
+
+	/**
+	 * Starts a turn from the input: step, side, time, play rate. A step without a clip for its side
+	 * (or a settle turn) becomes procedural when the entry allows it.
+	 */
+	static void BeginTurn(FEGTurnInPlaceNodeState& Node, const FEGTurnInPlaceGraphInput& Input);
+
+	/** The playing turn's length: its clip's, or the procedural duration. 0 without either. */
+	static double GetTurnLength(const FEGTurnInPlaceEntry& Entry, const FEGTurnInPlaceNodeState& Node, bool bRecovery);
+
+	/** Advances Node.AnimTime (clamped to the turn's length). True once it is at the end. */
+	static bool AdvanceTurnTime(const FEGTurnInPlaceEntry& Entry, FEGTurnInPlaceNodeState& Node, float DeltaTime, float PlayRate, bool bRecovery);
+
+	/**
+	 * The turn curves at the node's time: computed for a procedural turn, read from the clip's
+	 * authored curves otherwise. Pause and lock curves are read from the clip as well.
+	 */
+	static FEGTurnInPlaceCurves EvaluateTurnCurves(const FEGTurnInPlaceEntry& Entry, const FEGTurnInPlaceNodeState& Node, bool bRecovery, const FEGTurnInPlaceCurveNames& Names);
+
+	// ---- Procedural turns ------------------------------------------------------------------------
+
+	/** How long a procedural turn of TotalYaw takes. */
+	static float GetProceduralDuration(float TotalYaw, const FEGTurnInPlaceProcedural& Settings);
+
+	/** RemainingTurnYaw eases from TotalYaw to 0 over the duration; TurnYawWeight is 1 until it gets there. */
+	static FEGTurnInPlaceCurves EvaluateProceduralTurn(float TotalYaw, double Elapsed, const FEGTurnInPlaceProcedural& Settings);
+
+	/**
+	 * Settle timing: counts while a small offset (SettleAngle up to MinTurnAngle) is held with
+	 * nothing turning; true once it has been held for SettleDelay.
+	 */
+	static bool UpdateSettleTimer(float& InOutTimer, const FEGTurnInPlaceProcedural& Settings, float Offset, float MinTurnAngle, bool bCanSettle, float DeltaTime);
+
+	// ---- Root yaw tracks (clips without curves) --------------------------------------------------
+
+	/**
+	 * A yaw track from root yaw samples (Times ascending, from 0 to the clip length). Unwraps across
+	 * +-180 sample to sample. The weight ends where the remaining yaw is within FinishedTolerance,
+	 * or RecoveryBlendTime before the end, never on the first sample: what the curve modifier writes.
+	 */
+	static bool BuildYawTrack(const TArray<double>& Times, const TArray<double>& RawYaws, float FinishedTolerance, float RecoveryBlendTime, FEGTurnYawTrack& OutTrack);
+
+	/** RemainingTurnYaw and TurnYawWeight from a track at a time. */
+	static FEGTurnInPlaceCurves EvaluateYawTrack(const FEGTurnYawTrack& Track, double Time);
 
 	/**
 	 * One step of the dedicated server's pseudo states, mirroring the graph recipe: Idle -> Turn on

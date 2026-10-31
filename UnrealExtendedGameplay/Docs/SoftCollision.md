@@ -159,7 +159,7 @@ A pawn switches between its player and AI driver when it is possessed (`ReceiveC
 
 ### 8.2 Opt-in: move data
 
-A project that already has its own movement component (turn in place asks for one) can carry pushes inside the moves instead: `Prediction/EGSoftCollisionMoveData.h` has a saved-move template, prediction data, network move data and a container, plus `EGSoftCollision::HandleMoveAutonomous` for the server. The header shows the four lines of integration, stacked with turn in place's saved move.
+A project that already has its own movement component (turn in place's hooks, the recommended setup for multiplayer player characters, use one) can carry pushes inside the moves instead: `Prediction/EGSoftCollisionMoveData.h` has a saved-move template, prediction data, network move data and a container, plus `EGSoftCollision::HandleMoveAutonomous` for the server. The header shows the four lines of integration, stacked with turn in place's saved move.
 
 The push then arrives with the move it starts on and the server applies it just before simulating that move, from that move's own start time, which also holds across a client timestamp reset. A move carrying a push is important, so the movement component resends it once; if that copy is lost too, the request goes out once by RPC after a round trip and the server takes whichever copy comes first. That removes the timing risk of 8.1. Everything else (validation, rejects, the safety lease) is shared. The component switches by itself the first time the saved move reports in, as long as packed move RPCs are on (`p.NetUsePackedMovementRPCs`, the engine default).
 

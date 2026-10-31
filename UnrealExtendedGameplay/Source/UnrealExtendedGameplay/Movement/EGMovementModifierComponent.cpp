@@ -4,6 +4,7 @@
 
 #include "GameFramework/Character.h"
 #include "GameFramework/CharacterMovementComponent.h"
+#include "UnrealExtendedGameplay/Animation/EGAnimationTags.h"
 
 // ---------------------------------------------------------------------------------------------
 // FEGMovementModifierStack
@@ -152,6 +153,16 @@ void UEGMovementModifierComponent::Restore()
 		Apply();
 	}
 	bHasBase = false;
+}
+
+FGameplayTagContainer UEGMovementModifierComponent::GetAnimStateTags_Implementation() const
+{
+	FGameplayTagContainer Tags;
+	if (HasModifiers() && FMath::IsNearlyZero(GetCombinedModifier().RotationRateScale))
+	{
+		Tags.AddTag(TAG_EGMovement_RotationLocked);
+	}
+	return Tags;
 }
 
 void UEGMovementModifierComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)

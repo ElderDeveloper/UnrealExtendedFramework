@@ -5,6 +5,7 @@
 #include "Components/ActorComponent.h"
 #include "CoreMinimal.h"
 #include "EGTurnInPlaceTypes.h"
+#include "Engine/EngineBaseTypes.h"
 #include "UnrealExtendedGameplay/Animation/AnimInstance/EGAnimStateProvider.h"
 
 #include "EGTurnInPlaceComponent.generated.h"
@@ -13,20 +14,52 @@ class ACharacter;
 class UAnimInstance;
 class UAnimMontage;
 class UCharacterMovementComponent;
+class UEGTurnInPlaceComponent;
+class UEGTurnInPlaceMovementSource;
 class UEGTurnInPlaceSet;
+class UPrimitiveComponent;
 class USkeletalMeshComponent;
+
+/**
+ * Runs the component's own rotation after the movement component and before the mesh, so the
+ * animation sees the final rotation the frame it is applied.
+ */
+USTRUCT()
+struct FEGTurnInPlaceDriverTickFunction : public FTickFunction
+{
+	GENERATED_BODY()
+
+	UEGTurnInPlaceComponent* Target = nullptr;
+
+	virtual void ExecuteTick(float DeltaTime, ELevelTick TickType, ENamedThreads::Type CurrentThread, const FGraphEventRef& MyCompletionGraphEvent) override;
+	virtual FString DiagnosticMessage() override;
+};
+
+template <>
+struct TStructOpsTypeTraits<FEGTurnInPlaceDriverTickFunction> : public TStructOpsTypeTraitsBase2<FEGTurnInPlaceDriverTickFunction>
+{
+	enum
+	{
+		WithCopy = false
+	};
+};
 
 /**
  * UEGTurnInPlaceComponent
  *
- * Actor-based turn in place: while the character stands still its capsule is held back from the
+ * Actor-based turn in place: while the owner stands still its capsule is held back from the
  * desired facing by a turn offset, and turn animations consume that offset through their
- * RemainingTurnYaw curve, so the capsule rotates exactly as the animation does. The mesh is never
- * counter-rotated.
+ * RemainingTurnYaw curve (or root track, or a procedural turn), so the capsule rotates exactly
+ * as the animation does. The mesh is never counter-rotated.
  *
- * The project forwards ACharacter::FaceRotation and UCharacterMovementComponent::PhysicsRotation
- * to EGTurnInPlace::HandleFaceRotation / HandlePhysicsRotation, adds TEGTurnInPlaceSavedMove to its
- * saved move, and feeds the anim graph (UEGAnimInstance does it). See Docs/TurnInPlace.md.
+ * Works with no code: add the component, assign a turn set, and add the Turn In Place node to the
+ * AnimBP. The component then rotates the owner itself after the movement component (Rotation
+ * Driver: Component). That is not predicted, so player characters in multiplayer forward the
+ * hooks instead (EGTurnInPlaceHooks.h); Auto switches to them as soon as they are seen.
+ *
+ * The owner is read through a Movement Source (Character Movement by default), so other movement
+ * systems plug in without changing this component. Pause and lock come from anim state tags, so
+ * any system can drive them without depending on this one. See Docs/TurnInPlace.md.
  *
  * Missing hooks and bad setups are reported once each in development builds.
  */
@@ -35,6 +68,8 @@ class UNREALEXTENDEDGAMEPLAY_API UEGTurnInPlaceComponent : public UActorComponen
 {
 	GENERATED_BODY()
 
+	friend struct FEGTurnInPlaceDriverTickFunction;
+
 public:
 	UEGTurnInPlaceComponent();
 
@@ -42,6 +77,14 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Turn In Place")
 	TObjectPtr<UEGTurnInPlaceSet> TurnSet;
+
+	/** How the owner is read and rotated. Character Movement covers ACharacter; subclass it for other movement. */
+	UPROPERTY(EditAnywhere, Instanced, BlueprintReadOnly, Category = "Turn In Place")
+	TObjectPtr<UEGTurnInPlaceMovementSource> MovementSource;
+
+	/** What applies the rotation: the forwarded hooks (predicted) or this component (no code needed). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Turn In Place")
+	EEGTurnRotationDriver RotationDriver = EEGTurnRotationDriver::Auto;
 
 	/** OrientToMovement: keep turning towards the last input direction once the stick is released. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Turn In Place")
@@ -99,13 +142,29 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Extended|Turn In Place")
 	EEGTurnMethod GetTurnMethod() const;
 
+	/** Hooks or Component: what applies the rotation this frame (Auto resolved). */
+	UFUNCTION(BlueprintPure, Category = "Extended|Turn In Place")
+	EEGTurnRotationDriver GetActiveRotationDriver() const;
+
 	UFUNCTION(BlueprintPure, Category = "Extended|Turn In Place")
 	FVector GetLastInputDirection() const { return LastInputDirection; }
 
+	/** What the movement source reports this frame. False when it cannot read the owner. */
+	UFUNCTION(BlueprintPure, Category = "Extended|Turn In Place")
+	bool GetMovementInfo(FEGTurnInPlaceMovementInfo& OutInfo) const;
+
 	/**
-	 * Curves from the anim instance (IEGTurnInPlaceAnimSource), or from the pseudo states on a
-	 * dedicated server. Game-thread reads use a copy taken after the mesh's animation finished this
-	 * frame, never the anim instance while its worker may be writing it.
+	 * Forget the held-back offset and take the current facing as the last input direction. Call
+	 * after teleporting or setting the rotation from gameplay, or the character turns back.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Extended|Turn In Place")
+	void ResetTurn();
+
+	/**
+	 * Curves from the anim instance: IEGTurnInPlaceAnimSource when it implements it, otherwise
+	 * read from its evaluated curves. Pseudo states on a dedicated server. Game-thread reads use a
+	 * copy taken after the mesh's animation finished this frame, never the anim instance while its
+	 * worker may be writing it.
 	 */
 	FEGTurnInPlaceCurves GetCurves() const;
 
@@ -116,8 +175,11 @@ public:
 	/** Game thread: what the anim graph needs this frame. */
 	FEGTurnInPlaceGraphInput MakeGraphInput() const;
 
-	/** Valid set, character, movement component, and a curve source (anim instance or pseudo mode). */
+	/** Valid set and movement, and a curve source (an anim instance, or pseudo mode). */
 	bool HasValidData() const;
+
+	/** The mesh the movement source picked. */
+	USkeletalMeshComponent* GetMesh() const;
 
 	// ----- Requests -----------------------------------------------------------------------------
 
@@ -161,6 +223,7 @@ public:
 
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 	virtual void OnRegister() override;
+	virtual void RegisterComponentTickFunctions(bool bRegister) override;
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 
 protected:
@@ -180,6 +243,10 @@ protected:
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Transient, Category = "Turn In Place")
 	FEGTurnInPlaceMoveState MoveState;
 
+	/** After the movement component, before the mesh (Rotation Driver: Component). */
+	UPROPERTY()
+	FEGTurnInPlaceDriverTickFunction DriverTick;
+
 private:
 	struct FRequest
 	{
@@ -188,31 +255,36 @@ private:
 		FName Reason;
 	};
 
-	ACharacter* GetCharacter() const;
-	UCharacterMovementComponent* GetMovement() const;
-	USkeletalMeshComponent* GetMesh() const;
-	bool IsStationary() const;
+	const UEGTurnInPlaceMovementSource* GetSource() const;
+	bool GatherMovementInfo(FEGTurnInPlaceMovementInfo& OutInfo) const;
+	bool HasValidData(const FEGTurnInPlaceMovementInfo& Info) const;
+	EEGTurnInPlaceState ResolveEnabledState(const FEGTurnInPlaceMovementInfo& Info, EEGTurnStateReason& OutReason) const;
+	EEGTurnRotationDriver ResolveDriver(const FEGTurnInPlaceMovementInfo& Info) const;
+	static bool IsStationary(const FEGTurnInPlaceMovementInfo& Info);
 	bool WantsPseudoAnimState() const;
-	UAnimMontage* GetRootMotionMontage() const;
-	void GetGravity(FVector& OutUp, FQuat& OutWorldToGravity, FQuat& OutGravityToWorld) const;
 	FGameplayTag ResolveStanceKey() const;
-	void RefreshStateProviders();
 
-	/** One standing step: solver update, then the rotation (none on simulated proxies). */
-	void RunTurnInPlace(const FRotator& Current, const FRotator& Desired, EEGTurnInPlaceState State, bool bSimulatedProxy);
-	void ApplyYaw(const FRotator& Base, float AddYaw, const FQuat& WorldToGravity, const FQuat& GravityToWorld);
-	void SetOwnerRotation(const FRotator& NewRotation);
-	void UpdateLastInputDirection(const UCharacterMovementComponent* Movement);
+	/** Tags from every IEGAnimStateProvider on the owner, gathered once per frame (windows, rotation lock, stance). */
+	const FGameplayTagContainer& GetStateTags() const;
+	void RefreshStateProviders() const;
+
+	/** One standing step: solver update, then the rotation (none on simulated proxies). Returns the rotation applied. */
+	FRotator RunTurnInPlace(const FRotator& Current, const FRotator& Desired, EEGTurnInPlaceState State, bool bSimulatedProxy, const FVector& Up);
+	void ApplyRotation(const FRotator& NewRotation);
+	void UpdateLastInputDirection(const FEGTurnInPlaceMovementInfo& Info);
 	void UpdateReplicatedOffset();
 	FEGTurnInPlaceRequestHandle PushRequest(bool bLock, FName Reason);
 
+	void TickDriver(float DeltaTime);
+	void SetDriverRotation(const FRotator& Rotation);
+	void UpdateSettle(const FEGTurnInPlaceMovementInfo& Info, float DeltaTime);
 	void TickPseudoStates(float DeltaTime);
-	void TickSimulatedProxy();
-	void TickSelfCheck();
+	void TickSimulatedProxy(const FEGTurnInPlaceMovementInfo& Info);
+	void TickSelfCheck(const FEGTurnInPlaceMovementInfo& Info);
 	void DrawDebug() const;
 	void ReportProblem(const FString& Message) const;
 
-	TWeakObjectPtr<ACharacter> CachedCharacter;
+	TWeakObjectPtr<USkeletalMeshComponent> CachedMesh;
 	TWeakObjectPtr<UAnimInstance> CachedAnimInstance;
 	bool bHasAnimSource = false;
 
@@ -226,9 +298,21 @@ private:
 	TArray<FRequest> Requests;
 	int32 NextRequestId = 0;
 
-	TArray<TWeakObjectPtr<UObject>> StateProviders;
+	mutable TArray<TWeakObjectPtr<UObject>> StateProviders;
+	mutable int32 ProviderComponentCount = INDEX_NONE;
+	mutable uint64 CachedStateTagsFrame = MAX_uint64;
+	mutable FGameplayTagContainer CachedStateTags;
 	mutable uint64 CachedStanceFrame = MAX_uint64;
 	mutable FGameplayTag CachedStanceKey;
+
+	/** Component driver: the rotation it left the owner at, and what the owner stood on then. */
+	FRotator DriverRotation = FRotator::ZeroRotator;
+	bool bHasDriverRotation = false;
+	TWeakObjectPtr<UPrimitiveComponent> DriverBase;
+	FRotator DriverBaseRotation = FRotator::ZeroRotator;
+
+	float SettleTimer = 0.0f;
+	bool bWantsSettle = false;
 
 	EEGTurnPseudoState PseudoState = EEGTurnPseudoState::Idle;
 	FEGTurnInPlaceNodeState PseudoNode;
@@ -240,4 +324,5 @@ private:
 	int32 FramesWithoutFaceHook = 0;
 	int32 FramesWithoutPhysicsHook = 0;
 	int32 ClientFramesWithoutSavedMove = 0;
+	int32 FramesDrivenUnpredicted = 0;
 };

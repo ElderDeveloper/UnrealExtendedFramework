@@ -8,8 +8,11 @@
 #include "GameFramework/CharacterMovementComponent.h"
 
 /**
- * What a project calls from its own character and movement component to use turn in place. No
- * base class is needed. See Docs/TurnInPlace.md, "Project integration".
+ * What a project calls from its own character and movement component for predicted turn in place.
+ * Optional: without them the component rotates the owner itself (Rotation Driver: Auto or
+ * Component), which is fine for single player, AI and Blueprint-only projects. Player characters
+ * in multiplayer need them, with TEGTurnInPlaceSavedMove, so the owning client predicts the turn.
+ * No base class is needed. See Docs/TurnInPlace.md, "Project integration".
  *
  *   void AMyCharacter::FaceRotation(FRotator NewControlRotation, float DeltaTime)
  *   {

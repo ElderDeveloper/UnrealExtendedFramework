@@ -2,6 +2,7 @@
 
 #include "EGTurnInPlaceSolver.h"
 
+#include "Algo/BinarySearch.h"
 #include "Animation/AnimMontage.h"
 #include "Animation/AnimSequence.h"
 
@@ -49,6 +50,34 @@ float FEGTurnInPlaceSolver::YawDeltaAroundUp(const FRotator& From, const FRotato
 	const double Cross = FVector::DotProduct(FVector::CrossProduct(FromHeading, ToHeading), Up);
 	const double Dot = FVector::DotProduct(FromHeading, ToHeading);
 	return static_cast<float>(FMath::RadiansToDegrees(FMath::Atan2(Cross, Dot)));
+}
+
+FVector FEGTurnInPlaceSolver::HeadingAroundUp(const FRotator& Rotation, const FVector& Up)
+{
+	return HeadingInPlane(Rotation, Up);
+}
+
+FRotator FEGTurnInPlaceSolver::MakeUprightRotation(const FRotator& Base, float AddYaw, const FVector& Up)
+{
+	if (Up.Equals(FVector::UpVector))
+	{
+		return FRotator(0.0, FRotator::NormalizeAxis(Base.Yaw + AddYaw), 0.0);
+	}
+
+	FVector Heading = HeadingInPlane(Base, Up);
+	if (Heading.IsNearlyZero())
+	{
+		// A degenerate base has no heading: any direction across Up will do.
+		Heading = FVector::VectorPlaneProject(FVector::ForwardVector, Up).GetSafeNormal();
+		if (Heading.IsNearlyZero())
+		{
+			Heading = FVector::VectorPlaneProject(FVector::RightVector, Up).GetSafeNormal();
+		}
+	}
+
+	// A positive angle about Up is a positive (rightward) yaw, as under normal gravity.
+	Heading = FQuat(Up, FMath::DegreesToRadians(static_cast<double>(AddYaw))).RotateVector(Heading);
+	return FRotationMatrix::MakeFromZX(Up, Heading).Rotator();
 }
 
 float FEGTurnInPlaceSolver::UpdateOffset(const FOffsetInputs& Inputs, FEGTurnInPlaceMoveState& State)
@@ -277,7 +306,7 @@ void FEGTurnInPlaceSolver::ComputeGraphOutput(const FEGTurnInPlaceGraphInput& In
 	}
 
 	Output.TurnOffset = Input.TurnOffset;
-	Output.bWantsToTurn = Input.bWantsToTurn;
+	Output.bWantsToTurn = Input.bWantsToTurn || Input.bWantsSettle;
 	Output.bAbortTurn = Input.bAbortTurn;
 
 	// Recovery needs the turn to have been seen turning in this entry (the first frame still carries
@@ -286,7 +315,7 @@ void FEGTurnInPlaceSolver::ComputeGraphOutput(const FEGTurnInPlaceGraphInput& In
 	Output.bWantsRecovery = (bTurnedThisEntry || bReachedAnimEnd) && !Input.bIsTurning && !Input.bAbortTurn;
 
 	Output.bStartToCycleFromTurn = Input.bIsStrafing && Input.bHasAngles && FMath::Abs(Input.TurnOffset) > Input.Angles.MinTurnAngle;
-	Output.bStopToIdleForTurn = Input.bIsTurning || Input.bWantsToTurn;
+	Output.bStopToIdleForTurn = Input.bIsTurning || Output.bWantsToTurn;
 	Output.bPlayTurnAnim = Output.bWantsToTurn && !Input.bPseudo;
 }
 
@@ -310,7 +339,178 @@ void FEGTurnInPlaceSolver::UpdateNodePlayRate(FEGTurnInPlaceNodeState& Node, con
 
 UAnimSequence* FEGTurnInPlaceSolver::GetTurnAnimation(const FEGTurnInPlaceEntry& Entry, const FEGTurnInPlaceNodeState& Node, bool bRecovery)
 {
+	// A procedural turn plays no clip, even where its step has one (a settle turn).
+	if (Node.bProcedural)
+	{
+		return nullptr;
+	}
 	return Entry.GetTurnSequence(Node.StepIndex, bRecovery ? Node.bRecoveryTurningRight : Node.bTurningRight);
+}
+
+void FEGTurnInPlaceSolver::BeginTurn(FEGTurnInPlaceNodeState& Node, const FEGTurnInPlaceGraphInput& Input)
+{
+	const FEGTurnInPlaceEntry& Entry = Input.GetEntry();
+	Node.StepIndex = Input.StepIndex;
+	Node.bTurningRight = Input.bTurnRight;
+	Node.AnimTime = 0.0;
+	Node.bReachedMaxAngle = false;
+	Node.bReachedAnimEnd = false;
+	Node.bRecoveryFinished = false;
+
+	// A settle turn always closes the offset procedurally; a regular turn when its clip is missing.
+	const bool bSettle = Input.bWantsSettle && !Input.bWantsToTurn;
+	const bool bHasClip = Entry.GetTurnSequence(Node.StepIndex, Node.bTurningRight) != nullptr;
+	Node.bProcedural = bSettle || (!bHasClip && Entry.Procedural.bTurnWithoutAnimation);
+	Node.ProceduralYaw = Node.bProcedural ? Input.TurnOffset : 0.0f;
+
+	UpdateNodePlayRate(Node, Input);
+}
+
+double FEGTurnInPlaceSolver::GetTurnLength(const FEGTurnInPlaceEntry& Entry, const FEGTurnInPlaceNodeState& Node, bool bRecovery)
+{
+	if (Node.bProcedural)
+	{
+		return GetProceduralDuration(Node.ProceduralYaw, Entry.Procedural);
+	}
+	const UAnimSequence* const Sequence = GetTurnAnimation(Entry, Node, bRecovery);
+	return Sequence ? static_cast<double>(Sequence->GetPlayLength()) : 0.0;
+}
+
+bool FEGTurnInPlaceSolver::AdvanceTurnTime(const FEGTurnInPlaceEntry& Entry, FEGTurnInPlaceNodeState& Node, float DeltaTime, float PlayRate, bool bRecovery)
+{
+	const double Length = GetTurnLength(Entry, Node, bRecovery);
+	if (Length <= 0.0)
+	{
+		// Nothing to play: played out.
+		return true;
+	}
+
+	const UAnimSequence* const Sequence = GetTurnAnimation(Entry, Node, bRecovery);
+	const double RateScale = Sequence ? FMath::Max(static_cast<double>(Sequence->RateScale), 0.0) : 1.0;
+	Node.AnimTime = FMath::Clamp(Node.AnimTime + static_cast<double>(DeltaTime) * PlayRate * RateScale, 0.0, Length);
+	return Node.AnimTime >= Length - UE_KINDA_SMALL_NUMBER;
+}
+
+FEGTurnInPlaceCurves FEGTurnInPlaceSolver::EvaluateTurnCurves(const FEGTurnInPlaceEntry& Entry, const FEGTurnInPlaceNodeState& Node, bool bRecovery, const FEGTurnInPlaceCurveNames& Names)
+{
+	if (Node.bProcedural)
+	{
+		return EvaluateProceduralTurn(Node.ProceduralYaw, Node.AnimTime, Entry.Procedural);
+	}
+
+	FEGTurnInPlaceCurves Curves;
+	if (const UAnimSequenceBase* const Sequence = GetTurnAnimation(Entry, Node, bRecovery))
+	{
+		// Through the base class: UAnimSequence hides the overloads it does not override.
+		const FAnimExtractContext Context(Node.AnimTime);
+		Curves.RemainingTurnYaw = Sequence->EvaluateCurveData(Names.RemainingTurnYaw, Context, false);
+		Curves.TurnYawWeight = Sequence->EvaluateCurveData(Names.TurnYawWeight, Context, false);
+		Curves.PauseTurnInPlace = Sequence->EvaluateCurveData(Names.PauseTurnInPlace, Context, false);
+		Curves.LockTurnInPlace = Sequence->EvaluateCurveData(Names.LockTurnInPlace, Context, false);
+	}
+	return Curves;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Procedural turns
+// ---------------------------------------------------------------------------------------------
+
+float FEGTurnInPlaceSolver::GetProceduralDuration(float TotalYaw, const FEGTurnInPlaceProcedural& Settings)
+{
+	return FMath::Max(Settings.MinDuration, FMath::Abs(TotalYaw) / FMath::Max(Settings.TurnRate, 1.0f));
+}
+
+FEGTurnInPlaceCurves FEGTurnInPlaceSolver::EvaluateProceduralTurn(float TotalYaw, double Elapsed, const FEGTurnInPlaceProcedural& Settings)
+{
+	const double Duration = GetProceduralDuration(TotalYaw, Settings);
+	const double Alpha = Duration > 0.0 ? FMath::Clamp(Elapsed / Duration, 0.0, 1.0) : 1.0;
+
+	// Smoothstep: no jolt where the capsule starts or stops.
+	const double Eased = Alpha * Alpha * (3.0 - 2.0 * Alpha);
+
+	FEGTurnInPlaceCurves Curves;
+	Curves.RemainingTurnYaw = static_cast<float>(TotalYaw * (1.0 - Eased));
+	Curves.TurnYawWeight = Alpha < 1.0 ? 1.0f : 0.0f;
+	return Curves;
+}
+
+bool FEGTurnInPlaceSolver::UpdateSettleTimer(float& InOutTimer, const FEGTurnInPlaceProcedural& Settings, float Offset, float MinTurnAngle, bool bCanSettle, float DeltaTime)
+{
+	const float AbsOffset = FMath::Abs(Offset);
+	if (!Settings.bSettle || !bCanSettle || AbsOffset < Settings.SettleAngle || AbsOffset >= MinTurnAngle)
+	{
+		InOutTimer = 0.0f;
+		return false;
+	}
+	InOutTimer += FMath::Max(DeltaTime, 0.0f);
+	return InOutTimer >= Settings.SettleDelay;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Root yaw tracks
+// ---------------------------------------------------------------------------------------------
+
+bool FEGTurnInPlaceSolver::BuildYawTrack(const TArray<double>& Times, const TArray<double>& RawYaws, float FinishedTolerance, float RecoveryBlendTime, FEGTurnYawTrack& OutTrack)
+{
+	OutTrack = FEGTurnYawTrack();
+	const int32 Num = Times.Num();
+	if (Num < 2 || RawYaws.Num() != Num || Times.Last() <= 0.0)
+	{
+		return false;
+	}
+
+	OutTrack.Times.Reserve(Num);
+	OutTrack.CumulativeYaw.Reserve(Num);
+
+	// Frame-to-frame deltas, so a 180-degree turn is not ambiguous at its ends.
+	double Cumulative = 0.0;
+	for (int32 Index = 0; Index < Num; ++Index)
+	{
+		if (Index > 0)
+		{
+			Cumulative += FRotator::NormalizeAxis(RawYaws[Index] - RawYaws[Index - 1]);
+		}
+		OutTrack.Times.Add(static_cast<float>(Times[Index]));
+		OutTrack.CumulativeYaw.Add(static_cast<float>(Cumulative));
+	}
+
+	OutTrack.Length = static_cast<float>(Times.Last());
+	OutTrack.TotalYaw = static_cast<float>(Cumulative);
+
+	// Where the remaining yaw is gone, or early enough to blend into recovery. Never the first
+	// sample: the weight must be seen at 1 for the turn to register. The last sample always ends it.
+	const double LatestEnd = FMath::Max(0.0, Times.Last() - RecoveryBlendTime);
+	OutTrack.WeightEndTime = OutTrack.Length;
+	for (int32 Index = 1; Index < Num; ++Index)
+	{
+		const double Remaining = Cumulative - OutTrack.CumulativeYaw[Index];
+		if (FMath::Abs(Remaining) <= FinishedTolerance || Times[Index] >= LatestEnd)
+		{
+			OutTrack.WeightEndTime = static_cast<float>(Times[Index]);
+			break;
+		}
+	}
+	return OutTrack.IsValid();
+}
+
+FEGTurnInPlaceCurves FEGTurnInPlaceSolver::EvaluateYawTrack(const FEGTurnYawTrack& Track, double Time)
+{
+	FEGTurnInPlaceCurves Curves;
+	if (!Track.IsValid())
+	{
+		return Curves;
+	}
+
+	const float ClampedTime = FMath::Clamp(static_cast<float>(Time), 0.0f, Track.Length);
+	const int32 Upper = FMath::Clamp(Algo::UpperBound(Track.Times, ClampedTime), 1, Track.Times.Num() - 1);
+	const int32 Lower = Upper - 1;
+	const float Span = Track.Times[Upper] - Track.Times[Lower];
+	const float Alpha = Span > UE_KINDA_SMALL_NUMBER ? FMath::Clamp((ClampedTime - Track.Times[Lower]) / Span, 0.0f, 1.0f) : 1.0f;
+	const float Cumulative = FMath::Lerp(Track.CumulativeYaw[Lower], Track.CumulativeYaw[Upper], Alpha);
+
+	Curves.RemainingTurnYaw = Track.TotalYaw - Cumulative;
+	Curves.TurnYawWeight = ClampedTime < Track.WeightEndTime ? 1.0f : 0.0f;
+	return Curves;
 }
 
 void FEGTurnInPlaceSolver::AdvancePseudoState(EEGTurnPseudoState& State, FEGTurnInPlaceNodeState& Node, const FEGTurnInPlaceGraphInput& Input,
@@ -318,18 +518,21 @@ void FEGTurnInPlaceSolver::AdvancePseudoState(EEGTurnPseudoState& State, FEGTurn
 {
 	const FEGTurnInPlaceEntry& Entry = Input.GetEntry();
 
+	auto EnterIdle = [&Node]()
+	{
+		Node.PlayRate = 1.0f;
+		Node.bReachedMaxAngle = false;
+		Node.bReachedAnimEnd = false;
+		Node.bProcedural = false;
+	};
+
 	switch (State)
 	{
 	case EEGTurnPseudoState::Idle:
 		if (Output.bWantsToTurn)
 		{
 			State = EEGTurnPseudoState::Turn;
-			Node.StepIndex = Input.StepIndex;
-			Node.bTurningRight = Input.bTurnRight;
-			Node.AnimTime = 0.0;
-			Node.bReachedMaxAngle = false;
-			Node.bReachedAnimEnd = false;
-			UpdateNodePlayRate(Node, Input);
+			BeginTurn(Node, Input);
 		}
 		break;
 
@@ -337,8 +540,7 @@ void FEGTurnInPlaceSolver::AdvancePseudoState(EEGTurnPseudoState& State, FEGTurn
 		if (Output.bAbortTurn)
 		{
 			State = EEGTurnPseudoState::Idle;
-			Node.PlayRate = 1.0f;
-			Node.bReachedMaxAngle = false;
+			EnterIdle();
 		}
 		else if (Output.bWantsRecovery)
 		{
@@ -350,34 +552,24 @@ void FEGTurnInPlaceSolver::AdvancePseudoState(EEGTurnPseudoState& State, FEGTurn
 		}
 		else
 		{
-			const UAnimSequence* Sequence = GetTurnAnimation(Entry, Node, false);
-			Node.AnimTime = AdvanceAnimTime(Sequence, Node.AnimTime, DeltaTime, Node.PlayRate);
-			Node.bReachedAnimEnd = !Sequence || Node.AnimTime >= Sequence->GetPlayLength() - UE_KINDA_SMALL_NUMBER;
+			Node.bReachedAnimEnd = AdvanceTurnTime(Entry, Node, DeltaTime, Node.PlayRate, false);
 			UpdateNodePlayRate(Node, Input);
 		}
 		break;
 
 	case EEGTurnPseudoState::Recovery:
 	{
-		const UAnimSequence* Sequence = GetTurnAnimation(Entry, Node, true);
-		Node.AnimTime = AdvanceAnimTime(Sequence, Node.AnimTime, DeltaTime, 1.0f);
+		const bool bFinished = AdvanceTurnTime(Entry, Node, DeltaTime, 1.0f, true);
 		if (Output.bWantsToTurn)
 		{
 			// Recovery -> Turn, as in the graph.
 			State = EEGTurnPseudoState::Turn;
-			Node.StepIndex = Input.StepIndex;
-			Node.bTurningRight = Input.bTurnRight;
-			Node.AnimTime = 0.0;
-			Node.bReachedMaxAngle = false;
-			Node.bReachedAnimEnd = false;
-			UpdateNodePlayRate(Node, Input);
+			BeginTurn(Node, Input);
 		}
-		else if (!Sequence || Node.AnimTime >= Sequence->GetPlayLength() - UE_KINDA_SMALL_NUMBER)
+		else if (bFinished)
 		{
 			State = EEGTurnPseudoState::Idle;
-			Node.PlayRate = 1.0f;
-			Node.bReachedMaxAngle = false;
-			Node.bReachedAnimEnd = false;
+			EnterIdle();
 			Node.bRecoveryFinished = true;
 		}
 		break;

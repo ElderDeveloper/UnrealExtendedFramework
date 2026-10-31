@@ -11,7 +11,8 @@ The animation side of **UnrealExtendedGameplay** is built on one rule: **notifie
 | Root motion & warping | `Animation/RootMotion`, `Animation/MotionWarping` | Predicted dashes and lunges; warp targets from lock-on |
 | Montage playback | `Animation/Montage` | One mesh/set/playback path, animation sets by tag, async montage nodes |
 | Anim instance | `Animation/AnimInstance` | A thread-safe AnimBP base and gameplay state as tags |
-| Turn in place | `Animation/TurnInPlace` | Actor-based turn in place as a component; see [TurnInPlace.md](TurnInPlace.md) |
+| Turn in place | `Animation/TurnInPlace` | Actor-based turn in place: a component and the Turn In Place anim node; see [TurnInPlace.md](TurnInPlace.md) |
+| Foot lock | `Animation/IK` | The Foot Lock anim node: planted feet stay put while a standing character rotates; procedural steps |
 | Footsteps | `Footstep` | A footstep notify driving `UEGFootstepComponent` |
 | Soft collision | `SoftCollision` | Pawn-vs-pawn pushes; the Soft Collision Modifier notify, `SoftCollision.Pushed` / `.Bumped` state tags; see [SoftCollision.md](SoftCollision.md) |
 
@@ -100,7 +101,14 @@ Parent your AnimBP to `UEGAnimInstance`.
 
 ## Turn in place
 
-Actor-based turn in place as a component: the capsule is held back while standing and the turn animations' curves rotate it. The project forwards `FaceRotation` and `PhysicsRotation` and adds a saved-move mixin; `UEGAnimInstance` runs the anim side. The full guide, including the anim graph recipe and how each known pitfall is prevented, is in [TurnInPlace.md](TurnInPlace.md).
+Actor-based turn in place: the capsule is held back while standing, and turn animations rotate it through their curves, their root track, or a procedural turn where a step has no clip.
+
+* **No code to start:** add `UEGTurnInPlaceComponent` with a turn set, and the **Turn In Place** node to any AnimBP. The component rotates the character itself.
+* **Predicted multiplayer:** forward `FaceRotation` and `PhysicsRotation` and add the saved-move mixin; the component switches to them.
+* **Any movement system:** a movement source reads and rotates the owner (Character Movement ships).
+* **Foot Lock:** an optional IK node that keeps planted feet in place while the capsule turns under them, and steps them when they drift.
+
+The full guide, including the anim graph setups and how each known pitfall is prevented, is in [TurnInPlace.md](TurnInPlace.md).
 
 ## Footsteps
 
