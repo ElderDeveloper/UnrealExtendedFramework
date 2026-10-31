@@ -4,7 +4,8 @@
 #include "EFFoundationVersion.h"
 #include "Shared/ESteamLog.h"
 
-EF_REQUIRE_FOUNDATION_VERSION(1, 0, "UnrealExtendedSteam");
+// 1.1: the platform layer (UEFPlatformProviderSubsystem) that UESteamPlatformProvider implements.
+EF_REQUIRE_FOUNDATION_VERSION(1, 2, "UnrealExtendedSteam");
 
 void FUnrealExtendedSteamModule::StartupModule()
 {

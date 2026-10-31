@@ -108,7 +108,7 @@ protected:
 
 	static FEPFAuthContext SharedAuthContext;
 
-	/** The plugin's automation tests install a session through it and put the previous one back (Tests/EPFAsyncNodeTests.cpp). */
+	/** The plugin's automation tests install a session through it and put the previous one back (Tests/EPFSharedAuthTestScope.h). */
 	friend struct FEPFSharedAuthTestScope;
 
 private:

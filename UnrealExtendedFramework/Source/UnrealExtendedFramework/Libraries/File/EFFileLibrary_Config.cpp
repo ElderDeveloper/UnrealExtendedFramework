@@ -78,6 +78,11 @@ bool UEFFileLibrary::WriteConfigFile(FString Filename, FString Section, FString 
 			}
 			else if (TypeName == "LinearColor")
 			{
+				// FLinearColor is four floats, not an FColor; stored as its text form "(R=..,G=..,B=..,A=..)".
+				GConfig->SetString(*Section, *Key, *static_cast<FLinearColor*>(Value)->ToString(), *Filename);
+			}
+			else if (TypeName == "Color")
+			{
 				GConfig->SetColor(*Section, *Key, *(static_cast<FColor*>(Value)), *Filename);
 			}
 			else if (TypeName == "Vector4")
@@ -171,6 +176,12 @@ bool UEFFileLibrary::ReadConfigFile(FString Filename, FString Section, FString K
 				Success = GConfig->GetVector(*Section, *Key, *(static_cast<FVector*>(Value)), *Filename);
 			}
 			else if (TypeName == "LinearColor")
+			{
+				FString ColorText;
+				Success = GConfig->GetString(*Section, *Key, ColorText, *Filename)
+					&& static_cast<FLinearColor*>(Value)->InitFromString(ColorText);
+			}
+			else if (TypeName == "Color")
 			{
 				Success = GConfig->GetColor(*Section, *Key, *(static_cast<FColor*>(Value)), *Filename);
 			}

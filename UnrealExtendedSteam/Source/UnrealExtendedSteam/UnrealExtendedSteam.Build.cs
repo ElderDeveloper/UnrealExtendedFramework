@@ -19,12 +19,17 @@ public class UnrealExtendedSteam : ModuleRules
 		// resolve "Shared/ESteamBlueprintLibrary.h" and internal files resolve their siblings.
 		PublicIncludePaths.Add(ModuleDirectory);
 
+		// ExtendedFoundation is public: Platform/ESteamPlatformProvider.h derives from
+		// UEFPlatformProviderSubsystem (the Steam provider of the Extended platform layer). The
+		// subsystem .cpp files also use it for EFCallContext propagation, and the module .cpp for
+		// the foundation version check.
 		PublicDependencyModuleNames.AddRange(
 			new string[]
 			{
 				"Core",
 				"CoreUObject",
 				"Engine",
+				"ExtendedFoundation",
 				"ExtendedSteamShared",
 				"OnlineSubsystem"
 			}
@@ -32,13 +37,10 @@ public class UnrealExtendedSteam : ModuleRules
 
 		// AudioExtensions provides IAudioProxyDataFactory, the base of USoundWave used by
 		// UESteamVoiceSoundWave (USoundWaveProcedural) for Steam voice playback.
-		// ExtendedFoundation: EFCallContext propagation in the subsystem .cpp files and the
-		// foundation version check in the module .cpp (no public header includes it).
 		PrivateDependencyModuleNames.AddRange(
 			new string[]
 			{
-				"AudioExtensions",
-				"ExtendedFoundation"
+				"AudioExtensions"
 			}
 		);
 

@@ -9,21 +9,28 @@ all of this.
 ```text
 UnrealExtendedFoundation        engine modules only, no plugin dependencies
   ├─ UnrealExtendedFrameworkLog   EF_LOG category log files
-  └─ ExtendedFoundation           HTTP, JSON, results, async nodes, settings, credentials, status, tests
+  └─ ExtendedFoundation           HTTP, JSON, results, async nodes, settings, credentials, status, tests,
+                                  and the shared contracts: message bus, analytics, platform layer
         ▲
         │  every Extended plugin may depend on the foundation
         │
-UnrealExtendedFramework (core)  settings system, libraries, AI/EQS, subtitles, loading screen, UI Lab
+UnrealExtendedFramework (core)  settings system, libraries, AI/EQS, subtitles, loading screen, object pool, UI Lab
         ▲
         │  only plugins that need the core's features depend on it
         │
 Gameplay · PlayFab · EOS        service and gameplay plugins
-GAS · Quest · Steam · PerfSentinel · Atlassian   depend on the foundation only (or nothing)
+GAS · Quest · Steam · Save · Debug · PerfSentinel · Atlassian   depend on the foundation only (or nothing)
 ```
 
 - **The foundation stays light.** It may depend only on modules every engine install has without a
-  plugin (Core, CoreUObject, Engine, DeveloperSettings, HTTP, Json, JsonUtilities, Projects). Anything
-  tied to gameplay, UI, AI, audio or a specific online service belongs in the plugin that needs it.
+  plugin (Core, CoreUObject, Engine, DeveloperSettings, GameplayTags, HTTP, Json, JsonUtilities,
+  Projects). Anything tied to gameplay, UI, AI, audio or a specific online service belongs in the
+  plugin that needs it.
+- **Shared contracts live in the foundation.** When several plugins must meet without depending on
+  each other, the meeting point goes in the foundation and the plugins depend on it. Examples: a
+  result type, a status report, a message channel, an analytics sink, a platform provider. Steam,
+  EOS and PlayFab each implement `UEFPlatformProviderSubsystem`, and none of them knows the
+  others.
 - **The core is not a dependency dump.** Do not add a module to the core's Build.cs because a
   dependent plugin needs it; the dependent declares its own.
 - A plugin that uses a module from another plugin lists that plugin in its `.uplugin`.
@@ -47,7 +54,10 @@ GAS · Quest · Steam · PerfSentinel · Atlassian   depend on the foundation on
 | Finding a subsystem from any object | `EF::GetGameInstanceSubsystem<T>(Context)` | `Subsystems/EFSubsystems.h` |
 | Reporting state to `Extended.Status` (console and `Extended.Status.Overlay 1`) | `FEFServiceStatusRegistry::Register` | `Status/EFServiceStatus.h` |
 | Test game instance, waiting, fixtures | `EFTest::FScopedGameInstance`, `FEFWaitUntilCommand` | `Testing/EFTestHelpers.h` |
-| Compile-time foundation version check | `EF_REQUIRE_FOUNDATION_VERSION(1, 0, "Plugin")` | `EFFoundationVersion.h` |
+| Telling other systems something happened, without knowing who listens | `UEFMessageSubsystem::BroadcastMessage`, **Listen For Message** | `Messages/EFMessageSubsystem.h`, `Messages/EFMessageLibrary.h` |
+| Recording an analytics event; feeding a back end | `UEFAnalyticsSubsystem::RecordEvent`, `IEFAnalyticsSink` | `Analytics/EFAnalyticsSubsystem.h`, `Analytics/EFAnalyticsTypes.h` |
+| Achievements, stats, leaderboards, cloud files, presence on any store | `UEFPlatformSubsystem`; a store implements `UEFPlatformProviderSubsystem` | `Platform/EFPlatformSubsystem.h`, `Platform/EFPlatformProvider.h` |
+| Compile-time foundation version check | `EF_REQUIRE_FOUNDATION_VERSION(1, 2, "Plugin")` | `EFFoundationVersion.h` |
 
 ## Naming
 
@@ -55,6 +65,8 @@ GAS · Quest · Steam · PerfSentinel · Atlassian   depend on the foundation on
 |:--|:--|
 | `EF` | Foundation and core framework |
 | `EG` | Gameplay and Quest |
+| `ESave` | Save |
+| `EDbg` | Debug |
 | `EGAS` | GAS extensions |
 | `EPF` | PlayFab |
 | `EEOS` | EOS |
@@ -99,6 +111,18 @@ copyright line; third-party and vendored code keeps its original notice.
 - Report outcomes as `FEFResult` or convert to it (`ToEFResult()`), so UI and retry logic work the
   same for every service.
 
+## Messages, analytics and the platform layer
+
+- Announce events other systems may care about (a kill, a save, an unlock) on the message bus. Use
+  gameplay-tag channels under the plugin's own root, `Extended.<Plugin>.*`, and a USTRUCT payload.
+  Don't call the listener directly.
+- Analytics events come from game code or from forwarded message channels. Plugins never send
+  analytics on their own, except to record that a debug tool was used.
+- A plugin that wraps a store or back end exposes it through the platform layer (a provider
+  subsystem) or as an analytics sink, in addition to its own detailed API. Answer every provider
+  call once, return `SupportsFeature` false for what the store can never do, and register through
+  the base class.
+
 ## Settings and secrets
 
 - Settings classes derive from `UEFDeveloperSettings` and appear under
@@ -123,14 +147,15 @@ copyright line; third-party and vendored code keeps its original notice.
 ## Tests and checks
 
 - Automation tests live in each module's `Private/Tests` (or the plugin's test module), run offline,
-  and use `FEFScopedHttpMock` instead of real services. Test names start with the plugin or module
-  name, so `Automation RunTests ExtendedFoundation` or `Automation RunTests UnrealExtendedPlayFab`
-  runs one plugin.
+  and use `FEFScopedHttpMock` instead of real services. New test names start with the plugin name
+  (`UnrealExtendedPlayFab.`, `ExtendedFoundation.`), so `Automation RunTests <prefix>` runs one plugin.
+  Older suites use `ExtendedFramework.` (Log, Log Viewer, UI Lab), `ExtendedAtlassian.`,
+  `QuestPlugin.` and `PerfSentinel.`.
 - `python3 Scripts/lint_repository.py` checks descriptors, cross-plugin and cross-module
   dependencies, copyright headers and redirect syntax without Unreal. CI runs it on every push.
 - Building and running the automation tests needs Unreal Engine, so it runs on a developer machine
   or a self-hosted runner:
 
   ```text
-  UnrealEditor-Cmd.exe YourProject.uproject -ExecCmds="Automation RunTests ExtendedFoundation+UnrealExtended;Quit" -unattended -nop4 -NullRHI -TestExit="Automation Test Queue Empty"
+  UnrealEditor-Cmd.exe YourProject.uproject -ExecCmds="Automation RunTests ExtendedFoundation+ExtendedFramework+UnrealExtended+ExtendedAtlassian+QuestPlugin+PerfSentinel;Quit" -unattended -nop4 -NullRHI -TestExit="Automation Test Queue Empty"
   ```
