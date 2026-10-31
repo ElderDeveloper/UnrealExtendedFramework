@@ -15,7 +15,7 @@
 <p align="center">
   <img alt="Unreal Engine 5.8" src="https://img.shields.io/badge/Unreal%20Engine-5.8-0E1128?style=for-the-badge&logo=unrealengine&logoColor=white">
   <img alt="C++ and Blueprint" src="https://img.shields.io/badge/API-C%2B%2B%20%2B%20Blueprint-00599C?style=for-the-badge&logo=cplusplus&logoColor=white">
-  <img alt="Eight plugins" src="https://img.shields.io/badge/Suite-8%20Plugins-00A6A6?style=for-the-badge">
+  <img alt="Nine plugins" src="https://img.shields.io/badge/Suite-9%20Plugins-00A6A6?style=for-the-badge">
   <img alt="Mixed licensing" src="https://img.shields.io/badge/License-MIT%20%2B%20Additional%20Terms-F2C94C?style=for-the-badge">
 </p>
 
@@ -31,20 +31,21 @@
 
 ---
 
-Unreal Extended Framework is a collection of focused Unreal Engine plugins for projects that need more than a small utility library but do not want a single, tightly coupled framework. It combines reusable runtime systems, gameplay building blocks, a Gameplay Ability System layer, a graph-based quest system, online-service integrations, editor workflows, and evidence-driven performance tooling.
+Unreal Extended Framework is a collection of focused Unreal Engine plugins for projects that need more than a small utility library but do not want a single, tightly coupled framework. It combines reusable runtime systems, gameplay building blocks, a Gameplay Ability System layer, a graph-based quest system, online-service integrations, editor workflows, Jira/Confluence collaboration inside the editor, and evidence-driven performance tooling.
 
 Each plugin has its own descriptor and module boundary. Install the full repository once, then enable only the capabilities your project needs.
 
 > [!IMPORTANT]
-> This repository targets **Unreal Engine 5.8**. Earlier engine versions may require API and build-rule changes.
+> This repository targets **Unreal Engine 5.8**. Earlier engine versions may require API and build-rule changes. `UnrealExtendedAtlassian` was developed against UE 5.6 and is documented as such in [its own README](UnrealExtendedAtlassian/README.md).
 
 ## ✨ Why Extended Framework?
 
-- **Modular by design** — eight separately enableable plugins instead of one monolith.
+- **Modular by design** — nine separately enableable plugins instead of one monolith.
 - **Blueprint-friendly** — subsystems, async actions, actor components, settings, and data types are exposed where appropriate.
 - **C++ ready** — explicit module boundaries and reusable public APIs for native projects.
 - **Runtime + editor workflows** — gameplay systems are paired with validation, authoring, reporting, and debugging tools.
 - **Online-service breadth** — EOS, PlayFab, and Steam integrations live behind dedicated modules.
+- **Team workflow in the editor** — Jira and Confluence work, sprint boards, and annotated bug capture without leaving Unreal.
 - **Production-minded systems** — persistence, replication, diagnostics, commandlets, automation tests, and performance evidence are first-class concerns.
 - **Selective adoption** — the core is useful by itself, while several specialized plugins can also stand alone.
 
@@ -52,14 +53,15 @@ Each plugin has its own descriptor and module boundary. Install the full reposit
 
 | Plugin | Role | Highlights | Version |
 |:--|:--|:--|:--:|
-| [**UnrealExtendedFramework**](UnrealExtendedFramework/) | Core runtime and editor foundation | Modular settings, Blueprint libraries, async nodes, AI/EQS helpers, subtitles, HTTP/JSON, UI Lab, localization tooling | `1.0` |
-| [**UnrealExtendedGameplay**](UnrealExtendedGameplay/) | Reusable gameplay systems | AI state machine, combat, targeting, cover, traversal, perception, footsteps, input buffering, outlines, spawners, animation notifies | `1.0` |
+| [**UnrealExtendedFramework**](UnrealExtendedFramework/) | Core runtime and editor foundation | Modular settings, Blueprint libraries, async nodes, AI/EQS helpers, subtitles, HTTP/JSON, UI Lab, localization tooling, log viewer | `1.0` |
+| [**UnrealExtendedGameplay**](UnrealExtendedGameplay/) | Reusable gameplay systems | AI state machine, interaction system, combat, targeting, cover, traversal, perception, footsteps, input buffering, outlines, spawners, chess and skill-check minigames, animation notifies | `1.0` |
 | [**UnrealExtendedGAS**](UnrealExtendedGAS/) | Gameplay Ability System extensions | Ability sets, ASC/attribute bases, effect components, async listeners, ability tasks, debug UI | `1.0` |
 | [**UnrealExtendedQuest**](UnrealExtendedQuest/) | Runtime and editor quest framework | Custom graph editor, stages/objectives, facts, replication, JSON I/O, simulator, search, debugger, commandlets | `1.0` |
 | [**UnrealExtendedPlayFab**](UnrealExtendedPlayFab/) | PlayFab client integration | Authentication, player data, inventory, currency, matchmaking, CloudScript, groups, analytics, async Blueprint actions | `1.0` |
 | [**UnrealExtendedEOS**](UnrealExtendedEOS/) | Epic Online Services integration | Auth/connect, sessions, lobbies, matchmaking, social, stats, achievements, storage, voice, anti-cheat, e-commerce | `1.0` |
 | [**UnrealExtendedSteam**](UnrealExtendedSteam/) | Steamworks, OSS, sockets, and Web API | Client/server APIs, custom online subsystem, networking, async Blueprint nodes, Web API, publishing tools | `0.1.0` |
 | [**UnrealExtendedPerfSentinel**](UnrealExtendedPerfSentinel/) | Performance capture and regression analysis | Trace capture, stat harvesting, deterministic analysis, budget gates, spike evidence, editor reports | `1.0.0` beta |
+| [**UnrealExtendedAtlassian**](UnrealExtendedAtlassian/) | Jira and Confluence inside the editor | Backlot workspace: docs, issues, sprint board, asset pins, inbox, annotated editor/PIE capture to Jira | `0.1.0` beta |
 
 ### How the pieces fit together
 
@@ -74,6 +76,7 @@ flowchart TB
     EOS["UnrealExtendedEOS"]
     Steam["UnrealExtendedSteam"]
     Perf["UnrealExtendedPerfSentinel"]
+    Atlassian["UnrealExtendedAtlassian<br/>editor-only"]
     Vendor["Optional vendor upscalers<br/>DLSS · FSR · XeSS"]
 
     UE --> Core
@@ -81,6 +84,7 @@ flowchart TB
     UE --> Quest
     UE --> Steam
     UE --> Perf
+    UE --> Atlassian
     Core -->|required| Gameplay
     Core -->|required| PlayFab
     Core -->|required| EOS
@@ -94,11 +98,11 @@ flowchart TB
     class Core foundation;
     class Gameplay,GAS,Quest gameplay;
     class PlayFab,EOS,Steam online;
-    class Perf,Vendor tooling;
+    class Perf,Vendor,Atlassian tooling;
 ```
 
 > [!NOTE]
-> `UnrealExtendedGAS`, `UnrealExtendedQuest`, `UnrealExtendedSteam`, and `UnrealExtendedPerfSentinel` do not require the core plugin in their descriptors. Gameplay, PlayFab, and EOS do.
+> `UnrealExtendedGAS`, `UnrealExtendedQuest`, `UnrealExtendedSteam`, `UnrealExtendedPerfSentinel`, and `UnrealExtendedAtlassian` do not require the core plugin in their descriptors. Gameplay, PlayFab, and EOS do.
 
 ## 🚀 Feature Highlights
 
@@ -124,12 +128,18 @@ The core plugin supplies the shared runtime and editor foundation used across th
 
 - UI Lab fixtures, providers, focus/input tooling, scripted interaction, and automation support.
 - Localization workbench with glossary, context, validation, review, pseudo-localization, providers, and pipeline tooling.
+- Log viewer for browsing and filtering Unreal log files inside the editor.
 - Editor utilities and cheat-manager helpers.
+
+**Logging**
+
+- `UnrealExtendedFrameworkLog` runtime module with logging helpers, "Extended Log" project settings, and a Blueprint logging library.
 
 ### 🎮 Extended Gameplay
 
 Composable components and actors for common action-game needs:
 
+- **Interaction system** — server-validated interactions: `UEGInteractionSystemComponent` on the interactor, provider components/interfaces on targets, instanced `UEGInteraction` definitions (hold, provider event), latent interaction tasks (montage, hold, input release, range), tag-named input slots, and prompt widgets. A simpler `UEGInteractionComponent` + interactable actor/interface path is also included.
 - **AI state machine** — replicated stack-based state machine (`UEGStateMachineComponent`, `UEGState`) with per-actor instanced states, an explicit default state, declarative transition policy, opt-in client mirroring, and a world debug overlay.
 - Area damage actors and data-driven enemy spawning.
 - Sight, hearing, faction sense, stimuli sources, and procedural patrol generation.
@@ -140,6 +150,8 @@ Composable components and actors for common action-game needs:
 - Feet IK animation support.
 - Animation notifies for damage traces, camera shake, movement control, particles, perception noise, montage control, play rate, slow motion, and soft lock.
 - Input-image widgets for player-facing control prompts.
+- **Chess minigame** — replicated chess table actor with seats and sit interaction, full rules/move generation and notation, a rule-based AI with data-driven profiles, time controls, board feedback, piece visuals, sound/animation sets, UI base widget, and debug console commands.
+- **Skill-check minigame** — rotating-indicator skill checks (wrap or ping-pong sweep, hit zones) with a base widget.
 
 ### ⚡ Extended GAS
 
@@ -209,6 +221,21 @@ A desktop-focused Steam integration split into small runtime and editor modules:
 > [!WARNING]
 > Steam modules are restricted to **Win64, Linux, and macOS** by the plugin descriptor. Access to and redistribution of the Steamworks SDK are governed by Valve's terms.
 
+### 📋 Extended Atlassian
+
+A native Slate **Backlot** workspace for Jira and Confluence Cloud inside the editor — no embedded browser:
+
+- **Docs** — Confluence page tree and search, structured editing, page operations, comments, and linked Jira work.
+- **Issues / Issue Detail** — Jira filters and views, inline transitions, create/edit/delete with Undo, activity, and comments.
+- **Board** — active-sprint columns, card CRUD, estimates, WIP limits, transitions, and ranking.
+- **Pins** — shared Unreal asset, level, Blueprint, and page pins with collaborative threads, stored as versioned Confluence content properties.
+- **Inbox** — synthesized per-user notifications with read, dismiss, and archive.
+- **Capture** — `Ctrl+Shift+B` / `Cmd+Shift+B` screenshots of the PIE or editor viewport with PIN/BOX/BLUR annotations, engine/level/camera/source-control context, and log tails, filed directly as Jira issues.
+- Per-user credentials stored outside project config (DPAPI-protected on Windows), permission-aware actions, draft preservation on failure, and rate-limit handling.
+
+> [!NOTE]
+> Atlassian Cloud only (`https://<site>.atlassian.net`); Jira/Confluence Server and Data Center are not supported. See the [Atlassian plugin README](UnrealExtendedAtlassian/README.md) for setup, configuration, and troubleshooting.
+
 ### 📈 Perf Sentinel
 
 Performance tooling for repeatable capture, analysis, and reporting:
@@ -263,7 +290,8 @@ YourProject/
         ├── UnrealExtendedPlayFab/
         ├── UnrealExtendedEOS/
         ├── UnrealExtendedSteam/
-        └── UnrealExtendedPerfSentinel/
+        ├── UnrealExtendedPerfSentinel/
+        └── UnrealExtendedAtlassian/
 ```
 
 ### Option B — download a source archive
@@ -302,14 +330,15 @@ All required non-vendor dependencies below ship with the local UE 5.8 installati
 
 | Plugin | Extended dependency | Unreal Engine plugin dependencies |
 |:--|:--|:--|
-| UnrealExtendedFramework | — | GameplayAbilities, Niagara, OnlineSubsystem, OnlineSubsystemUtils, OnlineSubsystemNull, VoiceChat, EnhancedInput |
+| UnrealExtendedFramework | — | GameplayAbilities, Niagara, OnlineSubsystem, OnlineSubsystemUtils, OnlineSubsystemNull, EnhancedInput, DLSS *(optional)* |
 | UnrealExtendedGameplay | UnrealExtendedFramework | Niagara, OnlineSubsystem, OnlineSubsystemUtils, OnlineSubsystemNull |
 | UnrealExtendedGAS | — | GameplayAbilities, EnhancedInput |
 | UnrealExtendedQuest | — | GameplayTagsEditor *(editor only)* |
 | UnrealExtendedPlayFab | UnrealExtendedFramework | — |
-| UnrealExtendedEOS | UnrealExtendedFramework | OnlineSubsystem, OnlineSubsystemUtils, OnlineSubsystemEOS, EOSShared, EOSVoiceChat |
+| UnrealExtendedEOS | UnrealExtendedFramework | OnlineSubsystem, OnlineSubsystemUtils, OnlineSubsystemEOS, EOSShared, EOSVoiceChat, AudioCapture |
 | UnrealExtendedSteam | — | OnlineSubsystem, OnlineSubsystemUtils |
-| UnrealExtendedPerfSentinel | — | — |
+| UnrealExtendedPerfSentinel | — | ToolsetRegistry *(editor only)* |
+| UnrealExtendedAtlassian | — | — *(engine modules only: HTTP, Json, Slate, UnrealEd)* |
 
 `DLSS` is an optional descriptor dependency. The core build rules also detect `FSR`, `FSR3`, `FSR4`, and `XeSS` when one of those vendor plugins is installed and enabled. The framework builds without them.
 
@@ -389,6 +418,7 @@ Use the module that owns the API you include:
 | Capability | Module name |
 |:--|:--|
 | Core runtime | `UnrealExtendedFramework` |
+| Core logging | `UnrealExtendedFrameworkLog` |
 | Core editor tools | `UnrealExtendedFrameworkEditor` |
 | Gameplay systems | `UnrealExtendedGameplay` |
 | GAS extensions | `UnrealExtendedGAS` |
@@ -406,18 +436,20 @@ Use the module that owns the API you include:
 | Steam Blueprint async actions | `ExtendedSteamBlueprints` |
 | Perf Sentinel runtime | `UnrealExtendedPerfSentinel` |
 | Perf Sentinel editor | `UnrealExtendedPerfSentinelEditor` |
+| Atlassian API, models, credentials | `UnrealExtendedAtlassian` |
+| Atlassian Backlot editor UI | `UnrealExtendedAtlassianEditor` |
 
 Editor modules must never be added to a shipping runtime target.
 
 ## 🧪 Testing and Validation
 
-The suite includes Unreal Automation tests across the core, EOS, PlayFab, Quest, Steam, and Perf Sentinel plugins. Steam contains the broadest offline contract suite, covering subsystem registration and major client, OSS, sockets, storage, UGC, and Web API surfaces.
+The suite includes Unreal Automation tests across the core, Gameplay, EOS, PlayFab, Quest, Steam, Perf Sentinel, and Atlassian plugins. Steam contains the broadest offline contract suite, covering subsystem registration and major client, OSS, sockets, storage, UGC, and Web API surfaces.
 
 ### From the editor
 
 1. Open **Tools → Test Automation**.
 2. Disable smoke-only filtering if you want the full set.
-3. Filter for `UnrealExtended`, `ExtendedSteam`, `ExtendedEOS`, `PlayFab`, `Quest`, or `PerfSentinel`.
+3. Filter for `UnrealExtended`, `ExtendedSteam`, `ExtendedEOS`, `PlayFab`, `Quest`, `PerfSentinel`, or `ExtendedAtlassian`.
 4. Run the relevant group before integrating a plugin update.
 
 ### From the command line
@@ -428,13 +460,13 @@ UnrealEditor-Cmd.exe YourProject.uproject `
   -unattended -nop4 -NullRHI -TestExit="Automation Test Queue Empty"
 ```
 
-Quest content can additionally be checked with the included validation and statistics commandlets. Perf Sentinel can be driven by console commands or its analyze commandlet for repeatable performance gates.
+Quest content can additionally be checked with the included validation and statistics commandlets. Perf Sentinel can be driven by console commands or its analyze commandlet for repeatable performance gates. Atlassian ships network-free parity and visual golden-capture suites (`ExtendedAtlassian.Parity`, `ExtendedAtlassian.Visual.GoldenCapture`).
 
 ## 🔐 Credentials and Security
 
 Online integrations can expose privileged operations if configured carelessly.
 
-- Never ship PlayFab secret keys, Steam publisher Web API keys, service-account credentials, or private signing material in a client build.
+- Never ship PlayFab secret keys, Atlassian API tokens, Steam publisher Web API keys, service-account credentials, or private signing material in a client build.
 - Treat client-visible identifiers and authentication tokens according to the provider's current security guidance.
 - Prefer server-authoritative calls for inventory grants, currency mutation, moderation, progression, and other trusted operations.
 - Keep development, staging, and production service configurations separate.
@@ -453,6 +485,7 @@ ExtendedFramework/
 ├── UnrealExtendedEOS/             # EOS services + Blueprint layer
 ├── UnrealExtendedSteam/           # Steamworks, OSS, sockets, Web API, editor
 ├── UnrealExtendedPerfSentinel/    # Capture, analysis, reports, regression gates
+├── UnrealExtendedAtlassian/       # Jira/Confluence Backlot workspace + capture (editor)
 ├── LICENSE
 └── README.md
 ```
@@ -472,6 +505,7 @@ The public API prefixes help identify ownership at a glance:
 | `EEOS` / `UEEOS` | Epic Online Services integration |
 | `ESteam` / `UESteam` | Steam integration |
 | `PerfSentinel` | Performance tooling |
+| `ExtendedAtlassian` / `SExtendedAtlassian` | Atlassian integration |
 
 ## 🩺 Troubleshooting
 
@@ -537,7 +571,7 @@ Licensing is intentionally called out because the repository contains multiple c
 - The repository-level code is provided under the [MIT License](LICENSE), except where a more specific license applies.
 - `UnrealExtendedSteam` is governed by its [separate proprietary license](UnrealExtendedSteam/LICENSE).
 - Third-party SDKs, sample code, fonts, icons, and libraries retain their respective owners' licenses and notices.
-- Epic Online Services, PlayFab, Steamworks, and optional upscaler technologies are subject to their providers' terms.
+- Epic Online Services, PlayFab, Steamworks, Atlassian Cloud, and optional upscaler technologies are subject to their providers' terms.
 
 Review every applicable license before redistributing source, binaries, SDK content, or packaged products.
 
