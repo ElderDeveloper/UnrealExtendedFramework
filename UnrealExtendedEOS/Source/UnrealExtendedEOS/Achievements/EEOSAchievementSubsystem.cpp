@@ -6,6 +6,7 @@
 #include "Interfaces/OnlineAchievementsInterface.h"
 #include "Shared/EEOSSettings.h"
 #include "UnrealExtendedEOS.h"
+#include "Async/EFCallContext.h"
 
 void UEEOSAchievementSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
@@ -71,9 +72,12 @@ bool UEEOSAchievementSubsystem::QueryAchievements()
 		return false;
 	}
 
+	// The completion reports under the caller's call context (see EFCallContext).
+	const int64 CallContext = EFCallContext::GetActive();
 	AchievementsInterface->QueryAchievements(*UserId,
-		FOnQueryAchievementsCompleteDelegate::CreateWeakLambda(this, [this, AchievementsInterface, Ownership = CaptureEOSContext()](const FUniqueNetId& PlayerId, bool bWasSuccessful)
+		FOnQueryAchievementsCompleteDelegate::CreateWeakLambda(this, [this, AchievementsInterface, Ownership = CaptureEOSContext(), CallContext](const FUniqueNetId& PlayerId, bool bWasSuccessful)
 		{
+			EFCallContext::FScope CallScope(CallContext);
 			if (!IsEOSContextCurrent(Ownership)) { OnAchievementsQueried.Broadcast(false, TArray<FEEOSAchievement>()); return; }
 			HandleQueryAchievementsComplete(PlayerId, bWasSuccessful, AchievementsInterface);
 		}));
@@ -115,9 +119,12 @@ bool UEEOSAchievementSubsystem::UnlockAchievement(const FString& AchievementId)
 	FOnlineAchievementsWriteRef WriteObject = MakeShareable(new FOnlineAchievementsWrite());
 	WriteObject->SetFloatStat(AchievementId, 100.0f);
 
+	// The completion reports under the caller's call context (see EFCallContext).
+	const int64 CallContext = EFCallContext::GetActive();
 	AchievementsInterface->WriteAchievements(*UserId, WriteObject,
-		FOnAchievementsWrittenDelegate::CreateWeakLambda(this, [this, AchievementId, Ownership = CaptureEOSContext()](const FUniqueNetId& InUserId, bool bWasSuccessful)
+		FOnAchievementsWrittenDelegate::CreateWeakLambda(this, [this, AchievementId, Ownership = CaptureEOSContext(), CallContext](const FUniqueNetId& InUserId, bool bWasSuccessful)
 		{
+			EFCallContext::FScope CallScope(CallContext);
 			bWasSuccessful = bWasSuccessful && IsEOSContextCurrent(Ownership);
 			if (bWasSuccessful)
 			{

@@ -15,25 +15,15 @@
 #include "Sanctions/EEOSSanctionsSubsystem.h"
 #include "Shared/EEOSBlueprintLibrary.h"
 #include "UnrealExtendedEOS.h"
-#include "Engine/GameInstance.h"
 
-// Helper: get a game instance subsystem from a world context
-template<typename T>
-static T* GetSubsystem(UObject* WorldContext)
-{
-	if (!WorldContext || !GEngine) return nullptr;
-	UWorld* World = GEngine->GetWorldFromContextObject(WorldContext, EGetWorldErrorMode::ReturnNull);
-	if (!World) return nullptr;
-	UGameInstance* GI = World->GetGameInstance();
-	if (!GI) return nullptr;
-	return GI->GetSubsystem<T>();
-}
-
-// NOTE on the uniform Activate pattern (see the header's "Completion pattern" block):
+// NOTE on the uniform ExecuteAction pattern (see the header's "Completion pattern" block):
 // handlers are bound BEFORE the subsystem call so a synchronous pre-flight failure
-// broadcast still reaches this node. When the call returns false AND no handler fired
-// (bCompleted is false), the subsystem will never broadcast for this call — the node
-// unbinds and fires OnFailure exactly once.
+// broadcast still reaches this node. The call runs inside CallWithContext so the subsystem
+// tags its completion broadcast as this node's; handlers return early unless
+// IsResultForThisCall(). When the call returns false AND no handler fired (the node is not
+// finished), the subsystem will never broadcast for this call — the node unbinds and fires
+// OnFailure exactly once. A missing subsystem fails the node through
+// RequireGameInstanceSubsystem; cancellation and timeouts call CancelWork, then fail the node.
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Stats — Query
@@ -42,44 +32,45 @@ static T* GetSubsystem(UObject* WorldContext)
 UEOSAsyncQueryStats* UEOSAsyncQueryStats::QueryStats(UObject* WorldContext, const TArray<FString>& StatNames)
 {
 	UEOSAsyncQueryStats* Action = NewObject<UEOSAsyncQueryStats>();
-	Action->WorldContext = WorldContext;
 	Action->StatNames = StatNames;
-	Action->RegisterWithGameInstance(WorldContext);
+	Action->InitAsyncAction(WorldContext);
 	return Action;
 }
 
-void UEOSAsyncQueryStats::Activate()
+void UEOSAsyncQueryStats::ExecuteAction()
 {
-	auto* Sub = GetSubsystem<UEEOSStatsSubsystem>(WorldContext.Get());
-	if (!Sub)
-	{
-		OnFailure.Broadcast(TEXT("StatsSubsystem not available"));
-		SetReadyToDestroy();
-		return;
-	}
+	UEEOSStatsSubsystem* Sub = RequireGameInstanceSubsystem<UEEOSStatsSubsystem>();
+	if (!Sub) return;
 
 	Subsystem = Sub;
 	Sub->OnStatsQueried.AddDynamic(this, &UEOSAsyncQueryStats::HandleComplete);
-	if (!Sub->QueryLocalStats(StatNames) && !bCompleted)
+	bool bStarted = false;
+	CallWithContext([&] { bStarted = Sub->QueryLocalStats(StatNames); });
+	if (!bStarted && !IsFinished())
+	{
+		CancelWork();
+		FailWithError(TEXT("QueryLocalStats could not be started"));
+	}
+}
+
+void UEOSAsyncQueryStats::CancelWork()
+{
+	if (UEEOSStatsSubsystem* Sub = Subsystem.Get())
 	{
 		Sub->OnStatsQueried.RemoveDynamic(this, &UEOSAsyncQueryStats::HandleComplete);
-		OnFailure.Broadcast(TEXT("QueryLocalStats could not be started"));
-		SetReadyToDestroy();
 	}
 }
 
 void UEOSAsyncQueryStats::HandleComplete(bool bSuccess, const TArray<FEEOSStat>& Stats)
 {
-	bCompleted = true;
-	auto* Sub = Subsystem.Get();
-	if (Sub) Sub->OnStatsQueried.RemoveDynamic(this, &UEOSAsyncQueryStats::HandleComplete);
+	if (!IsResultForThisCall()) return;
+	CancelWork();
+	if (!FinishAction()) return;
 
 	if (bSuccess)
 		OnSuccess.Broadcast(Stats);
 	else
 		OnFailure.Broadcast(TEXT("QueryLocalStats failed"));
-
-	SetReadyToDestroy();
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -89,45 +80,46 @@ void UEOSAsyncQueryStats::HandleComplete(bool bSuccess, const TArray<FEEOSStat>&
 UEOSAsyncIngestStat* UEOSAsyncIngestStat::IngestStat(UObject* WorldContext, const FString& StatName, int32 Amount)
 {
 	UEOSAsyncIngestStat* Action = NewObject<UEOSAsyncIngestStat>();
-	Action->WorldContext = WorldContext;
 	Action->StatName = StatName;
 	Action->Amount = Amount;
-	Action->RegisterWithGameInstance(WorldContext);
+	Action->InitAsyncAction(WorldContext);
 	return Action;
 }
 
-void UEOSAsyncIngestStat::Activate()
+void UEOSAsyncIngestStat::ExecuteAction()
 {
-	auto* Sub = GetSubsystem<UEEOSStatsSubsystem>(WorldContext.Get());
-	if (!Sub)
-	{
-		OnFailure.Broadcast(TEXT("StatsSubsystem not available"));
-		SetReadyToDestroy();
-		return;
-	}
+	UEEOSStatsSubsystem* Sub = RequireGameInstanceSubsystem<UEEOSStatsSubsystem>();
+	if (!Sub) return;
 
 	Subsystem = Sub;
 	Sub->OnStatIngested.AddDynamic(this, &UEOSAsyncIngestStat::HandleComplete);
-	if (!Sub->IngestStat(StatName, Amount) && !bCompleted)
+	bool bStarted = false;
+	CallWithContext([&] { bStarted = Sub->IngestStat(StatName, Amount); });
+	if (!bStarted && !IsFinished())
+	{
+		CancelWork();
+		FailWithError(FString::Printf(TEXT("IngestStat '%s' could not be started"), *StatName));
+	}
+}
+
+void UEOSAsyncIngestStat::CancelWork()
+{
+	if (UEEOSStatsSubsystem* Sub = Subsystem.Get())
 	{
 		Sub->OnStatIngested.RemoveDynamic(this, &UEOSAsyncIngestStat::HandleComplete);
-		OnFailure.Broadcast(FString::Printf(TEXT("IngestStat '%s' could not be started"), *StatName));
-		SetReadyToDestroy();
 	}
 }
 
 void UEOSAsyncIngestStat::HandleComplete(bool bSuccess)
 {
-	bCompleted = true;
-	auto* Sub = Subsystem.Get();
-	if (Sub) Sub->OnStatIngested.RemoveDynamic(this, &UEOSAsyncIngestStat::HandleComplete);
+	if (!IsResultForThisCall()) return;
+	CancelWork();
+	if (!FinishAction()) return;
 
 	if (bSuccess)
 		OnSuccess.Broadcast();
 	else
 		OnFailure.Broadcast(TEXT("IngestStat failed"));
-
-	SetReadyToDestroy();
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -137,47 +129,47 @@ void UEOSAsyncIngestStat::HandleComplete(bool bSuccess)
 UEOSAsyncQueryAchievements* UEOSAsyncQueryAchievements::QueryAchievements(UObject* WorldContext)
 {
 	UEOSAsyncQueryAchievements* Action = NewObject<UEOSAsyncQueryAchievements>();
-	Action->WorldContext = WorldContext;
-	Action->RegisterWithGameInstance(WorldContext);
+	Action->InitAsyncAction(WorldContext);
 	return Action;
 }
 
-void UEOSAsyncQueryAchievements::Activate()
+void UEOSAsyncQueryAchievements::ExecuteAction()
 {
-	auto* Sub = GetSubsystem<UEEOSAchievementSubsystem>(WorldContext.Get());
-	if (!Sub)
-	{
-		OnFailure.Broadcast(TEXT("AchievementSubsystem not available"));
-		SetReadyToDestroy();
-		return;
-	}
+	UEEOSAchievementSubsystem* Sub = RequireGameInstanceSubsystem<UEEOSAchievementSubsystem>();
+	if (!Sub) return;
 
 	Subsystem = Sub;
 	Sub->OnAchievementsQueried.AddDynamic(this, &UEOSAsyncQueryAchievements::HandleComplete);
-	if (!Sub->QueryAchievements() && !bCompleted)
+	bool bStarted = false;
+	CallWithContext([&] { bStarted = Sub->QueryAchievements(); });
+	if (!bStarted && !IsFinished())
+	{
+		CancelWork();
+		FailWithError(TEXT("QueryAchievements could not be started"));
+	}
+}
+
+void UEOSAsyncQueryAchievements::CancelWork()
+{
+	if (UEEOSAchievementSubsystem* Sub = Subsystem.Get())
 	{
 		Sub->OnAchievementsQueried.RemoveDynamic(this, &UEOSAsyncQueryAchievements::HandleComplete);
-		OnFailure.Broadcast(TEXT("QueryAchievements could not be started"));
-		SetReadyToDestroy();
 	}
 }
 
 void UEOSAsyncQueryAchievements::HandleComplete(bool bSuccess, const TArray<FEEOSAchievement>& Achievements)
 {
-	// No request key in the delegate payload — first-completion semantics: if two REAL
-	// operations of this type are in flight, both nodes complete on whichever completion
-	// broadcasts first. (In-flight rejections no longer broadcast, so a rejected duplicate
-	// can no longer falsely complete this node — it fails fast in Activate instead.)
-	bCompleted = true;
-	auto* Sub = Subsystem.Get();
-	if (Sub) Sub->OnAchievementsQueried.RemoveDynamic(this, &UEOSAsyncQueryAchievements::HandleComplete);
+	// No request key in the delegate payload: the subsystem tags its completion with the call
+	// context of the call that started it, so a concurrent query's result is skipped here.
+	// (Untagged broadcasts are still accepted — first-completion semantics for those.)
+	if (!IsResultForThisCall()) return;
+	CancelWork();
+	if (!FinishAction()) return;
 
 	if (bSuccess)
 		OnSuccess.Broadcast(Achievements);
 	else
 		OnFailure.Broadcast(TEXT("QueryAchievements failed"));
-
-	SetReadyToDestroy();
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -187,48 +179,49 @@ void UEOSAsyncQueryAchievements::HandleComplete(bool bSuccess, const TArray<FEEO
 UEOSAsyncUnlockAchievement* UEOSAsyncUnlockAchievement::UnlockAchievement(UObject* WorldContext, const FString& AchievementId)
 {
 	UEOSAsyncUnlockAchievement* Action = NewObject<UEOSAsyncUnlockAchievement>();
-	Action->WorldContext = WorldContext;
 	Action->AchievementId = AchievementId;
-	Action->RegisterWithGameInstance(WorldContext);
+	Action->InitAsyncAction(WorldContext);
 	return Action;
 }
 
-void UEOSAsyncUnlockAchievement::Activate()
+void UEOSAsyncUnlockAchievement::ExecuteAction()
 {
-	auto* Sub = GetSubsystem<UEEOSAchievementSubsystem>(WorldContext.Get());
-	if (!Sub)
-	{
-		OnFailure.Broadcast(TEXT("AchievementSubsystem not available"));
-		SetReadyToDestroy();
-		return;
-	}
+	UEEOSAchievementSubsystem* Sub = RequireGameInstanceSubsystem<UEEOSAchievementSubsystem>();
+	if (!Sub) return;
 
 	Subsystem = Sub;
 	Sub->OnAchievementUnlocked.AddDynamic(this, &UEOSAsyncUnlockAchievement::HandleComplete);
-	if (!Sub->UnlockAchievement(AchievementId) && !bCompleted)
+	bool bStarted = false;
+	CallWithContext([&] { bStarted = Sub->UnlockAchievement(AchievementId); });
+	if (!bStarted && !IsFinished())
+	{
+		CancelWork();
+		FailWithError(FString::Printf(TEXT("UnlockAchievement '%s' could not be started"), *AchievementId));
+	}
+}
+
+void UEOSAsyncUnlockAchievement::CancelWork()
+{
+	if (UEEOSAchievementSubsystem* Sub = Subsystem.Get())
 	{
 		Sub->OnAchievementUnlocked.RemoveDynamic(this, &UEOSAsyncUnlockAchievement::HandleComplete);
-		OnFailure.Broadcast(FString::Printf(TEXT("UnlockAchievement '%s' could not be started"), *AchievementId));
-		SetReadyToDestroy();
 	}
 }
 
 void UEOSAsyncUnlockAchievement::HandleComplete(bool bSuccess, const FString& Id)
 {
+	if (!IsResultForThisCall()) return;
 	// Correlate by achievement ID: a completion for a different in-flight unlock is not ours —
 	// stay bound and wait for our own.
 	if (Id != AchievementId) return;
 
-	bCompleted = true;
-	auto* Sub = Subsystem.Get();
-	if (Sub) Sub->OnAchievementUnlocked.RemoveDynamic(this, &UEOSAsyncUnlockAchievement::HandleComplete);
+	CancelWork();
+	if (!FinishAction()) return;
 
 	if (bSuccess)
 		OnSuccess.Broadcast(Id);
 	else
 		OnFailure.Broadcast(FString::Printf(TEXT("UnlockAchievement '%s' failed"), *Id));
-
-	SetReadyToDestroy();
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -238,59 +231,60 @@ void UEOSAsyncUnlockAchievement::HandleComplete(bool bSuccess, const FString& Id
 UEOSAsyncConnectLogin* UEOSAsyncConnectLogin::ConnectLogin(UObject* WorldContext, EEOSConnectLoginType LoginType, const FString& Token, const FString& DisplayName)
 {
 	UEOSAsyncConnectLogin* Action = NewObject<UEOSAsyncConnectLogin>();
-	Action->WorldContext = WorldContext;
 	Action->LoginType = LoginType;
 	Action->Token = Token;
 	Action->DisplayName = DisplayName;
-	Action->RegisterWithGameInstance(WorldContext);
+	Action->InitAsyncAction(WorldContext);
 	return Action;
 }
 
-void UEOSAsyncConnectLogin::Activate()
+void UEOSAsyncConnectLogin::ExecuteAction()
 {
-	auto* Sub = GetSubsystem<UEEOSAuthSubsystem>(WorldContext.Get());
-	if (!Sub)
-	{
-		OnFailure.Broadcast(TEXT("AuthSubsystem not available"));
-		SetReadyToDestroy();
-		return;
-	}
+	UEEOSAuthSubsystem* Sub = RequireGameInstanceSubsystem<UEEOSAuthSubsystem>();
+	if (!Sub) return;
 
 	Subsystem = Sub;
 	Sub->OnConnectLoginComplete.AddDynamic(this, &UEOSAsyncConnectLogin::HandleComplete);
 
-	const bool bStarted = (LoginType == EEOSConnectLoginType::DeviceId)
-		? Sub->ConnectLoginWithDeviceId(DisplayName)
-		: Sub->ConnectLogin(LoginType, Token);
+	bool bStarted = false;
+	CallWithContext([&]
+	{
+		bStarted = (LoginType == EEOSConnectLoginType::DeviceId)
+			? Sub->ConnectLoginWithDeviceId(DisplayName)
+			: Sub->ConnectLogin(LoginType, Token);
+	});
 
-	if (!bStarted && !bCompleted)
+	if (!bStarted && !IsFinished())
 	{
 		// false without a broadcast = rejected because a Connect login is already in flight
 		// (other pre-flight failures broadcast OnConnectLoginComplete(false) synchronously
 		// and were consumed by the handler above).
+		CancelWork();
+		FailWithError(TEXT("Connect login could not be started (a Connect login is already in flight)"));
+	}
+}
+
+void UEOSAsyncConnectLogin::CancelWork()
+{
+	if (UEEOSAuthSubsystem* Sub = Subsystem.Get())
+	{
 		Sub->OnConnectLoginComplete.RemoveDynamic(this, &UEOSAsyncConnectLogin::HandleComplete);
-		OnFailure.Broadcast(TEXT("Connect login could not be started (a Connect login is already in flight)"));
-		SetReadyToDestroy();
 	}
 }
 
 void UEOSAsyncConnectLogin::HandleComplete(bool bSuccess, const FString& ProductUserId, const FString& Error)
 {
-	// No request key in the delegate payload — first-completion semantics: if two REAL
-	// logins are in flight (not possible through this subsystem's guard, but e.g. auto-login
-	// plus this node), both listeners complete on whichever completion broadcasts first.
-	// (In-flight rejections no longer broadcast, so a rejected duplicate can no longer
-	// falsely complete this node — it fails fast in Activate instead.)
-	bCompleted = true;
-	auto* Sub = Subsystem.Get();
-	if (Sub) Sub->OnConnectLoginComplete.RemoveDynamic(this, &UEOSAsyncConnectLogin::HandleComplete);
+	// No request key in the delegate payload: the subsystem tags the completion with the call
+	// context of the login that started it, so a login another node started is skipped here.
+	// Untagged broadcasts (a login started outside any node, e.g. auto-login) are still accepted.
+	if (!IsResultForThisCall()) return;
+	CancelWork();
+	if (!FinishAction()) return;
 
 	if (bSuccess)
 		OnSuccess.Broadcast(ProductUserId);
 	else
 		OnFailure.Broadcast(Error);
-
-	SetReadyToDestroy();
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -300,50 +294,51 @@ void UEOSAsyncConnectLogin::HandleComplete(bool bSuccess, const FString& Product
 UEOSAsyncReadSaveGame* UEOSAsyncReadSaveGame::ReadSaveGame(UObject* WorldContext, const FString& FileName)
 {
 	UEOSAsyncReadSaveGame* Action = NewObject<UEOSAsyncReadSaveGame>();
-	Action->WorldContext = WorldContext;
 	Action->FileName = FileName;
-	Action->RegisterWithGameInstance(WorldContext);
+	Action->InitAsyncAction(WorldContext);
 	return Action;
 }
 
-void UEOSAsyncReadSaveGame::Activate()
+void UEOSAsyncReadSaveGame::ExecuteAction()
 {
-	auto* Sub = GetSubsystem<UEEOSPlayerStorageSubsystem>(WorldContext.Get());
-	if (!Sub)
-	{
-		OnFailure.Broadcast(TEXT("PlayerStorageSubsystem not available"));
-		SetReadyToDestroy();
-		return;
-	}
+	UEEOSPlayerStorageSubsystem* Sub = RequireGameInstanceSubsystem<UEEOSPlayerStorageSubsystem>();
+	if (!Sub) return;
 
 	Subsystem = Sub;
 	Sub->OnSaveGameRead.AddDynamic(this, &UEOSAsyncReadSaveGame::HandleComplete);
-	if (!Sub->ReadSaveGame(FileName) && !bCompleted)
+	bool bStarted = false;
+	CallWithContext([&] { bStarted = Sub->ReadSaveGame(FileName); });
+	if (!bStarted && !IsFinished())
 	{
 		// false without a broadcast = same-file duplicate rejected log-only (the in-flight
 		// operation's completion must not be misattributed to this call).
+		CancelWork();
+		FailWithError(FString::Printf(TEXT("ReadSaveGame '%s' could not be started (an operation on this file is already in flight)"), *FileName));
+	}
+}
+
+void UEOSAsyncReadSaveGame::CancelWork()
+{
+	if (UEEOSPlayerStorageSubsystem* Sub = Subsystem.Get())
+	{
 		Sub->OnSaveGameRead.RemoveDynamic(this, &UEOSAsyncReadSaveGame::HandleComplete);
-		OnFailure.Broadcast(FString::Printf(TEXT("ReadSaveGame '%s' could not be started (an operation on this file is already in flight)"), *FileName));
-		SetReadyToDestroy();
 	}
 }
 
 void UEOSAsyncReadSaveGame::HandleComplete(bool bSuccess, const FString& InFileName, USaveGame* SaveGame)
 {
+	if (!IsResultForThisCall()) return;
 	// Correlate by file name: a completion for a different in-flight read is not ours —
 	// stay bound and wait for our own.
 	if (InFileName != FileName) return;
 
-	bCompleted = true;
-	auto* Sub = Subsystem.Get();
-	if (Sub) Sub->OnSaveGameRead.RemoveDynamic(this, &UEOSAsyncReadSaveGame::HandleComplete);
+	CancelWork();
+	if (!FinishAction()) return;
 
 	if (bSuccess && SaveGame)
 		OnSuccess.Broadcast(SaveGame);
 	else
 		OnFailure.Broadcast(FString::Printf(TEXT("ReadSaveGame '%s' failed"), *InFileName));
-
-	SetReadyToDestroy();
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -353,51 +348,52 @@ void UEOSAsyncReadSaveGame::HandleComplete(bool bSuccess, const FString& InFileN
 UEOSAsyncWriteSaveGame* UEOSAsyncWriteSaveGame::WriteSaveGame(UObject* WorldContext, const FString& FileName, USaveGame* SaveGameObject)
 {
 	UEOSAsyncWriteSaveGame* Action = NewObject<UEOSAsyncWriteSaveGame>();
-	Action->WorldContext = WorldContext;
 	Action->FileName = FileName;
 	Action->SaveGameObject = SaveGameObject;
-	Action->RegisterWithGameInstance(WorldContext);
+	Action->InitAsyncAction(WorldContext);
 	return Action;
 }
 
-void UEOSAsyncWriteSaveGame::Activate()
+void UEOSAsyncWriteSaveGame::ExecuteAction()
 {
-	auto* Sub = GetSubsystem<UEEOSPlayerStorageSubsystem>(WorldContext.Get());
-	if (!Sub)
-	{
-		OnFailure.Broadcast(TEXT("PlayerStorageSubsystem not available"));
-		SetReadyToDestroy();
-		return;
-	}
+	UEEOSPlayerStorageSubsystem* Sub = RequireGameInstanceSubsystem<UEEOSPlayerStorageSubsystem>();
+	if (!Sub) return;
 
 	Subsystem = Sub;
 	Sub->OnPlayerDataWritten.AddDynamic(this, &UEOSAsyncWriteSaveGame::HandleComplete);
-	if (!Sub->WriteSaveGame(FileName, SaveGameObject) && !bCompleted)
+	bool bStarted = false;
+	CallWithContext([&] { bStarted = Sub->WriteSaveGame(FileName, SaveGameObject); });
+	if (!bStarted && !IsFinished())
 	{
 		// false without a broadcast = same-file duplicate rejected log-only (the in-flight
 		// operation's completion must not be misattributed to this call).
+		CancelWork();
+		FailWithError(FString::Printf(TEXT("WriteSaveGame '%s' could not be started (an operation on this file is already in flight)"), *FileName));
+	}
+}
+
+void UEOSAsyncWriteSaveGame::CancelWork()
+{
+	if (UEEOSPlayerStorageSubsystem* Sub = Subsystem.Get())
+	{
 		Sub->OnPlayerDataWritten.RemoveDynamic(this, &UEOSAsyncWriteSaveGame::HandleComplete);
-		OnFailure.Broadcast(FString::Printf(TEXT("WriteSaveGame '%s' could not be started (an operation on this file is already in flight)"), *FileName));
-		SetReadyToDestroy();
 	}
 }
 
 void UEOSAsyncWriteSaveGame::HandleComplete(bool bSuccess, const FString& InFileName)
 {
+	if (!IsResultForThisCall()) return;
 	// Correlate by file name: a completion for a different in-flight write is not ours —
 	// stay bound and wait for our own.
 	if (InFileName != FileName) return;
 
-	bCompleted = true;
-	auto* Sub = Subsystem.Get();
-	if (Sub) Sub->OnPlayerDataWritten.RemoveDynamic(this, &UEOSAsyncWriteSaveGame::HandleComplete);
+	CancelWork();
+	if (!FinishAction()) return;
 
 	if (bSuccess)
 		OnSuccess.Broadcast();
 	else
 		OnFailure.Broadcast(FString::Printf(TEXT("WriteSaveGame '%s' failed"), *InFileName));
-
-	SetReadyToDestroy();
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -407,47 +403,46 @@ void UEOSAsyncWriteSaveGame::HandleComplete(bool bSuccess, const FString& InFile
 UEOSAsyncQueryOffers* UEOSAsyncQueryOffers::QueryOffers(UObject* WorldContext)
 {
 	UEOSAsyncQueryOffers* Action = NewObject<UEOSAsyncQueryOffers>();
-	Action->WorldContext = WorldContext;
-	Action->RegisterWithGameInstance(WorldContext);
+	Action->InitAsyncAction(WorldContext);
 	return Action;
 }
 
-void UEOSAsyncQueryOffers::Activate()
+void UEOSAsyncQueryOffers::ExecuteAction()
 {
-	auto* Sub = GetSubsystem<UEEOSEcomSubsystem>(WorldContext.Get());
-	if (!Sub)
-	{
-		OnFailure.Broadcast(TEXT("EcomSubsystem not available"));
-		SetReadyToDestroy();
-		return;
-	}
+	UEEOSEcomSubsystem* Sub = RequireGameInstanceSubsystem<UEEOSEcomSubsystem>();
+	if (!Sub) return;
 
 	Subsystem = Sub;
 	Sub->OnOffersQueried.AddDynamic(this, &UEOSAsyncQueryOffers::HandleComplete);
-	if (!Sub->QueryOffers() && !bCompleted)
+	bool bStarted = false;
+	CallWithContext([&] { bStarted = Sub->QueryOffers(); });
+	if (!bStarted && !IsFinished())
+	{
+		CancelWork();
+		FailWithError(TEXT("QueryOffers could not be started (an offers query is already in flight)"));
+	}
+}
+
+void UEOSAsyncQueryOffers::CancelWork()
+{
+	if (UEEOSEcomSubsystem* Sub = Subsystem.Get())
 	{
 		Sub->OnOffersQueried.RemoveDynamic(this, &UEOSAsyncQueryOffers::HandleComplete);
-		OnFailure.Broadcast(TEXT("QueryOffers could not be started (an offers query is already in flight)"));
-		SetReadyToDestroy();
 	}
 }
 
 void UEOSAsyncQueryOffers::HandleComplete(bool bSuccess, const TArray<FEEOSCatalogOffer>& Offers)
 {
-	// No request key in the delegate payload — first-completion semantics: if two REAL
-	// operations of this type are in flight, both nodes complete on whichever completion
-	// broadcasts first. (In-flight rejections no longer broadcast, so a rejected duplicate
-	// can no longer falsely complete this node — it fails fast in Activate instead.)
-	bCompleted = true;
-	auto* Sub = Subsystem.Get();
-	if (Sub) Sub->OnOffersQueried.RemoveDynamic(this, &UEOSAsyncQueryOffers::HandleComplete);
+	// No request key in the delegate payload: the subsystem tags the completion with the call
+	// context of the query that started it. Untagged broadcasts are still accepted.
+	if (!IsResultForThisCall()) return;
+	CancelWork();
+	if (!FinishAction()) return;
 
 	if (bSuccess)
 		OnSuccess.Broadcast(Offers);
 	else
 		OnFailure.Broadcast(TEXT("QueryOffers failed"));
-
-	SetReadyToDestroy();
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -457,48 +452,48 @@ void UEOSAsyncQueryOffers::HandleComplete(bool bSuccess, const TArray<FEEOSCatal
 UEOSAsyncCheckout* UEOSAsyncCheckout::Checkout(UObject* WorldContext, const FString& OfferId)
 {
 	UEOSAsyncCheckout* Action = NewObject<UEOSAsyncCheckout>();
-	Action->WorldContext = WorldContext;
 	Action->OfferId = OfferId;
-	Action->RegisterWithGameInstance(WorldContext);
+	Action->InitAsyncAction(WorldContext);
 	return Action;
 }
 
-void UEOSAsyncCheckout::Activate()
+void UEOSAsyncCheckout::ExecuteAction()
 {
-	auto* Sub = GetSubsystem<UEEOSEcomSubsystem>(WorldContext.Get());
-	if (!Sub)
-	{
-		OnFailure.Broadcast(TEXT("EcomSubsystem not available"));
-		SetReadyToDestroy();
-		return;
-	}
+	UEEOSEcomSubsystem* Sub = RequireGameInstanceSubsystem<UEEOSEcomSubsystem>();
+	if (!Sub) return;
 
 	Subsystem = Sub;
 	Sub->OnCheckoutComplete.AddDynamic(this, &UEOSAsyncCheckout::HandleComplete);
-	if (!Sub->Checkout(OfferId) && !bCompleted)
+	bool bStarted = false;
+	CallWithContext([&] { bStarted = Sub->Checkout(OfferId); });
+	if (!bStarted && !IsFinished())
+	{
+		CancelWork();
+		FailWithError(FString::Printf(TEXT("Checkout '%s' could not be started (a checkout is already in flight)"), *OfferId));
+	}
+}
+
+void UEOSAsyncCheckout::CancelWork()
+{
+	if (UEEOSEcomSubsystem* Sub = Subsystem.Get())
 	{
 		Sub->OnCheckoutComplete.RemoveDynamic(this, &UEOSAsyncCheckout::HandleComplete);
-		OnFailure.Broadcast(FString::Printf(TEXT("Checkout '%s' could not be started (a checkout is already in flight)"), *OfferId));
-		SetReadyToDestroy();
 	}
 }
 
 void UEOSAsyncCheckout::HandleComplete(bool bSuccess, const FString& TransactionId)
 {
 	// No request key in the delegate payload (TransactionId is a result, not the requested
-	// OfferId) — first-completion semantics: if two REAL checkouts are in flight, both nodes
-	// complete on whichever completion broadcasts first. (In-flight rejections no longer
-	// broadcast, so a rejected duplicate can no longer falsely complete this node.)
-	bCompleted = true;
-	auto* Sub = Subsystem.Get();
-	if (Sub) Sub->OnCheckoutComplete.RemoveDynamic(this, &UEOSAsyncCheckout::HandleComplete);
+	// OfferId): the subsystem tags the completion with the call context of the checkout that
+	// started it. Untagged broadcasts are still accepted.
+	if (!IsResultForThisCall()) return;
+	CancelWork();
+	if (!FinishAction()) return;
 
 	if (bSuccess)
 		OnSuccess.Broadcast(TransactionId);
 	else
 		OnFailure.Broadcast(TEXT("Checkout failed"));
-
-	SetReadyToDestroy();
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -508,64 +503,70 @@ void UEOSAsyncCheckout::HandleComplete(bool bSuccess, const FString& Transaction
 UEOSAsyncCreateSession* UEOSAsyncCreateSession::CreateSession(UObject* WorldContext, int32 MaxPlayers, bool bIsLAN, bool bIsPresence, const FString& SessionName)
 {
 	UEOSAsyncCreateSession* Action = NewObject<UEOSAsyncCreateSession>();
-	Action->WorldContext = WorldContext;
 	Action->MaxPlayers = MaxPlayers;
 	Action->bIsLAN = bIsLAN;
 	Action->bIsPresence = bIsPresence;
 	Action->SessionName = SessionName;
-	Action->RegisterWithGameInstance(WorldContext);
+	Action->InitAsyncAction(WorldContext);
 	return Action;
 }
 
-void UEOSAsyncCreateSession::Activate()
+void UEOSAsyncCreateSession::ExecuteAction()
 {
-	auto* Sub = GetSubsystem<UEEOSSessionSubsystem>(WorldContext.Get());
-	if (!Sub)
-	{
-		bCompleted = true;
-		FEEOSOperationOutcome Missing; Missing.Operation = TEXT("CreateSession"); Missing.Code = EEOSOperationCode::UnsupportedCapability; Missing.Phase = TEXT("Rejected"); Missing.Message = TEXT("EOS subsystem unavailable.");
-		OnDetailedCompleted.Broadcast(Missing);
-		OnFailure.Broadcast(TEXT("SessionSubsystem not available"));
-		SetReadyToDestroy();
-		return;
-	}
+	UEEOSSessionSubsystem* Sub = RequireGameInstanceSubsystem<UEEOSSessionSubsystem>();
+	if (!Sub) return;
 
 	Subsystem = Sub;
 	IgnoredRequestId = Sub->GetActiveOperationOutcome(TEXT("CreateSession")).RequestId;
 	Sub->OnSessionCreated.AddDynamic(this, &UEOSAsyncCreateSession::HandleComplete);
-	if (!Sub->CreateSession(MaxPlayers, bIsLAN, bIsPresence, SessionName) && !bCompleted)
+	bool bStarted = false;
+	CallWithContext([&] { bStarted = Sub->CreateSession(MaxPlayers, bIsLAN, bIsPresence, SessionName); });
+	if (!bStarted && !IsFinished())
 	{
 		// false without a broadcast = rejected (a create/destroy is already in flight); the
 		// pre-flight cases broadcast OnSessionCreated(false) synchronously and were consumed
 		// by the handler above.
-		Sub->OnSessionCreated.RemoveDynamic(this, &UEOSAsyncCreateSession::HandleComplete);
-		bCompleted = true;
-		auto Rejection = Sub->GetLastOperationRejection();
+		CancelWork();
+		if (!FinishAction()) return;
+		FEEOSOperationOutcome Rejection = Sub->GetLastOperationRejection();
 		if (Rejection.Operation != TEXT("CreateSession")) { Rejection = FEEOSOperationOutcome(); Rejection.Operation = TEXT("CreateSession"); Rejection.Code = EEOSOperationCode::NativeStartRejected; Rejection.Message = TEXT("Request could not be started."); }
 		OnDetailedCompleted.Broadcast(Rejection);
 		OnFailure.Broadcast(Rejection.Operation == TEXT("CreateSession") && !Rejection.Message.IsEmpty() ? Rejection.Message : TEXT("CreateSession could not be started."));
-		SetReadyToDestroy();
+		return;
 	}
-	if (!bCompleted) ExpectedRequestId = Sub->GetActiveOperationOutcome(TEXT("CreateSession")).RequestId;
+	if (!IsFinished()) ExpectedRequestId = Sub->GetActiveOperationOutcome(TEXT("CreateSession")).RequestId;
+}
+
+void UEOSAsyncCreateSession::CancelWork()
+{
+	if (UEEOSSessionSubsystem* Sub = Subsystem.Get())
+	{
+		Sub->OnSessionCreated.RemoveDynamic(this, &UEOSAsyncCreateSession::HandleComplete);
+	}
+}
+
+void UEOSAsyncCreateSession::BroadcastFailure(const FEFResult& Result)
+{
+	OnDetailedCompleted.Broadcast(MakeFailureOutcome(TEXT("CreateSession"), Result));
+	Super::BroadcastFailure(Result);
 }
 
 void UEOSAsyncCreateSession::HandleComplete(bool bSuccess, const FString& InSessionName)
 {
-	// Match the dispatch-scoped terminal request; ignore the operation active before Activate.
-	auto* Sub = Subsystem.Get();
-	const auto Completion = Sub ? Sub->GetLastOperationOutcome(TEXT("CreateSession")) : FEEOSOperationOutcome();
-	if (bCompleted || !Completion.RequestId || Completion.RequestId == IgnoredRequestId
+	if (!IsResultForThisCall()) return;
+	// Match the dispatch-scoped terminal request; ignore the operation active before ExecuteAction.
+	UEEOSSessionSubsystem* Sub = Subsystem.Get();
+	const FEEOSOperationOutcome Completion = Sub ? Sub->GetLastOperationOutcome(TEXT("CreateSession")) : FEEOSOperationOutcome();
+	if (IsFinished() || !Completion.RequestId || Completion.RequestId == IgnoredRequestId
 		|| (ExpectedRequestId && Completion.RequestId != ExpectedRequestId)) return;
-	bCompleted = true;
-	if (Sub) Sub->OnSessionCreated.RemoveDynamic(this, &UEOSAsyncCreateSession::HandleComplete);
+	CancelWork();
+	if (!FinishAction()) return;
 	OnDetailedCompleted.Broadcast(Completion);
 
 	if (bSuccess)
 		OnSuccess.Broadcast(InSessionName);
 	else
 		OnFailure.Broadcast(Sub ? Sub->GetLastOperationOutcome(TEXT("CreateSession")).Message : TEXT("CreateSession failed"));
-
-	SetReadyToDestroy();
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -575,59 +576,66 @@ void UEOSAsyncCreateSession::HandleComplete(bool bSuccess, const FString& InSess
 UEOSAsyncFindSessions* UEOSAsyncFindSessions::FindSessions(UObject* WorldContext, int32 MaxResults)
 {
 	UEOSAsyncFindSessions* Action = NewObject<UEOSAsyncFindSessions>();
-	Action->WorldContext = WorldContext;
 	Action->MaxResults = MaxResults;
-	Action->RegisterWithGameInstance(WorldContext);
+	Action->InitAsyncAction(WorldContext);
 	return Action;
 }
 
-void UEOSAsyncFindSessions::Activate()
+void UEOSAsyncFindSessions::ExecuteAction()
 {
-	auto* Sub = GetSubsystem<UEEOSSessionSubsystem>(WorldContext.Get());
-	if (!Sub)
-	{
-		bCompleted = true;
-		FEEOSOperationOutcome Missing; Missing.Operation = TEXT("FindSessions"); Missing.Code = EEOSOperationCode::UnsupportedCapability; Missing.Phase = TEXT("Rejected"); Missing.Message = TEXT("EOS subsystem unavailable.");
-		OnDetailedCompleted.Broadcast(Missing);
-		OnFailure.Broadcast(TEXT("SessionSubsystem not available"));
-		SetReadyToDestroy();
-		return;
-	}
+	UEEOSSessionSubsystem* Sub = RequireGameInstanceSubsystem<UEEOSSessionSubsystem>();
+	if (!Sub) return;
 
 	Subsystem = Sub;
 	IgnoredRequestId = Sub->GetActiveOperationOutcome(TEXT("FindSessions")).RequestId;
 	Sub->OnSessionsFound.AddDynamic(this, &UEOSAsyncFindSessions::HandleComplete);
-	if (!Sub->FindSessions(MaxResults) && !bCompleted)
+	bool bStarted = false;
+	CallWithContext([&] { bStarted = Sub->FindSessions(MaxResults); });
+	if (!bStarted && !IsFinished())
 	{
 		// false without a broadcast = the search was rejected (our own or a sibling
 		// session/lobby search is already in flight). The OnFailure doc contract —
 		// "fires when the search could not be started" — is exactly this path.
-		Sub->OnSessionsFound.RemoveDynamic(this, &UEOSAsyncFindSessions::HandleComplete);
-		bCompleted = true;
-		auto Rejection = Sub->GetLastOperationRejection();
+		CancelWork();
+		if (!FinishAction()) return;
+		FEEOSOperationOutcome Rejection = Sub->GetLastOperationRejection();
 		if (Rejection.Operation != TEXT("FindSessions")) { Rejection = FEEOSOperationOutcome(); Rejection.Operation = TEXT("FindSessions"); Rejection.Code = EEOSOperationCode::NativeStartRejected; Rejection.Message = TEXT("Request could not be started."); }
 		OnDetailedCompleted.Broadcast(Rejection);
 		OnFailure.Broadcast(Rejection.Operation == TEXT("FindSessions") && !Rejection.Message.IsEmpty() ? Rejection.Message : TEXT("FindSessions could not be started."));
-		SetReadyToDestroy();
+		return;
 	}
-	if (!bCompleted) ExpectedRequestId = Sub->GetActiveOperationOutcome(TEXT("FindSessions")).RequestId;
+	if (!IsFinished()) ExpectedRequestId = Sub->GetActiveOperationOutcome(TEXT("FindSessions")).RequestId;
+}
+
+void UEOSAsyncFindSessions::CancelWork()
+{
+	if (UEEOSSessionSubsystem* Sub = Subsystem.Get())
+	{
+		Sub->OnSessionsFound.RemoveDynamic(this, &UEOSAsyncFindSessions::HandleComplete);
+	}
+}
+
+void UEOSAsyncFindSessions::BroadcastFailure(const FEFResult& Result)
+{
+	OnDetailedCompleted.Broadcast(MakeFailureOutcome(TEXT("FindSessions"), Result));
+	Super::BroadcastFailure(Result);
 }
 
 void UEOSAsyncFindSessions::HandleComplete(const TArray<FEEOSSessionSearchResult>& Results)
 {
-	// Match the dispatch-scoped terminal request; ignore the operation active before Activate.
-	auto* Sub = Subsystem.Get();
-	const auto Completion = Sub ? Sub->GetLastOperationOutcome(TEXT("FindSessions")) : FEEOSOperationOutcome();
-	if (bCompleted || !Completion.RequestId || Completion.RequestId == IgnoredRequestId
+	if (!IsResultForThisCall()) return;
+	// Match the dispatch-scoped terminal request; ignore the operation active before ExecuteAction.
+	UEEOSSessionSubsystem* Sub = Subsystem.Get();
+	const FEEOSOperationOutcome Completion = Sub ? Sub->GetLastOperationOutcome(TEXT("FindSessions")) : FEEOSOperationOutcome();
+	if (IsFinished() || !Completion.RequestId || Completion.RequestId == IgnoredRequestId
 		|| (ExpectedRequestId && Completion.RequestId != ExpectedRequestId)) return;
-	bCompleted = true;
-	if (Sub) Sub->OnSessionsFound.RemoveDynamic(this, &UEOSAsyncFindSessions::HandleComplete);
+	CancelWork();
+	if (!FinishAction()) return;
 	OnDetailedCompleted.Broadcast(Completion);
 
-	const auto Outcome = Sub ? Sub->GetLastOperationOutcome(TEXT("FindSessions")) : FEEOSOperationOutcome();
+	const FEEOSOperationOutcome Outcome = Sub ? Sub->GetLastOperationOutcome(TEXT("FindSessions")) : FEEOSOperationOutcome();
 	if (Outcome.bSuccess) OnSuccess.Broadcast(Results);
 	else OnFailure.Broadcast(Outcome.Message.IsEmpty() ? TEXT("Native search failed.") : Outcome.Message);
-	SetReadyToDestroy();
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -637,59 +645,65 @@ void UEOSAsyncFindSessions::HandleComplete(const TArray<FEEOSSessionSearchResult
 UEOSAsyncJoinSession* UEOSAsyncJoinSession::JoinSession(UObject* WorldContext, int32 SearchResultIndex, const FString& SessionName)
 {
 	UEOSAsyncJoinSession* Action = NewObject<UEOSAsyncJoinSession>();
-	Action->WorldContext = WorldContext;
 	Action->SearchResultIndex = SearchResultIndex;
 	Action->SessionName = SessionName;
-	Action->RegisterWithGameInstance(WorldContext);
+	Action->InitAsyncAction(WorldContext);
 	return Action;
 }
 
-void UEOSAsyncJoinSession::Activate()
+void UEOSAsyncJoinSession::ExecuteAction()
 {
-	auto* Sub = GetSubsystem<UEEOSSessionSubsystem>(WorldContext.Get());
-	if (!Sub)
-	{
-		bCompleted = true;
-		FEEOSOperationOutcome Missing; Missing.Operation = TEXT("JoinSession"); Missing.Code = EEOSOperationCode::UnsupportedCapability; Missing.Phase = TEXT("Rejected"); Missing.Message = TEXT("EOS subsystem unavailable.");
-		OnDetailedCompleted.Broadcast(Missing);
-		OnFailure.Broadcast(TEXT("SessionSubsystem not available"));
-		SetReadyToDestroy();
-		return;
-	}
+	UEEOSSessionSubsystem* Sub = RequireGameInstanceSubsystem<UEEOSSessionSubsystem>();
+	if (!Sub) return;
 
 	Subsystem = Sub;
 	IgnoredRequestId = Sub->GetActiveOperationOutcome(TEXT("JoinSession")).RequestId;
 	Sub->OnSessionJoined.AddDynamic(this, &UEOSAsyncJoinSession::HandleComplete);
-	if (!Sub->JoinSession(SearchResultIndex, SessionName) && !bCompleted)
+	bool bStarted = false;
+	CallWithContext([&] { bStarted = Sub->JoinSession(SearchResultIndex, SessionName); });
+	if (!bStarted && !IsFinished())
 	{
-		Sub->OnSessionJoined.RemoveDynamic(this, &UEOSAsyncJoinSession::HandleComplete);
-		bCompleted = true;
-		auto Rejection = Sub->GetLastOperationRejection();
+		CancelWork();
+		if (!FinishAction()) return;
+		FEEOSOperationOutcome Rejection = Sub->GetLastOperationRejection();
 		if (Rejection.Operation != TEXT("JoinSession")) { Rejection = FEEOSOperationOutcome(); Rejection.Operation = TEXT("JoinSession"); Rejection.Code = EEOSOperationCode::NativeStartRejected; Rejection.Message = TEXT("Request could not be started."); }
 		OnDetailedCompleted.Broadcast(Rejection);
 		OnFailure.Broadcast(Rejection.Operation == TEXT("JoinSession") && !Rejection.Message.IsEmpty() ? Rejection.Message : TEXT("JoinSession could not be started."));
-		SetReadyToDestroy();
+		return;
 	}
-	if (!bCompleted) ExpectedRequestId = Sub->GetActiveOperationOutcome(TEXT("JoinSession")).RequestId;
+	if (!IsFinished()) ExpectedRequestId = Sub->GetActiveOperationOutcome(TEXT("JoinSession")).RequestId;
+}
+
+void UEOSAsyncJoinSession::CancelWork()
+{
+	if (UEEOSSessionSubsystem* Sub = Subsystem.Get())
+	{
+		Sub->OnSessionJoined.RemoveDynamic(this, &UEOSAsyncJoinSession::HandleComplete);
+	}
+}
+
+void UEOSAsyncJoinSession::BroadcastFailure(const FEFResult& Result)
+{
+	OnDetailedCompleted.Broadcast(MakeFailureOutcome(TEXT("JoinSession"), Result));
+	Super::BroadcastFailure(Result);
 }
 
 void UEOSAsyncJoinSession::HandleComplete(bool bSuccess, const FString& InSessionName)
 {
-	// Match the dispatch-scoped terminal request; ignore the operation active before Activate.
-	auto* Sub = Subsystem.Get();
-	const auto Completion = Sub ? Sub->GetLastOperationOutcome(TEXT("JoinSession")) : FEEOSOperationOutcome();
-	if (bCompleted || !Completion.RequestId || Completion.RequestId == IgnoredRequestId
+	if (!IsResultForThisCall()) return;
+	// Match the dispatch-scoped terminal request; ignore the operation active before ExecuteAction.
+	UEEOSSessionSubsystem* Sub = Subsystem.Get();
+	const FEEOSOperationOutcome Completion = Sub ? Sub->GetLastOperationOutcome(TEXT("JoinSession")) : FEEOSOperationOutcome();
+	if (IsFinished() || !Completion.RequestId || Completion.RequestId == IgnoredRequestId
 		|| (ExpectedRequestId && Completion.RequestId != ExpectedRequestId)) return;
-	bCompleted = true;
-	if (Sub) Sub->OnSessionJoined.RemoveDynamic(this, &UEOSAsyncJoinSession::HandleComplete);
+	CancelWork();
+	if (!FinishAction()) return;
 	OnDetailedCompleted.Broadcast(Completion);
 
 	if (bSuccess)
 		OnSuccess.Broadcast(InSessionName);
 	else
 		OnFailure.Broadcast(Sub ? Sub->GetLastOperationOutcome(TEXT("JoinSession")).Message : TEXT("JoinSession failed"));
-
-	SetReadyToDestroy();
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -699,60 +713,66 @@ void UEOSAsyncJoinSession::HandleComplete(bool bSuccess, const FString& InSessio
 UEOSAsyncCreateLobby* UEOSAsyncCreateLobby::CreateLobby(UObject* WorldContext, int32 MaxMembers, bool bIsPublic, bool bUseVoiceChat)
 {
 	UEOSAsyncCreateLobby* Action = NewObject<UEOSAsyncCreateLobby>();
-	Action->WorldContext = WorldContext;
 	Action->MaxMembers = MaxMembers;
 	Action->bIsPublic = bIsPublic;
 	Action->bUseVoiceChat = bUseVoiceChat;
-	Action->RegisterWithGameInstance(WorldContext);
+	Action->InitAsyncAction(WorldContext);
 	return Action;
 }
 
-void UEOSAsyncCreateLobby::Activate()
+void UEOSAsyncCreateLobby::ExecuteAction()
 {
-	auto* Sub = GetSubsystem<UEEOSLobbySubsystem>(WorldContext.Get());
-	if (!Sub)
-	{
-		bCompleted = true;
-		FEEOSOperationOutcome Missing; Missing.Operation = TEXT("CreateLobby"); Missing.Code = EEOSOperationCode::UnsupportedCapability; Missing.Phase = TEXT("Rejected"); Missing.Message = TEXT("EOS subsystem unavailable.");
-		OnDetailedCompleted.Broadcast(Missing);
-		OnFailure.Broadcast(TEXT("LobbySubsystem not available"));
-		SetReadyToDestroy();
-		return;
-	}
+	UEEOSLobbySubsystem* Sub = RequireGameInstanceSubsystem<UEEOSLobbySubsystem>();
+	if (!Sub) return;
 
 	Subsystem = Sub;
 	IgnoredRequestId = Sub->GetActiveOperationOutcome(TEXT("CreateLobby")).RequestId;
 	Sub->OnLobbyCreated.AddDynamic(this, &UEOSAsyncCreateLobby::HandleComplete);
-	if (!Sub->CreateLobby(MaxMembers, bIsPublic, bUseVoiceChat) && !bCompleted)
+	bool bStarted = false;
+	CallWithContext([&] { bStarted = Sub->CreateLobby(MaxMembers, bIsPublic, bUseVoiceChat); });
+	if (!bStarted && !IsFinished())
 	{
-		Sub->OnLobbyCreated.RemoveDynamic(this, &UEOSAsyncCreateLobby::HandleComplete);
-		bCompleted = true;
-		auto Rejection = Sub->GetLastOperationRejection();
+		CancelWork();
+		if (!FinishAction()) return;
+		FEEOSOperationOutcome Rejection = Sub->GetLastOperationRejection();
 		if (Rejection.Operation != TEXT("CreateLobby")) { Rejection = FEEOSOperationOutcome(); Rejection.Operation = TEXT("CreateLobby"); Rejection.Code = EEOSOperationCode::NativeStartRejected; Rejection.Message = TEXT("Request could not be started."); }
 		OnDetailedCompleted.Broadcast(Rejection);
 		OnFailure.Broadcast(Rejection.Operation == TEXT("CreateLobby") && !Rejection.Message.IsEmpty() ? Rejection.Message : TEXT("CreateLobby could not be started."));
-		SetReadyToDestroy();
+		return;
 	}
-	if (!bCompleted) ExpectedRequestId = Sub->GetActiveOperationOutcome(TEXT("CreateLobby")).RequestId;
+	if (!IsFinished()) ExpectedRequestId = Sub->GetActiveOperationOutcome(TEXT("CreateLobby")).RequestId;
+}
+
+void UEOSAsyncCreateLobby::CancelWork()
+{
+	if (UEEOSLobbySubsystem* Sub = Subsystem.Get())
+	{
+		Sub->OnLobbyCreated.RemoveDynamic(this, &UEOSAsyncCreateLobby::HandleComplete);
+	}
+}
+
+void UEOSAsyncCreateLobby::BroadcastFailure(const FEFResult& Result)
+{
+	OnDetailedCompleted.Broadcast(MakeFailureOutcome(TEXT("CreateLobby"), Result));
+	Super::BroadcastFailure(Result);
 }
 
 void UEOSAsyncCreateLobby::HandleComplete(bool bSuccess, const FString& LobbyId)
 {
-	// Match the dispatch-scoped terminal request; ignore the operation active before Activate.
-	auto* Sub = Subsystem.Get();
-	const auto Completion = Sub ? Sub->GetLastOperationOutcome(TEXT("CreateLobby")) : FEEOSOperationOutcome();
-	if (bCompleted || !Completion.RequestId || Completion.RequestId == IgnoredRequestId
+	if (!IsResultForThisCall()) return;
+	// Match the dispatch-scoped terminal request; ignore the operation active before ExecuteAction.
+	UEEOSLobbySubsystem* Sub = Subsystem.Get();
+	const FEEOSOperationOutcome Completion = Sub ? Sub->GetLastOperationOutcome(TEXT("CreateLobby")) : FEEOSOperationOutcome();
+	if (IsFinished() || !Completion.RequestId || Completion.RequestId == IgnoredRequestId
 		|| (ExpectedRequestId && Completion.RequestId != ExpectedRequestId)) return;
-	bCompleted = true;
-	if (Sub) Sub->OnLobbyCreated.RemoveDynamic(this, &UEOSAsyncCreateLobby::HandleComplete);
+	CancelWork();
+	if (!FinishAction()) return;
 	OnDetailedCompleted.Broadcast(Completion);
 
 	if (bSuccess)
 		OnSuccess.Broadcast(LobbyId);
 	else
 		OnFailure.Broadcast(Sub ? Sub->GetLastOperationOutcome(TEXT("CreateLobby")).Message : TEXT("CreateLobby failed"));
-
-	SetReadyToDestroy();
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -762,59 +782,66 @@ void UEOSAsyncCreateLobby::HandleComplete(bool bSuccess, const FString& LobbyId)
 UEOSAsyncFindLobbies* UEOSAsyncFindLobbies::FindLobbies(UObject* WorldContext, int32 MaxResults)
 {
 	UEOSAsyncFindLobbies* Action = NewObject<UEOSAsyncFindLobbies>();
-	Action->WorldContext = WorldContext;
 	Action->MaxResults = MaxResults;
-	Action->RegisterWithGameInstance(WorldContext);
+	Action->InitAsyncAction(WorldContext);
 	return Action;
 }
 
-void UEOSAsyncFindLobbies::Activate()
+void UEOSAsyncFindLobbies::ExecuteAction()
 {
-	auto* Sub = GetSubsystem<UEEOSLobbySubsystem>(WorldContext.Get());
-	if (!Sub)
-	{
-		bCompleted = true;
-		FEEOSOperationOutcome Missing; Missing.Operation = TEXT("FindLobbies"); Missing.Code = EEOSOperationCode::UnsupportedCapability; Missing.Phase = TEXT("Rejected"); Missing.Message = TEXT("EOS subsystem unavailable.");
-		OnDetailedCompleted.Broadcast(Missing);
-		OnFailure.Broadcast(TEXT("LobbySubsystem not available"));
-		SetReadyToDestroy();
-		return;
-	}
+	UEEOSLobbySubsystem* Sub = RequireGameInstanceSubsystem<UEEOSLobbySubsystem>();
+	if (!Sub) return;
 
 	Subsystem = Sub;
 	IgnoredRequestId = Sub->GetActiveOperationOutcome(TEXT("FindLobbies")).RequestId;
 	Sub->OnLobbiesFound.AddDynamic(this, &UEOSAsyncFindLobbies::HandleComplete);
-	if (!Sub->FindLobbies(MaxResults) && !bCompleted)
+	bool bStarted = false;
+	CallWithContext([&] { bStarted = Sub->FindLobbies(MaxResults); });
+	if (!bStarted && !IsFinished())
 	{
 		// false without a broadcast = the search was rejected (our own or a sibling
 		// session/lobby search is already in flight). The OnFailure doc contract —
 		// "fires when the search could not be started" — is exactly this path.
-		Sub->OnLobbiesFound.RemoveDynamic(this, &UEOSAsyncFindLobbies::HandleComplete);
-		bCompleted = true;
-		auto Rejection = Sub->GetLastOperationRejection();
+		CancelWork();
+		if (!FinishAction()) return;
+		FEEOSOperationOutcome Rejection = Sub->GetLastOperationRejection();
 		if (Rejection.Operation != TEXT("FindLobbies")) { Rejection = FEEOSOperationOutcome(); Rejection.Operation = TEXT("FindLobbies"); Rejection.Code = EEOSOperationCode::NativeStartRejected; Rejection.Message = TEXT("Request could not be started."); }
 		OnDetailedCompleted.Broadcast(Rejection);
 		OnFailure.Broadcast(Rejection.Operation == TEXT("FindLobbies") && !Rejection.Message.IsEmpty() ? Rejection.Message : TEXT("FindLobbies could not be started."));
-		SetReadyToDestroy();
+		return;
 	}
-	if (!bCompleted) ExpectedRequestId = Sub->GetActiveOperationOutcome(TEXT("FindLobbies")).RequestId;
+	if (!IsFinished()) ExpectedRequestId = Sub->GetActiveOperationOutcome(TEXT("FindLobbies")).RequestId;
+}
+
+void UEOSAsyncFindLobbies::CancelWork()
+{
+	if (UEEOSLobbySubsystem* Sub = Subsystem.Get())
+	{
+		Sub->OnLobbiesFound.RemoveDynamic(this, &UEOSAsyncFindLobbies::HandleComplete);
+	}
+}
+
+void UEOSAsyncFindLobbies::BroadcastFailure(const FEFResult& Result)
+{
+	OnDetailedCompleted.Broadcast(MakeFailureOutcome(TEXT("FindLobbies"), Result));
+	Super::BroadcastFailure(Result);
 }
 
 void UEOSAsyncFindLobbies::HandleComplete(const TArray<FEEOSSessionSearchResult>& Results)
 {
-	// Match the dispatch-scoped terminal request; ignore the operation active before Activate.
-	auto* Sub = Subsystem.Get();
-	const auto Completion = Sub ? Sub->GetLastOperationOutcome(TEXT("FindLobbies")) : FEEOSOperationOutcome();
-	if (bCompleted || !Completion.RequestId || Completion.RequestId == IgnoredRequestId
+	if (!IsResultForThisCall()) return;
+	// Match the dispatch-scoped terminal request; ignore the operation active before ExecuteAction.
+	UEEOSLobbySubsystem* Sub = Subsystem.Get();
+	const FEEOSOperationOutcome Completion = Sub ? Sub->GetLastOperationOutcome(TEXT("FindLobbies")) : FEEOSOperationOutcome();
+	if (IsFinished() || !Completion.RequestId || Completion.RequestId == IgnoredRequestId
 		|| (ExpectedRequestId && Completion.RequestId != ExpectedRequestId)) return;
-	bCompleted = true;
-	if (Sub) Sub->OnLobbiesFound.RemoveDynamic(this, &UEOSAsyncFindLobbies::HandleComplete);
+	CancelWork();
+	if (!FinishAction()) return;
 	OnDetailedCompleted.Broadcast(Completion);
 
-	const auto Outcome = Sub ? Sub->GetLastOperationOutcome(TEXT("FindLobbies")) : FEEOSOperationOutcome();
+	const FEEOSOperationOutcome Outcome = Sub ? Sub->GetLastOperationOutcome(TEXT("FindLobbies")) : FEEOSOperationOutcome();
 	if (Outcome.bSuccess) OnSuccess.Broadcast(Results);
 	else OnFailure.Broadcast(Outcome.Message.IsEmpty() ? TEXT("Native search failed.") : Outcome.Message);
-	SetReadyToDestroy();
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -824,58 +851,64 @@ void UEOSAsyncFindLobbies::HandleComplete(const TArray<FEEOSSessionSearchResult>
 UEOSAsyncJoinLobby* UEOSAsyncJoinLobby::JoinLobby(UObject* WorldContext, int32 SearchResultIndex)
 {
 	UEOSAsyncJoinLobby* Action = NewObject<UEOSAsyncJoinLobby>();
-	Action->WorldContext = WorldContext;
 	Action->SearchResultIndex = SearchResultIndex;
-	Action->RegisterWithGameInstance(WorldContext);
+	Action->InitAsyncAction(WorldContext);
 	return Action;
 }
 
-void UEOSAsyncJoinLobby::Activate()
+void UEOSAsyncJoinLobby::ExecuteAction()
 {
-	auto* Sub = GetSubsystem<UEEOSLobbySubsystem>(WorldContext.Get());
-	if (!Sub)
-	{
-		bCompleted = true;
-		FEEOSOperationOutcome Missing; Missing.Operation = TEXT("JoinLobby"); Missing.Code = EEOSOperationCode::UnsupportedCapability; Missing.Phase = TEXT("Rejected"); Missing.Message = TEXT("EOS subsystem unavailable.");
-		OnDetailedCompleted.Broadcast(Missing);
-		OnFailure.Broadcast(TEXT("LobbySubsystem not available"));
-		SetReadyToDestroy();
-		return;
-	}
+	UEEOSLobbySubsystem* Sub = RequireGameInstanceSubsystem<UEEOSLobbySubsystem>();
+	if (!Sub) return;
 
 	Subsystem = Sub;
 	IgnoredRequestId = Sub->GetActiveOperationOutcome(TEXT("JoinLobby")).RequestId;
 	Sub->OnLobbyJoined.AddDynamic(this, &UEOSAsyncJoinLobby::HandleComplete);
-	if (!Sub->JoinLobby(SearchResultIndex) && !bCompleted)
+	bool bStarted = false;
+	CallWithContext([&] { bStarted = Sub->JoinLobby(SearchResultIndex); });
+	if (!bStarted && !IsFinished())
 	{
-		Sub->OnLobbyJoined.RemoveDynamic(this, &UEOSAsyncJoinLobby::HandleComplete);
-		bCompleted = true;
-		auto Rejection = Sub->GetLastOperationRejection();
+		CancelWork();
+		if (!FinishAction()) return;
+		FEEOSOperationOutcome Rejection = Sub->GetLastOperationRejection();
 		if (Rejection.Operation != TEXT("JoinLobby")) { Rejection = FEEOSOperationOutcome(); Rejection.Operation = TEXT("JoinLobby"); Rejection.Code = EEOSOperationCode::NativeStartRejected; Rejection.Message = TEXT("Request could not be started."); }
 		OnDetailedCompleted.Broadcast(Rejection);
 		OnFailure.Broadcast(Rejection.Operation == TEXT("JoinLobby") && !Rejection.Message.IsEmpty() ? Rejection.Message : TEXT("JoinLobby could not be started."));
-		SetReadyToDestroy();
+		return;
 	}
-	if (!bCompleted) ExpectedRequestId = Sub->GetActiveOperationOutcome(TEXT("JoinLobby")).RequestId;
+	if (!IsFinished()) ExpectedRequestId = Sub->GetActiveOperationOutcome(TEXT("JoinLobby")).RequestId;
+}
+
+void UEOSAsyncJoinLobby::CancelWork()
+{
+	if (UEEOSLobbySubsystem* Sub = Subsystem.Get())
+	{
+		Sub->OnLobbyJoined.RemoveDynamic(this, &UEOSAsyncJoinLobby::HandleComplete);
+	}
+}
+
+void UEOSAsyncJoinLobby::BroadcastFailure(const FEFResult& Result)
+{
+	OnDetailedCompleted.Broadcast(MakeFailureOutcome(TEXT("JoinLobby"), Result));
+	Super::BroadcastFailure(Result);
 }
 
 void UEOSAsyncJoinLobby::HandleComplete(bool bSuccess, const FString& LobbyId)
 {
-	// Match the dispatch-scoped terminal request; ignore the operation active before Activate.
-	auto* Sub = Subsystem.Get();
-	const auto Completion = Sub ? Sub->GetLastOperationOutcome(TEXT("JoinLobby")) : FEEOSOperationOutcome();
-	if (bCompleted || !Completion.RequestId || Completion.RequestId == IgnoredRequestId
+	if (!IsResultForThisCall()) return;
+	// Match the dispatch-scoped terminal request; ignore the operation active before ExecuteAction.
+	UEEOSLobbySubsystem* Sub = Subsystem.Get();
+	const FEEOSOperationOutcome Completion = Sub ? Sub->GetLastOperationOutcome(TEXT("JoinLobby")) : FEEOSOperationOutcome();
+	if (IsFinished() || !Completion.RequestId || Completion.RequestId == IgnoredRequestId
 		|| (ExpectedRequestId && Completion.RequestId != ExpectedRequestId)) return;
-	bCompleted = true;
-	if (Sub) Sub->OnLobbyJoined.RemoveDynamic(this, &UEOSAsyncJoinLobby::HandleComplete);
+	CancelWork();
+	if (!FinishAction()) return;
 	OnDetailedCompleted.Broadcast(Completion);
 
 	if (bSuccess)
 		OnSuccess.Broadcast(LobbyId);
 	else
 		OnFailure.Broadcast(Sub ? Sub->GetLastOperationOutcome(TEXT("JoinLobby")).Message : TEXT("JoinLobby failed"));
-
-	SetReadyToDestroy();
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -885,25 +918,15 @@ void UEOSAsyncJoinLobby::HandleComplete(bool bSuccess, const FString& LobbyId)
 UEOSAsyncStartMatchmaking* UEOSAsyncStartMatchmaking::StartMatchmaking(UObject* WorldContext, const FString& QueueName)
 {
 	UEOSAsyncStartMatchmaking* Action = NewObject<UEOSAsyncStartMatchmaking>();
-	Action->WorldContext = WorldContext;
 	Action->QueueName = QueueName;
-	Action->RegisterWithGameInstance(WorldContext);
+	Action->InitAsyncAction(WorldContext);
 	return Action;
 }
 
-void UEOSAsyncStartMatchmaking::Activate()
+void UEOSAsyncStartMatchmaking::ExecuteAction()
 {
-	auto* Sub = GetSubsystem<UEEOSMatchmakingSubsystem>(WorldContext.Get());
-	if (!Sub)
-	{
-		bCompleted = true;
-		FEEOSOperationOutcome Outcome; Outcome.Operation = TEXT("StartMatchmaking"); Outcome.Code = EEOSOperationCode::UnsupportedCapability;
-		Outcome.Phase = TEXT("Rejected"); Outcome.Message = TEXT("MatchmakingSubsystem not available");
-		OnDetailedCompleted.Broadcast(Outcome);
-		OnFailure.Broadcast(Outcome.Message);
-		SetReadyToDestroy();
-		return;
-	}
+	UEEOSMatchmakingSubsystem* Sub = RequireGameInstanceSubsystem<UEEOSMatchmakingSubsystem>();
+	if (!Sub) return;
 
 	Subsystem = Sub; IgnoredCycleId = Sub->GetMatchmakingCycleId();
 	Sub->OnMatchFound.AddDynamic(this, &UEOSAsyncStartMatchmaking::HandleMatchFound);
@@ -913,23 +936,25 @@ void UEOSAsyncStartMatchmaking::Activate()
 	// abandoned graph on a LATER cycle. Binding it restores the exactly-one-pin guarantee.
 	Sub->OnMatchmakingCancelled.AddDynamic(this, &UEOSAsyncStartMatchmaking::HandleCancelled);
 
-	if (!Sub->StartMatchmaking(QueueName) && !bCompleted)
+	bool bStarted = false;
+	CallWithContext([&] { bStarted = Sub->StartMatchmaking(QueueName); });
+	if (!bStarted && !IsFinished())
 	{
 		// false without a broadcast = rejected (a matchmaking cycle is already in flight);
 		// the no-cycle pre-flight failures broadcast OnMatchmakingComplete(false)
 		// synchronously and were consumed by the handler above.
-		bCompleted = true;
-		UnbindAll();
+		CancelWork();
+		if (!FinishAction()) return;
 		OnDetailedCompleted.Broadcast(Sub->GetLastOperationRejection());
 		OnFailure.Broadcast(TEXT("StartMatchmaking could not be started (a matchmaking cycle is already in flight)"));
-		SetReadyToDestroy();
+		return;
 	}
-	if (!bCompleted) ExpectedCycleId = Sub->GetMatchmakingCycleId();
+	if (!IsFinished()) ExpectedCycleId = Sub->GetMatchmakingCycleId();
 }
 
-void UEOSAsyncStartMatchmaking::UnbindAll()
+void UEOSAsyncStartMatchmaking::CancelWork()
 {
-	if (auto* Sub = Subsystem.Get())
+	if (UEEOSMatchmakingSubsystem* Sub = Subsystem.Get())
 	{
 		Sub->OnMatchFound.RemoveDynamic(this, &UEOSAsyncStartMatchmaking::HandleMatchFound);
 		Sub->OnMatchmakingComplete.RemoveDynamic(this, &UEOSAsyncStartMatchmaking::HandleComplete);
@@ -937,34 +962,40 @@ void UEOSAsyncStartMatchmaking::UnbindAll()
 	}
 }
 
+void UEOSAsyncStartMatchmaking::BroadcastFailure(const FEFResult& Result)
+{
+	OnDetailedCompleted.Broadcast(MakeFailureOutcome(TEXT("StartMatchmaking"), Result));
+	Super::BroadcastFailure(Result);
+}
+
 void UEOSAsyncStartMatchmaking::HandleMatchFound(const FString& SessionId)
 {
-	auto* Sub = Subsystem.Get();
-	const auto Outcome = Sub ? Sub->GetLastOperationOutcome(TEXT("MatchOffer")) : FEEOSOperationOutcome();
+	if (!IsResultForThisCall()) return;
+	UEEOSMatchmakingSubsystem* Sub = Subsystem.Get();
+	const FEEOSOperationOutcome Outcome = Sub ? Sub->GetLastOperationOutcome(TEXT("MatchOffer")) : FEEOSOperationOutcome();
 	const int64 Cycle = Outcome.ParentRequestId;
-	if (bCompleted || !Cycle || Cycle == IgnoredCycleId || (ExpectedCycleId && Cycle != ExpectedCycleId)) return;
+	if (IsFinished() || !Cycle || Cycle == IgnoredCycleId || (ExpectedCycleId && Cycle != ExpectedCycleId)) return;
 
-	// No request key in the delegate payload — first-completion semantics: the subsystem
-	// allows one cycle at a time and duplicate starts are log-only rejected (they fail fast
-	// in Activate), so the only remaining overlap is two nodes bound to the SAME real cycle —
-	// both then complete on this event.
-	bCompleted = true;
-	UnbindAll();
+	// The subsystem allows one cycle at a time, duplicate starts are log-only rejected (they
+	// fail fast in ExecuteAction) and the cycle's events carry the call context of the node
+	// that started it — only that node completes on this event.
+	CancelWork();
+	if (!FinishAction()) return;
 	OnDetailedCompleted.Broadcast(Outcome);
 	OnSuccess.Broadcast(SessionId);
-	SetReadyToDestroy();
 }
 
 void UEOSAsyncStartMatchmaking::HandleComplete(bool bSuccess, const FString& ErrorMessage)
 {
-	auto* Sub = Subsystem.Get();
-	const auto Outcome = Sub ? Sub->GetLastOperationOutcome(TEXT("Matchmaking")) : FEEOSOperationOutcome();
+	if (!IsResultForThisCall()) return;
+	UEEOSMatchmakingSubsystem* Sub = Subsystem.Get();
+	const FEEOSOperationOutcome Outcome = Sub ? Sub->GetLastOperationOutcome(TEXT("Matchmaking")) : FEEOSOperationOutcome();
 	const int64 Cycle = Outcome.RequestId;
-	if (bCompleted || !Cycle || Cycle == IgnoredCycleId || (ExpectedCycleId && Cycle != ExpectedCycleId)) return;
+	if (IsFinished() || !Cycle || Cycle == IgnoredCycleId || (ExpectedCycleId && Cycle != ExpectedCycleId)) return;
 
-	// See HandleMatchFound for the first-completion semantics note.
-	bCompleted = true;
-	UnbindAll();
+	// See HandleMatchFound for the correlation note.
+	CancelWork();
+	if (!FinishAction()) return;
 	OnDetailedCompleted.Broadcast(Outcome);
 
 	// Every branch must fire exactly one pin. A successful completion reaching this handler
@@ -975,24 +1006,22 @@ void UEOSAsyncStartMatchmaking::HandleComplete(bool bSuccess, const FString& Err
 		OnSuccess.Broadcast(FString());
 	else
 		OnFailure.Broadcast(ErrorMessage);
-
-	SetReadyToDestroy();
 }
 
 void UEOSAsyncStartMatchmaking::HandleCancelled()
 {
-	auto* Sub = Subsystem.Get();
-	const auto Outcome = Sub ? Sub->GetLastOperationOutcome(TEXT("Matchmaking")) : FEEOSOperationOutcome();
+	if (!IsResultForThisCall()) return;
+	UEEOSMatchmakingSubsystem* Sub = Subsystem.Get();
+	const FEEOSOperationOutcome Outcome = Sub ? Sub->GetLastOperationOutcome(TEXT("Matchmaking")) : FEEOSOperationOutcome();
 	const int64 Cycle = Outcome.RequestId;
-	if (bCompleted || !Cycle || Cycle == IgnoredCycleId || (ExpectedCycleId && Cycle != ExpectedCycleId)) return;
+	if (IsFinished() || !Cycle || Cycle == IgnoredCycleId || (ExpectedCycleId && Cycle != ExpectedCycleId)) return;
 
 	// CancelMatchmaking ends the cycle with ONLY this broadcast (no OnMatchmakingComplete) —
 	// complete the node on its failure pin so exactly one pin always fires.
-	bCompleted = true;
-	UnbindAll();
+	CancelWork();
+	if (!FinishAction()) return;
 	OnDetailedCompleted.Broadcast(Outcome);
 	OnFailure.Broadcast(TEXT("Matchmaking cancelled"));
-	SetReadyToDestroy();
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1002,50 +1031,49 @@ void UEOSAsyncStartMatchmaking::HandleCancelled()
 UEOSAsyncQueryLeaderboard* UEOSAsyncQueryLeaderboard::QueryLeaderboard(UObject* WorldContext, const FString& LeaderboardId)
 {
 	UEOSAsyncQueryLeaderboard* Action = NewObject<UEOSAsyncQueryLeaderboard>();
-	Action->WorldContext = WorldContext;
 	Action->LeaderboardId = LeaderboardId;
-	Action->RegisterWithGameInstance(WorldContext);
+	Action->InitAsyncAction(WorldContext);
 	return Action;
 }
 
-void UEOSAsyncQueryLeaderboard::Activate()
+void UEOSAsyncQueryLeaderboard::ExecuteAction()
 {
-	auto* Sub = GetSubsystem<UEEOSLeaderboardSubsystem>(WorldContext.Get());
-	if (!Sub)
-	{
-		OnFailure.Broadcast(TEXT("LeaderboardSubsystem not available"));
-		SetReadyToDestroy();
-		return;
-	}
+	UEEOSLeaderboardSubsystem* Sub = RequireGameInstanceSubsystem<UEEOSLeaderboardSubsystem>();
+	if (!Sub) return;
 
 	Subsystem = Sub;
 	Sub->OnLeaderboardQueried.AddDynamic(this, &UEOSAsyncQueryLeaderboard::HandleComplete);
-	if (!Sub->QueryLeaderboard(LeaderboardId) && !bCompleted)
+	bool bStarted = false;
+	CallWithContext([&] { bStarted = Sub->QueryLeaderboard(LeaderboardId); });
+	if (!bStarted && !IsFinished())
 	{
 		// false without a broadcast = rejected (another leaderboard query is already in
 		// flight — log-only); pre-flight failures broadcast and were consumed above.
+		CancelWork();
+		FailWithError(FString::Printf(TEXT("QueryLeaderboard '%s' could not be started (another leaderboard query is already in flight)"), *LeaderboardId));
+	}
+}
+
+void UEOSAsyncQueryLeaderboard::CancelWork()
+{
+	if (UEEOSLeaderboardSubsystem* Sub = Subsystem.Get())
+	{
 		Sub->OnLeaderboardQueried.RemoveDynamic(this, &UEOSAsyncQueryLeaderboard::HandleComplete);
-		OnFailure.Broadcast(FString::Printf(TEXT("QueryLeaderboard '%s' could not be started (another leaderboard query is already in flight)"), *LeaderboardId));
-		SetReadyToDestroy();
 	}
 }
 
 void UEOSAsyncQueryLeaderboard::HandleComplete(bool bSuccess, const TArray<FEEOSLeaderboardEntry>& Entries)
 {
-	// No request key in the delegate payload — first-completion semantics: if two REAL
-	// queries are in flight, both nodes complete on whichever completion broadcasts first.
-	// (In-flight rejections no longer broadcast, so a rejected duplicate can no longer
-	// falsely fail this node while the real query is about to succeed.)
-	bCompleted = true;
-	auto* Sub = Subsystem.Get();
-	if (Sub) Sub->OnLeaderboardQueried.RemoveDynamic(this, &UEOSAsyncQueryLeaderboard::HandleComplete);
+	// No request key in the delegate payload: the subsystem tags the completion with the call
+	// context of the query that started it. Untagged broadcasts are still accepted.
+	if (!IsResultForThisCall()) return;
+	CancelWork();
+	if (!FinishAction()) return;
 
 	if (bSuccess)
 		OnSuccess.Broadcast(Entries);
 	else
 		OnFailure.Broadcast(TEXT("QueryLeaderboard failed"));
-
-	SetReadyToDestroy();
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1055,49 +1083,50 @@ void UEOSAsyncQueryLeaderboard::HandleComplete(bool bSuccess, const TArray<FEEOS
 UEOSAsyncUploadScore* UEOSAsyncUploadScore::UploadScore(UObject* WorldContext, const FString& LeaderboardId, int32 Score)
 {
 	UEOSAsyncUploadScore* Action = NewObject<UEOSAsyncUploadScore>();
-	Action->WorldContext = WorldContext;
 	Action->LeaderboardId = LeaderboardId;
 	Action->Score = Score;
-	Action->RegisterWithGameInstance(WorldContext);
+	Action->InitAsyncAction(WorldContext);
 	return Action;
 }
 
-void UEOSAsyncUploadScore::Activate()
+void UEOSAsyncUploadScore::ExecuteAction()
 {
-	auto* Sub = GetSubsystem<UEEOSLeaderboardSubsystem>(WorldContext.Get());
-	if (!Sub)
-	{
-		OnFailure.Broadcast(TEXT("LeaderboardSubsystem not available"));
-		SetReadyToDestroy();
-		return;
-	}
+	UEEOSLeaderboardSubsystem* Sub = RequireGameInstanceSubsystem<UEEOSLeaderboardSubsystem>();
+	if (!Sub) return;
 
 	Subsystem = Sub;
 	Sub->OnScoreUploaded.AddDynamic(this, &UEOSAsyncUploadScore::HandleComplete);
-	if (!Sub->UploadScore(LeaderboardId, Score) && !bCompleted)
+	bool bStarted = false;
+	CallWithContext([&] { bStarted = Sub->UploadScore(LeaderboardId, Score); });
+	if (!bStarted && !IsFinished())
+	{
+		CancelWork();
+		FailWithError(FString::Printf(TEXT("UploadScore '%s' could not be started"), *LeaderboardId));
+	}
+}
+
+void UEOSAsyncUploadScore::CancelWork()
+{
+	if (UEEOSLeaderboardSubsystem* Sub = Subsystem.Get())
 	{
 		Sub->OnScoreUploaded.RemoveDynamic(this, &UEOSAsyncUploadScore::HandleComplete);
-		OnFailure.Broadcast(FString::Printf(TEXT("UploadScore '%s' could not be started"), *LeaderboardId));
-		SetReadyToDestroy();
 	}
 }
 
 void UEOSAsyncUploadScore::HandleComplete(bool bSuccess, const FString& InLeaderboardId)
 {
+	if (!IsResultForThisCall()) return;
 	// Correlate by leaderboard ID: a completion for a different in-flight upload is not ours —
 	// stay bound and wait for our own.
 	if (InLeaderboardId != LeaderboardId) return;
 
-	bCompleted = true;
-	auto* Sub = Subsystem.Get();
-	if (Sub) Sub->OnScoreUploaded.RemoveDynamic(this, &UEOSAsyncUploadScore::HandleComplete);
+	CancelWork();
+	if (!FinishAction()) return;
 
 	if (bSuccess)
 		OnSuccess.Broadcast(InLeaderboardId);
 	else
 		OnFailure.Broadcast(TEXT("UploadScore failed"));
-
-	SetReadyToDestroy();
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1107,43 +1136,45 @@ void UEOSAsyncUploadScore::HandleComplete(bool bSuccess, const FString& InLeader
 UEOSAsyncReadFriendsList* UEOSAsyncReadFriendsList::ReadFriendsList(UObject* WorldContext)
 {
 	UEOSAsyncReadFriendsList* Action = NewObject<UEOSAsyncReadFriendsList>();
-	Action->WorldContext = WorldContext;
-	Action->RegisterWithGameInstance(WorldContext);
+	Action->InitAsyncAction(WorldContext);
 	return Action;
 }
 
-void UEOSAsyncReadFriendsList::Activate()
+void UEOSAsyncReadFriendsList::ExecuteAction()
 {
-	auto* Sub = GetSubsystem<UEEOSFriendsSubsystem>(WorldContext.Get());
-	if (!Sub)
-	{
-		OnFailure.Broadcast(TEXT("FriendsSubsystem not available"));
-		SetReadyToDestroy();
-		return;
-	}
+	UEEOSFriendsSubsystem* Sub = RequireGameInstanceSubsystem<UEEOSFriendsSubsystem>();
+	if (!Sub) return;
 
 	Subsystem = Sub;
 	Sub->OnFriendsListReady.AddDynamic(this, &UEOSAsyncReadFriendsList::HandleComplete);
-	if (!Sub->ReadFriendsList() && !bCompleted)
+	bool bStarted = false;
+	CallWithContext([&] { bStarted = Sub->ReadFriendsList(); });
+	if (!bStarted && !IsFinished())
+	{
+		CancelWork();
+		FailWithError(TEXT("ReadFriendsList could not be started"));
+	}
+}
+
+void UEOSAsyncReadFriendsList::CancelWork()
+{
+	if (UEEOSFriendsSubsystem* Sub = Subsystem.Get())
 	{
 		Sub->OnFriendsListReady.RemoveDynamic(this, &UEOSAsyncReadFriendsList::HandleComplete);
-		OnFailure.Broadcast(TEXT("ReadFriendsList could not be started"));
-		SetReadyToDestroy();
 	}
 }
 
 void UEOSAsyncReadFriendsList::HandleComplete(const TArray<FEEOSFriendInfo>& Friends)
 {
-	// No request key in the delegate payload — first-completion semantics: if two REAL reads
-	// are in flight, both nodes complete on whichever completion broadcasts first.
-	bCompleted = true;
-	auto* Sub = Subsystem.Get();
-	if (Sub) Sub->OnFriendsListReady.RemoveDynamic(this, &UEOSAsyncReadFriendsList::HandleComplete);
+	// No request key in the delegate payload: the subsystem tags the completion with the call
+	// context of the read that started it. Untagged broadcasts are still accepted.
+	if (!IsResultForThisCall()) return;
+	CancelWork();
+	if (!FinishAction()) return;
 
 	// The subsystem broadcasts on every completion path (empty list on failure), so a started
 	// read always completes this node here.
 	OnSuccess.Broadcast(Friends);
-	SetReadyToDestroy();
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1153,50 +1184,51 @@ void UEOSAsyncReadFriendsList::HandleComplete(const TArray<FEEOSFriendInfo>& Fri
 UEOSAsyncJoinChatChannel* UEOSAsyncJoinChatChannel::JoinChatChannel(UObject* WorldContext, const FString& ChannelName)
 {
 	UEOSAsyncJoinChatChannel* Action = NewObject<UEOSAsyncJoinChatChannel>();
-	Action->WorldContext = WorldContext;
 	Action->ChannelName = ChannelName;
-	Action->RegisterWithGameInstance(WorldContext);
+	Action->InitAsyncAction(WorldContext);
 	return Action;
 }
 
-void UEOSAsyncJoinChatChannel::Activate()
+void UEOSAsyncJoinChatChannel::ExecuteAction()
 {
-	auto* Sub = GetSubsystem<UEEOSChatSubsystem>(WorldContext.Get());
-	if (!Sub)
-	{
-		OnFailure.Broadcast(TEXT("ChatSubsystem not available"));
-		SetReadyToDestroy();
-		return;
-	}
+	UEEOSChatSubsystem* Sub = RequireGameInstanceSubsystem<UEEOSChatSubsystem>();
+	if (!Sub) return;
 
 	Subsystem = Sub;
 	Sub->OnChannelJoined.AddDynamic(this, &UEOSAsyncJoinChatChannel::HandleComplete);
 	// NOTE: already-joined channels re-broadcast success synchronously during this call —
 	// the handler (bound above) completes the node in that case and the return is true.
-	if (!Sub->JoinChannel(ChannelName) && !bCompleted)
+	bool bStarted = false;
+	CallWithContext([&] { bStarted = Sub->JoinChannel(ChannelName); });
+	if (!bStarted && !IsFinished())
+	{
+		CancelWork();
+		FailWithError(FString::Printf(TEXT("JoinChannel '%s' could not be started"), *ChannelName));
+	}
+}
+
+void UEOSAsyncJoinChatChannel::CancelWork()
+{
+	if (UEEOSChatSubsystem* Sub = Subsystem.Get())
 	{
 		Sub->OnChannelJoined.RemoveDynamic(this, &UEOSAsyncJoinChatChannel::HandleComplete);
-		OnFailure.Broadcast(FString::Printf(TEXT("JoinChannel '%s' could not be started"), *ChannelName));
-		SetReadyToDestroy();
 	}
 }
 
 void UEOSAsyncJoinChatChannel::HandleComplete(bool bSuccess, const FString& InChannelName)
 {
+	if (!IsResultForThisCall()) return;
 	// Correlate by channel name: a completion for a different in-flight join is not ours —
 	// stay bound and wait for our own.
 	if (InChannelName != ChannelName) return;
 
-	bCompleted = true;
-	auto* Sub = Subsystem.Get();
-	if (Sub) Sub->OnChannelJoined.RemoveDynamic(this, &UEOSAsyncJoinChatChannel::HandleComplete);
+	CancelWork();
+	if (!FinishAction()) return;
 
 	if (bSuccess)
 		OnSuccess.Broadcast(InChannelName);
 	else
 		OnFailure.Broadcast(FString::Printf(TEXT("Failed to join channel '%s'"), *InChannelName));
-
-	SetReadyToDestroy();
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1206,50 +1238,50 @@ void UEOSAsyncJoinChatChannel::HandleComplete(bool bSuccess, const FString& InCh
 UEOSAsyncSendChatMessage* UEOSAsyncSendChatMessage::SendChatMessage(UObject* WorldContext, const FString& ChannelName, const FString& Message)
 {
 	UEOSAsyncSendChatMessage* Action = NewObject<UEOSAsyncSendChatMessage>();
-	Action->WorldContext = WorldContext;
 	Action->ChannelName = ChannelName;
 	Action->Message = Message;
-	Action->RegisterWithGameInstance(WorldContext);
+	Action->InitAsyncAction(WorldContext);
 	return Action;
 }
 
-void UEOSAsyncSendChatMessage::Activate()
+void UEOSAsyncSendChatMessage::ExecuteAction()
 {
-	auto* Sub = GetSubsystem<UEEOSChatSubsystem>(WorldContext.Get());
-	if (!Sub)
-	{
-		OnFailure.Broadcast(TEXT("ChatSubsystem not available"));
-		SetReadyToDestroy();
-		return;
-	}
+	UEEOSChatSubsystem* Sub = RequireGameInstanceSubsystem<UEEOSChatSubsystem>();
+	if (!Sub) return;
 
 	Subsystem = Sub;
 	Sub->OnMessageSent.AddDynamic(this, &UEOSAsyncSendChatMessage::HandleComplete);
-	if (!Sub->SendMessage(ChannelName, Message) && !bCompleted)
+	bool bStarted = false;
+	CallWithContext([&] { bStarted = Sub->SendMessage(ChannelName, Message); });
+	if (!bStarted && !IsFinished())
+	{
+		CancelWork();
+		FailWithError(FString::Printf(TEXT("SendMessage to '%s' could not be started"), *ChannelName));
+	}
+}
+
+void UEOSAsyncSendChatMessage::CancelWork()
+{
+	if (UEEOSChatSubsystem* Sub = Subsystem.Get())
 	{
 		Sub->OnMessageSent.RemoveDynamic(this, &UEOSAsyncSendChatMessage::HandleComplete);
-		OnFailure.Broadcast(FString::Printf(TEXT("SendMessage to '%s' could not be started"), *ChannelName));
-		SetReadyToDestroy();
 	}
 }
 
 void UEOSAsyncSendChatMessage::HandleComplete(bool bSuccess, const FString& InChannelName)
 {
-	// Correlate by channel name: a completion for a different channel is not ours — stay bound and
-	// wait for our own. (Two in-flight sends to the SAME channel still race; the delegate carries no
-	// per-message key.)
+	if (!IsResultForThisCall()) return;
+	// Correlate by channel name: a completion for a different channel is not ours — stay bound
+	// and wait for our own. (SendMessage reports synchronously, inside this node's call.)
 	if (InChannelName != ChannelName) return;
 
-	bCompleted = true;
-	auto* Sub = Subsystem.Get();
-	if (Sub) Sub->OnMessageSent.RemoveDynamic(this, &UEOSAsyncSendChatMessage::HandleComplete);
+	CancelWork();
+	if (!FinishAction()) return;
 
 	if (bSuccess)
 		OnSuccess.Broadcast(InChannelName);
 	else
 		OnFailure.Broadcast(FString::Printf(TEXT("Failed to send message to '%s'"), *InChannelName));
-
-	SetReadyToDestroy();
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1259,21 +1291,15 @@ void UEOSAsyncSendChatMessage::HandleComplete(bool bSuccess, const FString& InCh
 UEOSAsyncQuerySanctions* UEOSAsyncQuerySanctions::QuerySanctions(UObject* WorldContext, const FString& TargetUserId)
 {
 	UEOSAsyncQuerySanctions* Action = NewObject<UEOSAsyncQuerySanctions>();
-	Action->WorldContext = WorldContext;
 	Action->TargetUserId = TargetUserId;
-	Action->RegisterWithGameInstance(WorldContext);
+	Action->InitAsyncAction(WorldContext);
 	return Action;
 }
 
-void UEOSAsyncQuerySanctions::Activate()
+void UEOSAsyncQuerySanctions::ExecuteAction()
 {
-	auto* Sub = GetSubsystem<UEEOSSanctionsSubsystem>(WorldContext.Get());
-	if (!Sub)
-	{
-		OnFailure.Broadcast(TEXT("SanctionsSubsystem not available"));
-		SetReadyToDestroy();
-		return;
-	}
+	UEEOSSanctionsSubsystem* Sub = RequireGameInstanceSubsystem<UEEOSSanctionsSubsystem>();
+	if (!Sub) return;
 
 	// The subsystem broadcasts the BARE target Product User ID on every completion (empty
 	// when the input had no parseable PUID) — extract ours the same way so completions can
@@ -1286,26 +1312,32 @@ void UEOSAsyncQuerySanctions::Activate()
 	// different targets run in parallel and are told apart by the target id). Every pre-flight
 	// failure broadcasts synchronously, carrying our target PUID, so the handler always
 	// completes this node.
-	Sub->QueryActiveSanctions(TargetUserId);
+	CallWithContext([&] { Sub->QueryActiveSanctions(TargetUserId); });
+}
+
+void UEOSAsyncQuerySanctions::CancelWork()
+{
+	if (UEEOSSanctionsSubsystem* Sub = Subsystem.Get())
+	{
+		Sub->OnSanctionsQueried.RemoveDynamic(this, &UEOSAsyncQuerySanctions::HandleComplete);
+	}
 }
 
 void UEOSAsyncQuerySanctions::HandleComplete(bool bSuccess, const FString& CompletedTargetUserId, const TArray<FEEOSSanction>& Sanctions)
 {
+	if (!IsResultForThisCall()) return;
 	// Correlate by bare target PUID: a completion for a DIFFERENT target is not ours — stay
 	// bound (without unbinding) and wait for our own. An empty broadcast id matches only when
 	// our own target had no parseable PUID (that pre-flight failure echo is ours).
 	if (CompletedTargetUserId != TargetPUID) return;
 
-	bCompleted = true;
-	auto* Sub = Subsystem.Get();
-	if (Sub) Sub->OnSanctionsQueried.RemoveDynamic(this, &UEOSAsyncQuerySanctions::HandleComplete);
+	CancelWork();
+	if (!FinishAction()) return;
 
 	if (bSuccess)
 		OnSuccess.Broadcast(Sanctions);
 	else
 		OnFailure.Broadcast(FString::Printf(TEXT("QuerySanctions failed for '%s'"), *TargetUserId));
-
-	SetReadyToDestroy();
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1315,23 +1347,17 @@ void UEOSAsyncQuerySanctions::HandleComplete(bool bSuccess, const FString& Compl
 UEOSAsyncReportPlayer* UEOSAsyncReportPlayer::ReportPlayer(UObject* WorldContext, const FString& TargetUserId, const FString& Reason, const FString& Message)
 {
 	UEOSAsyncReportPlayer* Action = NewObject<UEOSAsyncReportPlayer>();
-	Action->WorldContext = WorldContext;
 	Action->TargetUserId = TargetUserId;
 	Action->Reason = Reason;
 	Action->Message = Message;
-	Action->RegisterWithGameInstance(WorldContext);
+	Action->InitAsyncAction(WorldContext);
 	return Action;
 }
 
-void UEOSAsyncReportPlayer::Activate()
+void UEOSAsyncReportPlayer::ExecuteAction()
 {
-	auto* Sub = GetSubsystem<UEEOSSanctionsSubsystem>(WorldContext.Get());
-	if (!Sub)
-	{
-		OnFailure.Broadcast(TEXT("SanctionsSubsystem not available"));
-		SetReadyToDestroy();
-		return;
-	}
+	UEEOSSanctionsSubsystem* Sub = RequireGameInstanceSubsystem<UEEOSSanctionsSubsystem>();
+	if (!Sub) return;
 
 	// The subsystem broadcasts the BARE target Product User ID on every completion (empty
 	// when the input had no parseable PUID) — extract ours the same way so completions can
@@ -1344,24 +1370,30 @@ void UEOSAsyncReportPlayer::Activate()
 	// different targets run in parallel and are told apart by the target id). Every pre-flight
 	// failure broadcasts synchronously, carrying our target PUID, so the handler always
 	// completes this node.
-	Sub->SendPlayerReport(TargetUserId, Reason, Message);
+	CallWithContext([&] { Sub->SendPlayerReport(TargetUserId, Reason, Message); });
+}
+
+void UEOSAsyncReportPlayer::CancelWork()
+{
+	if (UEEOSSanctionsSubsystem* Sub = Subsystem.Get())
+	{
+		Sub->OnPlayerReportSent.RemoveDynamic(this, &UEOSAsyncReportPlayer::HandleComplete);
+	}
 }
 
 void UEOSAsyncReportPlayer::HandleComplete(bool bSuccess, const FString& CompletedTargetUserId)
 {
+	if (!IsResultForThisCall()) return;
 	// Correlate by bare target PUID: a completion for a DIFFERENT target is not ours — stay
 	// bound (without unbinding) and wait for our own. An empty broadcast id matches only when
 	// our own target had no parseable PUID (that pre-flight failure echo is ours).
 	if (CompletedTargetUserId != TargetPUID) return;
 
-	bCompleted = true;
-	auto* Sub = Subsystem.Get();
-	if (Sub) Sub->OnPlayerReportSent.RemoveDynamic(this, &UEOSAsyncReportPlayer::HandleComplete);
+	CancelWork();
+	if (!FinishAction()) return;
 
 	if (bSuccess)
 		OnSuccess.Broadcast();
 	else
 		OnFailure.Broadcast(FString::Printf(TEXT("ReportPlayer failed for '%s'"), *TargetUserId));
-
-	SetReadyToDestroy();
 }

@@ -125,6 +125,17 @@ bool FEFAsyncActionBaseTest::RunTest(const FString& Parameters)
 		TestEqual(TEXT("the node's source is used"), Action->LastFailure.Source, FName(TEXT("Test")));
 	}
 
+	// Destroying a running node (game-instance teardown, GC) never calls into Blueprint.
+	{
+		UEFTestAsyncAction* Action = NewObject<UEFTestAsyncAction>();
+		Action->Init(/*Timeout*/ 30.f);
+		Action->Activate();
+		Action->MarkAsGarbage();
+		Action->ConditionalBeginDestroy();
+		TestEqual(TEXT("destruction does not broadcast a failure"), Action->FailureCount, 0);
+		TestTrue(TEXT("a destroyed node counts as finished"), Action->IsFinished());
+	}
+
 	// A failure found in the factory waits for Activate, then skips the work.
 	{
 		UEFTestAsyncAction* Action = NewObject<UEFTestAsyncAction>();

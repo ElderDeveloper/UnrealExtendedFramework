@@ -3,7 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Kismet/BlueprintAsyncActionBase.h"
+#include "BlueprintActions/EEOSAsyncActionBase.h"
 #include "Shared/EEOSTypes.h"
 #include "EEOSAsyncActions.generated.h"
 
@@ -22,24 +22,27 @@ class UEEOSChatSubsystem;
 class UEEOSSanctionsSubsystem;
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//  Shared Delegates for OnFailure
+//  Shared OnFailure pin
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-/** Fired when any EOS async action fails. Provides an error description. */
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnAsyncFailed, const FString&, Error);
+//  Every node derives from UEEOSAsyncActionBase (EEOSAsyncActionBase.h), which owns the
+//  FOnAsyncFailed OnFailure pin. It also fires for cancellation (the node's Async Task pin),
+//  timeouts and a missing subsystem.
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  Completion pattern (uniform across all nodes)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//  Every node binds its handler(s) FIRST, then calls the subsystem entry point.
+//  Every node binds its handler(s) FIRST, then calls the subsystem entry point inside
+//  CallWithContext(). The subsystems carry that call context to their completion broadcast, so
+//  each handler returns early unless IsResultForThisCall(): two identical nodes running at once
+//  each finish on their own result. Broadcasts without a context are still accepted.
 //  Subsystem entry points return bool: false means the call was rejected (an
 //  operation is already in flight — log-only, NO delegate ever fires for that
 //  call) or failed pre-flight (some pre-flight failures DO broadcast, and do so
 //  synchronously during the call — reaching the already-bound handler).
-//  On a false return the node unbinds and fires OnFailure exactly once. The
-//  bCompleted flag guards against double-firing: handlers set it when they fire
-//  a pin, so a pre-flight broadcast that already completed the node during the
-//  call suppresses the false-return OnFailure path.
+//  On a false return the node unbinds and fires OnFailure exactly once. FinishAction()
+//  guards against double-firing: a pre-flight broadcast that already completed the node
+//  during the call suppresses the false-return OnFailure path (IsFinished()).
+//  CancelWork() unbinds the node on cancellation and timeout.
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -53,9 +56,10 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnAsyncStatIngested);
  * Query player stats from EOS.
  * Returns the stat values (e.g., GoldCoins, EnemiesKilled) on the OnSuccess pin.
  * Use GetStatValue() on the subsystem to read individual values after this completes.
+ * OnFailure fires if the stat query fails or could not be started.
  */
 UCLASS(meta = (DisplayName = "EOS: Query Stats"))
-class EXTENDEDEOSBLUEPRINTS_API UEOSAsyncQueryStats : public UBlueprintAsyncActionBase
+class EXTENDEDEOSBLUEPRINTS_API UEOSAsyncQueryStats : public UEEOSAsyncActionBase
 {
 	GENERATED_BODY()
 
@@ -69,16 +73,14 @@ public:
 
 	/** Fires when stats are successfully retrieved. Provides the stat array. */
 	UPROPERTY(BlueprintAssignable) FOnAsyncStatsQueried OnSuccess;
-	/** Fires if the stat query fails or could not be started. */
-	UPROPERTY(BlueprintAssignable) FOnAsyncFailed OnFailure;
 
-	virtual void Activate() override;
+protected:
+	virtual void ExecuteAction() override;
+	virtual void CancelWork() override;
 
 private:
 	TArray<FString> StatNames;
-	TWeakObjectPtr<UObject> WorldContext;
 	TWeakObjectPtr<UEEOSStatsSubsystem> Subsystem;
-	bool bCompleted = false; // set by the handler once a pin fired — see Activate's false-return path
 
 	UFUNCTION() void HandleComplete(bool bSuccess, const TArray<FEEOSStat>& Stats);
 };
@@ -86,9 +88,10 @@ private:
 /**
  * Add a value to a player stat (e.g., +100 gold, +1 kill).
  * The stat must exist in the EOS DevPortal with SUM aggregation.
+ * OnFailure fires if the stat ingestion fails or could not be started.
  */
 UCLASS(meta = (DisplayName = "EOS: Ingest Stat"))
-class EXTENDEDEOSBLUEPRINTS_API UEOSAsyncIngestStat : public UBlueprintAsyncActionBase
+class EXTENDEDEOSBLUEPRINTS_API UEOSAsyncIngestStat : public UEEOSAsyncActionBase
 {
 	GENERATED_BODY()
 
@@ -103,17 +106,15 @@ public:
 
 	/** Fires when the stat is successfully ingested. */
 	UPROPERTY(BlueprintAssignable) FOnAsyncStatIngested OnSuccess;
-	/** Fires if the stat ingestion fails or could not be started. */
-	UPROPERTY(BlueprintAssignable) FOnAsyncFailed OnFailure;
 
-	virtual void Activate() override;
+protected:
+	virtual void ExecuteAction() override;
+	virtual void CancelWork() override;
 
 private:
 	FString StatName;
-	int32 Amount;
-	TWeakObjectPtr<UObject> WorldContext;
+	int32 Amount = 0;
 	TWeakObjectPtr<UEEOSStatsSubsystem> Subsystem;
-	bool bCompleted = false; // set by the handler once a pin fired — see Activate's false-return path
 
 	UFUNCTION() void HandleComplete(bool bSuccess);
 };
@@ -128,9 +129,10 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnAsyncAchievementUnlocked, const F
 /**
  * Query all achievements and their unlock progress for the local player.
  * Use the returned array to build achievement UI, check unlock status, and gate content.
+ * OnFailure fires if the achievement query fails or could not be started.
  */
 UCLASS(meta = (DisplayName = "EOS: Query Achievements"))
-class EXTENDEDEOSBLUEPRINTS_API UEOSAsyncQueryAchievements : public UBlueprintAsyncActionBase
+class EXTENDEDEOSBLUEPRINTS_API UEOSAsyncQueryAchievements : public UEEOSAsyncActionBase
 {
 	GENERATED_BODY()
 
@@ -141,15 +143,13 @@ public:
 
 	/** Fires when achievements are successfully retrieved. Provides the full achievement array. */
 	UPROPERTY(BlueprintAssignable) FOnAsyncAchievementsQueried OnSuccess;
-	/** Fires if the achievement query fails or could not be started. */
-	UPROPERTY(BlueprintAssignable) FOnAsyncFailed OnFailure;
 
-	virtual void Activate() override;
+protected:
+	virtual void ExecuteAction() override;
+	virtual void CancelWork() override;
 
 private:
-	TWeakObjectPtr<UObject> WorldContext;
 	TWeakObjectPtr<UEEOSAchievementSubsystem> Subsystem;
-	bool bCompleted = false; // set by the handler once a pin fired — see Activate's false-return path
 
 	UFUNCTION() void HandleComplete(bool bSuccess, const TArray<FEEOSAchievement>& Achievements);
 };
@@ -157,9 +157,10 @@ private:
 /**
  * Instantly unlock (complete) an achievement for the local player.
  * The achievement must exist in the EOS DevPortal.
+ * OnFailure fires if the unlock fails or could not be started.
  */
 UCLASS(meta = (DisplayName = "EOS: Unlock Achievement"))
-class EXTENDEDEOSBLUEPRINTS_API UEOSAsyncUnlockAchievement : public UBlueprintAsyncActionBase
+class EXTENDEDEOSBLUEPRINTS_API UEOSAsyncUnlockAchievement : public UEEOSAsyncActionBase
 {
 	GENERATED_BODY()
 
@@ -173,16 +174,14 @@ public:
 
 	/** Fires when the achievement is successfully unlocked. */
 	UPROPERTY(BlueprintAssignable) FOnAsyncAchievementUnlocked OnSuccess;
-	/** Fires if the unlock fails or could not be started. */
-	UPROPERTY(BlueprintAssignable) FOnAsyncFailed OnFailure;
 
-	virtual void Activate() override;
+protected:
+	virtual void ExecuteAction() override;
+	virtual void CancelWork() override;
 
 private:
 	FString AchievementId;
-	TWeakObjectPtr<UObject> WorldContext;
 	TWeakObjectPtr<UEEOSAchievementSubsystem> Subsystem;
-	bool bCompleted = false; // set by the handler once a pin fired — see Activate's false-return path
 
 	UFUNCTION() void HandleComplete(bool bSuccess, const FString& Id);
 };
@@ -199,9 +198,10 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnAsyncConnectLoginSuccess, const F
  * Returns the ProductUserId on success, which is needed for all game services.
  *
  * For DeviceId login, leave Token empty — it creates the device ID automatically.
+ * OnFailure fires if login fails or could not be started (e.g. a Connect login is already in flight).
  */
 UCLASS(meta = (DisplayName = "EOS: Connect Login"))
-class EXTENDEDEOSBLUEPRINTS_API UEOSAsyncConnectLogin : public UBlueprintAsyncActionBase
+class EXTENDEDEOSBLUEPRINTS_API UEOSAsyncConnectLogin : public UEEOSAsyncActionBase
 {
 	GENERATED_BODY()
 
@@ -217,18 +217,16 @@ public:
 
 	/** Fires on successful login. Provides the ProductUserId for game services. */
 	UPROPERTY(BlueprintAssignable) FOnAsyncConnectLoginSuccess OnSuccess;
-	/** Fires if login fails or could not be started (e.g. a Connect login is already in flight). */
-	UPROPERTY(BlueprintAssignable) FOnAsyncFailed OnFailure;
 
-	virtual void Activate() override;
+protected:
+	virtual void ExecuteAction() override;
+	virtual void CancelWork() override;
 
 private:
-	EEOSConnectLoginType LoginType;
+	EEOSConnectLoginType LoginType = EEOSConnectLoginType::DeviceId;
 	FString Token;
 	FString DisplayName;
-	TWeakObjectPtr<UObject> WorldContext;
 	TWeakObjectPtr<UEEOSAuthSubsystem> Subsystem;
-	bool bCompleted = false; // set by the handler once a pin fired — see Activate's false-return path
 
 	UFUNCTION() void HandleComplete(bool bSuccess, const FString& ProductUserId, const FString& Error);
 };
@@ -244,9 +242,11 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnAsyncSaveGameWritten);
  * Read a USaveGame object from EOS cloud storage.
  * The file must have been previously written with "EOS: Write Save Game".
  * Cast the returned SaveGame to your custom class.
+ * OnFailure fires if the read fails (file not found, network error, etc.) or could not be
+ * started (an operation on this file is already in flight).
  */
 UCLASS(meta = (DisplayName = "EOS: Read Save Game"))
-class EXTENDEDEOSBLUEPRINTS_API UEOSAsyncReadSaveGame : public UBlueprintAsyncActionBase
+class EXTENDEDEOSBLUEPRINTS_API UEOSAsyncReadSaveGame : public UEEOSAsyncActionBase
 {
 	GENERATED_BODY()
 
@@ -260,17 +260,14 @@ public:
 
 	/** Fires when the save game is successfully loaded. Cast the result to your SaveGame class. */
 	UPROPERTY(BlueprintAssignable) FOnAsyncSaveGameRead OnSuccess;
-	/** Fires if the read fails (file not found, network error, etc.) or could not be started
-	 *  (an operation on this file is already in flight). */
-	UPROPERTY(BlueprintAssignable) FOnAsyncFailed OnFailure;
 
-	virtual void Activate() override;
+protected:
+	virtual void ExecuteAction() override;
+	virtual void CancelWork() override;
 
 private:
 	FString FileName;
-	TWeakObjectPtr<UObject> WorldContext;
 	TWeakObjectPtr<UEEOSPlayerStorageSubsystem> Subsystem;
-	bool bCompleted = false; // set by the handler once a pin fired — see Activate's false-return path
 
 	UFUNCTION() void HandleComplete(bool bSuccess, const FString& InFileName, USaveGame* SaveGame);
 };
@@ -278,9 +275,11 @@ private:
 /**
  * Write a USaveGame object to EOS cloud storage.
  * The object is serialized automatically. Use this for inventory, progress, settings, etc.
+ * OnFailure fires if the write fails or could not be started (an operation on this file is
+ * already in flight).
  */
 UCLASS(meta = (DisplayName = "EOS: Write Save Game"))
-class EXTENDEDEOSBLUEPRINTS_API UEOSAsyncWriteSaveGame : public UBlueprintAsyncActionBase
+class EXTENDEDEOSBLUEPRINTS_API UEOSAsyncWriteSaveGame : public UEEOSAsyncActionBase
 {
 	GENERATED_BODY()
 
@@ -295,17 +294,15 @@ public:
 
 	/** Fires when the save game is successfully written to cloud. */
 	UPROPERTY(BlueprintAssignable) FOnAsyncSaveGameWritten OnSuccess;
-	/** Fires if the write fails or could not be started (an operation on this file is already in flight). */
-	UPROPERTY(BlueprintAssignable) FOnAsyncFailed OnFailure;
 
-	virtual void Activate() override;
+protected:
+	virtual void ExecuteAction() override;
+	virtual void CancelWork() override;
 
 private:
 	FString FileName;
-	UPROPERTY() USaveGame* SaveGameObject;
-	TWeakObjectPtr<UObject> WorldContext;
+	UPROPERTY() USaveGame* SaveGameObject = nullptr;
 	TWeakObjectPtr<UEEOSPlayerStorageSubsystem> Subsystem;
-	bool bCompleted = false; // set by the handler once a pin fired — see Activate's false-return path
 
 	UFUNCTION() void HandleComplete(bool bSuccess, const FString& InFileName);
 };
@@ -320,9 +317,10 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnAsyncCheckoutComplete, const FStr
 /**
  * Query available store offers (catalog) from the EOS DevPortal.
  * Returns the list of purchasable items with prices.
+ * OnFailure fires if the query fails or could not be started (an offers query is already in flight).
  */
 UCLASS(meta = (DisplayName = "EOS: Query Offers"))
-class EXTENDEDEOSBLUEPRINTS_API UEOSAsyncQueryOffers : public UBlueprintAsyncActionBase
+class EXTENDEDEOSBLUEPRINTS_API UEOSAsyncQueryOffers : public UEEOSAsyncActionBase
 {
 	GENERATED_BODY()
 
@@ -333,15 +331,13 @@ public:
 
 	/** Fires when offers are successfully retrieved. */
 	UPROPERTY(BlueprintAssignable) FOnAsyncOffersQueried OnSuccess;
-	/** Fires if the query fails or could not be started (an offers query is already in flight). */
-	UPROPERTY(BlueprintAssignable) FOnAsyncFailed OnFailure;
 
-	virtual void Activate() override;
+protected:
+	virtual void ExecuteAction() override;
+	virtual void CancelWork() override;
 
 private:
-	TWeakObjectPtr<UObject> WorldContext;
 	TWeakObjectPtr<UEEOSEcomSubsystem> Subsystem;
-	bool bCompleted = false; // set by the handler once a pin fired — see Activate's false-return path
 
 	UFUNCTION() void HandleComplete(bool bSuccess, const TArray<FEEOSCatalogOffer>& Offers);
 };
@@ -349,9 +345,11 @@ private:
 /**
  * Initiate a checkout/purchase for a store offer.
  * Opens the Epic overlay for payment. Returns the transaction ID on success.
+ * OnFailure fires if the checkout fails, is cancelled, or could not be started (a checkout is
+ * already in flight).
  */
 UCLASS(meta = (DisplayName = "EOS: Checkout"))
-class EXTENDEDEOSBLUEPRINTS_API UEOSAsyncCheckout : public UBlueprintAsyncActionBase
+class EXTENDEDEOSBLUEPRINTS_API UEOSAsyncCheckout : public UEEOSAsyncActionBase
 {
 	GENERATED_BODY()
 
@@ -365,16 +363,14 @@ public:
 
 	/** Fires on successful purchase. Provides the TransactionId. */
 	UPROPERTY(BlueprintAssignable) FOnAsyncCheckoutComplete OnSuccess;
-	/** Fires if the checkout fails, is cancelled, or could not be started (a checkout is already in flight). */
-	UPROPERTY(BlueprintAssignable) FOnAsyncFailed OnFailure;
 
-	virtual void Activate() override;
+protected:
+	virtual void ExecuteAction() override;
+	virtual void CancelWork() override;
 
 private:
 	FString OfferId;
-	TWeakObjectPtr<UObject> WorldContext;
 	TWeakObjectPtr<UEEOSEcomSubsystem> Subsystem;
-	bool bCompleted = false; // set by the handler once a pin fired — see Activate's false-return path
 
 	UFUNCTION() void HandleComplete(bool bSuccess, const FString& TransactionId);
 };
@@ -392,9 +388,11 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnAsyncSessionJoined, const FString
  * Use this for server-browser style games. The session becomes searchable by other players.
  *
  * For pre-game lobbies with member management, use "EOS: Create Lobby" instead.
+ * OnFailure fires if session creation fails or could not be started (a create/destroy is
+ * already in flight).
  */
 UCLASS(meta = (DisplayName = "EOS: Create Session"))
-class EXTENDEDEOSBLUEPRINTS_API UEOSAsyncCreateSession : public UBlueprintAsyncActionBase
+class EXTENDEDEOSBLUEPRINTS_API UEOSAsyncCreateSession : public UEEOSAsyncActionBase
 {
 	GENERATED_BODY()
 
@@ -411,23 +409,23 @@ public:
 
 	/** Fires when the session is successfully created. */
 	UPROPERTY(BlueprintAssignable) FOnAsyncSessionCreated OnSuccess;
-	/** Fires if session creation fails or could not be started (a create/destroy is already in flight). */
-	UPROPERTY(BlueprintAssignable) FOnAsyncFailed OnFailure;
 
 	/** Additive typed terminal pin; includes rejection codes and optional native/SDK detail. */
 	UPROPERTY(BlueprintAssignable) FOnEEOSOperationOutcome OnDetailedCompleted;
-	virtual void Activate() override;
+
+protected:
+	virtual void ExecuteAction() override;
+	virtual void CancelWork() override;
+	virtual void BroadcastFailure(const FEFResult& Result) override;
 
 private:
-	int32 MaxPlayers;
-	bool bIsLAN;
-	bool bIsPresence;
+	int32 MaxPlayers = 4;
+	bool bIsLAN = false;
+	bool bIsPresence = true;
 	FString SessionName;
-	TWeakObjectPtr<UObject> WorldContext;
 	TWeakObjectPtr<UEEOSSessionSubsystem> Subsystem;
 	int64 IgnoredRequestId = 0;
 	int64 ExpectedRequestId = 0;
-	bool bCompleted = false; // set by the handler once a pin fired — see Activate's false-return path
 
 	UFUNCTION() void HandleComplete(bool bSuccess, const FString& InSessionName);
 };
@@ -435,9 +433,10 @@ private:
 /**
  * Search for available EOS game sessions.
  * Returns a list of joinable sessions — use the index to join one with "EOS: Join Session".
+ * OnFailure fires on admission rejection, preflight failure, or native search failure.
  */
 UCLASS(meta = (DisplayName = "EOS: Find Sessions"))
-class EXTENDEDEOSBLUEPRINTS_API UEOSAsyncFindSessions : public UBlueprintAsyncActionBase
+class EXTENDEDEOSBLUEPRINTS_API UEOSAsyncFindSessions : public UEEOSAsyncActionBase
 {
 	GENERATED_BODY()
 
@@ -451,20 +450,20 @@ public:
 
 	/** Fires after a successful native search, including an empty results array. */
 	UPROPERTY(BlueprintAssignable) FOnAsyncSessionsFound OnSuccess;
-	/** Fires on admission rejection, preflight failure, or native search failure. */
-	UPROPERTY(BlueprintAssignable) FOnAsyncFailed OnFailure;
 
 	/** Additive typed terminal pin; includes rejection codes and optional native/SDK detail. */
 	UPROPERTY(BlueprintAssignable) FOnEEOSOperationOutcome OnDetailedCompleted;
-	virtual void Activate() override;
+
+protected:
+	virtual void ExecuteAction() override;
+	virtual void CancelWork() override;
+	virtual void BroadcastFailure(const FEFResult& Result) override;
 
 private:
-	int32 MaxResults;
-	TWeakObjectPtr<UObject> WorldContext;
+	int32 MaxResults = 20;
 	TWeakObjectPtr<UEEOSSessionSubsystem> Subsystem;
 	int64 IgnoredRequestId = 0;
 	int64 ExpectedRequestId = 0;
-	bool bCompleted = false; // set by the handler once a pin fired — see Activate's false-return path
 
 	UFUNCTION() void HandleComplete(const TArray<FEEOSSessionSearchResult>& Results);
 };
@@ -473,9 +472,11 @@ private:
  * Join a game session from the search results.
  * Use the index from the "EOS: Find Sessions" results array.
  * After joining, use ClientTravel on the Session Subsystem to travel to the host.
+ * OnFailure fires if the join fails (session full, no longer exists, etc.) or could not be
+ * started (a join is already in flight).
  */
 UCLASS(meta = (DisplayName = "EOS: Join Session"))
-class EXTENDEDEOSBLUEPRINTS_API UEOSAsyncJoinSession : public UBlueprintAsyncActionBase
+class EXTENDEDEOSBLUEPRINTS_API UEOSAsyncJoinSession : public UEEOSAsyncActionBase
 {
 	GENERATED_BODY()
 
@@ -490,22 +491,21 @@ public:
 
 	/** Fires when successfully joined. */
 	UPROPERTY(BlueprintAssignable) FOnAsyncSessionJoined OnSuccess;
-	/** Fires if the join fails (session full, no longer exists, etc.) or could not be started
-	 *  (a join is already in flight). */
-	UPROPERTY(BlueprintAssignable) FOnAsyncFailed OnFailure;
 
 	/** Additive typed terminal pin; includes rejection codes and optional native/SDK detail. */
 	UPROPERTY(BlueprintAssignable) FOnEEOSOperationOutcome OnDetailedCompleted;
-	virtual void Activate() override;
+
+protected:
+	virtual void ExecuteAction() override;
+	virtual void CancelWork() override;
+	virtual void BroadcastFailure(const FEFResult& Result) override;
 
 private:
-	int32 SearchResultIndex;
+	int32 SearchResultIndex = 0;
 	FString SessionName;
-	TWeakObjectPtr<UObject> WorldContext;
 	TWeakObjectPtr<UEEOSSessionSubsystem> Subsystem;
 	int64 IgnoredRequestId = 0;
 	int64 ExpectedRequestId = 0;
-	bool bCompleted = false; // set by the handler once a pin fired — see Activate's false-return path
 
 	UFUNCTION() void HandleComplete(bool bSuccess, const FString& InSessionName);
 };
@@ -524,9 +524,11 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnAsyncLobbyJoined, const FString&,
  * Use lobbies for character select, ready-up screens, party systems.
  *
  * For dedicated/listen server gameplay, use "EOS: Create Session" instead.
+ * OnFailure fires if lobby creation fails or could not be started (a lobby create/destroy is
+ * already in flight).
  */
 UCLASS(meta = (DisplayName = "EOS: Create Lobby"))
-class EXTENDEDEOSBLUEPRINTS_API UEOSAsyncCreateLobby : public UBlueprintAsyncActionBase
+class EXTENDEDEOSBLUEPRINTS_API UEOSAsyncCreateLobby : public UEEOSAsyncActionBase
 {
 	GENERATED_BODY()
 
@@ -542,22 +544,22 @@ public:
 
 	/** Fires when the lobby is successfully created. Provides the LobbyId. */
 	UPROPERTY(BlueprintAssignable) FOnAsyncLobbyCreated OnSuccess;
-	/** Fires if lobby creation fails or could not be started (a lobby create/destroy is already in flight). */
-	UPROPERTY(BlueprintAssignable) FOnAsyncFailed OnFailure;
 
 	/** Additive typed terminal pin; includes rejection codes and optional native/SDK detail. */
 	UPROPERTY(BlueprintAssignable) FOnEEOSOperationOutcome OnDetailedCompleted;
-	virtual void Activate() override;
+
+protected:
+	virtual void ExecuteAction() override;
+	virtual void CancelWork() override;
+	virtual void BroadcastFailure(const FEFResult& Result) override;
 
 private:
-	int32 MaxMembers;
-	bool bIsPublic;
-	bool bUseVoiceChat;
-	TWeakObjectPtr<UObject> WorldContext;
+	int32 MaxMembers = 4;
+	bool bIsPublic = true;
+	bool bUseVoiceChat = false;
 	TWeakObjectPtr<UEEOSLobbySubsystem> Subsystem;
 	int64 IgnoredRequestId = 0;
 	int64 ExpectedRequestId = 0;
-	bool bCompleted = false; // set by the handler once a pin fired — see Activate's false-return path
 
 	UFUNCTION() void HandleComplete(bool bSuccess, const FString& LobbyId);
 };
@@ -565,9 +567,10 @@ private:
 /**
  * Search for available EOS lobbies.
  * Returns a list of joinable lobbies — use the index to join one with "EOS: Join Lobby".
+ * OnFailure fires on admission rejection, preflight failure, or native search failure.
  */
 UCLASS(meta = (DisplayName = "EOS: Find Lobbies"))
-class EXTENDEDEOSBLUEPRINTS_API UEOSAsyncFindLobbies : public UBlueprintAsyncActionBase
+class EXTENDEDEOSBLUEPRINTS_API UEOSAsyncFindLobbies : public UEEOSAsyncActionBase
 {
 	GENERATED_BODY()
 
@@ -581,20 +584,20 @@ public:
 
 	/** Fires after a successful native search, including an empty results array. */
 	UPROPERTY(BlueprintAssignable) FOnAsyncLobbiesFound OnSuccess;
-	/** Fires on admission rejection, preflight failure, or native search failure. */
-	UPROPERTY(BlueprintAssignable) FOnAsyncFailed OnFailure;
 
 	/** Additive typed terminal pin; includes rejection codes and optional native/SDK detail. */
 	UPROPERTY(BlueprintAssignable) FOnEEOSOperationOutcome OnDetailedCompleted;
-	virtual void Activate() override;
+
+protected:
+	virtual void ExecuteAction() override;
+	virtual void CancelWork() override;
+	virtual void BroadcastFailure(const FEFResult& Result) override;
 
 private:
-	int32 MaxResults;
-	TWeakObjectPtr<UObject> WorldContext;
+	int32 MaxResults = 20;
 	TWeakObjectPtr<UEEOSLobbySubsystem> Subsystem;
 	int64 IgnoredRequestId = 0;
 	int64 ExpectedRequestId = 0;
-	bool bCompleted = false; // set by the handler once a pin fired — see Activate's false-return path
 
 	UFUNCTION() void HandleComplete(const TArray<FEEOSSessionSearchResult>& Results);
 };
@@ -602,9 +605,11 @@ private:
 /**
  * Join an existing EOS lobby from search results.
  * After joining, use lobby attributes and member events for pre-game coordination.
+ * OnFailure fires if the join fails (lobby full, no longer exists, etc.) or could not be
+ * started (a join-lobby is already in flight).
  */
 UCLASS(meta = (DisplayName = "EOS: Join Lobby"))
-class EXTENDEDEOSBLUEPRINTS_API UEOSAsyncJoinLobby : public UBlueprintAsyncActionBase
+class EXTENDEDEOSBLUEPRINTS_API UEOSAsyncJoinLobby : public UEEOSAsyncActionBase
 {
 	GENERATED_BODY()
 
@@ -618,21 +623,20 @@ public:
 
 	/** Fires when successfully joined. Provides the LobbyId. */
 	UPROPERTY(BlueprintAssignable) FOnAsyncLobbyJoined OnSuccess;
-	/** Fires if the join fails (lobby full, no longer exists, etc.) or could not be started
-	 *  (a join-lobby is already in flight). */
-	UPROPERTY(BlueprintAssignable) FOnAsyncFailed OnFailure;
 
 	/** Additive typed terminal pin; includes rejection codes and optional native/SDK detail. */
 	UPROPERTY(BlueprintAssignable) FOnEEOSOperationOutcome OnDetailedCompleted;
-	virtual void Activate() override;
+
+protected:
+	virtual void ExecuteAction() override;
+	virtual void CancelWork() override;
+	virtual void BroadcastFailure(const FEFResult& Result) override;
 
 private:
-	int32 SearchResultIndex;
-	TWeakObjectPtr<UObject> WorldContext;
+	int32 SearchResultIndex = 0;
 	TWeakObjectPtr<UEEOSLobbySubsystem> Subsystem;
 	int64 IgnoredRequestId = 0;
 	int64 ExpectedRequestId = 0;
-	bool bCompleted = false; // set by the handler once a pin fired — see Activate's false-return path
 
 	UFUNCTION() void HandleComplete(bool bSuccess, const FString& LobbyId);
 };
@@ -650,9 +654,11 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnAsyncMatchFound, const FString&, 
  * "MATCHMAKINGPOOL" custom setting in CreateSessionAdvanced.
  * Fires OnSuccess when a match is found — use AcceptMatch/RejectMatch on the subsystem.
  * Exactly one pin fires: found / failed / cancelled / could-not-start all complete the node.
+ * OnFailure fires if matchmaking fails, times out, is cancelled ("Matchmaking cancelled"), or
+ * could not be started (a matchmaking cycle is already in flight).
  */
 UCLASS(meta = (DisplayName = "EOS: Start Matchmaking"))
-class EXTENDEDEOSBLUEPRINTS_API UEOSAsyncStartMatchmaking : public UBlueprintAsyncActionBase
+class EXTENDEDEOSBLUEPRINTS_API UEOSAsyncStartMatchmaking : public UEEOSAsyncActionBase
 {
 	GENERATED_BODY()
 
@@ -669,23 +675,20 @@ public:
 	 *  accepted and joined), OnSuccess fires with an EMPTY SessionId — the completion delegate
 	 *  carries no id. */
 	UPROPERTY(BlueprintAssignable) FOnAsyncMatchFound OnSuccess;
-	/** Fires if matchmaking fails, times out, is cancelled ("Matchmaking cancelled"), or could
-	 *  not be started (a matchmaking cycle is already in flight). */
-	UPROPERTY(BlueprintAssignable) FOnAsyncFailed OnFailure;
 
 	UPROPERTY(BlueprintAssignable) FOnEEOSOperationOutcome OnDetailedCompleted;
-	virtual void Activate() override;
+
+protected:
+	virtual void ExecuteAction() override;
+	/** Unbind all three subsystem delegates this node binds. */
+	virtual void CancelWork() override;
+	virtual void BroadcastFailure(const FEFResult& Result) override;
 
 private:
 	FString QueueName;
-	TWeakObjectPtr<UObject> WorldContext;
 	TWeakObjectPtr<UEEOSMatchmakingSubsystem> Subsystem;
 	int64 IgnoredCycleId = 0;
 	int64 ExpectedCycleId = 0;
-	bool bCompleted = false; // set by the handlers once a pin fired — see Activate's false-return path
-
-	/** Unbind all three subsystem delegates this node binds. */
-	void UnbindAll();
 
 	UFUNCTION() void HandleMatchFound(const FString& SessionId);
 	UFUNCTION() void HandleComplete(bool bSuccess, const FString& ErrorMessage);
@@ -702,9 +705,11 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnAsyncScoreUploaded, const FString
 /**
  * Query a leaderboard from EOS.
  * Returns ranked entries with player names and scores.
+ * OnFailure fires if the query fails or could not be started (another leaderboard query is
+ * already in flight).
  */
 UCLASS(meta = (DisplayName = "EOS: Query Leaderboard"))
-class EXTENDEDEOSBLUEPRINTS_API UEOSAsyncQueryLeaderboard : public UBlueprintAsyncActionBase
+class EXTENDEDEOSBLUEPRINTS_API UEOSAsyncQueryLeaderboard : public UEEOSAsyncActionBase
 {
 	GENERATED_BODY()
 
@@ -718,16 +723,14 @@ public:
 
 	/** Fires when the leaderboard is retrieved. Provides the ranked entries. */
 	UPROPERTY(BlueprintAssignable) FOnAsyncLeaderboardQueried OnSuccess;
-	/** Fires if the query fails or could not be started (another leaderboard query is already in flight). */
-	UPROPERTY(BlueprintAssignable) FOnAsyncFailed OnFailure;
 
-	virtual void Activate() override;
+protected:
+	virtual void ExecuteAction() override;
+	virtual void CancelWork() override;
 
 private:
 	FString LeaderboardId;
-	TWeakObjectPtr<UObject> WorldContext;
 	TWeakObjectPtr<UEEOSLeaderboardSubsystem> Subsystem;
-	bool bCompleted = false; // set by the handler once a pin fired — see Activate's false-return path
 
 	UFUNCTION() void HandleComplete(bool bSuccess, const TArray<FEEOSLeaderboardEntry>& Entries);
 };
@@ -735,9 +738,10 @@ private:
 /**
  * Upload a score to an EOS leaderboard.
  * The leaderboard must exist in the EOS DevPortal.
+ * OnFailure fires if the upload fails or could not be started.
  */
 UCLASS(meta = (DisplayName = "EOS: Upload Score"))
-class EXTENDEDEOSBLUEPRINTS_API UEOSAsyncUploadScore : public UBlueprintAsyncActionBase
+class EXTENDEDEOSBLUEPRINTS_API UEOSAsyncUploadScore : public UEEOSAsyncActionBase
 {
 	GENERATED_BODY()
 
@@ -752,17 +756,15 @@ public:
 
 	/** Fires on successful upload. */
 	UPROPERTY(BlueprintAssignable) FOnAsyncScoreUploaded OnSuccess;
-	/** Fires if the upload fails or could not be started. */
-	UPROPERTY(BlueprintAssignable) FOnAsyncFailed OnFailure;
 
-	virtual void Activate() override;
+protected:
+	virtual void ExecuteAction() override;
+	virtual void CancelWork() override;
 
 private:
 	FString LeaderboardId;
-	int32 Score;
-	TWeakObjectPtr<UObject> WorldContext;
+	int32 Score = 0;
 	TWeakObjectPtr<UEEOSLeaderboardSubsystem> Subsystem;
-	bool bCompleted = false; // set by the handler once a pin fired — see Activate's false-return path
 
 	UFUNCTION() void HandleComplete(bool bSuccess, const FString& InLeaderboardId);
 };
@@ -776,9 +778,10 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnAsyncFriendsListReady, const TArr
 /**
  * Read (refresh) the friends list from EOS.
  * Returns the full friends list with online status and display names.
+ * OnFailure fires if the read could not be started.
  */
 UCLASS(meta = (DisplayName = "EOS: Read Friends List"))
-class EXTENDEDEOSBLUEPRINTS_API UEOSAsyncReadFriendsList : public UBlueprintAsyncActionBase
+class EXTENDEDEOSBLUEPRINTS_API UEOSAsyncReadFriendsList : public UEEOSAsyncActionBase
 {
 	GENERATED_BODY()
 
@@ -790,15 +793,13 @@ public:
 	/** Fires when the friends list is ready (an empty list may indicate a failed read — the
 	 *  subsystem broadcasts an empty list on failure). */
 	UPROPERTY(BlueprintAssignable) FOnAsyncFriendsListReady OnSuccess;
-	/** Fires if the read could not be started. */
-	UPROPERTY(BlueprintAssignable) FOnAsyncFailed OnFailure;
 
-	virtual void Activate() override;
+protected:
+	virtual void ExecuteAction() override;
+	virtual void CancelWork() override;
 
 private:
-	TWeakObjectPtr<UObject> WorldContext;
 	TWeakObjectPtr<UEEOSFriendsSubsystem> Subsystem;
-	bool bCompleted = false; // set by the handler once a pin fired — see Activate's false-return path
 
 	UFUNCTION() void HandleComplete(const TArray<FEEOSFriendInfo>& Friends);
 };
@@ -813,9 +814,10 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnAsyncChatMessageSent, const FStri
 /**
  * Join a text chat channel.
  * After joining, messages are received via the ChatSubsystem's OnChatMessageReceived delegate.
+ * OnFailure fires if the join fails or could not be started.
  */
 UCLASS(meta = (DisplayName = "EOS: Join Chat Channel"))
-class EXTENDEDEOSBLUEPRINTS_API UEOSAsyncJoinChatChannel : public UBlueprintAsyncActionBase
+class EXTENDEDEOSBLUEPRINTS_API UEOSAsyncJoinChatChannel : public UEEOSAsyncActionBase
 {
 	GENERATED_BODY()
 
@@ -829,16 +831,14 @@ public:
 
 	/** Fires when the channel is joined. */
 	UPROPERTY(BlueprintAssignable) FOnAsyncChatChannelJoined OnSuccess;
-	/** Fires if the join fails or could not be started. */
-	UPROPERTY(BlueprintAssignable) FOnAsyncFailed OnFailure;
 
-	virtual void Activate() override;
+protected:
+	virtual void ExecuteAction() override;
+	virtual void CancelWork() override;
 
 private:
 	FString ChannelName;
-	TWeakObjectPtr<UObject> WorldContext;
 	TWeakObjectPtr<UEEOSChatSubsystem> Subsystem;
-	bool bCompleted = false; // set by the handler once a pin fired — see Activate's false-return path
 
 	UFUNCTION() void HandleComplete(bool bSuccess, const FString& InChannelName);
 };
@@ -846,9 +846,10 @@ private:
 /**
  * Send a text message to a chat channel.
  * The channel must be joined first with "EOS: Join Chat Channel".
+ * OnFailure fires if the send fails or could not be started.
  */
 UCLASS(meta = (DisplayName = "EOS: Send Chat Message"))
-class EXTENDEDEOSBLUEPRINTS_API UEOSAsyncSendChatMessage : public UBlueprintAsyncActionBase
+class EXTENDEDEOSBLUEPRINTS_API UEOSAsyncSendChatMessage : public UEEOSAsyncActionBase
 {
 	GENERATED_BODY()
 
@@ -863,17 +864,15 @@ public:
 
 	/** Fires when the message is sent. */
 	UPROPERTY(BlueprintAssignable) FOnAsyncChatMessageSent OnSuccess;
-	/** Fires if the send fails or could not be started. */
-	UPROPERTY(BlueprintAssignable) FOnAsyncFailed OnFailure;
 
-	virtual void Activate() override;
+protected:
+	virtual void ExecuteAction() override;
+	virtual void CancelWork() override;
 
 private:
 	FString ChannelName;
 	FString Message;
-	TWeakObjectPtr<UObject> WorldContext;
 	TWeakObjectPtr<UEEOSChatSubsystem> Subsystem;
-	bool bCompleted = false; // set by the handler once a pin fired — see Activate's false-return path
 
 	UFUNCTION() void HandleComplete(bool bSuccess, const FString& InChannelName);
 };
@@ -890,9 +889,11 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnAsyncPlayerReported);
  * Returns bans, mutes, and other restrictions. Check on login to enforce sanctions.
  * Correlates by target: only the completion carrying THIS node's target PUID completes the
  * node — concurrent queries for other targets are ignored (no cross-target wrong data).
+ * OnFailure fires if the query fails (including pre-flight failures such as EOS unavailable or
+ * an unparseable target id).
  */
 UCLASS(meta = (DisplayName = "EOS: Query Sanctions"))
-class EXTENDEDEOSBLUEPRINTS_API UEOSAsyncQuerySanctions : public UBlueprintAsyncActionBase
+class EXTENDEDEOSBLUEPRINTS_API UEOSAsyncQuerySanctions : public UEEOSAsyncActionBase
 {
 	GENERATED_BODY()
 
@@ -907,20 +908,17 @@ public:
 
 	/** Fires when this node's target's sanctions are retrieved. */
 	UPROPERTY(BlueprintAssignable) FOnAsyncSanctionsQueried OnSuccess;
-	/** Fires if the query fails (including pre-flight failures such as EOS unavailable or an
-	 *  unparseable target id). */
-	UPROPERTY(BlueprintAssignable) FOnAsyncFailed OnFailure;
 
-	virtual void Activate() override;
+protected:
+	virtual void ExecuteAction() override;
+	virtual void CancelWork() override;
 
 private:
 	FString TargetUserId;
-	/** Bare target PUID extracted at Activate (empty when TargetUserId had no parseable PUID).
+	/** Bare target PUID extracted at ExecuteAction (empty when TargetUserId had no parseable PUID).
 	 *  The subsystem broadcasts the bare PUID on every completion — compared for correlation. */
 	FString TargetPUID;
-	TWeakObjectPtr<UObject> WorldContext;
 	TWeakObjectPtr<UEEOSSanctionsSubsystem> Subsystem;
-	bool bCompleted = false; // set by the handler once a pin fired
 
 	UFUNCTION() void HandleComplete(bool bSuccess, const FString& CompletedTargetUserId, const TArray<FEEOSSanction>& Sanctions);
 };
@@ -930,9 +928,11 @@ private:
  * The report is sent to EOS for review. Use categories from EOS DevPortal.
  * Correlates by target: only the completion carrying THIS node's target PUID completes the
  * node — concurrent reports against other targets are ignored.
+ * OnFailure fires if the report fails (including pre-flight failures such as EOS unavailable,
+ * no logged-in reporter, or an unparseable target id).
  */
 UCLASS(meta = (DisplayName = "EOS: Report Player"))
-class EXTENDEDEOSBLUEPRINTS_API UEOSAsyncReportPlayer : public UBlueprintAsyncActionBase
+class EXTENDEDEOSBLUEPRINTS_API UEOSAsyncReportPlayer : public UEEOSAsyncActionBase
 {
 	GENERATED_BODY()
 
@@ -949,22 +949,19 @@ public:
 
 	/** Fires when the report is successfully sent. */
 	UPROPERTY(BlueprintAssignable) FOnAsyncPlayerReported OnSuccess;
-	/** Fires if the report fails (including pre-flight failures such as EOS unavailable, no
-	 *  logged-in reporter, or an unparseable target id). */
-	UPROPERTY(BlueprintAssignable) FOnAsyncFailed OnFailure;
 
-	virtual void Activate() override;
+protected:
+	virtual void ExecuteAction() override;
+	virtual void CancelWork() override;
 
 private:
 	FString TargetUserId;
-	/** Bare target PUID extracted at Activate (empty when TargetUserId had no parseable PUID).
+	/** Bare target PUID extracted at ExecuteAction (empty when TargetUserId had no parseable PUID).
 	 *  The subsystem broadcasts the bare PUID on every completion — compared for correlation. */
 	FString TargetPUID;
 	FString Reason;
 	FString Message;
-	TWeakObjectPtr<UObject> WorldContext;
 	TWeakObjectPtr<UEEOSSanctionsSubsystem> Subsystem;
-	bool bCompleted = false; // set by the handler once a pin fired
 
 	UFUNCTION() void HandleComplete(bool bSuccess, const FString& CompletedTargetUserId);
 };

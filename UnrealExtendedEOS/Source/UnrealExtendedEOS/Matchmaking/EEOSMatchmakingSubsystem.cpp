@@ -7,6 +7,7 @@
 #include "Interfaces/OnlineIdentityInterface.h"
 #include "Sessions/EEOSSearchCoordinator.h"
 #include "UnrealExtendedEOS.h"
+#include "Async/EFCallContext.h"
 #include "OnlineSubsystemUtils.h"
 #include "Interfaces/OnlineSessionInterface.h"
 #include "OnlineSessionSettings.h"
@@ -143,6 +144,9 @@ bool UEEOSMatchmakingSubsystem::StartMatchmakingWithAttributes(const FString& Qu
 	// Begin a fresh matchmaking cycle: new start timestamp, empty reject-exclusion set,
 	// full attempt budget.
 	bIsMatchmaking = true; CycleContext = CaptureEOSContext();
+	// Every event of this cycle (match found, completion, cancellation) reports under the call
+	// context of the caller that started it, including those raised from the retry timer.
+	CycleCallContext = EFCallContext::GetActive();
 	CycleRequestId = BeginOperation(TEXT("Matchmaking"));
 	const int64 StartedCycle = CycleRequestId; OfferRequestId = 0;
 	CurrentQueueName = QueueName;
@@ -169,6 +173,7 @@ void UEEOSMatchmakingSubsystem::IssueMatchmakingSearch()
 	{
 		return;
 	}
+	EFCallContext::FScope CallScope(CycleCallContext);
 
 	IOnlineSubsystem* EOSSub = GetEOSOnlineSubsystem();
 	IOnlineSessionPtr SessionInterface = EOSSub ? EOSSub->GetSessionInterface() : nullptr;
@@ -292,8 +297,10 @@ void UEEOSMatchmakingSubsystem::RetryOrEndCycle(const FString& AttemptOutcome)
 
 	UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSMatchmakingSubsystem: Matchmaking failed — no match found after %d attempts (last attempt: %s)"),
 		MaxSearchAttempts, *FEEOSNativeOperationLease::SafeField(AttemptOutcome));
+	const int64 CallContext = CycleCallContext;
 	const auto Outcome = CompleteCycle(false, EEOSOperationCode::NativeFailure, TEXT("No match found within the configured attempt budget."));
 	FEEOSOutcomeDispatchScope Dispatch(this, Outcome);
+	EFCallContext::FScope CallScope(CallContext);
 	OnMatchmakingComplete.Broadcast(false, Outcome.Message); OnOperationCompleted.Broadcast(Outcome);
 }
 
@@ -315,6 +322,7 @@ void UEEOSMatchmakingSubsystem::HandleFindSessionsComplete(bool bWasSuccessful)
 		UE_LOG(LogExtendedEOS, Log, TEXT("EEOSMatchmakingSubsystem: Search completed after the cycle ended; ignoring"));
 		return;
 	}
+	EFCallContext::FScope CallScope(CycleCallContext);
 
 	// Read results from OUR search object; the trigger's payload carries success. Empty
 	// results with bWasSuccessful == true is a successful (but matchless) search.
@@ -417,8 +425,10 @@ bool UEEOSMatchmakingSubsystem::CancelMatchmaking()
 	CachedSearchSettings.Reset();
 
 	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSMatchmakingSubsystem::CancelMatchmaking — Cancelled after %.1f seconds"), ElapsedTime);
+	const int64 CallContext = CycleCallContext;
 	const auto Outcome = CompleteCycle(false, EEOSOperationCode::Canceled, TEXT("Matchmaking canceled; native search retirement remains independent."));
 	FEEOSOutcomeDispatchScope Dispatch(this, Outcome);
+	EFCallContext::FScope CallScope(CallContext);
 	if (!bShuttingDown) { OnMatchmakingCancelled.Broadcast(); OnOperationCompleted.Broadcast(Outcome); }
 	return true;
 }
@@ -554,8 +564,10 @@ void UEEOSMatchmakingSubsystem::HandleAcceptMatchJoinComplete(FName InSessionNam
 	SelectedResultIndex = INDEX_NONE;
 	CachedSearchSettings.Reset();
 
+	const int64 CallContext = CycleCallContext;
 	const auto CycleOutcome = CompleteCycle(bJoinSuccess, bJoinSuccess ? EEOSOperationCode::Succeeded : Outcome.Code, Outcome.Message);
 	FEEOSOutcomeDispatchScope CycleDispatch(this, CycleOutcome);
+	EFCallContext::FScope CallScope(CallContext);
 	if (bShuttingDown) return;
 	if (bJoinSuccess)
 	{
@@ -644,5 +656,5 @@ float UEEOSMatchmakingSubsystem::GetEstimatedWaitTime() const
 FEEOSOperationOutcome UEEOSMatchmakingSubsystem::CompleteCycle(bool bSuccess, EEOSOperationCode Code, const FString& Message)
 {
 	const auto Outcome = CompleteOperation(TEXT("Matchmaking"), bSuccess, Code, Message);
-	CycleRequestId = 0; OfferRequestId = 0; bIsMatchmaking = false; return Outcome;
+	CycleRequestId = 0; OfferRequestId = 0; CycleCallContext = 0; bIsMatchmaking = false; return Outcome;
 }

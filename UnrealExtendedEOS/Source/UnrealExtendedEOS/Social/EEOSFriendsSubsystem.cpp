@@ -6,6 +6,7 @@
 #include "Interfaces/OnlineFriendsInterface.h"
 #include "Interfaces/OnlinePresenceInterface.h"
 #include "UnrealExtendedEOS.h"
+#include "Async/EFCallContext.h"
 
 void UEEOSFriendsSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
@@ -42,11 +43,14 @@ bool UEEOSFriendsSubsystem::ReadFriendsList()
 
 	// The engine executes the per-call delegate on its synchronous failure path too
 	// (UserManagerEOS.cpp:2742-2749), so HandleReadFriendsListComplete fires exactly once
-	// whether this returns true or false.
+	// whether this returns true or false. It reports under the caller's call context (see
+	// EFCallContext).
+	const int64 CallContext = EFCallContext::GetActive();
 	const bool bStarted = FriendsInterface->ReadFriendsList(0, TEXT("default"),
-		FOnReadFriendsListComplete::CreateWeakLambda(this, [this, FriendsInterface, Ownership = CaptureEOSContext()](int32 LocalUserNum, bool bWasSuccessful, const FString& ListName, const FString& ErrorStr)
+		FOnReadFriendsListComplete::CreateWeakLambda(this, [this, FriendsInterface, Ownership = CaptureEOSContext(), CallContext](int32 LocalUserNum, bool bWasSuccessful, const FString& ListName, const FString& ErrorStr)
 		{
 			if (LocalUserNum != 0) return;
+			EFCallContext::FScope CallScope(CallContext);
 			if (!IsEOSContextCurrent(Ownership)) { OnFriendsListReady.Broadcast(TArray<FEEOSFriendInfo>()); return; }
 			HandleReadFriendsListComplete(LocalUserNum, bWasSuccessful, ListName, ErrorStr, FriendsInterface);
 		}));

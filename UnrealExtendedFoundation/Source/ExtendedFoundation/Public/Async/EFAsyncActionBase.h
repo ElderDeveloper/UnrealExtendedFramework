@@ -65,6 +65,9 @@ public:
 
 	virtual bool IsActive() const override;
 
+	/** A node destroyed while still running (game-instance teardown, GC) finishes silently. */
+	virtual void BeginDestroy() override;
+
 	bool IsFinished() const { return bEFFinished; }
 
 	UObject* GetWorldContextObject() const { return EFContextObject.Get(); }
@@ -126,12 +129,13 @@ protected:
 	template <typename TSubsystem>
 	TSubsystem* RequireGameInstanceSubsystem()
 	{
-		TSubsystem* Subsystem = GetGameInstanceSubsystem<TSubsystem>();
-		if (!Subsystem)
+		// Named so it cannot shadow a node's own "Subsystem" member.
+		TSubsystem* FoundEFSubsystem = GetGameInstanceSubsystem<TSubsystem>();
+		if (!FoundEFSubsystem)
 		{
 			FailAction(FEFResult::NotAvailable(GetResultSource(), TSubsystem::StaticClass()->GetName()));
 		}
-		return Subsystem;
+		return FoundEFSubsystem;
 	}
 
 	/**

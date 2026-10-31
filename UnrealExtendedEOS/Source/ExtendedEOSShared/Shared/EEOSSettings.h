@@ -3,17 +3,18 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Engine/DeveloperSettings.h"
+#include "Settings/EFDeveloperSettings.h"
 #include "EEOSTypes.h"
 #include "EEOSSettings.generated.h"
 
 
 /**
  * Developer settings for Epic Online Services configuration.
- * These settings appear in Project Settings → Plugins → Extended EOS.
+ * These settings appear in Project Settings → Extended Framework → Extended EOS.
+ * Properties marked EFSecret warn in the editor when saved to DefaultGame.ini (see UEFDeveloperSettings).
  */
 UCLASS(config=Game, defaultconfig, meta=(DisplayName="Extended EOS"))
-class EXTENDEDEOSSHARED_API UEEOSSettings : public UDeveloperSettings
+class EXTENDEDEOSSHARED_API UEEOSSettings : public UEFDeveloperSettings
 {
 	GENERATED_BODY()
 
@@ -51,12 +52,12 @@ public:
 
 	/** The Client Secret for the application from the EOS Developer Portal */
 	UPROPERTY(config, EditAnywhere, BlueprintReadOnly, Category = "Credentials",
-		meta = (DisplayName = "Client Secret"))
+		meta = (DisplayName = "Client Secret", EFSecret))
 	FString ClientSecret;
 
 	/** Encryption key used for player data storage (64 hex characters) */
 	UPROPERTY(config, EditAnywhere, BlueprintReadOnly, Category = "Credentials",
-		meta = (DisplayName = "Encryption Key"))
+		meta = (DisplayName = "Encryption Key", EFSecret))
 	FString EncryptionKey;
 
 
@@ -268,7 +269,4 @@ public:
 	 * from PostEditChangeProperty so an edit in Project Settings takes effect immediately.
 	 */
 	void ApplyLogVerbosity() const;
-
-	/** Category path for Project Settings UI */
-	virtual FName GetCategoryName() const override { return FName(TEXT("Extended Framework")); }
 };
