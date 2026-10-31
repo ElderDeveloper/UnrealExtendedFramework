@@ -400,6 +400,10 @@ struct UNREALEXTENDEDGAMEPLAY_API FEGTurnInPlaceNodeState
 	/** The turn animation has played to its end in this entry (escape from a turn whose weight never registered). */
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadWrite, Category = "Turn In Place")
 	bool bReachedAnimEnd = false;
+
+	/** Recovery has played the rest of the clip: Recovery -> Idle. */
+	UPROPERTY(VisibleInstanceOnly, BlueprintReadWrite, Category = "Turn In Place")
+	bool bRecoveryFinished = false;
 };
 
 /** Everything the anim instance keeps for turn in place. Pass it by reference to UEGTurnInPlaceAnimLibrary. */

@@ -183,9 +183,10 @@ The resolved state is the first match in this list, top to bottom (`FEGTurnInPla
 5. **Locked**: `LockTurnInPlace` curve ≥ 0.95.
 6. **Paused**: an `ExtendedGameplay.TurnInPlace.Pause` window is open.
 7. **Locked**: an `ExtendedGameplay.TurnInPlace.Lock` window is open.
-8. A networked root-motion montage:
-   * a per-montage override, if one is set;
-   * nothing, if the montage is ignored (`ShouldIgnoreMontage`, ignored montages or slots, additive);
+8. A networked root-motion montage, checked in this order:
+   * nothing, if `ShouldIgnoreMontage` returns true (the project's own rule wins);
+   * the montage's entry in `Montages.Overrides`, if it has one;
+   * nothing, if it is in `IgnoredMontages`, uses an `IgnoredSlots` slot, or is additive;
    * otherwise **Paused**.
 9. **Paused**: the movement component has root motion sources (Root Motion Move, root-motion based abilities).
 10. **Locked**: `UEGMovementModifierComponent`'s combined `RotationRateScale` is 0.
@@ -221,7 +222,9 @@ What each state means:
 ### 7.4 Dedicated server
 
 * **Animation** (default): the mesh needs `AlwaysTickPoseAndRefreshBones`. Otherwise the component warns once at BeginPlay with the fix.
-* **Pseudo:** the component runs Idle / Turn / Recovery on the game thread (`AdvancePseudoState`, the same transitions as the graph, Abort included) and evaluates the curves from the selected sequence at the tracked time. The anim graph stays idle on that server.
+* **Pseudo:** the component runs Idle / Turn / Recovery on the game thread (`AdvancePseudoState`, the same transitions as the graph, Abort included, with Recovery continuing the turn clip as in the graph) and evaluates the curves from the selected sequence at the tracked time. The anim graph stays idle on that server.
+
+  Limitation: in Pseudo mode the server only sees `PauseTurnInPlace` / `LockTurnInPlace` curves on the turn sequences themselves, not on montages. To pause or lock from a montage that must also hold on a Pseudo server, use an `ExtendedGameplay.TurnInPlace.Pause` / `.Lock` anim event window, or a request, instead of a curve.
 
 ---
 
@@ -273,7 +276,12 @@ FNetworkPredictionData_Client* UMyMovement::GetPredictionData_Client() const
 With a saved move of its own, the project inherits through the mixin. With its own prediction data base, it passes that as the second argument:
 
 ```cpp
-class FMySavedMove : public TEGTurnInPlaceSavedMove<FSavedMove_Character> { /* call Super:: as usual */ };
+class FMySavedMove : public TEGTurnInPlaceSavedMove<FSavedMove_Character>
+{
+	// Super must be the mixin, not FSavedMove_Character: skipping it in CombineWith silently drops the restore.
+	using Super = TEGTurnInPlaceSavedMove<FSavedMove_Character>;
+	// ... call Super::Clear / SetInitialPosition / CombineWith in your overrides
+};
 using FMyPredictionData = TEGTurnInPlacePredictionData<FMySavedMove /*, FMyPredictionDataBase */>;
 ```
 
@@ -331,11 +339,13 @@ The last input direction is tracked inside `HandlePhysicsRotation` and the compo
 
 A `TurnInPlace` state machine, used as the idle pose. `TurnInPlace` below is the anim instance's `FEGTurnInPlaceAnimData`; the functions are in `UEGTurnInPlaceAnimLibrary`.
 
+Set the state machine's **Max Transitions Per Frame to 1**. The transitions read outputs computed before the graph update, so allowing several per frame would let a single update chain through Turn on stale outputs.
+
 | State | Node | Functions |
 |:--|:--|:--|
 | **Idle** | Idle pose | State On Become Relevant: `SetupIdle(TurnInPlace)` |
 | **Turn** | Sequence Evaluator | State On Become Relevant: `SetupTurnPose(TurnInPlace)`. Evaluator On Become Relevant: Set Sequence to `SetupTurnAnim(TurnInPlace)`, Set Explicit Time 0. Evaluator On Update: `UpdateTurnAnim(TurnInPlace, DeltaTime, OutSequence)` → Set Sequence With Inertial Blending (OutSequence, 0.2), **Set Explicit Time to the returned time** |
-| **Recovery** | Sequence Player | State On Become Relevant: `SetupRecoveryPose(TurnInPlace)`. Player On Update: Set Sequence With Inertial Blending (`GetTurnAnimation(TurnInPlace, true)`, 0.2) |
+| **Recovery** | Sequence Evaluator | State On Become Relevant: `SetupRecoveryPose(TurnInPlace)`. Evaluator On Update: `UpdateRecoveryAnim(TurnInPlace, DeltaTime, OutSequence)` → Set Sequence With Inertial Blending (OutSequence, 0.2), **Set Explicit Time to the returned time**. Recovery continues the turn clip from where the turn left it; restarting the clip would replay its turning frames and turn the character twice |
 | **Abort** | State alias over Turn and Recovery | |
 
 | Transition | Rule | Blend |
@@ -343,7 +353,7 @@ A `TurnInPlace` state machine, used as the idle pose. `TurnInPlace` below is the
 | Idle → Turn | `TurnInPlace.Output.bWantsToTurn` | Inertialization 0.2 |
 | Turn → Recovery | `Output.bWantsRecovery` | Inertialization 0.2 |
 | Recovery → Turn | `Output.bWantsToTurn` | Inertialization 0.2 |
-| Recovery → Idle | automatic rule on remaining time | Inertialization 0.2 |
+| Recovery → Idle | `TurnInPlace.Node.bRecoveryFinished` | Inertialization 0.2 |
 | Abort → Idle | `Output.bAbortTurn`, priority −1 | Inertialization 0.15 |
 
 Locomotion helpers:
@@ -360,8 +370,9 @@ Locomotion helpers:
 | Pitfall | Prevention |
 |:--|:--|
 | Combined moves lose part of the turn on the owning client | Saved-move mixin restores the older move's start state (`CombinedMoves` test) |
-| Stale curves fire Recovery on the turn's first frame and it oscillates | Curves read on the worker before the state machine; "is turning" refreshed from them; recovery needs the "turned this entry" latch, which `SetupTurnPose` resets |
-| A turn whose weight never registers parks at its last frame | Recovery also fires once the sequence played to its end (`bReachedAnimEnd`), which cannot be true on the entry frame |
+| Stale curves fire Recovery on the turn's first frame and it oscillates | Curves read on the worker before the state machine; "is turning" refreshed from them; recovery needs the "turned this entry" latch; the latch and the end flag are cleared on every state entry (`SetupIdle`, `SetupTurnPose`, `SetupTurnAnim`, `SetupRecoveryPose`); one transition per frame (§9) |
+| A turn whose weight never registers parks at its last frame | Recovery also fires once the sequence played to its end (`bReachedAnimEnd`), cleared on entry like the latch |
+| Recovery replays the turn and turns twice | Recovery continues the clip from the turn's time (`UpdateRecoveryAnim`), as the pseudo states do |
 | First weighted frame jumps the offset | That frame only records the curve |
 | Curve sign flips mid-turn and snaps | Delta skipped on a sign flip (0 counts as same side) |
 | Offset passes 180 and wraps | A delta past 180 is held |
@@ -371,16 +382,18 @@ Locomotion helpers:
 | Proxy loses its replicated offset to a local lock | Proxies never reset the offset |
 | Proxies stuck mid-turn on slow server updates | Local curve simulation |
 | Server without bone refresh diverges | BeginPlay warning, or Pseudo mode |
-| Pseudo vs graph differ | Same transitions incl. Abort, tested |
-| Jumping changes the last input direction | Only ground velocity and real input count; air velocity loses Z |
-| Root motion leaves the last direction stale | Facing during root motion, plus a 0.25 s grace period after it |
+| Pseudo vs graph differ | Same transitions incl. Abort and the recovery continuation, tested; montage pause/lock curves are the one exception (§7.4) |
+| Jumping changes the last input direction | Only ground velocity and real input count; in the air the velocity along gravity is dropped |
+| Root motion leaves the last direction stale | The facing is recorded during root motion (the component's tick covers anim root motion, which skips `PhysicsRotation`), plus a 0.25 s grace period after it |
 | Gamepad stick bounce flips the character | Input only counts above 0.5 analog |
 | Mouse at the max angle jitters the play rate | Max-angle rate latched for the rest of the turn |
 | Direction-change rate never triggers | Compared with the playing turn's side, not with the offset's own sign |
 | Root-motion montage handling inverted or too broad | One tested function; ignored slots, montages and additive; per-montage overrides |
 | Strafe Direct snaps to the camera on the first step | Interp-out alpha |
 | A stop resumes an old half-turn | State cleared while moving |
-| Yaw-only rotation sweeps every frame | No sweep unless pitch or roll changes |
+| Yaw-only rotation sweeps every frame | Standing rotation does not sweep unless pitch or roll changes (moving Strafe Direct keeps the engine's `SetActorRotation`) |
+| Game-thread reads race the anim worker | Game-thread code reads a copy of the curves taken in the component's tick, which runs after the mesh's by prerequisite |
+| A stance override or provider that queries the component recurses | The stance is marked resolved (Default) before it is resolved |
 | Missing setup fails silently | Self-check (§11) |
 | Replication cost | 16 bits, simulated proxies only, push model, on change |
 | Blueprint events during load assert | Caching happens in OnRegister / BeginPlay / OnAnimInitialized |
@@ -391,7 +404,7 @@ Locomotion helpers:
 
 **Self-check** (development builds). Each problem is warned about once per owner class in `LogEGAnimation`:
 
-* the rotation setup needs `FaceRotation` or `PhysicsRotation`, but the hook never ran (counted only while the engine would call it);
+* the rotation setup needs `FaceRotation` or `PhysicsRotation`, but the hook never ran (counted only while the engine would call it: `FaceRotation` for player-controlled characters, which call it every frame);
 * the owning client predicts moves without `TEGTurnInPlaceSavedMove`;
 * the anim instance lacks `IEGTurnInPlaceAnimSource`;
 * no `TurnSet`, or no character mesh;

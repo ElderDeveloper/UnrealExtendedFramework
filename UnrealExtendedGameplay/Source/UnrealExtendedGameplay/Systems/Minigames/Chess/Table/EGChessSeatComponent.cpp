@@ -53,6 +53,7 @@ void UEGChessSeatComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>
 void UEGChessSeatComponent::OnUnregister()
 {
 	UnbindPawnAnimation();
+	ReleaseTurnInPlacePause();
 	Super::OnUnregister();
 }
 
@@ -289,6 +290,7 @@ void UEGChessSeatComponent::ClearOccupant()
 	{
 		ReleaseSeatedPawn(Pawn);
 	}
+	ReleaseTurnInPlacePause();
 	PreparedPawn.Reset();
 	Occupant = FEGChessSeatOccupant();
 	AnimState.Action = EEGChessSeatAction::None;
@@ -671,10 +673,11 @@ void UEGChessSeatComponent::PrepareSeatedPawn(APawn* Pawn)
 
 	BindPawnAnimation(Pawn);
 
+	ReleaseTurnInPlacePause();
 	if (UEGTurnInPlaceComponent* const TurnInPlace = UEGTurnInPlaceComponent::FindFor(Pawn))
 	{
-		TurnInPlace->RemoveRequest(TurnInPlacePause);
 		TurnInPlacePause = TurnInPlace->PushPause(TEXT("ChessSeat"));
+		PausedTurnInPlace = TurnInPlace;
 	}
 
 	if (Pawn->Implements<UEGChessCharacterInterface>())
@@ -690,11 +693,11 @@ void UEGChessSeatComponent::ReleaseSeatedPawn(APawn* Pawn)
 		return;
 	}
 
-	if (UEGTurnInPlaceComponent* const TurnInPlace = UEGTurnInPlaceComponent::FindFor(Pawn))
+	// Only the prepared pawn holds the pause; releasing any other pawn must not touch it.
+	if (Pawn == PreparedPawn.Get())
 	{
-		TurnInPlace->RemoveRequest(TurnInPlacePause);
+		ReleaseTurnInPlacePause();
 	}
-	TurnInPlacePause.Invalidate();
 
 	if (const UEGChessAnimationSet* Set = GetAnimationSet(Pawn))
 	{
@@ -931,4 +934,14 @@ void UEGChessSeatComponent::HandleMontageNotifyBegin(FName NotifyName, const FBr
 	{
 		Table->HandleCharacterNotify(SeatId, NotifyName);
 	}
+}
+
+void UEGChessSeatComponent::ReleaseTurnInPlacePause()
+{
+	if (UEGTurnInPlaceComponent* const TurnInPlace = PausedTurnInPlace.Get())
+	{
+		TurnInPlace->RemoveRequest(TurnInPlacePause);
+	}
+	TurnInPlacePause.Invalidate();
+	PausedTurnInPlace.Reset();
 }

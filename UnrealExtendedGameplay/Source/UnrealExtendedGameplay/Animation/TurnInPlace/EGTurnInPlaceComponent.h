@@ -102,7 +102,11 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Extended|Turn In Place")
 	FVector GetLastInputDirection() const { return LastInputDirection; }
 
-	/** Curves from the anim instance (IEGTurnInPlaceAnimSource), or from the pseudo states on a dedicated server. */
+	/**
+	 * Curves from the anim instance (IEGTurnInPlaceAnimSource), or from the pseudo states on a
+	 * dedicated server. Game-thread reads use a copy taken after the mesh's animation finished this
+	 * frame, never the anim instance while its worker may be writing it.
+	 */
 	FEGTurnInPlaceCurves GetCurves() const;
 
 	/** The stance entry in use this frame (resolved once per frame). */
@@ -134,18 +138,22 @@ public:
 	/** A stance key of TurnSet to use. Empty: the first Stances key found in the owner's anim state tags. */
 	UFUNCTION(BlueprintNativeEvent, Category = "Extended|Turn In Place")
 	FGameplayTag GetStanceTag() const;
+	virtual FGameplayTag GetStanceTag_Implementation() const;
 
 	/** Which turn angles apply. Default: Mode.Movement while orienting to movement, otherwise Mode.Strafe. */
 	UFUNCTION(BlueprintNativeEvent, Category = "Extended|Turn In Place")
 	FGameplayTag GetTurnModeTag() const;
+	virtual FGameplayTag GetTurnModeTag_Implementation() const;
 
 	/** Treat this root-motion montage as if it were not playing (in addition to the set's montage rules). */
 	UFUNCTION(BlueprintNativeEvent, Category = "Extended|Turn In Place")
 	bool ShouldIgnoreMontage(const UAnimMontage* Montage) const;
+	virtual bool ShouldIgnoreMontage_Implementation(const UAnimMontage* Montage) const;
 
 	/** Whether a turn animation is aborted when turn in place stops being enabled mid-turn. */
 	UFUNCTION(BlueprintNativeEvent, Category = "Extended|Turn In Place")
 	bool CanAbortTurn() const;
+	virtual bool CanAbortTurn_Implementation() const;
 
 	// ----- Interfaces and engine ------------------------------------------------------------------
 
@@ -207,6 +215,10 @@ private:
 	TWeakObjectPtr<ACharacter> CachedCharacter;
 	TWeakObjectPtr<UAnimInstance> CachedAnimInstance;
 	bool bHasAnimSource = false;
+
+	/** The anim instance's curves, copied in this component's tick (after the mesh's, by prerequisite). */
+	FEGTurnInPlaceCurves CachedCurves;
+	void RefreshCurveCache();
 
 	FVector LastInputDirection = FVector::ForwardVector;
 	double LastRootMotionTime = -1000.0;

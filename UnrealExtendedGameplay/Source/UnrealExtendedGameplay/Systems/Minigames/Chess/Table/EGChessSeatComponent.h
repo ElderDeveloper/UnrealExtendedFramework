@@ -205,4 +205,6 @@ private:
 
 	/** The seat scripts the pawn's transform, so turn in place is paused while it is prepared. */
 	FEGTurnInPlaceRequestHandle TurnInPlacePause;
+	TWeakObjectPtr<class UEGTurnInPlaceComponent> PausedTurnInPlace;
+	void ReleaseTurnInPlacePause();
 };

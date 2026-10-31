@@ -49,6 +49,11 @@ void UEGTurnInPlaceAnimLibrary::SetupIdle(FEGTurnInPlaceAnimData& Data)
 {
 	Data.Node.bReachedMaxAngle = false;
 	Data.Node.PlayRate = 1.0f;
+
+	// The previous turn's latch and end flag must not carry into the next one's first frame.
+	Data.bTurnedThisEntry = false;
+	Data.Node.bReachedAnimEnd = false;
+	Data.Node.bRecoveryFinished = false;
 }
 
 void UEGTurnInPlaceAnimLibrary::SetupTurnPose(FEGTurnInPlaceAnimData& Data)
@@ -89,6 +94,25 @@ float UEGTurnInPlaceAnimLibrary::UpdateTurnAnim(FEGTurnInPlaceAnimData& Data, fl
 void UEGTurnInPlaceAnimLibrary::SetupRecoveryPose(FEGTurnInPlaceAnimData& Data)
 {
 	Data.Node.bRecoveryTurningRight = Data.Node.bTurningRight;
+
+	// Recovery -> Turn must start clean too. AnimTime is kept: recovery continues the clip.
+	Data.bTurnedThisEntry = false;
+	Data.Node.bReachedAnimEnd = false;
+	Data.Node.bRecoveryFinished = false;
+}
+
+float UEGTurnInPlaceAnimLibrary::UpdateRecoveryAnim(FEGTurnInPlaceAnimData& Data, float DeltaTime, UAnimSequence*& OutSequence)
+{
+	OutSequence = GetTurnAnimation(Data, true);
+	if (!OutSequence)
+	{
+		Data.Node.bRecoveryFinished = true;
+		return static_cast<float>(Data.Node.AnimTime);
+	}
+
+	Data.Node.AnimTime = FEGTurnInPlaceSolver::AdvanceAnimTime(OutSequence, Data.Node.AnimTime, DeltaTime, 1.0f);
+	Data.Node.bRecoveryFinished = Data.Node.AnimTime >= OutSequence->GetPlayLength() - UE_KINDA_SMALL_NUMBER;
+	return static_cast<float>(Data.Node.AnimTime);
 }
 
 UAnimSequence* UEGTurnInPlaceAnimLibrary::GetTurnAnimation(const FEGTurnInPlaceAnimData& Data, bool bRecovery)

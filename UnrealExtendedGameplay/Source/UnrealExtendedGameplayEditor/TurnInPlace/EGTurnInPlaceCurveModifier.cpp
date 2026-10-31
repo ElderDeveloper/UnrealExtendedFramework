@@ -51,7 +51,7 @@ void UEGTurnInPlaceCurveModifier::OnApply_Implementation(UAnimSequence* Animatio
 	// Sample the raw root track, not the root-locked pose.
 	TGuardValue<bool> RootLockGuard(Animation->bForceRootLock, false);
 
-	const int32 Samples = FMath::Max(2, FMath::CeilToInt(Length * SampleRate) + 1);
+	const int32 Samples = FMath::Max(2, FMath::CeilToInt32(Length * SampleRate) + 1);
 	TArray<double> Times;
 	TArray<double> Yaws;
 	Times.Reserve(Samples);

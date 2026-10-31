@@ -58,9 +58,18 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Extended|Turn In Place|Graph", meta = (BlueprintThreadSafe))
 	static float UpdateTurnAnim(UPARAM(ref) FEGTurnInPlaceAnimData& Data, float DeltaTime, UAnimSequence*& OutSequence);
 
-	/** Recovery state's output pose: On Become Relevant. */
+	/** Recovery state's output pose: On Become Relevant. Recovery continues the same clip from where the turn is. */
 	UFUNCTION(BlueprintCallable, Category = "Extended|Turn In Place|Graph", meta = (BlueprintThreadSafe))
 	static void SetupRecoveryPose(UPARAM(ref) FEGTurnInPlaceAnimData& Data);
+
+	/**
+	 * Recovery Sequence Evaluator: On Update. Set Sequence With Inertial Blending to OutSequence and
+	 * Explicit Time to the returned time. It continues from the turn's time at 1x; restarting the
+	 * clip would replay its turning frames and turn the character twice. Recovery -> Idle on
+	 * TurnInPlace.Node.bRecoveryFinished.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Extended|Turn In Place|Graph", meta = (BlueprintThreadSafe))
+	static float UpdateRecoveryAnim(UPARAM(ref) FEGTurnInPlaceAnimData& Data, float DeltaTime, UAnimSequence*& OutSequence);
 
 	/** The turn sequence (or the recovery one, which continues the same clip). */
 	UFUNCTION(BlueprintPure, Category = "Extended|Turn In Place|Graph", meta = (BlueprintThreadSafe))

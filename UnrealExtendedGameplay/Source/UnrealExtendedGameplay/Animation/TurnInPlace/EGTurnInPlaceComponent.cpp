@@ -100,6 +100,8 @@ void UEGTurnInPlaceComponent::BeginPlay()
 	CachedCharacter = Cast<ACharacter>(GetOwner());
 	if (USkeletalMeshComponent* const Mesh = GetMesh())
 	{
+		// Tick after the mesh, so the curve copy is taken once its animation work is done.
+		AddTickPrerequisiteComponent(Mesh);
 		Mesh->OnAnimInitialized.AddUniqueDynamic(this, &UEGTurnInPlaceComponent::HandleAnimInitialized);
 		HandleAnimInitialized();
 
@@ -139,6 +141,7 @@ void UEGTurnInPlaceComponent::HandleAnimInitialized()
 	UAnimInstance* const AnimInstance = Mesh ? Mesh->GetAnimInstance() : nullptr;
 	CachedAnimInstance = AnimInstance;
 	bHasAnimSource = AnimInstance && AnimInstance->Implements<UEGTurnInPlaceAnimSource>();
+	CachedCurves = FEGTurnInPlaceCurves();
 
 	if (AnimInstance && !bHasAnimSource && !WantsPseudoAnimState())
 	{
@@ -283,12 +286,15 @@ FEGTurnInPlaceCurves UEGTurnInPlaceComponent::GetCurves() const
 		return Curves;
 	}
 
+	return CachedCurves;
+}
+
+void UEGTurnInPlaceComponent::RefreshCurveCache()
+{
 	UAnimInstance* const AnimInstance = CachedAnimInstance.Get();
-	if (AnimInstance && bHasAnimSource)
-	{
-		return IEGTurnInPlaceAnimSource::Execute_GetTurnInPlaceCurves(AnimInstance);
-	}
-	return FEGTurnInPlaceCurves();
+	CachedCurves = (AnimInstance && bHasAnimSource)
+		? IEGTurnInPlaceAnimSource::Execute_GetTurnInPlaceCurves(AnimInstance)
+		: FEGTurnInPlaceCurves();
 }
 
 bool UEGTurnInPlaceComponent::IsTurningInPlace() const
@@ -330,11 +336,14 @@ FGameplayTag UEGTurnInPlaceComponent::ResolveStanceKey() const
 
 FGameplayTag UEGTurnInPlaceComponent::GetStanceKey() const
 {
-	// Once per frame, so the movement hook and the anim graph agree on the stance.
+	// Once per frame, so the movement hook and the anim graph agree on the stance. Marked resolved
+	// (as Default) before resolving: a provider or override that asks this component for its state
+	// would otherwise recurse forever.
 	if (CachedStanceFrame != GFrameCounter)
 	{
-		CachedStanceKey = ResolveStanceKey();
 		CachedStanceFrame = GFrameCounter;
+		CachedStanceKey = FGameplayTag();
+		CachedStanceKey = ResolveStanceKey();
 	}
 	return CachedStanceKey;
 }
@@ -561,6 +570,9 @@ void UEGTurnInPlaceComponent::UpdateLastInputDirection(const UCharacterMovementC
 	In.Velocity = Movement->Velocity;
 	In.Acceleration = Movement->GetCurrentAcceleration();
 	In.bMovingOnGround = Movement->IsMovingOnGround();
+	FQuat WorldToGravity;
+	FQuat GravityToWorld;
+	GetGravity(In.Up, WorldToGravity, GravityToWorld);
 	const float MaxAcceleration = Movement->GetMaxAcceleration();
 	In.AnalogInput = MaxAcceleration > UE_SMALL_NUMBER ? FMath::Clamp(static_cast<float>(In.Acceleration.Size() / MaxAcceleration), 0.0f, 1.0f) : 0.0f;
 	In.MaxSpeed = Movement->GetMaxSpeed();
@@ -768,7 +780,9 @@ FEGTurnInPlaceGraphInput UEGTurnInPlaceComponent::MakeGraphInput() const
 	{
 		In.bHasAngles = true;
 		In.Angles = *Angles;
-		In.bWantsToTurn = In.State != EEGTurnInPlaceState::Locked && Entry.StepSizes.Num() > 0 && FMath::Abs(In.TurnOffset) >= Angles->MinTurnAngle;
+		// Only while Enabled: a proxy keeps its replicated offset while paused, and wanting to turn
+		// while aborting would flip the graph between Turn and Abort.
+		In.bWantsToTurn = In.State == EEGTurnInPlaceState::Enabled && Entry.StepSizes.Num() > 0 && FMath::Abs(In.TurnOffset) >= Angles->MinTurnAngle;
 	}
 
 	if (In.bWantsToTurn && !Entry.GetTurnSequence(In.StepIndex, In.bTurnRight))
@@ -810,6 +824,8 @@ void UEGTurnInPlaceComponent::TickComponent(float DeltaTime, ELevelTick TickType
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
+	RefreshCurveCache();
+
 #if !UE_BUILD_SHIPPING
 	TickSelfCheck();
 #endif
@@ -819,10 +835,15 @@ void UEGTurnInPlaceComponent::TickComponent(float DeltaTime, ELevelTick TickType
 		return;
 	}
 
-	// Anim root motion skips PhysicsRotation, so note it here for the last-input grace period.
+	// Anim root motion skips PhysicsRotation: record the facing it leaves (and the time, for the
+	// grace period) here, or Orient To Movement would turn back to where it faced before.
 	if (GetCharacter()->HasAnyRootMotion())
 	{
 		LastRootMotionTime = GetWorld()->GetTimeSeconds();
+		if (const UCharacterMovementComponent* const Movement = GetMovement(); Movement && Movement->UpdatedComponent && Movement->bOrientRotationToMovement)
+		{
+			LastInputDirection = Movement->UpdatedComponent->GetForwardVector();
+		}
 	}
 
 	if (WantsPseudoAnimState())
@@ -849,8 +870,9 @@ void UEGTurnInPlaceComponent::TickPseudoStates(float DeltaTime)
 
 	const EEGTurnPseudoState Before = PseudoState;
 	FEGTurnInPlaceSolver::AdvancePseudoState(PseudoState, PseudoNode, Input, Output, DeltaTime);
-	if (PseudoState == EEGTurnPseudoState::Turn && Before != EEGTurnPseudoState::Turn)
+	if (PseudoState != Before)
 	{
+		// As the graph's Setup functions do on every state entry.
 		bPseudoTurnedThisEntry = false;
 	}
 }
@@ -895,7 +917,9 @@ void UEGTurnInPlaceComponent::TickSelfCheck()
 	switch (GetTurnMethod())
 	{
 	case EEGTurnMethod::FaceRotation:
-		if (!bFaceHookSeen && Character->Controller && ++FramesWithoutFaceHook > MissingHookFrames)
+		// Player controllers call FaceRotation every frame; AI only when its facing differs, so an
+		// idle, aligned AI would be reported falsely.
+		if (!bFaceHookSeen && Character->IsPlayerControlled() && ++FramesWithoutFaceHook > MissingHookFrames)
 		{
 			ReportProblem(TEXT("ACharacter::FaceRotation is not forwarded. Override it and call EGTurnInPlace::HandleFaceRotation first (see Docs/TurnInPlace.md)."));
 		}

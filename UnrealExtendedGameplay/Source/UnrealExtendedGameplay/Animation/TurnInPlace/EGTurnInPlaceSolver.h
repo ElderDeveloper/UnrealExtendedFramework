@@ -121,6 +121,8 @@ struct UNREALEXTENDEDGAMEPLAY_API FEGTurnInPlaceSolver
 		FVector Velocity = FVector::ZeroVector;
 		FVector Acceleration = FVector::ZeroVector;
 		bool bMovingOnGround = true;
+		/** Gravity up; in the air the velocity along it is ignored. */
+		FVector Up = FVector::UpVector;
 		/** Acceleration / max acceleration, 0..1. */
 		float AnalogInput = 0.0f;
 		float MaxSpeed = 600.0f;

@@ -342,9 +342,11 @@ void FEGTurnInPlaceSolver::AdvancePseudoState(EEGTurnPseudoState& State, FEGTurn
 		}
 		else if (Output.bWantsRecovery)
 		{
-			// The recovery continues from where the turn is.
+			// The recovery continues from where the turn is (as UpdateRecoveryAnim does in the graph).
 			State = EEGTurnPseudoState::Recovery;
 			Node.bRecoveryTurningRight = Node.bTurningRight;
+			Node.bReachedAnimEnd = false;
+			Node.bRecoveryFinished = false;
 		}
 		else
 		{
@@ -375,6 +377,8 @@ void FEGTurnInPlaceSolver::AdvancePseudoState(EEGTurnPseudoState& State, FEGTurn
 			State = EEGTurnPseudoState::Idle;
 			Node.PlayRate = 1.0f;
 			Node.bReachedMaxAngle = false;
+			Node.bReachedAnimEnd = false;
+			Node.bRecoveryFinished = true;
 		}
 		break;
 	}
@@ -394,8 +398,8 @@ void FEGTurnInPlaceSolver::UpdateLastInputDirection(FVector& InOutDirection, con
 		return;
 	}
 
-	// In the air only the horizontal part counts, so jumping does not change the direction.
-	const FVector GroundVelocity = In.bMovingOnGround ? In.Velocity : FVector(In.Velocity.X, In.Velocity.Y, 0.0);
+	// In the air only the part across gravity counts, so jumping does not change the direction.
+	const FVector GroundVelocity = In.bMovingOnGround ? In.Velocity : FVector::VectorPlaneProject(In.Velocity, In.Up);
 	const bool bFromInput = In.AnalogInput > AnalogInputThreshold && !In.Acceleration.IsNearlyZero();
 	const bool bFromVelocity = In.TimeSinceRootMotion >= RootMotionGraceSeconds && !GroundVelocity.IsNearlyZero(In.MaxSpeed * 0.05f);
 
