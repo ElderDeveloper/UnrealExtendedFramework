@@ -100,6 +100,19 @@ void FEFHttpOperation::BeginAttempt()
 	++AttemptCount;
 	const int32 AttemptNumber = AttemptCount;
 
+	// A transport override (tests, offline mocks) replaces the engine's HTTP module entirely.
+	if (const TSharedPtr<IEFHttpTransport> Transport = EFHttp::GetTransportOverride())
+	{
+		UE_LOG(LogEFHttp, Verbose, TEXT("%s %s (attempt %d, transport override)"), EFHttp::VerbToString(Request.Verb), *EFHttp::RedactUrlForLog(FinalUrl), AttemptNumber);
+
+		const TSharedRef<FEFHttpOperation> Self = AsShared();
+		Transport->Send(Request, FinalUrl, [Self, AttemptNumber](const FEFHttpResponse& Response)
+		{
+			Self->HandleTransportResponse(AttemptNumber, Response);
+		});
+		return;
+	}
+
 	const TSharedRef<IHttpRequest, ESPMode::ThreadSafe> NewRequest = FHttpModule::Get().CreateRequest();
 	NewRequest->SetURL(FinalUrl);
 	NewRequest->SetVerb(EFHttp::VerbToString(Request.Verb));
@@ -211,6 +224,41 @@ void FEFHttpOperation::HandleAttemptComplete(int32 AttemptNumber, FHttpRequestPt
 		}
 	}
 
+	ProcessAttemptResponse(MoveTemp(Response));
+}
+
+void FEFHttpOperation::HandleTransportResponse(int32 AttemptNumber, FEFHttpResponse Response)
+{
+	if (bFinished || AttemptNumber != AttemptCount)
+	{
+		return;
+	}
+
+	const TSharedRef<FEFHttpOperation> KeepAlive = AsShared();
+
+	Response.Url = FinalUrl;
+	if (Response.Result == EEFHttpResult::Success || Response.Result == EEFHttpResult::HttpError)
+	{
+		// A transport that produced a status decides nothing else: the status does.
+		if (EFHttp::IsSuccessStatus(Response.StatusCode))
+		{
+			Response.Result = EEFHttpResult::Success;
+		}
+		else
+		{
+			Response.Result = EEFHttpResult::HttpError;
+			if (Response.ErrorMessage.IsEmpty())
+			{
+				Response.ErrorMessage = FString::Printf(TEXT("The server answered HTTP %d."), Response.StatusCode);
+			}
+		}
+	}
+
+	ProcessAttemptResponse(MoveTemp(Response));
+}
+
+void FEFHttpOperation::ProcessAttemptResponse(FEFHttpResponse Response)
+{
 	const bool bRetryableResult =
 		Response.Result == EEFHttpResult::ConnectionError
 		|| Response.Result == EEFHttpResult::TimedOut
@@ -313,6 +361,28 @@ void FEFHttpOperation::ReleaseHttpRequest()
 	HttpRequest.Reset();
 	Released->OnProcessRequestComplete().Unbind();
 	Released->CancelRequest();
+}
+
+// ─── Transport override ─────────────────────────────────────────────────────────
+
+namespace EFHttpPrivate
+{
+	TSharedPtr<IEFHttpTransport>& TransportOverride()
+	{
+		static TSharedPtr<IEFHttpTransport> Override;
+		return Override;
+	}
+}
+
+void EFHttp::SetTransportOverride(TSharedPtr<IEFHttpTransport> Transport)
+{
+	check(IsInGameThread());
+	EFHttpPrivate::TransportOverride() = MoveTemp(Transport);
+}
+
+TSharedPtr<IEFHttpTransport> EFHttp::GetTransportOverride()
+{
+	return EFHttpPrivate::TransportOverride();
 }
 
 // ─── EFHttp helpers ─────────────────────────────────────────────────────────────

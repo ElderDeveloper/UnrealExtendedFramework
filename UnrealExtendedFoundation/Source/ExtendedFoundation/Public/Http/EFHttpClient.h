@@ -8,6 +8,26 @@
 #include "Interfaces/IHttpRequest.h"
 
 /**
+ * Sends one attempt of a request instead of the engine's HTTP module.
+ *
+ * Install one with EFHttp::SetTransportOverride (or FEFScopedHttpMock in tests) to run every
+ * FEFHttpOperation offline. Retries, timeouts of the retry schedule, cancellation and logging still
+ * go through FEFHttpOperation; the transport only answers single attempts.
+ */
+class IEFHttpTransport
+{
+public:
+	virtual ~IEFHttpTransport() = default;
+
+	/**
+	 * Answers one attempt. Call OnResponse exactly once, on the game thread, now or later. Set
+	 * StatusCode, Body, Headers and ContentType for an answer (Result is then derived from the
+	 * status), or set Result to ConnectionError or TimedOut for no answer.
+	 */
+	virtual void Send(const FEFHttpRequest& Request, const FString& FinalUrl, TFunction<void(const FEFHttpResponse&)> OnResponse) = 0;
+};
+
+/**
  * One HTTP request, including its retries, sent through the engine's HTTP module.
  *
  * This is the C++ layer under UEFHttpSubsystem and the Http Request Blueprint node. It needs no
@@ -47,6 +67,8 @@ public:
 private:
 	void BeginAttempt();
 	void HandleAttemptComplete(int32 AttemptNumber, FHttpRequestPtr CompletedRequest, FHttpResponsePtr HttpResponse, bool bConnectedSuccessfully);
+	void HandleTransportResponse(int32 AttemptNumber, FEFHttpResponse Response);
+	void ProcessAttemptResponse(FEFHttpResponse Response);
 	void ScheduleRetry(const FEFHttpResponse& FailedResponse);
 	void FinishOnNextTick(FEFHttpResponse Response);
 	void Finish(FEFHttpResponse Response);
@@ -67,6 +89,13 @@ private:
 /** Pure helpers behind FEFHttpOperation, exposed for reuse and tests. */
 namespace EFHttp
 {
+	/**
+	 * Routes every FEFHttpOperation attempt through Transport instead of the network, until reset
+	 * with nullptr. Process-wide and game-thread only; restore it when done (FEFScopedHttpMock does).
+	 */
+	EXTENDEDFOUNDATION_API void SetTransportOverride(TSharedPtr<IEFHttpTransport> Transport);
+	EXTENDEDFOUNDATION_API TSharedPtr<IEFHttpTransport> GetTransportOverride();
+
 	EXTENDEDFOUNDATION_API const TCHAR* VerbToString(EEFHttpVerb Verb);
 
 	/** POST and PATCH are the verbs whose repetition can change the result. */

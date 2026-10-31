@@ -28,6 +28,13 @@ public class ExtendedFoundation : ModuleRules
 				"JsonUtilities"
 			});
 
+		PrivateDependencyModuleNames.AddRange(
+			new string[]
+			{
+				// Testing/EFTestHelpers: plugin fixture lookup.
+				"Projects"
+			});
+
 		if (Target.bBuildEditor)
 		{
 			// UEFDeveloperSettings::OpenInEditor; resolved at runtime, so only the interface header is needed.
