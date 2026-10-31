@@ -12,30 +12,50 @@
 
 bool UEFFileLibrary::IsFile(FString Path)
 {
+	if (!EFFileLibraryAccess::CheckRead(TEXT("UEFFileLibrary::IsFile"), Path))
+	{
+		return false;
+	}
 	IPlatformFile& File = FPlatformFileManager::Get().GetPlatformFile();
 	return File.FileExists(*Path);
 }
 
 bool UEFFileLibrary::IsDirectory(FString Path)
 {
+	if (!EFFileLibraryAccess::CheckRead(TEXT("UEFFileLibrary::IsDirectory"), Path))
+	{
+		return false;
+	}
 	IPlatformFile& File = FPlatformFileManager::Get().GetPlatformFile();
 	return File.DirectoryExists(*Path);
 }
 
 bool UEFFileLibrary::SetReadOnlyFlag(FString FilePath, bool Flag)
 {
+	if (!EFFileLibraryAccess::CheckWrite(TEXT("UEFFileLibrary::SetReadOnlyFlag"), FilePath))
+	{
+		return false;
+	}
 	IPlatformFile& File = FPlatformFileManager::Get().GetPlatformFile();
 	return File.SetReadOnly(*FilePath, Flag);
 }
 
 bool UEFFileLibrary::GetReadOnlyFlag(FString FilePath)
 {
+	if (!EFFileLibraryAccess::CheckRead(TEXT("UEFFileLibrary::GetReadOnlyFlag"), FilePath))
+	{
+		return false;
+	}
 	IPlatformFile& File = FPlatformFileManager::Get().GetPlatformFile();
 	return File.IsReadOnly(*FilePath);
 }
 
 int64 UEFFileLibrary::GetFileSize(FString FilePath)
 {
+	if (!EFFileLibraryAccess::CheckRead(TEXT("UEFFileLibrary::GetFileSize"), FilePath))
+	{
+		return -1;
+	}
 	IPlatformFile& File = FPlatformFileManager::Get().GetPlatformFile();
 	return File.FileSize(*FilePath);
 }
@@ -43,6 +63,10 @@ int64 UEFFileLibrary::GetFileSize(FString FilePath)
 bool UEFFileLibrary::ListDirectory(FString Path, FString Pattern, TArray<FString>& Nodes, bool ShowFile,
                                    bool ShowDirectory, bool Recursive)
 {
+	if (!EFFileLibraryAccess::CheckRead(TEXT("UEFFileLibrary::ListDirectory"), Path))
+	{
+		return false;
+	}
 	IPlatformFile& File = FPlatformFileManager::Get().GetPlatformFile();
 	if (!File.DirectoryExists(*Path))
 	{
@@ -66,6 +90,10 @@ bool UEFFileLibrary::ListDirectory(FString Path, FString Pattern, TArray<FString
 
 bool UEFFileLibrary::MakeDirectory(FString Path, bool Recursive)
 {
+	if (!EFFileLibraryAccess::CheckWrite(TEXT("UEFFileLibrary::MakeDirectory"), Path))
+	{
+		return false;
+	}
 	IPlatformFile& File = FPlatformFileManager::Get().GetPlatformFile();
 	if (File.DirectoryExists(*Path))
 	{
@@ -83,6 +111,10 @@ bool UEFFileLibrary::MakeDirectory(FString Path, bool Recursive)
 
 bool UEFFileLibrary::RemoveDirectory(FString Path, bool Recursive)
 {
+	if (!EFFileLibraryAccess::CheckWrite(TEXT("UEFFileLibrary::RemoveDirectory"), Path))
+	{
+		return false;
+	}
 	IPlatformFile& File = FPlatformFileManager::Get().GetPlatformFile();
 	if (!File.DirectoryExists(*Path))
 	{
@@ -100,6 +132,11 @@ bool UEFFileLibrary::RemoveDirectory(FString Path, bool Recursive)
 
 bool UEFFileLibrary::CopyDirectory(FString Source, FString Dest) // bool Force = false
 {
+	if (!EFFileLibraryAccess::CheckRead(TEXT("UEFFileLibrary::CopyDirectory"), Source)
+		|| !EFFileLibraryAccess::CheckWrite(TEXT("UEFFileLibrary::CopyDirectory"), Dest))
+	{
+		return false;
+	}
 	IPlatformFile& File = FPlatformFileManager::Get().GetPlatformFile();
 	FPaths::NormalizeDirectoryName(Dest);
 	if (!File.DirectoryExists(*Source) && !File.FileExists(*Source))
@@ -115,6 +152,11 @@ bool UEFFileLibrary::CopyDirectory(FString Source, FString Dest) // bool Force =
 
 bool UEFFileLibrary::MoveDirectory(FString Source, FString Dest) // bool Force = false
 {
+	if (!EFFileLibraryAccess::CheckWrite(TEXT("UEFFileLibrary::MoveDirectory"), Source)
+		|| !EFFileLibraryAccess::CheckWrite(TEXT("UEFFileLibrary::MoveDirectory"), Dest))
+	{
+		return false;
+	}
 	FPaths::NormalizeDirectoryName(Source);
 	FPaths::NormalizeDirectoryName(Dest);
 	if (Dest.Equals(Source))
@@ -130,6 +172,10 @@ bool UEFFileLibrary::MoveDirectory(FString Source, FString Dest) // bool Force =
 
 bool UEFFileLibrary::NodeStats(FString Path, FCustomNodeStat& Stats)
 {
+	if (!EFFileLibraryAccess::CheckRead(TEXT("UEFFileLibrary::NodeStats"), Path))
+	{
+		return false;
+	}
 	IPlatformFile& File = FPlatformFileManager::Get().GetPlatformFile();
 	if (!File.DirectoryExists(*Path) && !File.FileExists(*Path))
 	{
@@ -151,6 +197,10 @@ bool UEFFileLibrary::NodeStats(FString Path, FCustomNodeStat& Stats)
 
 bool UEFFileLibrary::RemoveFile(FString Path)
 {
+	if (!EFFileLibraryAccess::CheckWrite(TEXT("UEFFileLibrary::RemoveFile"), Path))
+	{
+		return false;
+	}
 	IPlatformFile& File = FPlatformFileManager::Get().GetPlatformFile();
 	if (File.DirectoryExists(*Path))
 	{
@@ -165,6 +215,11 @@ bool UEFFileLibrary::RemoveFile(FString Path)
 
 bool UEFFileLibrary::CopyFile(FString Source, FString Dest, bool Force)
 {
+	if (!EFFileLibraryAccess::CheckRead(TEXT("UEFFileLibrary::CopyFile"), Source)
+		|| !EFFileLibraryAccess::CheckWrite(TEXT("UEFFileLibrary::CopyFile"), Dest))
+	{
+		return false;
+	}
 	FPaths::NormalizeFilename(Source);
 	FPaths::NormalizeFilename(Dest);
 	if (Dest.Equals(Source))
@@ -191,6 +246,11 @@ bool UEFFileLibrary::CopyFile(FString Source, FString Dest, bool Force)
 
 bool UEFFileLibrary::MoveFile(FString Source, FString Dest, bool Force)
 {
+	if (!EFFileLibraryAccess::CheckWrite(TEXT("UEFFileLibrary::MoveFile"), Source)
+		|| !EFFileLibraryAccess::CheckWrite(TEXT("UEFFileLibrary::MoveFile"), Dest))
+	{
+		return false;
+	}
 	FPaths::NormalizeFilename(Source);
 	FPaths::NormalizeFilename(Dest);
 	if (Dest.Equals(Source))
@@ -217,6 +277,10 @@ bool UEFFileLibrary::MoveFile(FString Source, FString Dest, bool Force)
 
 bool UEFFileLibrary::RenameFile(FString Path, FString NewName)
 {
+	if (!EFFileLibraryAccess::CheckWrite(TEXT("UEFFileLibrary::RenameFile"), Path))
+	{
+		return false;
+	}
 	FText Error;
 	if (!FFileHelper::IsFilenameValidForSaving(*NewName, Error))
 	{
@@ -230,6 +294,10 @@ bool UEFFileLibrary::RenameFile(FString Path, FString NewName)
 	FString Clean = FPaths::GetCleanFilename(NewName);
 	FString Base = FPaths::GetPath(Path);
 	FString Output = FPaths::Combine(*Base, *Clean);
+	if (!EFFileLibraryAccess::CheckWrite(TEXT("UEFFileLibrary::RenameFile"), Output))
+	{
+		return false;
+	}
 	if (File.FileExists(*Output) || File.DirectoryExists(*Output))
 	{
 		return false;
@@ -239,6 +307,11 @@ bool UEFFileLibrary::RenameFile(FString Path, FString NewName)
 
 FDateTime UEFFileLibrary::GetFileModificationTime(FString FilePath, bool& Success)
 {
+	if (!EFFileLibraryAccess::CheckRead(TEXT("UEFFileLibrary::GetFileModificationTime"), FilePath))
+	{
+		Success = false;
+		return FDateTime::MinValue();
+	}
 	IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
 	if (PlatformFile.FileExists(*FilePath))
 	{

@@ -4,6 +4,7 @@
 
 #include "EFFileLibrary.h"
 
+#include "EFFileLibraryPrivate.h"
 #include "GenericPlatform/GenericPlatformFile.h"
 #include "HAL/PlatformFileManager.h"
 #include "Misc/FileHelper.h"
@@ -11,6 +12,11 @@
 
 bool UEFFileLibrary::SaveCSV(FString Path, TArray<FString> Headers, TArray<FString> Data, int32& Total, bool Force)
 {
+	if (!EFFileLibraryAccess::CheckWrite(TEXT("UEFFileLibrary::SaveCSV"), Path))
+	{
+		Total = 0;
+		return false;
+	}
 	FString Output;
 	if (!UEFFileLibrary::CSVToString(Output, Headers, Data, Total))
 	{
@@ -24,6 +30,10 @@ bool UEFFileLibrary::ReadCSV(FString Path, TArray<FString>& Headers, TArray<FStr
                              bool HeaderFirst)
 {
 	Total = 0;
+	if (!EFFileLibraryAccess::CheckRead(TEXT("UEFFileLibrary::ReadCSV"), Path))
+	{
+		return false;
+	}
 	IPlatformFile& file = FPlatformFileManager::Get().GetPlatformFile();
 	if (!file.FileExists(*Path))
 	{

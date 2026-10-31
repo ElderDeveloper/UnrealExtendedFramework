@@ -4,6 +4,7 @@
 
 #include "EFFileLibrary.h"
 
+#include "EFFileLibraryPrivate.h"
 #include "Engine/Texture2D.h"
 #include "GenericPlatform/GenericPlatformFile.h"
 #include "HAL/PlatformFileManager.h"
@@ -22,6 +23,13 @@ bool UEFFileLibrary::TakeScreenShot(FString Filename, FString& Path, bool Prefix
 	}
 	FString FinalFilename = (PrefixTimestamp ? (FDateTime::Now().ToString(TEXT("%Y_%m_%d__%H_%M_%S__"))) : "") +
 		Filename;
+	// The file name carries no directory, so the screenshot lands in the screenshot directory (under
+	// Saved). Check that destination before the request: refusing afterwards would leave the request
+	// state (and the hidden screen messages of a capture without UI) behind.
+	if (!EFFileLibraryAccess::CheckWrite(TEXT("UEFFileLibrary::TakeScreenShot"), FPaths::Combine(FPaths::ScreenShotDir(), FinalFilename)))
+	{
+		return false;
+	}
 	FScreenshotRequest::Reset();
 	FScreenshotRequest::RequestScreenshot(FinalFilename, ShowUI, false);
 	if (FScreenshotRequest::IsScreenshotRequested())
@@ -34,6 +42,11 @@ bool UEFFileLibrary::TakeScreenShot(FString Filename, FString& Path, bool Prefix
 
 UTexture2D* UEFFileLibrary::LoadScreenshot(FString Path, bool& Success)
 {
+	if (!EFFileLibraryAccess::CheckRead(TEXT("UEFFileLibrary::LoadScreenshot"), Path))
+	{
+		Success = false;
+		return nullptr;
+	}
 	IPlatformFile& file = FPlatformFileManager::Get().GetPlatformFile();
 	if (file.FileExists(*Path))
 	{

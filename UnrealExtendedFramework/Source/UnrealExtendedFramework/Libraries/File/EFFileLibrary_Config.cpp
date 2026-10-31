@@ -4,6 +4,7 @@
 
 #include "EFFileLibrary.h"
 
+#include "EFFileLibraryPrivate.h"
 #include "Math/Color.h"
 #include "Misc/ConfigCacheIni.h"
 #include "UObject/UnrealType.h"
@@ -11,6 +12,10 @@
 bool UEFFileLibrary::WriteConfigFile(FString Filename, FString Section, FString Key, FProperty* Type, void* Value,
                                      bool SingleLineArray)
 {
+	if (!EFFileLibraryAccess::CheckConfigFile(TEXT("UEFFileLibrary::WriteConfig"), Filename, true))
+	{
+		return false;
+	}
 	if (!GConfig)
 	{
 		return false;
@@ -104,6 +109,10 @@ bool UEFFileLibrary::WriteConfigFile(FString Filename, FString Section, FString 
 bool UEFFileLibrary::ReadConfigFile(FString Filename, FString Section, FString Key, FProperty* Type, void* Value,
                                     bool SingleLineArray)
 {
+	if (!EFFileLibraryAccess::CheckConfigFile(TEXT("UEFFileLibrary::ReadConfig"), Filename, false))
+	{
+		return false;
+	}
 	if (!GConfig)
 	{
 		return false;
@@ -180,6 +189,11 @@ bool UEFFileLibrary::ReadConfigFile(FString Filename, FString Section, FString K
 
 bool UEFFileLibrary::RemoveConfig(FString FilePath, FString Section, FString Key)
 {
+	// Removing a key marks the file dirty, and GConfig writes it back on its next flush.
+	if (!EFFileLibraryAccess::CheckConfigFile(TEXT("UEFFileLibrary::RemoveConfig"), FilePath, true))
+	{
+		return false;
+	}
 	if (!GConfig)
 	{
 		return false;

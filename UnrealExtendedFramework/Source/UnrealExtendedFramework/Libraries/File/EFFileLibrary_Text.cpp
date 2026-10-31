@@ -4,6 +4,7 @@
 
 #include "EFFileLibrary.h"
 
+#include "EFFileLibraryPrivate.h"
 #include "GenericPlatform/GenericPlatformFile.h"
 #include "HAL/FileManager.h"
 #include "HAL/PlatformFileManager.h"
@@ -13,6 +14,10 @@
 
 bool UEFFileLibrary::ReadText(FString Path, FString& Output)
 {
+	if (!EFFileLibraryAccess::CheckRead(TEXT("UEFFileLibrary::ReadText"), Path))
+	{
+		return false;
+	}
 	IPlatformFile& file = FPlatformFileManager::Get().GetPlatformFile();
 	if (file.FileExists(*Path))
 	{
@@ -23,6 +28,11 @@ bool UEFFileLibrary::ReadText(FString Path, FString& Output)
 
 bool UEFFileLibrary::SaveText(FString Path, FString Text, FString& Error, bool Append, bool Force)
 {
+	if (!EFFileLibraryAccess::CheckWrite(TEXT("UEFFileLibrary::SaveText"), Path))
+	{
+		Error = FString(TEXT("Path is not allowed by the Extended File Access settings"));
+		return false;
+	}
 	IPlatformFile& file = FPlatformFileManager::Get().GetPlatformFile();
 	FText ErrorFilename;
 	if (!FFileHelper::IsFilenameValidForSaving(Path, ErrorFilename))
@@ -44,6 +54,10 @@ bool UEFFileLibrary::SaveText(FString Path, FString Text, FString& Error, bool A
 
 bool UEFFileLibrary::ReadLine(FString Path, FString Pattern, TArray<FString>& Lines)
 {
+	if (!EFFileLibraryAccess::CheckRead(TEXT("UEFFileLibrary::ReadLine"), Path))
+	{
+		return false;
+	}
 	IPlatformFile& file = FPlatformFileManager::Get().GetPlatformFile();
 	if (!file.FileExists(*Path))
 	{
@@ -66,6 +80,11 @@ bool UEFFileLibrary::ReadLine(FString Path, FString Pattern, TArray<FString>& Li
 
 bool UEFFileLibrary::SaveLine(FString Path, const TArray<FString>& Text, FString& Error, bool Append, bool Force)
 {
+	if (!EFFileLibraryAccess::CheckWrite(TEXT("UEFFileLibrary::SaveLine"), Path))
+	{
+		Error = FString(TEXT("Path is not allowed by the Extended File Access settings"));
+		return false;
+	}
 	IPlatformFile& file = FPlatformFileManager::Get().GetPlatformFile();
 	FText ErrorFilename;
 	if (!FFileHelper::IsFilenameValidForSaving(Path, ErrorFilename))
@@ -87,6 +106,10 @@ bool UEFFileLibrary::SaveLine(FString Path, const TArray<FString>& Text, FString
 
 bool UEFFileLibrary::ReadByte(FString Path, TArray<uint8>& Bytes)
 {
+	if (!EFFileLibraryAccess::CheckRead(TEXT("UEFFileLibrary::ReadByte"), Path))
+	{
+		return false;
+	}
 	IPlatformFile& file = FPlatformFileManager::Get().GetPlatformFile();
 	if (!file.FileExists(*Path))
 	{
@@ -97,6 +120,11 @@ bool UEFFileLibrary::ReadByte(FString Path, TArray<uint8>& Bytes)
 
 bool UEFFileLibrary::SaveByte(FString Path, const TArray<uint8>& Bytes, FString& Error, bool Append, bool Force)
 {
+	if (!EFFileLibraryAccess::CheckWrite(TEXT("UEFFileLibrary::SaveByte"), Path))
+	{
+		Error = FString(TEXT("Path is not allowed by the Extended File Access settings"));
+		return false;
+	}
 	IPlatformFile& file = FPlatformFileManager::Get().GetPlatformFile();
 	FText ErrorFilename;
 	if (!FFileHelper::IsFilenameValidForSaving(Path, ErrorFilename))
