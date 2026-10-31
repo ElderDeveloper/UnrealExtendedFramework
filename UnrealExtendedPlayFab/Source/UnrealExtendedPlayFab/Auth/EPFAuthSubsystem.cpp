@@ -9,6 +9,7 @@
 #include "Misc/Paths.h"
 #include "TimerManager.h"
 #include "Engine/GameInstance.h"
+#include "Status/EFServiceStatus.h"
 
 namespace
 {
@@ -106,6 +107,49 @@ namespace
 void UEPFAuthSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
 	Super::Initialize(Collection);
+
+	// Extended.Status: configuration and session state for this game instance. No tickets or keys.
+	TWeakObjectPtr<UEPFAuthSubsystem> WeakThis(this);
+	EFStatusHandle = FEFServiceStatusRegistry::Register(TEXT("PlayFab"), [WeakThis]
+	{
+		FEFServiceStatus Status;
+		const UEPFAuthSubsystem* This = WeakThis.Get();
+		if (!This)
+		{
+			Status.State = EEFServiceState::Unavailable;
+			Status.Summary = TEXT("Not running.");
+			return Status;
+		}
+		if (!This->IsConfigured())
+		{
+			Status.State = EEFServiceState::NotConfigured;
+			Status.Summary = TEXT("No PlayFab title id is set (Project Settings > Extended Framework > Extended PlayFab).");
+			return Status;
+		}
+
+		if (This->IsReauthenticating())
+		{
+			Status.State = EEFServiceState::Degraded;
+			Status.Summary = TEXT("Session rejected; re-authenticating.");
+		}
+		else if (This->IsLoggedIn())
+		{
+			Status.State = EEFServiceState::Ready;
+			Status.Summary = FString::Printf(TEXT("Logged in (PlayFabId %s)"), *This->GetPlayFabId());
+		}
+		else
+		{
+			Status.State = EEFServiceState::Starting;
+			Status.Summary = TEXT("Not logged in.");
+		}
+
+		const FEPFError LastError = This->GetLastError();
+		if (LastError.bHasError)
+		{
+			Status.Details.Add(TEXT("Last error"), FString::Printf(TEXT("%s: %s"), *LastError.ErrorCode, *LastError.ErrorMessage));
+		}
+		return Status;
+	});
 
 	const UEPFSettings* Settings = GetSettings();
 	if (Settings && Settings->bAutoLoginOnStart)
@@ -315,6 +359,9 @@ void UEPFAuthSubsystem::CompleteReauth(bool bSuccess)
 
 void UEPFAuthSubsystem::Deinitialize()
 {
+	FEFServiceStatusRegistry::Unregister(EFStatusHandle);
+	EFStatusHandle = 0;
+
 	// Stop session refresh timer
 	if (UGameInstance* GI = GetGameInstance())
 	{
