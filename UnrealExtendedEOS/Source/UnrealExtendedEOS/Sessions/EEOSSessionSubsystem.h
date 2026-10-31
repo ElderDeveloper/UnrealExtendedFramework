@@ -195,6 +195,10 @@ private:
 	IOnlineSessionPtr OperationSessions;
 	IOnlineSessionPtr SearchSessions;
 	FEEOSRequestContext SearchContext;
+	/** EFCallContext active when the pending search / named-session operation was admitted;
+	 *  active again while its terminal result is broadcast, so the caller's async node can claim it. */
+	int64 SearchCallContext = 0;
+	int64 SessionOperationCallContext = 0;
 	TSet<FName> MembershipNames;
 	FOnlineSessionSearchResult AcceptedInvite;
 	FEEOSSessionInvite AcceptedInviteDescriptor;

@@ -300,6 +300,10 @@ private:
 	FEEOSRequestContext SearchContext;
 	IOnlineSessionPtr NotificationSessions;
 	FEEOSRequestContext MembershipContext;
+	/** EFCallContext active when the pending search / membership operation was admitted; active
+	 *  again while its terminal result is broadcast, so the caller's async node can claim it. */
+	int64 SearchCallContext = 0;
+	int64 MembershipCallContext = 0;
 	FEEOSRequestContext LobbyContext;
 	FEEOSRequestContext UpdateContext;
 	FEEOSLobbyVisibilitySnapshot ConfirmedVisibility;

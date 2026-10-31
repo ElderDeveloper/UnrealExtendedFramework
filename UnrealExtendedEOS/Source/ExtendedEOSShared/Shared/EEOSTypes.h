@@ -3,6 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Result/EFResult.h"
 #include "Shared/EEOSOperationTypes.h"
 #include "EEOSTypes.generated.h"
 
@@ -152,6 +153,40 @@ struct EXTENDEDEOSSHARED_API FEEOSResult
 		Result.ErrorMessage = InErrorMessage;
 		Result.ErrorCode = InErrorCode;
 		return Result;
+	}
+
+	/**
+	 * The same outcome as an FEFResult with Source "EOS", for code shared across Extended plugins.
+	 * Retryable for transient SDK results (timeouts, rate limits, lost connection, service
+	 * failures); ErrorCode may carry the SDK name with or without its "EOS_" prefix.
+	 */
+	FEFResult ToEFResult() const
+	{
+		if (bSuccess)
+		{
+			return FEFResult::Success(TEXT("EOS"));
+		}
+
+		const FString BareCode = ErrorCode.StartsWith(TEXT("EOS_")) ? ErrorCode.RightChop(4) : ErrorCode;
+		const TCHAR* const RetryableCodes[] =
+		{
+			TEXT("TimedOut"),
+			TEXT("TooManyRequests"),
+			TEXT("NoConnection"),
+			TEXT("NetworkDisconnected"),
+			TEXT("ServiceFailure"),
+			TEXT("Connect_ExternalServiceUnavailable")
+		};
+		bool bRetryable = false;
+		for (const TCHAR* RetryableCode : RetryableCodes)
+		{
+			if (BareCode.Equals(RetryableCode, ESearchCase::IgnoreCase))
+			{
+				bRetryable = true;
+				break;
+			}
+		}
+		return FEFResult::Failure(TEXT("EOS"), ErrorCode, ErrorMessage, bRetryable);
 	}
 };
 

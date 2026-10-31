@@ -260,6 +260,9 @@ private:
 	IOnlineIdentityPtr ConnectOperationIdentity;
 	int64 ActiveSDKConnectRequest = 0;
 	FEEOSRequestContext SDKConnectContext;
+	/** EFCallContext active when the current raw Connect login was admitted; active again while
+	 *  SetConnectLoginResult broadcasts its result, so the caller's async node can claim it. */
+	int64 ConnectCallContext = 0;
 	int64 ActivePersistentAuthRequest = 0;
 	bool bIdentitySubmissionRejected = false;
 	bool bNativeIdentitySubmitted = false;

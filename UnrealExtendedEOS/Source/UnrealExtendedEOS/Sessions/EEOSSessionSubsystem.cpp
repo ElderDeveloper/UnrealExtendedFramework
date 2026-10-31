@@ -14,6 +14,7 @@
 #include "Online/OnlineSessionNames.h"
 #include "Shared/EEOSSettings.h"
 #include "UnrealExtendedEOS.h"
+#include "Async/EFCallContext.h"
 #include "GameFramework/PlayerController.h"
 #include "Engine/GameInstance.h"
 #include "Engine/World.h"
@@ -291,7 +292,7 @@ bool UEEOSSessionSubsystem::FindSessionsForBackend(EEOSSessionBackend Backend, i
 		RejectOperation(TEXT("FindSessions"), EEOSOperationCode::Busy, TEXT("Another native search is pending.")); return false;
 	}
 	SearchGeneration = BeginOperation(TEXT("FindSessions"), FString(), GetSearchCoordinator()->GetRequestId()); const int64 Token = SearchGeneration;
-	SearchSessions = Sessions; SearchContext = CaptureEOSContext(); SearchBackend = Backend == EEOSSessionBackend::Unknown
+	SearchSessions = Sessions; SearchContext = CaptureEOSContext(); SearchCallContext = EFCallContext::GetActive(); SearchBackend = Backend == EEOSSessionBackend::Unknown
 		? (UseLobbiesByDefault() ? EEOSSessionBackend::Lobby : EEOSSessionBackend::Session) : Backend;
 	SessionSearch = MakeShared<FOnlineSessionSearch>(); SessionSearch->MaxSearchResults = MaxResults;
 	SessionSearch->bIsLanQuery = SearchBackend == EEOSSessionBackend::LAN;
@@ -622,6 +623,9 @@ void UEEOSSessionSubsystem::HandleFindSessionsComplete(bool bWasSuccessful)
 	SearchSessions.Reset();
 	FindSessionsCompleteHandle.Reset();
 	ReleaseSearchSlot();
+	// Report under the call context of the caller that started this search (see EFCallContext).
+	const int64 CallContext = SearchCallContext;
+	SearchCallContext = 0;
 
 	CachedSearchResults.Empty();
 	SearchCompletedAtSeconds = FPlatformTime::Seconds();
@@ -660,6 +664,7 @@ void UEEOSSessionSubsystem::HandleFindSessionsComplete(bool bWasSuccessful)
 	const auto Outcome = CompleteOperation(TEXT("FindSessions"), bWasSuccessful, !bContextCurrent ? EEOSOperationCode::Canceled : bWasSuccessful ? EEOSOperationCode::Succeeded : EEOSOperationCode::NativeFailure,
 		!bContextCurrent ? TEXT("Session search context retired before completion.") : bWasSuccessful ? TEXT("Session search succeeded.") : TEXT("Native session search failed."), FString(), bNativeSuccess ? TEXT("Success") : TEXT("Failure"), EEOSResultSource::NativeCallback);
 	FEEOSOutcomeDispatchScope Dispatch(this, Outcome);
+	EFCallContext::FScope CallScope(CallContext);
 	const auto Results = CachedSearchResults;
 	if (!bShuttingDown) { OnSessionsFound.Broadcast(Results); OnOperationCompleted.Broadcast(Outcome); }
 }
@@ -756,7 +761,7 @@ bool UEEOSSessionSubsystem::AdmitSessionOperation(FName Operation, FName Session
 	{
 		RejectOperation(Operation, EEOSOperationCode::Busy, TEXT("Another plugin operation owns the named native session."), SessionName.ToString()); return false;
 	}
-	OperationSessions = Sessions; SessionOperationContext = CaptureEOSContext();
+	OperationSessions = Sessions; SessionOperationContext = CaptureEOSContext(); SessionOperationCallContext = EFCallContext::GetActive();
 	BeginOperation(Operation, SessionName.ToString(), SessionLease.GetRequestId());
 	const auto* Existing = Sessions->GetNamedSession(SessionName);
 	TagOperationContext(Operation, Existing && Existing->SessionInfo.IsValid() ? Existing->GetSessionIdStr() : FString()); return true;
@@ -863,6 +868,9 @@ void UEEOSSessionSubsystem::FinishSessionOperation(FName Operation, FName Name, 
 	const FString& Message, const FString& NativeResult, EEOSResultSource Source)
 {
 	const auto Sessions = OperationSessions;
+	// An admitted operation finishes on a later tick: report under the call context of the caller
+	// that started it (see EFCallContext). Pre-admission failures run inside that call already.
+	const int64 CallContext = SessionLease.IsValid() ? SessionOperationCallContext : EFCallContext::GetActive();
 	const auto* Native = Sessions.IsValid() ? Sessions->GetNamedSession(Name) : nullptr;
 	const bool bContextRetired = SessionLease.IsValid() && !IsEOSContextCurrent(SessionOperationContext);
 	if (bContextRetired) { bSuccess = false; Code = EEOSOperationCode::Canceled; }
@@ -893,9 +901,10 @@ void UEEOSSessionSubsystem::FinishSessionOperation(FName Operation, FName Name, 
 	CreateSessionCompleteHandle.Reset(); DestroyForCreateHandle.Reset(); JoinSessionCompleteHandle.Reset();
 	DestroySessionCompleteHandle.Reset(); StartSessionCompleteHandle.Reset(); EndSessionCompleteHandle.Reset();
 	PendingCreateSessionName = PendingJoinSessionName = PendingDestroySessionName = PendingStartSessionName = PendingEndSessionName = NAME_None;
-	SessionLease.Reset(); OperationSessions.Reset(); bInSession = IsInSession();
+	SessionLease.Reset(); OperationSessions.Reset(); SessionOperationCallContext = 0; bInSession = IsInSession();
 	const auto Outcome = CompleteOperation(Operation, bSuccess, Code, bContextRetired ? TEXT("Original identity/platform context retired.") : Message, CurrentId, NativeResult, Source);
 	FEEOSOutcomeDispatchScope Dispatch(this, Outcome);
+	EFCallContext::FScope CallScope(CallContext);
 	if (bShuttingDown) return;
 	if (Operation == TEXT("CreateSession")) OnSessionCreated.Broadcast(bSuccess, Name.ToString());
 	else if (Operation == TEXT("JoinSession")) OnSessionJoined.Broadcast(bSuccess, Name.ToString());

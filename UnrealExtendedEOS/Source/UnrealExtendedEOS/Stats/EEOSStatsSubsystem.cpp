@@ -6,6 +6,7 @@
 #include "Interfaces/OnlineStatsInterface.h"
 #include "Shared/EEOSBlueprintLibrary.h"
 #include "UnrealExtendedEOS.h"
+#include "Async/EFCallContext.h"
 
 #include "eos_sdk.h"
 #include "eos_stats.h"
@@ -147,11 +148,14 @@ bool UEEOSStatsSubsystem::IngestStatsInternal(const TCHAR* FunctionName, const T
 		TWeakObjectPtr<UEEOSStatsSubsystem> Self;
 		FEEOSRequestContext Ownership;
 		int32 NumStats = 0;
+		/** EFCallContext of the caller; active again while the result is broadcast. */
+		int64 CallContext = 0;
 	};
 
 	FIngestStatsContext* Context = new FIngestStatsContext();
 	Context->Self = this; Context->Ownership = CaptureEOSContext();
 	Context->NumStats = IngestData.Num();
+	Context->CallContext = EFCallContext::GetActive();
 
 	EOS_Stats_IngestStat(StatsHandle, &Options, Context,
 		[](const EOS_Stats_IngestStatCompleteCallbackInfo* Data)
@@ -163,6 +167,7 @@ bool UEEOSStatsSubsystem::IngestStatsInternal(const TCHAR* FunctionName, const T
 			UEEOSStatsSubsystem* Self = Ctx->Self.Get();
 			if (!Self || !Self->IsEOSContextCurrent(Ctx->Ownership)) return;
 
+			EFCallContext::FScope CallScope(Ctx->CallContext);
 			const bool bSuccess = Data->ResultCode == EOS_EResult::EOS_Success;
 			if (bSuccess)
 			{
@@ -231,9 +236,12 @@ bool UEEOSStatsSubsystem::QueryStats(const FString& UserId, const TArray<FString
 	TArray<FUniqueNetIdRef> Users;
 	Users.Add(NetId.ToSharedRef());
 
+	// The completion reports under the caller's call context (see EFCallContext).
+	const int64 CallContext = EFCallContext::GetActive();
 	StatsInterface->QueryStats(LocalUserId.ToSharedRef(), Users, StatNames,
-		FOnlineStatsQueryUsersStatsComplete::CreateWeakLambda(this, [this, QueriedId = NetId.ToSharedRef(), Ownership = CaptureEOSContext()](const FOnlineError& Error, const TArray<TSharedRef<const FOnlineStatsUserStats>>& UsersStats)
+		FOnlineStatsQueryUsersStatsComplete::CreateWeakLambda(this, [this, QueriedId = NetId.ToSharedRef(), Ownership = CaptureEOSContext(), CallContext](const FOnlineError& Error, const TArray<TSharedRef<const FOnlineStatsUserStats>>& UsersStats)
 		{
+			EFCallContext::FScope CallScope(CallContext);
 			if (!IsEOSContextCurrent(Ownership)) { OnStatsQueried.Broadcast(false, TArray<FEEOSStat>()); return; }
 			CachedStats.Empty();
 			bool bQueriedUserPresent = false;

@@ -2,6 +2,9 @@
 
 #include "UnrealExtendedEOS.h"
 #include "Shared/EEOSSettings.h"
+#include "EFFoundationVersion.h"
+
+EF_REQUIRE_FOUNDATION_VERSION(1, 0, "UnrealExtendedEOS");
 
 #define LOCTEXT_NAMESPACE "FUnrealExtendedEOSModule"
 
