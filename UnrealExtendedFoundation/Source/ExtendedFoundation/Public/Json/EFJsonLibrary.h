@@ -46,11 +46,19 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Extended Framework|Backend|Json")
 	static FString JsonValueToString(const FEFJsonValue& JsonValue, bool bPrettyPrint = false);
 
-	/** Reads a JSON object from a file. A relative path such as "Saved/Data/Profile.json" is resolved against the project directory. */
+	/**
+	 * Reads a JSON object from a file. A relative path such as "Saved/Data/Profile.json" is resolved
+	 * against the project directory. With the core framework enabled, the path must pass its Extended
+	 * File Access settings.
+	 */
 	UFUNCTION(BlueprintCallable, Category = "Extended Framework|Backend|Json")
 	static bool LoadJsonObjectFromFile(const FString& FilePath, FEFJsonObject& OutObject);
 
-	/** Writes a JSON object to a UTF-8 file, creating folders as needed. A relative path such as "Saved/Data/Profile.json" is resolved against the project directory. */
+	/**
+	 * Writes a JSON object to a UTF-8 file, creating folders as needed. A relative path such as
+	 * "Saved/Data/Profile.json" is resolved against the project directory. With the core framework
+	 * enabled, the path must pass its Extended File Access settings.
+	 */
 	UFUNCTION(BlueprintCallable, Category = "Extended Framework|Backend|Json")
 	static bool SaveJsonObjectToFile(const FEFJsonObject& JsonObject, const FString& FilePath, bool bPrettyPrint = true);
 

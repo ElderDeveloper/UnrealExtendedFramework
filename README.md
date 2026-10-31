@@ -138,6 +138,7 @@ The core plugin supplies runtime and editor systems shared by the gameplay-facin
 - Optional compile-time integration for NVIDIA DLSS, AMD FSR variants, and Intel XeSS.
 - Async Blueprint actions for delays, loops, timelines, input, gameplay tags, and character movement.
 - Actor, AI, array, condition, conversion, data-table, file, input, math, monitor, perception, trace, variable, and widget libraries.
+- **Extended File Access**: in shipped builds (by default), Blueprint file nodes may read only under the project, Saved and user folders and write only under Saved, plus any folders you allow. The foundation's JSON file nodes follow the same rules.
 - Subtitle data, style profiles, project settings, playback, and presentation support.
 - Behavior Tree composites, decorators, services, and tasks.
 - EQS contexts, generators, and tests for tactical AI queries.
@@ -465,6 +466,7 @@ Every plugin's settings derive from `UEFDeveloperSettings` and sit under **Proje
 | Subtitles | Extended Framework → Extended Subtitle Settings | `UEFSubtitleProjectSettings` |
 | Atlassian | Extended Framework → Extended Atlassian | `UExtendedAtlassianSettings` |
 | Extended Log | Extended Framework → Extended Log | `UEFLogSettings` |
+| File access | Extended Framework → Extended File Access | `UEFFileAccessSettings` |
 
 Configure only one provider at a time, verify its authentication flow in a development environment, and add the rest after the base path is stable.
 
@@ -531,6 +533,7 @@ Online integrations can expose privileged operations if configured carelessly.
 - Prefer server-authoritative calls for inventory grants, currency mutation, moderation, progression, and other trusted operations.
 - Keep development, staging, and production service configurations separate.
 - Store publishing credentials in your operating-system credential store or CI secret manager. `FEFCredentialStore` does this for editor tools (DPAPI on Windows, Keychain on macOS). Encryption with a key embedded in a client or editor module is obfuscation, not a security boundary.
+- File-system Blueprint nodes are limited to safe folders in shipped builds (**Extended File Access**, default `ShippingOnly`). A shipped game that writes outside `Saved` must add the folder there or set the mode to `Off`.
 - Mark settings properties that could hold a secret with `meta = (EFSecret)`; the editor warns when one would be saved to a `Default*.ini`, which ships with the game.
 - Review packaged configuration and staged files before every release.
 

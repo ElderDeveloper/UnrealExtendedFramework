@@ -108,8 +108,14 @@ bool UEFJsonLibrary::LoadJsonObjectFromFile(const FString& FilePath, FEFJsonObje
 {
 	OutObject = FEFJsonObject();
 
+	if (FilePath.IsEmpty())
+	{
+		return false;
+	}
+
+	const FString FullPath = EFJsonLibraryPrivate::ResolveFilePath(FilePath);
 	FString Text;
-	if (FilePath.IsEmpty() || !FFileHelper::LoadFileToString(Text, *EFJsonLibraryPrivate::ResolveFilePath(FilePath)))
+	if (!EFJson::IsFileAccessAllowed(FullPath, /*bForWrite*/ false, TEXT("LoadJsonObjectFromFile")) || !FFileHelper::LoadFileToString(Text, *FullPath))
 	{
 		return false;
 	}
@@ -125,6 +131,10 @@ bool UEFJsonLibrary::SaveJsonObjectToFile(const FEFJsonObject& JsonObject, const
 	}
 
 	const FString FullPath = EFJsonLibraryPrivate::ResolveFilePath(FilePath);
+	if (!EFJson::IsFileAccessAllowed(FullPath, /*bForWrite*/ true, TEXT("SaveJsonObjectToFile")))
+	{
+		return false;
+	}
 	IFileManager::Get().MakeDirectory(*FPaths::GetPath(FullPath), /*Tree*/ true);
 	return FFileHelper::SaveStringToFile(EFJson::ObjectToString(JsonObject.Object, bPrettyPrint), *FullPath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
 }
