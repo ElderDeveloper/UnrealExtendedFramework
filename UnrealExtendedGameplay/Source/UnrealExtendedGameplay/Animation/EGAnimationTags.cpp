@@ -38,3 +38,5 @@ UE_DEFINE_GAMEPLAY_TAG(TAG_EGTurnInPlace_State_Locked, "ExtendedGameplay.TurnInP
 UE_DEFINE_GAMEPLAY_TAG(TAG_EGTurnInPlace_State_Paused, "ExtendedGameplay.TurnInPlace.State.Paused");
 UE_DEFINE_GAMEPLAY_TAG(TAG_EGTurnInPlace_State_Left, "ExtendedGameplay.TurnInPlace.State.Left");
 UE_DEFINE_GAMEPLAY_TAG(TAG_EGTurnInPlace_State_Right, "ExtendedGameplay.TurnInPlace.State.Right");
+
+UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_EGMovement_RotationLocked, "ExtendedGameplay.Movement.RotationLocked", "Movement modifiers have scaled the rotation rate to 0.");

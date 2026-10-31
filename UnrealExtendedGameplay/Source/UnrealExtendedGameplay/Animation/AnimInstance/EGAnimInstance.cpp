@@ -35,6 +35,7 @@ void UEGAnimInstance::RefreshStateProviders()
 
 	AActor* const Owner = GetOwningActor();
 	TurnInPlaceComponent = UEGTurnInPlaceComponent::FindFor(Owner);
+	ProviderComponentCount = Owner ? Owner->GetComponents().Num() : INDEX_NONE;
 	if (!Owner)
 	{
 		return;
@@ -97,6 +98,12 @@ void UEGAnimInstance::GatherGameThreadData(float DeltaSeconds)
 		Acceleration = FVector::ZeroVector;
 		bIsFalling = false;
 		bIsCrouching = false;
+	}
+
+	// Components added at runtime (a movement modifier added on demand) are picked up here.
+	if (const AActor* const Owner = GetOwningActor(); Owner && Owner->GetComponents().Num() != ProviderComponentCount)
+	{
+		RefreshStateProviders();
 	}
 
 	UEGTurnInPlaceAnimLibrary::GatherTurnInPlace(TurnInPlaceComponent, TurnInPlace);

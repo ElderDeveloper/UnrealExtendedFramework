@@ -4,6 +4,7 @@
 
 #include "Components/ActorComponent.h"
 #include "CoreMinimal.h"
+#include "UnrealExtendedGameplay/Animation/AnimInstance/EGAnimStateProvider.h"
 
 #include "EGMovementModifierComponent.generated.h"
 
@@ -75,9 +76,12 @@ private:
  *
  * Values changed by other code while modifiers are active are picked up as the new base the next
  * time a modifier is pushed or removed.
+ *
+ * Publishes ExtendedGameplay.Movement.RotationLocked as an anim state tag while rotation is locked,
+ * which turn in place reads without depending on this component.
  */
 UCLASS(ClassGroup = (Extended), meta = (BlueprintSpawnableComponent))
-class UNREALEXTENDEDGAMEPLAY_API UEGMovementModifierComponent : public UActorComponent
+class UNREALEXTENDEDGAMEPLAY_API UEGMovementModifierComponent : public UActorComponent, public IEGAnimStateProvider
 {
 	GENERATED_BODY()
 
@@ -99,6 +103,9 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "Extended|Movement Modifier")
 	FEGMovementModifier GetCombinedModifier() const { return Stack.GetCombined(); }
+
+	/** ExtendedGameplay.Movement.RotationLocked while the combined rotation rate scale is 0. */
+	virtual FGameplayTagContainer GetAnimStateTags_Implementation() const override;
 
 protected:
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;

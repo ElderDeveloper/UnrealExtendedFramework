@@ -43,6 +43,12 @@ const FEGTurnInPlaceEntry& FEGTurnInPlaceGraphInput::GetEntry() const
 // UEGTurnInPlaceSet
 // ---------------------------------------------------------------------------------------------
 
+bool UEGTurnInPlaceSet::HasTurnCurves(const UAnimSequenceBase* Sequence, const FEGTurnInPlaceCurveNames& Names)
+{
+	// Through the base class, with both arguments: UAnimSequence's override has no default.
+	return Sequence && Sequence->HasCurveData(Names.RemainingTurnYaw, false) && Sequence->HasCurveData(Names.TurnYawWeight, false);
+}
+
 const FEGTurnInPlaceEntry& UEGTurnInPlaceSet::GetEmptyEntry()
 {
 	static const FEGTurnInPlaceEntry Empty;
@@ -93,9 +99,11 @@ namespace
 			}
 		}
 
-		if (Entry.LeftTurns.Num() != Entry.StepSizes.Num() || Entry.RightTurns.Num() != Entry.StepSizes.Num())
+		const bool bMissingSteps = Entry.LeftTurns.Num() < Entry.StepSizes.Num() || Entry.RightTurns.Num() < Entry.StepSizes.Num();
+		if ((bMissingSteps && !Entry.Procedural.bTurnWithoutAnimation)
+			|| Entry.LeftTurns.Num() > Entry.StepSizes.Num() || Entry.RightTurns.Num() > Entry.StepSizes.Num())
 		{
-			Context.AddError(FText::Format(LOCTEXT("StepCount", "{0}: LeftTurns and RightTurns need one sequence per step ({1})."), Label, FText::AsNumber(Entry.StepSizes.Num())));
+			Context.AddError(FText::Format(LOCTEXT("StepCount", "{0}: LeftTurns and RightTurns need one sequence per step ({1}); fewer is allowed while Procedural.bTurnWithoutAnimation is on."), Label, FText::AsNumber(Entry.StepSizes.Num())));
 			Result = EDataValidationResult::Invalid;
 		}
 
@@ -106,15 +114,19 @@ namespace
 				const UAnimSequence* Sequence = Turns[Index];
 				if (!Sequence)
 				{
-					Context.AddError(FText::Format(LOCTEXT("MissingSequence", "{0}: {1} turn {2} is empty."), Label, Side, FText::AsNumber(Index)));
-					Result = EDataValidationResult::Invalid;
+					// A missing clip turns procedurally when the entry allows it.
+					if (!Entry.Procedural.bTurnWithoutAnimation)
+					{
+						Context.AddError(FText::Format(LOCTEXT("MissingSequence", "{0}: {1} turn {2} is empty and Procedural.bTurnWithoutAnimation is off."), Label, Side, FText::AsNumber(Index)));
+						Result = EDataValidationResult::Invalid;
+					}
 					continue;
 				}
-				if (!Sequence->HasCurveData(Curves.RemainingTurnYaw) || !Sequence->HasCurveData(Curves.TurnYawWeight))
+				// A warning: the Turn In Place node reads the turn from the root track without them.
+				if (!HasTurnCurves(Sequence, Curves))
 				{
-					Context.AddError(FText::Format(LOCTEXT("MissingCurves", "{0}: {1} lacks the {2} / {3} curves. Run the Turn In Place Curve modifier on it."),
+					Context.AddWarning(FText::Format(LOCTEXT("MissingCurves", "{0}: {1} lacks the {2} / {3} curves. The Turn In Place node reads its root track instead; the state machine recipe and Pseudo servers need the curves (run the Turn In Place Curves modifier)."),
 						Label, FText::FromString(Sequence->GetName()), FText::FromName(Curves.RemainingTurnYaw), FText::FromName(Curves.TurnYawWeight)));
-					Result = EDataValidationResult::Invalid;
 				}
 			}
 		};

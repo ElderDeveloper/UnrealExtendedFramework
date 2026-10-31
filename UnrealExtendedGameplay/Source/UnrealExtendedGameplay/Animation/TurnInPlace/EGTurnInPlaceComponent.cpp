@@ -5,10 +5,11 @@
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
 #include "Animation/AnimSequence.h"
-#include "Components/CapsuleComponent.h"
+#include "Components/PrimitiveComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "DrawDebugHelpers.h"
 #include "EGTurnInPlaceAnimSource.h"
+#include "EGTurnInPlaceMovementSource.h"
 #include "EGTurnInPlaceSet.h"
 #include "EGTurnInPlaceSolver.h"
 #include "Engine/Engine.h"
@@ -16,14 +17,12 @@
 #include "GameFramework/Character.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/Controller.h"
+#include "GameFramework/Pawn.h"
 #include "HAL/IConsoleManager.h"
 #include "Net/Core/PushModel/PushModel.h"
 #include "Net/UnrealNetwork.h"
 #include "UnrealExtendedGameplay/Animation/Debug/EGAnimDebug.h"
 #include "UnrealExtendedGameplay/Animation/EGAnimationTags.h"
-#include "UnrealExtendedGameplay/Animation/Events/EGAnimEventComponent.h"
-#include "UnrealExtendedGameplay/Movement/EGMovementModifierComponent.h"
-#include "UnrealExtendedGameplay/SoftCollision/EGRootMotionSource_SoftPush.h"
 
 namespace EGTurnInPlaceCVars
 {
@@ -39,7 +38,7 @@ namespace EGTurnInPlaceCVars
 
 	static TAutoConsoleVariable<int32> DebugState(
 		TEXT("eg.TurnInPlace.Debug.State"), 0,
-		TEXT("1: show each character's resolved turn in place state and why."),
+		TEXT("1: show each character's resolved turn in place state, why, and what drives the rotation."),
 		ECVF_Cheat);
 }
 
@@ -49,11 +48,39 @@ namespace
 	constexpr int32 MissingHookFrames = 120;
 }
 
+// ---------------------------------------------------------------------------------------------
+// Driver tick
+// ---------------------------------------------------------------------------------------------
+
+void FEGTurnInPlaceDriverTickFunction::ExecuteTick(float DeltaTime, ELevelTick TickType, ENamedThreads::Type CurrentThread, const FGraphEventRef& MyCompletionGraphEvent)
+{
+	FActorComponentTickFunction::ExecuteTickHelper(Target, /*bTickInEditor=*/ false, DeltaTime, TickType, [this](float DilatedTime)
+	{
+		Target->TickDriver(DilatedTime);
+	});
+}
+
+FString FEGTurnInPlaceDriverTickFunction::DiagnosticMessage()
+{
+	return Target ? Target->GetFullName() + TEXT("[TurnInPlaceDriver]") : FString(TEXT("<null>[TurnInPlaceDriver]"));
+}
+
+// ---------------------------------------------------------------------------------------------
+// Construction
+// ---------------------------------------------------------------------------------------------
+
 UEGTurnInPlaceComponent::UEGTurnInPlaceComponent()
 {
 	PrimaryComponentTick.bCanEverTick = true;
 	PrimaryComponentTick.TickGroup = TG_PostPhysics;
+
+	DriverTick.bCanEverTick = true;
+	DriverTick.bStartWithTickEnabled = true;
+	DriverTick.TickGroup = TG_PrePhysics;
+
 	SetIsReplicatedByDefault(true);
+
+	MovementSource = CreateDefaultSubobject<UEGTurnInPlaceCharacterSource>(TEXT("MovementSource"));
 }
 
 UEGTurnInPlaceComponent* UEGTurnInPlaceComponent::FindFor(const AActor* Actor)
@@ -91,17 +118,45 @@ void UEGTurnInPlaceComponent::GetLifetimeReplicatedProps(TArray<FLifetimePropert
 void UEGTurnInPlaceComponent::OnRegister()
 {
 	Super::OnRegister();
-	CachedCharacter = Cast<ACharacter>(GetOwner());
+	CachedMesh = GetSource()->GetMesh(GetOwner());
+}
+
+void UEGTurnInPlaceComponent::RegisterComponentTickFunctions(bool bRegister)
+{
+	Super::RegisterComponentTickFunctions(bRegister);
+
+	if (bRegister)
+	{
+		if (SetupActorComponentTickFunction(&DriverTick))
+		{
+			DriverTick.Target = this;
+		}
+	}
+	else if (DriverTick.IsTickFunctionRegistered())
+	{
+		DriverTick.UnRegisterTickFunction();
+	}
 }
 
 void UEGTurnInPlaceComponent::BeginPlay()
 {
 	Super::BeginPlay();
 
-	CachedCharacter = Cast<ACharacter>(GetOwner());
+	AActor* const Owner = GetOwner();
+	const UEGTurnInPlaceMovementSource* const Source = GetSource();
+	CachedMesh = Source->GetMesh(Owner);
+
+	// The driver runs after the movement and before the mesh, so the animation sees its rotation.
+	if (UActorComponent* const Movement = Source->GetMovementComponent(Owner))
+	{
+		DriverTick.AddPrerequisite(Movement, Movement->PrimaryComponentTick);
+	}
+
 	if (USkeletalMeshComponent* const Mesh = GetMesh())
 	{
-		// Tick after the mesh, so the curve copy is taken once its animation work is done.
+		Mesh->PrimaryComponentTick.AddPrerequisite(this, DriverTick);
+
+		// The main tick runs after the mesh, so the curve copy is taken once its animation is done.
 		AddTickPrerequisiteComponent(Mesh);
 		Mesh->OnAnimInitialized.AddUniqueDynamic(this, &UEGTurnInPlaceComponent::HandleAnimInitialized);
 		HandleAnimInitialized();
@@ -115,7 +170,18 @@ void UEGTurnInPlaceComponent::BeginPlay()
 	}
 	else
 	{
-		ReportProblem(TEXT("Turn in place needs an ACharacter with a skeletal mesh."));
+		ReportProblem(TEXT("No skeletal mesh found (the movement source's GetMesh); turn in place is off."));
+	}
+
+	FEGTurnInPlaceMovementInfo Info;
+	if (!GatherMovementInfo(Info))
+	{
+		ReportProblem(FString::Printf(TEXT("The movement source %s cannot read %s (Character Movement needs an ACharacter); turn in place is off."),
+			*GetNameSafe(Source->GetClass()), *GetNameSafe(Owner ? Owner->GetClass() : nullptr)));
+	}
+	else
+	{
+		LastInputDirection = Info.Rotation.Quaternion().GetForwardVector();
 	}
 
 	if (!TurnSet)
@@ -131,6 +197,7 @@ void UEGTurnInPlaceComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	if (USkeletalMeshComponent* const Mesh = GetMesh())
 	{
 		Mesh->OnAnimInitialized.RemoveDynamic(this, &UEGTurnInPlaceComponent::HandleAnimInitialized);
+		Mesh->PrimaryComponentTick.RemovePrerequisite(this, DriverTick);
 	}
 	Requests.Reset();
 	Super::EndPlay(EndPlayReason);
@@ -144,19 +211,20 @@ void UEGTurnInPlaceComponent::HandleAnimInitialized()
 	bHasAnimSource = AnimInstance && AnimInstance->Implements<UEGTurnInPlaceAnimSource>();
 	CachedCurves = FEGTurnInPlaceCurves();
 
-	if (AnimInstance && !bHasAnimSource && !WantsPseudoAnimState())
+	if (!AnimInstance && !WantsPseudoAnimState())
 	{
-		ReportProblem(FString::Printf(TEXT("Anim instance %s does not implement IEGTurnInPlaceAnimSource. Parent the AnimBP to UEGAnimInstance or implement the interface."), *GetNameSafe(AnimInstance->GetClass())));
+		ReportProblem(TEXT("The mesh has no anim instance; turn in place is off."));
 	}
 
 	// Blueprint components exist by now on spawned characters.
 	RefreshStateProviders();
 }
 
-void UEGTurnInPlaceComponent::RefreshStateProviders()
+void UEGTurnInPlaceComponent::RefreshStateProviders() const
 {
 	StateProviders.Reset();
-	AActor* const Owner = GetOwner();
+	const AActor* const Owner = GetOwner();
+	ProviderComponentCount = Owner ? Owner->GetComponents().Num() : INDEX_NONE;
 	if (!Owner)
 	{
 		return;
@@ -164,12 +232,12 @@ void UEGTurnInPlaceComponent::RefreshStateProviders()
 
 	if (Owner->Implements<UEGAnimStateProvider>())
 	{
-		StateProviders.Add(Owner);
+		StateProviders.Add(const_cast<AActor*>(Owner));
 	}
 	TInlineComponentArray<UActorComponent*> Components(Owner);
 	for (UActorComponent* Component : Components)
 	{
-		// Not this component: its own state tags depend on the stance it is resolving.
+		// Not this component: its own state tags depend on the state being resolved.
 		if (Component && Component != this && Component->Implements<UEGAnimStateProvider>())
 		{
 			StateProviders.Add(Component);
@@ -177,25 +245,64 @@ void UEGTurnInPlaceComponent::RefreshStateProviders()
 	}
 }
 
+const FGameplayTagContainer& UEGTurnInPlaceComponent::GetStateTags() const
+{
+	// Once per frame. Marked gathered first: a provider that asks this component for its state
+	// would otherwise recurse.
+	if (CachedStateTagsFrame != GFrameCounter)
+	{
+		CachedStateTagsFrame = GFrameCounter;
+		CachedStateTags.Reset();
+
+		// Components added at runtime (a movement modifier added on demand) are picked up here.
+		const AActor* const Owner = GetOwner();
+		if (Owner && Owner->GetComponents().Num() != ProviderComponentCount)
+		{
+			RefreshStateProviders();
+		}
+
+		FGameplayTagContainer Tags;
+		for (const TWeakObjectPtr<UObject>& Provider : StateProviders)
+		{
+			if (UObject* const Object = Provider.Get())
+			{
+				Tags.AppendTags(IEGAnimStateProvider::Execute_GetAnimStateTags(Object));
+			}
+		}
+		CachedStateTags = MoveTemp(Tags);
+	}
+	return CachedStateTags;
+}
+
 // ---------------------------------------------------------------------------------------------
 // Accessors
 // ---------------------------------------------------------------------------------------------
 
-ACharacter* UEGTurnInPlaceComponent::GetCharacter() const
+const UEGTurnInPlaceMovementSource* UEGTurnInPlaceComponent::GetSource() const
 {
-	return CachedCharacter.Get();
+	// Cleared in the details panel: fall back to the stateless default.
+	return MovementSource ? MovementSource.Get() : GetDefault<UEGTurnInPlaceCharacterSource>();
 }
 
-UCharacterMovementComponent* UEGTurnInPlaceComponent::GetMovement() const
+bool UEGTurnInPlaceComponent::GatherMovementInfo(FEGTurnInPlaceMovementInfo& OutInfo) const
 {
-	const ACharacter* const Character = GetCharacter();
-	return Character ? Character->GetCharacterMovement() : nullptr;
+	const AActor* const Owner = GetOwner();
+	if (!Owner || !GetSource()->GatherMovement(Owner, OutInfo))
+	{
+		OutInfo = FEGTurnInPlaceMovementInfo();
+		return false;
+	}
+	return OutInfo.bValid;
+}
+
+bool UEGTurnInPlaceComponent::GetMovementInfo(FEGTurnInPlaceMovementInfo& OutInfo) const
+{
+	return GatherMovementInfo(OutInfo);
 }
 
 USkeletalMeshComponent* UEGTurnInPlaceComponent::GetMesh() const
 {
-	const ACharacter* const Character = GetCharacter();
-	return Character ? Character->GetMesh() : nullptr;
+	return CachedMesh.Get();
 }
 
 bool UEGTurnInPlaceComponent::WantsPseudoAnimState() const
@@ -203,99 +310,83 @@ bool UEGTurnInPlaceComponent::WantsPseudoAnimState() const
 	return GetNetMode() == NM_DedicatedServer && DedicatedServerAnimMode == EEGTurnServerAnimMode::Pseudo;
 }
 
-bool UEGTurnInPlaceComponent::HasValidData() const
+bool UEGTurnInPlaceComponent::HasValidData(const FEGTurnInPlaceMovementInfo& Info) const
 {
-	const ACharacter* const Character = GetCharacter();
-	return TurnSet && Character && !Character->IsPendingKillPending() && Character->GetCharacterMovement()
-		&& (bHasAnimSource || WantsPseudoAnimState());
+	return TurnSet && Info.bValid && (CachedAnimInstance.IsValid() || WantsPseudoAnimState());
 }
 
-bool UEGTurnInPlaceComponent::IsStationary() const
+bool UEGTurnInPlaceComponent::HasValidData() const
 {
-	const AActor* const Owner = GetOwner();
-	return Owner && Owner->GetVelocity().IsNearlyZero();
+	FEGTurnInPlaceMovementInfo Info;
+	return GatherMovementInfo(Info) && HasValidData(Info);
+}
+
+bool UEGTurnInPlaceComponent::IsStationary(const FEGTurnInPlaceMovementInfo& Info)
+{
+	return Info.Velocity.IsNearlyZero();
 }
 
 EEGTurnMethod UEGTurnInPlaceComponent::GetTurnMethod() const
 {
-	const ACharacter* const Character = GetCharacter();
-	const UCharacterMovementComponent* const Movement = GetMovement();
-	if (!Character || !Movement)
-	{
-		return EEGTurnMethod::None;
-	}
-
-	if (!Movement->bOrientRotationToMovement && (Character->bUseControllerRotationPitch || Character->bUseControllerRotationYaw || Character->bUseControllerRotationRoll))
-	{
-		return EEGTurnMethod::FaceRotation;
-	}
-	if (Movement->bOrientRotationToMovement || Movement->bUseControllerDesiredRotation)
-	{
-		return EEGTurnMethod::PhysicsRotation;
-	}
-	return EEGTurnMethod::None;
+	FEGTurnInPlaceMovementInfo Info;
+	return GatherMovementInfo(Info) ? Info.TurnMethod : EEGTurnMethod::None;
 }
 
-void UEGTurnInPlaceComponent::GetGravity(FVector& OutUp, FQuat& OutWorldToGravity, FQuat& OutGravityToWorld) const
+EEGTurnRotationDriver UEGTurnInPlaceComponent::ResolveDriver(const FEGTurnInPlaceMovementInfo& Info) const
 {
-	OutUp = FVector::UpVector;
-	OutWorldToGravity = FQuat::Identity;
-	OutGravityToWorld = FQuat::Identity;
-
-	const UCharacterMovementComponent* const Movement = GetMovement();
-	if (Movement && Movement->HasCustomGravity())
+	if (RotationDriver != EEGTurnRotationDriver::Auto)
 	{
-		const FVector Up = (-Movement->GetGravityDirection()).GetSafeNormal();
-		if (!Up.IsNearlyZero())
-		{
-			OutUp = Up;
-			OutWorldToGravity = Movement->GetWorldToGravityTransform();
-			OutGravityToWorld = Movement->GetGravityToWorldTransform();
-		}
+		return RotationDriver;
+	}
+	switch (Info.TurnMethod)
+	{
+	case EEGTurnMethod::FaceRotation: return bFaceHookSeen ? EEGTurnRotationDriver::Hooks : EEGTurnRotationDriver::Component;
+	case EEGTurnMethod::PhysicsRotation: return bPhysicsHookSeen ? EEGTurnRotationDriver::Hooks : EEGTurnRotationDriver::Component;
+	default: return EEGTurnRotationDriver::Component;
 	}
 }
 
-UAnimMontage* UEGTurnInPlaceComponent::GetRootMotionMontage() const
+EEGTurnRotationDriver UEGTurnInPlaceComponent::GetActiveRotationDriver() const
 {
-	const ACharacter* const Character = GetCharacter();
-	const UAnimInstance* const AnimInstance = CachedAnimInstance.Get();
-	if (!Character || !AnimInstance || !Character->IsPlayingNetworkedRootMotionMontage())
-	{
-		return nullptr;
-	}
-	const FAnimMontageInstance* const Instance = AnimInstance->GetRootMotionMontageInstance();
-	return Instance ? Instance->Montage.Get() : nullptr;
+	FEGTurnInPlaceMovementInfo Info;
+	GatherMovementInfo(Info);
+	return ResolveDriver(Info);
 }
 
 FEGTurnInPlaceCurves UEGTurnInPlaceComponent::GetCurves() const
 {
 	if (WantsPseudoAnimState())
 	{
-		FEGTurnInPlaceCurves Curves;
-		if (TurnSet && PseudoState != EEGTurnPseudoState::Idle)
+		if (!TurnSet || PseudoState == EEGTurnPseudoState::Idle)
 		{
-			const UAnimSequence* const Sequence = FEGTurnInPlaceSolver::GetTurnAnimation(GetEntry(), PseudoNode, PseudoState == EEGTurnPseudoState::Recovery);
-			if (Sequence)
-			{
-				const float Time = static_cast<float>(PseudoNode.AnimTime);
-				Curves.RemainingTurnYaw = Sequence->EvaluateCurveData(TurnSet->Curves.RemainingTurnYaw, Time);
-				Curves.TurnYawWeight = Sequence->EvaluateCurveData(TurnSet->Curves.TurnYawWeight, Time);
-				Curves.PauseTurnInPlace = Sequence->EvaluateCurveData(TurnSet->Curves.PauseTurnInPlace, Time);
-				Curves.LockTurnInPlace = Sequence->EvaluateCurveData(TurnSet->Curves.LockTurnInPlace, Time);
-			}
+			return FEGTurnInPlaceCurves();
 		}
-		return Curves;
+		return FEGTurnInPlaceSolver::EvaluateTurnCurves(GetEntry(), PseudoNode, PseudoState == EEGTurnPseudoState::Recovery, TurnSet->Curves);
 	}
-
 	return CachedCurves;
 }
 
 void UEGTurnInPlaceComponent::RefreshCurveCache()
 {
 	UAnimInstance* const AnimInstance = CachedAnimInstance.Get();
-	CachedCurves = (AnimInstance && bHasAnimSource)
-		? IEGTurnInPlaceAnimSource::Execute_GetTurnInPlaceCurves(AnimInstance)
-		: FEGTurnInPlaceCurves();
+	if (!AnimInstance || !TurnSet)
+	{
+		CachedCurves = FEGTurnInPlaceCurves();
+		return;
+	}
+
+	if (bHasAnimSource)
+	{
+		CachedCurves = IEGTurnInPlaceAnimSource::Execute_GetTurnInPlaceCurves(AnimInstance);
+		return;
+	}
+
+	// Any anim instance: the curves it evaluated this frame (complete by now, the mesh ticked first).
+	const FEGTurnInPlaceCurveNames& Names = TurnSet->Curves;
+	CachedCurves.RemainingTurnYaw = AnimInstance->GetCurveValue(Names.RemainingTurnYaw);
+	CachedCurves.TurnYawWeight = AnimInstance->GetCurveValue(Names.TurnYawWeight);
+	CachedCurves.PauseTurnInPlace = AnimInstance->GetCurveValue(Names.PauseTurnInPlace);
+	CachedCurves.LockTurnInPlace = AnimInstance->GetCurveValue(Names.LockTurnInPlace);
 }
 
 bool UEGTurnInPlaceComponent::IsTurningInPlace() const
@@ -323,22 +414,13 @@ FGameplayTag UEGTurnInPlaceComponent::ResolveStanceKey() const
 	{
 		return FGameplayTag();
 	}
-
-	FGameplayTagContainer StateTags;
-	for (const TWeakObjectPtr<UObject>& Provider : StateProviders)
-	{
-		if (UObject* const Object = Provider.Get())
-		{
-			StateTags.AppendTags(IEGAnimStateProvider::Execute_GetAnimStateTags(Object));
-		}
-	}
-	return TurnSet->FindStanceKey(StateTags);
+	return TurnSet->FindStanceKey(GetStateTags());
 }
 
 FGameplayTag UEGTurnInPlaceComponent::GetStanceKey() const
 {
-	// Once per frame, so the movement hook and the anim graph agree on the stance. Marked resolved
-	// (as Default) before resolving: a provider or override that asks this component for its state
+	// Once per frame, so the movement and the anim graph agree on the stance. Marked resolved (as
+	// Default) before resolving: a provider or override that asks this component for its state
 	// would otherwise recurse forever.
 	if (CachedStanceFrame != GFrameCounter)
 	{
@@ -356,14 +438,20 @@ const FEGTurnInPlaceEntry& UEGTurnInPlaceComponent::GetEntry() const
 
 EEGTurnInPlaceState UEGTurnInPlaceComponent::GetEnabledState(EEGTurnStateReason& OutReason) const
 {
-	if (!HasValidData())
+	FEGTurnInPlaceMovementInfo Info;
+	GatherMovementInfo(Info);
+	return ResolveEnabledState(Info, OutReason);
+}
+
+EEGTurnInPlaceState UEGTurnInPlaceComponent::ResolveEnabledState(const FEGTurnInPlaceMovementInfo& Info, EEGTurnStateReason& OutReason) const
+{
+	if (!HasValidData(Info))
 	{
 		OutReason = EEGTurnStateReason::NoData;
 		return EEGTurnInPlaceState::Locked;
 	}
 
 	const FEGTurnInPlaceEntry& Entry = GetEntry();
-	const AActor* const Owner = GetOwner();
 
 	FEGTurnInPlaceSolver::FStateInputs In;
 	In.EntryState = Entry.State;
@@ -376,26 +464,19 @@ EEGTurnInPlaceState UEGTurnInPlaceComponent::GetEnabledState(EEGTurnStateReason&
 	}
 	In.Curves = GetCurves();
 
-	if (const UEGAnimEventComponent* const Events = Owner->FindComponentByClass<UEGAnimEventComponent>())
-	{
-		In.bPauseWindowOpen = Events->IsWindowActive(TAG_EGTurnInPlace_Pause);
-		In.bLockWindowOpen = Events->IsWindowActive(TAG_EGTurnInPlace_Lock);
-	}
+	// Soft links: anim event windows and movement modifiers publish tags; nothing here knows them.
+	const FGameplayTagContainer& Tags = GetStateTags();
+	In.bPauseWindowOpen = Tags.HasTag(TAG_EGTurnInPlace_Pause);
+	In.bLockWindowOpen = Tags.HasTag(TAG_EGTurnInPlace_Lock);
+	In.bRotationLockedByModifier = Tags.HasTag(TAG_EGMovement_RotationLocked);
 
-	if (const UAnimMontage* const Montage = GetRootMotionMontage())
+	if (const UAnimMontage* const Montage = Info.RootMotionMontage.Get())
 	{
 		In.MontageOverride = ShouldIgnoreMontage(Montage)
 			? EEGTurnInPlaceOverride::Default
 			: FEGTurnInPlaceSolver::EvaluateRootMotionMontage(Entry.Montages, Montage);
 	}
-
-	// Soft collision pushes are root motion sources too, but being jostled must not pause turning.
-	In.bHasRootMotionSources = EGSoftCollision::HasGameplayRootMotionSources(*GetMovement());
-
-	if (const UEGMovementModifierComponent* const Modifiers = Owner->FindComponentByClass<UEGMovementModifierComponent>())
-	{
-		In.bRotationLockedByModifier = Modifiers->HasModifiers() && FMath::IsNearlyZero(Modifiers->GetCombinedModifier().RotationRateScale);
-	}
+	In.bHasRootMotionSources = Info.bHasRootMotionSources;
 
 	return FEGTurnInPlaceSolver::ResolveState(In, OutReason);
 }
@@ -407,8 +488,9 @@ FGameplayTag UEGTurnInPlaceComponent::GetStanceTag_Implementation() const
 
 FGameplayTag UEGTurnInPlaceComponent::GetTurnModeTag_Implementation() const
 {
-	const UCharacterMovementComponent* const Movement = GetMovement();
-	return Movement && Movement->bOrientRotationToMovement ? FGameplayTag(TAG_EGTurnInPlace_Mode_Movement) : FGameplayTag(TAG_EGTurnInPlace_Mode_Strafe);
+	FEGTurnInPlaceMovementInfo Info;
+	GatherMovementInfo(Info);
+	return Info.bOrientToMovement ? FGameplayTag(TAG_EGTurnInPlace_Mode_Movement) : FGameplayTag(TAG_EGTurnInPlace_Mode_Strafe);
 }
 
 bool UEGTurnInPlaceComponent::ShouldIgnoreMontage_Implementation(const UAnimMontage* Montage) const
@@ -458,51 +540,32 @@ void UEGTurnInPlaceComponent::RemoveRequest(FEGTurnInPlaceRequestHandle& Handle)
 	Handle.Invalidate();
 }
 
+void UEGTurnInPlaceComponent::ResetTurn()
+{
+	MoveState = FEGTurnInPlaceMoveState();
+	bHasDriverRotation = false;
+	SettleTimer = 0.0f;
+	bWantsSettle = false;
+
+	FEGTurnInPlaceMovementInfo Info;
+	if (GatherMovementInfo(Info))
+	{
+		LastInputDirection = Info.Rotation.Quaternion().GetForwardVector();
+	}
+	UpdateReplicatedOffset();
+}
+
 // ---------------------------------------------------------------------------------------------
 // Rotation
 // ---------------------------------------------------------------------------------------------
 
-void UEGTurnInPlaceComponent::SetOwnerRotation(const FRotator& NewRotation)
+void UEGTurnInPlaceComponent::ApplyRotation(const FRotator& NewRotation)
 {
-	AActor* const Owner = GetOwner();
-	USceneComponent* const Root = Owner ? Owner->GetRootComponent() : nullptr;
-	if (!Root)
-	{
-		return;
-	}
-
-	const FRotator Current = Root->GetComponentRotation();
-	if (Current.Equals(NewRotation, 1.e-4f))
-	{
-		return;
-	}
-
-	// A yaw-only rotation of an upright capsule cannot collide: skip the sweep SetActorRotation does.
-	if (FMath::IsNearlyEqual(Current.Pitch, NewRotation.Pitch, 1.e-3) && FMath::IsNearlyEqual(Current.Roll, NewRotation.Roll, 1.e-3))
-	{
-		Root->SetWorldRotation(NewRotation, false, nullptr, ETeleportType::None);
-	}
-	else
-	{
-		Owner->SetActorRotation(NewRotation);
-	}
+	GetSource()->ApplyRotation(GetOwner(), NewRotation);
 }
 
-void UEGTurnInPlaceComponent::ApplyYaw(const FRotator& Base, float AddYaw, const FQuat& WorldToGravity, const FQuat& GravityToWorld)
+FRotator UEGTurnInPlaceComponent::RunTurnInPlace(const FRotator& Current, const FRotator& Desired, EEGTurnInPlaceState State, bool bSimulatedProxy, const FVector& Up)
 {
-	// Upright to gravity at Base's heading plus AddYaw. Under normal gravity this also clears any
-	// pitch or roll left from a tilted base.
-	const double GravityYaw = (GravityToWorld * Base.Quaternion()).Rotator().Yaw + AddYaw;
-	SetOwnerRotation((WorldToGravity * FRotator(0.0, GravityYaw, 0.0).Quaternion()).Rotator());
-}
-
-void UEGTurnInPlaceComponent::RunTurnInPlace(const FRotator& Current, const FRotator& Desired, EEGTurnInPlaceState State, bool bSimulatedProxy)
-{
-	FVector Up;
-	FQuat WorldToGravity;
-	FQuat GravityToWorld;
-	GetGravity(Up, WorldToGravity, GravityToWorld);
-
 	const FEGTurnInPlaceEntry& Entry = GetEntry();
 	const FGameplayTag ModeTag = GetTurnModeTag();
 	const FEGTurnAngles* const Angles = Entry.GetAngles(ModeTag);
@@ -521,10 +584,14 @@ void UEGTurnInPlaceComponent::RunTurnInPlace(const FRotator& Current, const FRot
 	Inputs.bSimulatedProxy = bSimulatedProxy;
 
 	const float Turn = FEGTurnInPlaceSolver::UpdateOffset(Inputs, MoveState);
-	if (!bSimulatedProxy)
+	if (bSimulatedProxy)
 	{
-		ApplyYaw(Current, Turn, WorldToGravity, GravityToWorld);
+		return Current;
 	}
+
+	const FRotator NewRotation = FEGTurnInPlaceSolver::MakeUprightRotation(Current, Turn, Up);
+	ApplyRotation(NewRotation);
+	return NewRotation;
 }
 
 void UEGTurnInPlaceComponent::UpdateReplicatedOffset()
@@ -551,36 +618,32 @@ void UEGTurnInPlaceComponent::OnRep_SimulatedOffset()
 	}
 }
 
-void UEGTurnInPlaceComponent::UpdateLastInputDirection(const UCharacterMovementComponent* Movement)
+void UEGTurnInPlaceComponent::UpdateLastInputDirection(const FEGTurnInPlaceMovementInfo& Info)
 {
-	const ACharacter* const Character = GetCharacter();
 	const UWorld* const World = GetWorld();
-	if (!Character || !Movement || !Movement->UpdatedComponent || !World)
+	if (!World || !Info.bValid)
 	{
 		return;
 	}
 
 	const double Now = World->GetTimeSeconds();
 	FEGTurnInPlaceSolver::FLastInputInputs In;
-	In.bOrientToMovement = Movement->bOrientRotationToMovement;
-	In.bRootMotion = EGSoftCollision::HasGameplayRootMotion(*Character);
+	In.bOrientToMovement = Info.bOrientToMovement;
+	In.bRootMotion = Info.bAnimRootMotion || Info.bHasRootMotionSources;
 	if (In.bRootMotion)
 	{
 		LastRootMotionTime = Now;
 	}
-	In.Forward = Movement->UpdatedComponent->GetForwardVector();
-	In.Velocity = Movement->Velocity;
-	In.Acceleration = Movement->GetCurrentAcceleration();
-	In.bMovingOnGround = Movement->IsMovingOnGround();
-	FQuat WorldToGravity;
-	FQuat GravityToWorld;
-	GetGravity(In.Up, WorldToGravity, GravityToWorld);
-	const float MaxAcceleration = Movement->GetMaxAcceleration();
-	In.AnalogInput = MaxAcceleration > UE_SMALL_NUMBER ? FMath::Clamp(static_cast<float>(In.Acceleration.Size() / MaxAcceleration), 0.0f, 1.0f) : 0.0f;
-	In.MaxSpeed = Movement->GetMaxSpeed();
+	In.Forward = Info.Rotation.Quaternion().GetForwardVector();
+	In.Velocity = Info.Velocity;
+	In.Acceleration = Info.Acceleration;
+	In.bMovingOnGround = Info.bMovingOnGround;
+	In.Up = Info.Up;
+	In.AnalogInput = Info.MaxAcceleration > UE_SMALL_NUMBER ? FMath::Clamp(static_cast<float>(Info.Acceleration.Size() / Info.MaxAcceleration), 0.0f, 1.0f) : 0.0f;
+	In.MaxSpeed = Info.MaxSpeed;
 	In.TimeSinceRootMotion = Now - LastRootMotionTime;
-	In.bBotControlled = Character->IsBotControlled();
-	In.ControlForward = Character->GetControlRotation().Vector();
+	In.bBotControlled = Info.bBotControlled;
+	In.ControlForward = Info.ControlRotation.Vector();
 
 	FEGTurnInPlaceSolver::UpdateLastInputDirection(LastInputDirection, In);
 }
@@ -594,11 +657,14 @@ bool UEGTurnInPlaceComponent::HandleFaceRotation(FRotator NewControlRotation, fl
 	bFaceHookSeen = true;
 	FramesWithoutFaceHook = 0;
 
-	if (GetTurnMethod() != EEGTurnMethod::FaceRotation)
+	ACharacter* const Character = Cast<ACharacter>(GetOwner());
+	FEGTurnInPlaceMovementInfo Info;
+	if (!Character || !GatherMovementInfo(Info) || Info.TurnMethod != EEGTurnMethod::FaceRotation
+		|| ResolveDriver(Info) != EEGTurnRotationDriver::Hooks)
 	{
 		return false;
 	}
-	if (!HasValidData())
+	if (!HasValidData(Info))
 	{
 		MoveState = FEGTurnInPlaceMoveState();
 		return false;
@@ -611,9 +677,8 @@ bool UEGTurnInPlaceComponent::HandleFaceRotation(FRotator NewControlRotation, fl
 		return false;
 	}
 
-	ACharacter* const Character = GetCharacter();
 	EEGTurnStateReason Reason;
-	const EEGTurnInPlaceState State = GetEnabledState(Reason);
+	const EEGTurnInPlaceState State = ResolveEnabledState(Info, Reason);
 
 	if (State == EEGTurnInPlaceState::Paused)
 	{
@@ -623,9 +688,9 @@ bool UEGTurnInPlaceComponent::HandleFaceRotation(FRotator NewControlRotation, fl
 	}
 
 	const FRotator Current = Character->GetActorRotation();
-	if (State == EEGTurnInPlaceState::Locked || IsStationary())
+	if (State == EEGTurnInPlaceState::Locked || IsStationary(Info))
 	{
-		RunTurnInPlace(Current, NewControlRotation, State, false);
+		RunTurnInPlace(Current, NewControlRotation, State, false, Info.Up);
 		UpdateReplicatedOffset();
 		return true;
 	}
@@ -664,11 +729,17 @@ bool UEGTurnInPlaceComponent::HandlePhysicsRotation(UCharacterMovementComponent*
 	bPhysicsHookSeen = true;
 	FramesWithoutPhysicsHook = 0;
 
-	// Tracked on every movement step, root motion included, so no CalcVelocity override is needed.
-	UpdateLastInputDirection(Movement);
+	FEGTurnInPlaceMovementInfo Info;
+	if (!Movement || !GatherMovementInfo(Info))
+	{
+		return false;
+	}
 
-	ACharacter* const Character = GetCharacter();
-	if (!Movement || !Character || GetTurnMethod() != EEGTurnMethod::PhysicsRotation)
+	// Tracked on every movement step, root motion included, so no CalcVelocity override is needed.
+	UpdateLastInputDirection(Info);
+
+	const ACharacter* const Character = Movement->GetCharacterOwner();
+	if (!Character || Info.TurnMethod != EEGTurnMethod::PhysicsRotation || ResolveDriver(Info) != EEGTurnRotationDriver::Hooks)
 	{
 		return false;
 	}
@@ -679,14 +750,14 @@ bool UEGTurnInPlaceComponent::HandlePhysicsRotation(UCharacterMovementComponent*
 		return false;
 	}
 
-	if (!HasValidData())
+	if (!HasValidData(Info))
 	{
 		MoveState = FEGTurnInPlaceMoveState();
 		return false;
 	}
 
 	EEGTurnStateReason Reason;
-	const EEGTurnInPlaceState State = GetEnabledState(Reason);
+	const EEGTurnInPlaceState State = ResolveEnabledState(Info, Reason);
 	if (State == EEGTurnInPlaceState::Paused)
 	{
 		MoveState = FEGTurnInPlaceMoveState();
@@ -697,12 +768,12 @@ bool UEGTurnInPlaceComponent::HandlePhysicsRotation(UCharacterMovementComponent*
 	const FRotator Current = Movement->UpdatedComponent->GetComponentRotation();
 	if (State == EEGTurnInPlaceState::Locked)
 	{
-		RunTurnInPlace(Current, Current, State, false);
+		RunTurnInPlace(Current, Current, State, false, Info.Up);
 		UpdateReplicatedOffset();
 		return true;
 	}
 
-	if (!IsStationary())
+	if (!IsStationary(Info))
 	{
 		// Moving: the movement component rotates; the offset is measured again once stopped.
 		MoveState = FEGTurnInPlaceMoveState();
@@ -710,24 +781,16 @@ bool UEGTurnInPlaceComponent::HandlePhysicsRotation(UCharacterMovementComponent*
 		return false;
 	}
 
-	if (Movement->bOrientRotationToMovement)
+	if (Info.bOrientToMovement)
 	{
 		if (bRotateToLastInputDirection && !LastInputDirection.IsNearlyZero())
 		{
-			RunTurnInPlace(Current, LastInputDirection.Rotation(), State, false);
+			RunTurnInPlace(Current, LastInputDirection.Rotation(), State, false, Info.Up);
 		}
 	}
-	else if (Movement->bUseControllerDesiredRotation)
+	else if (Info.bHasDesiredRotation)
 	{
-		const AController* Controller = Character->Controller;
-		if (!Controller && Movement->bRunPhysicsWithNoController)
-		{
-			Controller = Cast<AController>(Character->GetOwner());
-		}
-		if (Controller)
-		{
-			RunTurnInPlace(Current, Controller->GetDesiredRotation(), State, false);
-		}
+		RunTurnInPlace(Current, Info.DesiredRotation, State, false, Info.Up);
 	}
 
 	UpdateReplicatedOffset();
@@ -736,8 +799,8 @@ bool UEGTurnInPlaceComponent::HandlePhysicsRotation(UCharacterMovementComponent*
 
 bool UEGTurnInPlaceComponent::ComputeOrientToMovementRotation(const UCharacterMovementComponent* Movement, const FRotator& CurrentRotation, FRotator& OutRotation) const
 {
-	const ACharacter* const Character = GetCharacter();
-	if (!bRotateToLastInputDirection || !Movement || !Character || Character->IsBotControlled())
+	const ACharacter* const Character = Movement ? Movement->GetCharacterOwner() : nullptr;
+	if (!bRotateToLastInputDirection || !Character || Character->IsBotControlled())
 	{
 		// Bots keep the engine's path-following orientation.
 		return false;
@@ -751,13 +814,134 @@ bool UEGTurnInPlaceComponent::ComputeOrientToMovementRotation(const UCharacterMo
 }
 
 // ---------------------------------------------------------------------------------------------
+// Component driver
+// ---------------------------------------------------------------------------------------------
+
+void UEGTurnInPlaceComponent::SetDriverRotation(const FRotator& Rotation)
+{
+	DriverRotation = Rotation;
+	bHasDriverRotation = true;
+}
+
+void UEGTurnInPlaceComponent::TickDriver(float DeltaTime)
+{
+	const AActor* const Owner = GetOwner();
+	FEGTurnInPlaceMovementInfo Info;
+
+	// Simulated proxies follow the replicated rotation; the hooks drive when they are in use.
+	if (!Owner || Owner->GetLocalRole() == ROLE_SimulatedProxy || !GatherMovementInfo(Info) || ResolveDriver(Info) != EEGTurnRotationDriver::Component)
+	{
+		bHasDriverRotation = false;
+		return;
+	}
+
+	UpdateLastInputDirection(Info);
+
+	if (!HasValidData(Info))
+	{
+		MoveState = FEGTurnInPlaceMoveState();
+		bHasDriverRotation = false;
+		return;
+	}
+
+	// Root motion or no one to rotate it: whatever moved the owner this frame keeps it.
+	if (!Info.bCanRotate || Info.bAnimRootMotion)
+	{
+		bHasDriverRotation = false;
+		return;
+	}
+
+	// Start from where this left the owner, not from where the movement turned it this frame: the
+	// movement's own rotation towards the desired facing is what turn in place replaces. The
+	// rotation of what the owner stands on is passed on (the movement applied it too).
+	FRotator Current = bHasDriverRotation ? DriverRotation : Info.Rotation;
+	if (bHasDriverRotation && Info.Base && Info.Base.Get() == DriverBase.Get())
+	{
+		const FQuat BaseDelta = Info.BaseRotation.Quaternion() * DriverBaseRotation.Quaternion().Inverse();
+		if (!BaseDelta.IsIdentity(1.e-6))
+		{
+			Current = (BaseDelta * Current.Quaternion()).Rotator();
+		}
+	}
+	DriverBase = Info.Base.Get();
+	DriverBaseRotation = Info.BaseRotation;
+
+	EEGTurnStateReason Reason;
+	const EEGTurnInPlaceState State = ResolveEnabledState(Info, Reason);
+	if (State == EEGTurnInPlaceState::Paused)
+	{
+		MoveState = FEGTurnInPlaceMoveState();
+		bHasDriverRotation = false;
+		UpdateReplicatedOffset();
+		return;
+	}
+
+	if (State == EEGTurnInPlaceState::Locked)
+	{
+		SetDriverRotation(RunTurnInPlace(Current, Current, State, false, Info.Up));
+		UpdateReplicatedOffset();
+		return;
+	}
+
+	if (!IsStationary(Info))
+	{
+		FRotator Result = Info.Rotation;
+		if (Info.TurnMethod == EEGTurnMethod::FaceRotation)
+		{
+			// As the FaceRotation hook: clear the standing state and ease away from the held-back
+			// facing instead of snapping to the camera.
+			MoveState.TurnOffset = 0.0f;
+			MoveState.CurveValue = 0.0f;
+			MoveState.bLastCurveValid = false;
+			MoveState.InterpOutAlpha = FMath::FInterpConstantTo(MoveState.InterpOutAlpha, 1.0f, DeltaTime, GetEntry().MovingInterpOutRate);
+			if (MoveState.InterpOutAlpha < 1.0f)
+			{
+				Result = FQuat::Slerp(Current.Quaternion(), Info.Rotation.Quaternion(), MoveState.InterpOutAlpha).GetNormalized().Rotator();
+				ApplyRotation(Result);
+			}
+		}
+		else
+		{
+			// The movement rotates; the offset is measured again once stopped.
+			MoveState = FEGTurnInPlaceMoveState();
+		}
+		SetDriverRotation(Result);
+		UpdateReplicatedOffset();
+		return;
+	}
+
+	// Standing: hold back from the desired facing while the turn animation closes the gap.
+	if (Info.bOrientToMovement)
+	{
+		if (bRotateToLastInputDirection && !LastInputDirection.IsNearlyZero())
+		{
+			SetDriverRotation(RunTurnInPlace(Current, LastInputDirection.Rotation(), State, false, Info.Up));
+		}
+		else
+		{
+			SetDriverRotation(Info.Rotation);
+		}
+	}
+	else if (Info.bHasDesiredRotation)
+	{
+		SetDriverRotation(RunTurnInPlace(Current, Info.DesiredRotation, State, false, Info.Up));
+	}
+	else
+	{
+		SetDriverRotation(Info.Rotation);
+	}
+	UpdateReplicatedOffset();
+}
+
+// ---------------------------------------------------------------------------------------------
 // Anim graph
 // ---------------------------------------------------------------------------------------------
 
 FEGTurnInPlaceGraphInput UEGTurnInPlaceComponent::MakeGraphInput() const
 {
 	FEGTurnInPlaceGraphInput In;
-	if (!HasValidData())
+	FEGTurnInPlaceMovementInfo Info;
+	if (!GatherMovementInfo(Info) || !HasValidData(Info))
 	{
 		return In;
 	}
@@ -769,14 +953,16 @@ FEGTurnInPlaceGraphInput UEGTurnInPlaceComponent::MakeGraphInput() const
 
 	const FEGTurnInPlaceEntry& Entry = GetEntry();
 	EEGTurnStateReason Reason;
-	In.State = GetEnabledState(Reason);
+	In.State = ResolveEnabledState(Info, Reason);
 	In.TurnOffset = MoveState.TurnOffset;
 	In.bIsTurning = GetCurves().IsTurning();
 	In.StepIndex = FEGTurnInPlaceSolver::SelectStep(Entry, In.TurnOffset, In.bTurnRight);
 	In.ModeTag = GetTurnModeTag();
-	In.bIsStrafing = !GetMovement()->bOrientRotationToMovement;
+	In.bIsStrafing = !Info.bOrientToMovement;
+	In.bIsMoving = !IsStationary(Info);
 	In.bAbortTurn = In.State != EEGTurnInPlaceState::Enabled && CanAbortTurn();
 	In.bPseudo = WantsPseudoAnimState();
+	In.bWantsSettle = bWantsSettle && In.State == EEGTurnInPlaceState::Enabled;
 
 	if (const FEGTurnAngles* const Angles = Entry.GetAngles(In.ModeTag))
 	{
@@ -787,9 +973,17 @@ FEGTurnInPlaceGraphInput UEGTurnInPlaceComponent::MakeGraphInput() const
 		In.bWantsToTurn = In.State == EEGTurnInPlaceState::Enabled && Entry.StepSizes.Num() > 0 && FMath::Abs(In.TurnOffset) >= Angles->MinTurnAngle;
 	}
 
-	if (In.bWantsToTurn && !Entry.GetTurnSequence(In.StepIndex, In.bTurnRight))
+	if (In.bWantsToTurn)
 	{
-		ReportProblem(FString::Printf(TEXT("The turn set has no %s sequence for step %d."), In.bTurnRight ? TEXT("right") : TEXT("left"), In.StepIndex));
+		const UAnimSequence* const Sequence = Entry.GetTurnSequence(In.StepIndex, In.bTurnRight);
+		if (!Sequence && !Entry.Procedural.bTurnWithoutAnimation)
+		{
+			ReportProblem(FString::Printf(TEXT("The turn set has no %s sequence for step %d and procedural turns are off."), In.bTurnRight ? TEXT("right") : TEXT("left"), In.StepIndex));
+		}
+		else if (Sequence && In.bPseudo && !UEGTurnInPlaceSet::HasTurnCurves(Sequence, TurnSet->Curves))
+		{
+			ReportProblem(FString::Printf(TEXT("%s has no turn curves; Pseudo servers read only curves. Run the Turn In Place Curves modifier on it."), *GetNameSafe(Sequence)));
+		}
 	}
 	return In;
 }
@@ -797,13 +991,14 @@ FEGTurnInPlaceGraphInput UEGTurnInPlaceComponent::MakeGraphInput() const
 FGameplayTagContainer UEGTurnInPlaceComponent::GetAnimStateTags_Implementation() const
 {
 	FGameplayTagContainer Tags;
-	if (!HasValidData())
+	FEGTurnInPlaceMovementInfo Info;
+	if (!GatherMovementInfo(Info) || !HasValidData(Info))
 	{
 		return Tags;
 	}
 
 	EEGTurnStateReason Reason;
-	switch (GetEnabledState(Reason))
+	switch (ResolveEnabledState(Info, Reason))
 	{
 	case EEGTurnInPlaceState::Locked: Tags.AddTag(TAG_EGTurnInPlace_State_Locked); break;
 	case EEGTurnInPlaceState::Paused: Tags.AddTag(TAG_EGTurnInPlace_State_Paused); break;
@@ -828,35 +1023,58 @@ void UEGTurnInPlaceComponent::TickComponent(float DeltaTime, ELevelTick TickType
 
 	RefreshCurveCache();
 
+	FEGTurnInPlaceMovementInfo Info;
+	const bool bHasInfo = GatherMovementInfo(Info);
+
 #if !UE_BUILD_SHIPPING
-	TickSelfCheck();
+	if (bHasInfo)
+	{
+		TickSelfCheck(Info);
+	}
 #endif
 
-	if (!HasValidData())
+	if (!bHasInfo || !HasValidData(Info))
 	{
+		SettleTimer = 0.0f;
+		bWantsSettle = false;
 		return;
 	}
 
 	// Anim root motion skips PhysicsRotation: record the facing it leaves (and the time, for the
 	// grace period) here, or Orient To Movement would turn back to where it faced before.
-	if (EGSoftCollision::HasGameplayRootMotion(*GetCharacter()))
+	if (Info.bAnimRootMotion || Info.bHasRootMotionSources)
 	{
 		LastRootMotionTime = GetWorld()->GetTimeSeconds();
-		if (const UCharacterMovementComponent* const Movement = GetMovement(); Movement && Movement->UpdatedComponent && Movement->bOrientRotationToMovement)
+		if (Info.bOrientToMovement)
 		{
-			LastInputDirection = Movement->UpdatedComponent->GetForwardVector();
+			LastInputDirection = Info.Rotation.Quaternion().GetForwardVector();
 		}
 	}
+
+	UpdateSettle(Info, DeltaTime);
 
 	if (WantsPseudoAnimState())
 	{
 		TickPseudoStates(DeltaTime);
 	}
-	TickSimulatedProxy();
+	TickSimulatedProxy(Info);
 
 #if !UE_BUILD_SHIPPING
 	DrawDebug();
 #endif
+}
+
+void UEGTurnInPlaceComponent::UpdateSettle(const FEGTurnInPlaceMovementInfo& Info, float DeltaTime)
+{
+	const FEGTurnInPlaceEntry& Entry = GetEntry();
+	const FEGTurnAngles* const Angles = Entry.GetAngles(GetTurnModeTag());
+
+	EEGTurnStateReason Reason;
+	const bool bCanSettle = Angles && IsStationary(Info) && !GetCurves().IsTurning()
+		&& ResolveEnabledState(Info, Reason) == EEGTurnInPlaceState::Enabled;
+
+	bWantsSettle = FEGTurnInPlaceSolver::UpdateSettleTimer(SettleTimer, Entry.Procedural, MoveState.TurnOffset,
+		Angles ? Angles->MinTurnAngle : 0.0f, bCanSettle, DeltaTime);
 }
 
 void UEGTurnInPlaceComponent::TickPseudoStates(float DeltaTime)
@@ -874,22 +1092,22 @@ void UEGTurnInPlaceComponent::TickPseudoStates(float DeltaTime)
 	FEGTurnInPlaceSolver::AdvancePseudoState(PseudoState, PseudoNode, Input, Output, DeltaTime);
 	if (PseudoState != Before)
 	{
-		// As the graph's Setup functions do on every state entry.
+		// As the graph does on every state entry.
 		bPseudoTurnedThisEntry = false;
 	}
 }
 
-void UEGTurnInPlaceComponent::TickSimulatedProxy()
+void UEGTurnInPlaceComponent::TickSimulatedProxy(const FEGTurnInPlaceMovementInfo& Info)
 {
 	const AActor* const Owner = GetOwner();
-	if (!bSimulateCurvesOnProxies || !Owner || Owner->GetLocalRole() != ROLE_SimulatedProxy || !IsStationary())
+	if (!bSimulateCurvesOnProxies || !Owner || Owner->GetLocalRole() != ROLE_SimulatedProxy || !IsStationary(Info))
 	{
 		return;
 	}
 
 	// Consume the replicated offset with the local turn animation between server updates.
 	EEGTurnStateReason Reason;
-	RunTurnInPlace(FRotator::ZeroRotator, FRotator::ZeroRotator, GetEnabledState(Reason), true);
+	RunTurnInPlace(FRotator::ZeroRotator, FRotator::ZeroRotator, ResolveEnabledState(Info, Reason), true, Info.Up);
 }
 
 void UEGTurnInPlaceComponent::ReportProblem(const FString& Message) const
@@ -905,39 +1123,54 @@ void UEGTurnInPlaceComponent::ReportProblem(const FString& Message) const
 #endif
 }
 
-void UEGTurnInPlaceComponent::TickSelfCheck()
+void UEGTurnInPlaceComponent::TickSelfCheck(const FEGTurnInPlaceMovementInfo& Info)
 {
-	const ACharacter* const Character = GetCharacter();
-	const UCharacterMovementComponent* const Movement = GetMovement();
-	if (!bReportSetupProblems || !Character || !Movement || !TurnSet || Character->GetLocalRole() == ROLE_SimulatedProxy)
+	const AActor* const Owner = GetOwner();
+	if (!bReportSetupProblems || !Owner || !TurnSet || Owner->GetLocalRole() == ROLE_SimulatedProxy)
 	{
 		return;
 	}
 
-	// Only count frames where the engine would have called the hook.
-	const bool bMovementActive = Movement->MovementMode != MOVE_None && !EGSoftCollision::HasGameplayRootMotion(*Character);
-	switch (GetTurnMethod())
+	const ACharacter* const Character = Cast<ACharacter>(Owner);
+	const UCharacterMovementComponent* const Movement = Character ? Character->GetCharacterMovement() : nullptr;
+	const EEGTurnRotationDriver Driver = ResolveDriver(Info);
+
+	// Works without the hooks, but a player's own client is then not predicted.
+	if (RotationDriver == EEGTurnRotationDriver::Auto && Driver == EEGTurnRotationDriver::Component && Movement
+		&& Info.TurnMethod != EEGTurnMethod::None && GetNetMode() != NM_Standalone && Character->IsPlayerControlled()
+		&& ++FramesDrivenUnpredicted > MissingHookFrames)
 	{
-	case EEGTurnMethod::FaceRotation:
-		// Player controllers call FaceRotation every frame; AI only when its facing differs, so an
-		// idle, aligned AI would be reported falsely.
-		if (!bFaceHookSeen && Character->IsPlayerControlled() && ++FramesWithoutFaceHook > MissingHookFrames)
+		ReportProblem(TEXT("A player character in multiplayer turns from the component tick, which is not predicted. Forward the hooks and add TEGTurnInPlaceSavedMove (Docs/TurnInPlace.md), or set Rotation Driver to Component to accept it."));
+	}
+
+	// Only an explicit Hooks driver needs them: Auto falls back to the component.
+	if (Movement && RotationDriver == EEGTurnRotationDriver::Hooks)
+	{
+		// Only count frames where the engine would have called the hook.
+		const bool bMovementActive = Movement->MovementMode != MOVE_None && !Info.bAnimRootMotion && !Info.bHasRootMotionSources;
+		switch (Info.TurnMethod)
 		{
-			ReportProblem(TEXT("ACharacter::FaceRotation is not forwarded. Override it and call EGTurnInPlace::HandleFaceRotation first (see Docs/TurnInPlace.md)."));
+		case EEGTurnMethod::FaceRotation:
+			// Player controllers call FaceRotation every frame; AI only when its facing differs, so an
+			// idle, aligned AI would be reported falsely.
+			if (!bFaceHookSeen && Character->IsPlayerControlled() && ++FramesWithoutFaceHook > MissingHookFrames)
+			{
+				ReportProblem(TEXT("Rotation Driver is Hooks but ACharacter::FaceRotation is not forwarded. Override it and call EGTurnInPlace::HandleFaceRotation first (see Docs/TurnInPlace.md)."));
+			}
+			break;
+		case EEGTurnMethod::PhysicsRotation:
+			if (!bPhysicsHookSeen && bMovementActive && (Character->Controller || Movement->bRunPhysicsWithNoController) && ++FramesWithoutPhysicsHook > MissingHookFrames)
+			{
+				ReportProblem(TEXT("Rotation Driver is Hooks but UCharacterMovementComponent::PhysicsRotation is not forwarded. Use a movement component that calls EGTurnInPlace::HandlePhysicsRotation first (see Docs/TurnInPlace.md)."));
+			}
+			break;
+		default:
+			break;
 		}
-		break;
-	case EEGTurnMethod::PhysicsRotation:
-		if (!bPhysicsHookSeen && bMovementActive && (Character->Controller || Movement->bRunPhysicsWithNoController) && ++FramesWithoutPhysicsHook > MissingHookFrames)
-		{
-			ReportProblem(TEXT("UCharacterMovementComponent::PhysicsRotation is not forwarded. Use a movement component that calls EGTurnInPlace::HandlePhysicsRotation first (see Docs/TurnInPlace.md)."));
-		}
-		break;
-	default:
-		break;
 	}
 
 	// An owning client predicts moves; without the saved-move mixin combined moves lose part of the turn.
-	if (Character->GetLocalRole() == ROLE_AutonomousProxy && GetNetMode() == NM_Client && (bFaceHookSeen || bPhysicsHookSeen)
+	if (Character && Character->GetLocalRole() == ROLE_AutonomousProxy && GetNetMode() == NM_Client && Driver == EEGTurnRotationDriver::Hooks
 		&& !bSavedMoveHookSeen && ++ClientFramesWithoutSavedMove > MissingHookFrames)
 	{
 		ReportProblem(TEXT("The movement component's saved move does not use TEGTurnInPlaceSavedMove; combined moves will lose part of the turn. Allocate FEGTurnInPlacePredictionData (or your own TEGTurnInPlacePredictionData) in GetPredictionData_Client."));
@@ -949,18 +1182,18 @@ void UEGTurnInPlaceComponent::DrawDebug() const
 #if ENABLE_DRAW_DEBUG
 	const bool bShowOffset = EGTurnInPlaceCVars::Debug.GetValueOnGameThread() > 0;
 	const bool bShowState = EGTurnInPlaceCVars::DebugState.GetValueOnGameThread() > 0;
-	const ACharacter* const Character = GetCharacter();
-	if ((!bShowOffset && !bShowState) || !Character || !GEngine)
+	const AActor* const Owner = GetOwner();
+	if ((!bShowOffset && !bShowState) || !Owner || !GEngine)
 	{
 		return;
 	}
 
-	const TCHAR* const Role = Character->HasAuthority() ? TEXT("Server") : (Character->GetLocalRole() == ROLE_AutonomousProxy ? TEXT("Client") : TEXT("Simulated"));
-	const uint64 Key = Character->GetUniqueID() + 0x7E1F;
+	const TCHAR* const Role = Owner->HasAuthority() ? TEXT("Server") : (Owner->GetLocalRole() == ROLE_AutonomousProxy ? TEXT("Client") : TEXT("Simulated"));
+	const uint64 Key = Owner->GetUniqueID() + 0x7E1F;
 	const FRandomStream ColorStream(static_cast<int32>(Key));
 	const FColor Color(ColorStream.RandRange(64, 255), ColorStream.RandRange(64, 255), ColorStream.RandRange(64, 255));
 
-	FString Text = FString::Printf(TEXT("[%s] %s"), Role, *GetNameSafe(Character));
+	FString Text = FString::Printf(TEXT("[%s] %s"), Role, *GetNameSafe(Owner));
 	if (bShowOffset)
 	{
 		Text += FString::Printf(TEXT("  offset %.1f"), MoveState.TurnOffset);
@@ -969,27 +1202,34 @@ void UEGTurnInPlaceComponent::DrawDebug() const
 	{
 		EEGTurnStateReason Reason;
 		const EEGTurnInPlaceState State = GetEnabledState(Reason);
-		Text += FString::Printf(TEXT("  %s (%s)"),
+		Text += FString::Printf(TEXT("  %s (%s), %s"),
 			*StaticEnum<EEGTurnInPlaceState>()->GetNameStringByValue(static_cast<int64>(State)),
-			*StaticEnum<EEGTurnStateReason>()->GetNameStringByValue(static_cast<int64>(Reason)));
+			*StaticEnum<EEGTurnStateReason>()->GetNameStringByValue(static_cast<int64>(Reason)),
+			*StaticEnum<EEGTurnRotationDriver>()->GetNameStringByValue(static_cast<int64>(GetActiveRotationDriver())));
+		if (bWantsSettle)
+		{
+			Text += TEXT(", settling");
+		}
 	}
 	GEngine->AddOnScreenDebugMessage(static_cast<int32>(Key), 0.0f, Color, Text);
 
 	// Arrows once per character: the server skips characters a client owns and draws itself.
-	if (!bShowOffset || (Character->HasAuthority() && Character->GetRemoteRole() == ROLE_AutonomousProxy))
+	if (!bShowOffset || (Owner->HasAuthority() && Owner->GetRemoteRole() == ROLE_AutonomousProxy))
 	{
 		return;
 	}
 
 	UWorld* const World = GetWorld();
-	const UCapsuleComponent* const Capsule = Character->GetCapsuleComponent();
-	const FVector Feet = Character->GetActorLocation() - Character->GetActorUpVector() * (Capsule ? Capsule->GetScaledCapsuleHalfHeight() : 0.0f);
-	DrawDebugDirectionalArrow(World, Feet, Feet + Character->GetActorForwardVector() * 200.0f, 40.0f, FColor(199, 10, 143), false, -1.0f, 0, 2.0f);
-	if (const AController* const Controller = Character->GetController())
+	const FVector Feet = Owner->GetActorLocation() - Owner->GetActorUpVector() * Owner->GetSimpleCollisionHalfHeight();
+	DrawDebugDirectionalArrow(World, Feet, Feet + Owner->GetActorForwardVector() * 200.0f, 40.0f, FColor(199, 10, 143), false, -1.0f, 0, 2.0f);
+	if (const APawn* const Pawn = Cast<APawn>(Owner))
 	{
-		DrawDebugDirectionalArrow(World, Feet, Feet + FRotator(0.0, Controller->GetControlRotation().Yaw, 0.0).Vector() * 200.0f, 40.0f, FColor::Black, false, -1.0f, 0, 2.0f);
+		if (const AController* const Controller = Pawn->GetController())
+		{
+			DrawDebugDirectionalArrow(World, Feet, Feet + FRotator(0.0, Controller->GetControlRotation().Yaw, 0.0).Vector() * 200.0f, 40.0f, FColor::Black, false, -1.0f, 0, 2.0f);
+		}
 	}
-	const FVector Target = (Character->GetActorRotation() + FRotator(0.0, MoveState.TurnOffset, 0.0)).GetNormalized().Vector();
+	const FVector Target = (Owner->GetActorRotation() + FRotator(0.0, MoveState.TurnOffset, 0.0)).GetNormalized().Vector();
 	DrawDebugDirectionalArrow(World, Feet, Feet + Target * 200.0f, 40.0f, FColor(38, 199, 0), false, -1.0f, 0, 2.0f);
 #endif
 }

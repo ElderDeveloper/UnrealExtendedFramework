@@ -7,6 +7,7 @@
 #include "Animation/AnimSequence.h"
 #include "Animation/Skeleton.h"
 #include "AnimationBlueprintLibrary.h"
+#include "UnrealExtendedGameplay/Animation/TurnInPlace/EGTurnInPlaceSolver.h"
 
 void UEGTurnInPlaceCurveModifier::RemoveCurveIfPresent(UAnimSequence* Animation, FName CurveName)
 {
@@ -53,66 +54,51 @@ void UEGTurnInPlaceCurveModifier::OnApply_Implementation(UAnimSequence* Animatio
 
 	const int32 Samples = FMath::Max(2, FMath::CeilToInt32(Length * SampleRate) + 1);
 	TArray<double> Times;
-	TArray<double> Yaws;
 	Times.Reserve(Samples);
-	Yaws.Reserve(Samples);
 
-	// Accumulate frame-to-frame deltas, so a 180-degree turn is not ambiguous at its ends.
-	double Cumulative = 0.0;
-	double PreviousRaw = 0.0;
+	TArray<double> RawYaws;
+	RawYaws.Reserve(Samples);
 	for (int32 Index = 0; Index < Samples; ++Index)
 	{
 		const double Time = Index == Samples - 1 ? Length : FMath::Min(static_cast<double>(Index) / SampleRate, Length);
 
 		FTransform Pose;
 		UAnimationBlueprintLibrary::GetBonePoseForTime(Animation, RootBoneName, static_cast<float>(Time), false, Pose);
-		const double RawYaw = Pose.GetRotation().Rotator().Yaw;
-
-		if (Index > 0)
-		{
-			Cumulative += FRotator::NormalizeAxis(RawYaw - PreviousRaw);
-		}
-		PreviousRaw = RawYaw;
 		Times.Add(Time);
-		Yaws.Add(Cumulative);
+		RawYaws.Add(Pose.GetRotation().Rotator().Yaw);
 	}
 
-	const double TotalYaw = Yaws.Last();
-	if (FMath::Abs(TotalYaw) < FinishedTolerance)
+	// The same unwrapping and weight end the Turn In Place node uses for clips without curves.
+	FEGTurnYawTrack Track;
+	if (!FEGTurnInPlaceSolver::BuildYawTrack(Times, RawYaws, FinishedTolerance, RecoveryBlendTime, Track))
 	{
-		UE_LOG(LogAnimation, Warning, TEXT("Turn In Place Curves: the root of %s barely turns (%.2f degrees). Does it have root motion?"), *GetNameSafe(Animation), TotalYaw);
+		UE_LOG(LogAnimation, Error, TEXT("Turn In Place Curves: could not sample the root of %s."), *GetNameSafe(Animation));
+		return;
+	}
+	if (FMath::Abs(Track.TotalYaw) < FinishedTolerance)
+	{
+		UE_LOG(LogAnimation, Warning, TEXT("Turn In Place Curves: the root of %s barely turns (%.2f degrees). Does it have root motion?"), *GetNameSafe(Animation), Track.TotalYaw);
 	}
 
 	TArray<FRichCurveKey> RemainingKeys;
-	TArray<FRichCurveKey> WeightKeys;
-	RemainingKeys.Reserve(Samples);
+	RemainingKeys.Reserve(Track.Times.Num());
+	for (int32 Index = 0; Index < Track.Times.Num(); ++Index)
+	{
+		FRichCurveKey& Key = RemainingKeys.AddDefaulted_GetRef();
+		Key.Time = Track.Times[Index];
+		Key.Value = Track.TotalYaw - Track.CumulativeYaw[Index];
+	}
 
+	// 1 from the start (it must be seen at 1 for the turn to register), 0 from the turn's end.
+	TArray<FRichCurveKey> WeightKeys;
 	FRichCurveKey& WeightStart = WeightKeys.AddDefaulted_GetRef();
 	WeightStart.Time = 0.0f;
 	WeightStart.Value = 1.0f;
 	WeightStart.InterpMode = RCIM_Constant;
-
-	bool bPlacedWeightEnd = false;
-	const double LatestEnd = FMath::Max(0.0, Length - RecoveryBlendTime);
-	for (int32 Index = 0; Index < Samples; ++Index)
-	{
-		const double Remaining = TotalYaw - Yaws[Index];
-
-		FRichCurveKey& Key = RemainingKeys.AddDefaulted_GetRef();
-		Key.Time = static_cast<float>(Times[Index]);
-		Key.Value = static_cast<float>(Remaining);
-
-		// The turn ends where the remaining yaw is gone, or early enough to blend into recovery.
-		// Never on the first sample: the weight must be seen at 1 for the turn to register.
-		if (!bPlacedWeightEnd && Index > 0 && (FMath::Abs(Remaining) <= FinishedTolerance || Times[Index] >= LatestEnd))
-		{
-			bPlacedWeightEnd = true;
-			FRichCurveKey& End = WeightKeys.AddDefaulted_GetRef();
-			End.Time = static_cast<float>(Times[Index]);
-			End.Value = 0.0f;
-			End.InterpMode = RCIM_Constant;
-		}
-	}
+	FRichCurveKey& WeightEnd = WeightKeys.AddDefaulted_GetRef();
+	WeightEnd.Time = Track.WeightEndTime;
+	WeightEnd.Value = 0.0f;
+	WeightEnd.InterpMode = RCIM_Constant;
 
 	WriteCurve(Animation, RemainingTurnYawCurve, RemainingKeys);
 	WriteCurve(Animation, TurnYawWeightCurve, WeightKeys);

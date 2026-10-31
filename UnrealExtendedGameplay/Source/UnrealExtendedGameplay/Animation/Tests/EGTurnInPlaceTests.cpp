@@ -336,14 +336,21 @@ bool FEGTurnInPlaceGraphTest::RunTest(const FString& Parameters)
 	FSolver::ComputeGraphOutput(Input, false, false, Output);
 	TestFalse(TEXT("Pseudo mode does not play turn animations"), Output.bPlayTurnAnim);
 
-	// Pseudo states, with no sequences (empty entry): the turn ends at once and recovers.
+	// Pseudo states, with no sequences (empty entry): the turn is procedural and plays out.
 	EEGTurnPseudoState State = EEGTurnPseudoState::Idle;
 	FEGTurnInPlaceNodeState Node;
 	FSolver::AdvancePseudoState(State, Node, Input, Output, 0.1f);
 	TestEqual(TEXT("Idle -> Turn"), State, EEGTurnPseudoState::Turn);
+	TestTrue(TEXT("A missing clip turns procedurally"), Node.bProcedural);
+	TestEqual(TEXT("...closing the offset"), Node.ProceduralYaw, 90.0f);
 
 	FSolver::AdvancePseudoState(State, Node, Input, Output, 0.1f);
-	TestTrue(TEXT("A missing sequence counts as played out"), Node.bReachedAnimEnd);
+	TestFalse(TEXT("A procedural turn takes its duration"), Node.bReachedAnimEnd);
+	for (int32 Frame = 0; Frame < 20 && !Node.bReachedAnimEnd; ++Frame)
+	{
+		FSolver::AdvancePseudoState(State, Node, Input, Output, 0.1f);
+	}
+	TestTrue(TEXT("...then has played out"), Node.bReachedAnimEnd);
 
 	FEGTurnInPlaceGraphOutput Recover;
 	Recover.bWantsRecovery = true;
@@ -357,6 +364,97 @@ bool FEGTurnInPlaceGraphTest::RunTest(const FString& Parameters)
 	Abort.bAbortTurn = true;
 	FSolver::AdvancePseudoState(State, Node, Input, Abort, 0.1f);
 	TestEqual(TEXT("Abort -> Idle"), State, EEGTurnPseudoState::Idle);
+	return true;
+}
+
+// -----------------------------------------------------------------------------
+// Upright rotation, procedural turns, settle, root yaw tracks
+// -----------------------------------------------------------------------------
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEGTurnInPlaceProceduralTest,
+	"UnrealExtendedGameplay.Animation.TurnInPlace.Procedural",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FEGTurnInPlaceProceduralTest::RunTest(const FString& Parameters)
+{
+	using FSolver = FEGTurnInPlaceSolver;
+
+	// Upright rotation: normal gravity keeps the plain yaw and drops a tilt.
+	const FRotator Flat = FSolver::MakeUprightRotation(FRotator(10.0, 30.0, 5.0), 20.0f);
+	TestEqual(TEXT("World up: yaw added"), Flat.Yaw, 50.0, 1.e-3);
+	TestEqual(TEXT("World up: pitch cleared"), Flat.Pitch, 0.0, 1.e-3);
+	TestEqual(TEXT("World up: roll cleared"), Flat.Roll, 0.0, 1.e-3);
+
+	// Custom gravity: the result is upright to Up and turned about it by the asked yaw.
+	const FVector Up = FVector(0.0, 1.0, 1.0).GetSafeNormal();
+	const FRotator Base = FRotationMatrix::MakeFromZX(Up, FVector::ForwardVector).Rotator();
+	const FRotator Turned = FSolver::MakeUprightRotation(Base, 45.0f, Up);
+	TestTrue(TEXT("Custom up: stays upright"), Turned.Quaternion().GetUpVector().Equals(Up, 1.e-3));
+	TestEqual(TEXT("Custom up: turned about Up"), FSolver::YawDeltaAroundUp(Base, Turned, Up), 45.0f, 0.05f);
+
+	// Procedural turn curves.
+	FEGTurnInPlaceProcedural Settings;
+	Settings.TurnRate = 90.0f;
+	Settings.MinDuration = 0.25f;
+	TestEqual(TEXT("Duration from the rate"), FSolver::GetProceduralDuration(90.0f, Settings), 1.0f, 1.e-4f);
+	TestEqual(TEXT("Duration never below the minimum"), FSolver::GetProceduralDuration(5.0f, Settings), 0.25f, 1.e-4f);
+
+	FEGTurnInPlaceCurves Curves = FSolver::EvaluateProceduralTurn(90.0f, 0.0, Settings);
+	TestEqual(TEXT("Starts with the whole yaw"), Curves.RemainingTurnYaw, 90.0f, 1.e-3f);
+	TestTrue(TEXT("...and the weight up"), Curves.IsTurning());
+	Curves = FSolver::EvaluateProceduralTurn(90.0f, 0.5, Settings);
+	TestEqual(TEXT("Half way at half time (eased symmetrically)"), Curves.RemainingTurnYaw, 45.0f, 1.e-3f);
+	Curves = FSolver::EvaluateProceduralTurn(-90.0f, 1.0, Settings);
+	TestEqual(TEXT("Ends with nothing left"), Curves.RemainingTurnYaw, 0.0f, 1.e-3f);
+	TestFalse(TEXT("...and the weight down"), Curves.IsTurning());
+
+	// Settle: only small offsets, only after the delay, reset when anything else happens.
+	Settings.bSettle = true;
+	Settings.SettleAngle = 15.0f;
+	Settings.SettleDelay = 1.0f;
+	float Timer = 0.0f;
+	TestFalse(TEXT("Settle: not before the delay"), FSolver::UpdateSettleTimer(Timer, Settings, 30.0f, 60.0f, true, 0.6f));
+	TestTrue(TEXT("Settle: after the delay"), FSolver::UpdateSettleTimer(Timer, Settings, 30.0f, 60.0f, true, 0.6f));
+	TestFalse(TEXT("Settle: an offset below the settle angle is left alone"), FSolver::UpdateSettleTimer(Timer, Settings, 10.0f, 60.0f, true, 2.0f));
+	TestEqual(TEXT("...and resets the timer"), Timer, 0.0f);
+	TestFalse(TEXT("Settle: a real turn is not a settle"), FSolver::UpdateSettleTimer(Timer, Settings, 70.0f, 60.0f, true, 2.0f));
+	TestFalse(TEXT("Settle: not while it cannot"), FSolver::UpdateSettleTimer(Timer, Settings, 30.0f, 60.0f, false, 2.0f));
+
+	// BeginTurn: a settle turn is procedural even where the step has a clip slot.
+	FEGTurnInPlaceGraphInput Input;
+	Input.bValid = true;
+	Input.TurnOffset = -30.0f;
+	Input.bWantsSettle = true;
+	FEGTurnInPlaceNodeState Node;
+	FSolver::BeginTurn(Node, Input);
+	TestTrue(TEXT("Settle turn is procedural"), Node.bProcedural);
+	TestFalse(TEXT("...to the left"), Node.bTurningRight);
+	TestEqual(TEXT("...closing the offset"), Node.ProceduralYaw, -30.0f);
+	TestNull(TEXT("A procedural turn plays no clip"), FSolver::GetTurnAnimation(Input.GetEntry(), Node, false));
+
+	// Root yaw track: a right turn of 90 degrees crossing +-180, sampled at 10 Hz over one second.
+	TArray<double> Times;
+	TArray<double> Yaws;
+	for (int32 Index = 0; Index <= 10; ++Index)
+	{
+		Times.Add(Index * 0.1);
+		Yaws.Add(FRotator::NormalizeAxis(135.0 + 9.0 * Index));
+	}
+	FEGTurnYawTrack Track;
+	TestTrue(TEXT("Track builds"), FSolver::BuildYawTrack(Times, Yaws, 1.0f, 0.2f, Track));
+	TestEqual(TEXT("Track unwraps across 180"), Track.TotalYaw, 90.0f, 1.e-3f);
+	TestEqual(TEXT("Weight ends the recovery blend before the end"), Track.WeightEndTime, 0.8f, 1.e-4f);
+
+	Curves = FSolver::EvaluateYawTrack(Track, 0.0);
+	TestEqual(TEXT("Track: all of it remains at the start"), Curves.RemainingTurnYaw, 90.0f, 1.e-3f);
+	TestTrue(TEXT("Track: turning at the start"), Curves.IsTurning());
+	Curves = FSolver::EvaluateYawTrack(Track, 0.55);
+	TestEqual(TEXT("Track: interpolates between samples"), Curves.RemainingTurnYaw, 40.5f, 1.e-3f);
+	Curves = FSolver::EvaluateYawTrack(Track, 0.9);
+	TestFalse(TEXT("Track: recovery past the weight end"), Curves.IsTurning());
+
+	TArray<double> Short = { 0.0 };
+	TestFalse(TEXT("A single sample is not a track"), FSolver::BuildYawTrack(Short, Short, 1.0f, 0.2f, Track));
 	return true;
 }
 
