@@ -210,14 +210,14 @@ void SEGQuestTextPropertyEditableTextBox::Construct(
 						.IsReadOnly(this, &Self::IsNamespaceReadOnly)
 					]
 
-					// Warning, key will be overriden
+					// Warning, key will be overridden
 					+SGridPanel::Slot(2, 3)
 					.Padding(2)
 					[
 						SNew(SImage)
 						.Image(FCoreStyle::Get().GetBrush("Icons.Warning"))
 						.Visibility(this, &Self::GetNamespaceOverridenWarningImageVisibility)
-						.ToolTipText(LOCTEXT("NamespaceOverridenWarningToolTip", "The namespace will be overriden on Save.\nTo change this bevahiour go to Project Settings -> (Editors) Quest -> Localization"))
+						.ToolTipText(LOCTEXT("NamespaceOverridenWarningToolTip", "The namespace will be overridden on Save.\nTo change this behaviour go to Project Settings > Extended Framework > Extended Quest > Localization"))
 					]
 
 					// Key

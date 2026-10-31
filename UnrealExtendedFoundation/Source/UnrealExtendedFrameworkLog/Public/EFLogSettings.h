@@ -9,7 +9,7 @@
 #include "EFLogSettings.generated.h"
 
 /**
- * Project Settings > Plugins > Extended Log.
+ * Project Settings > Extended Framework > Extended Log.
  *
  * Thresholds and flushing apply at once; the folder and the archive count decide where a session
  * writes, so they take effect at the next launch.

@@ -6,7 +6,7 @@
 	"Description": "Save games: slots with metadata, crash-safe backups, versioned migrations, saveable actors and objects, autosave and cloud sync through the platform layer.",
 	"Category": "Extended",
 	"CreatedBy": "Kemal Erdem YILMAZ",
-	"CreatedByURL": "moonpunchgames.com",
+	"CreatedByURL": "https://moonpunchgames.com",
 	"DocsURL": "",
 	"MarketplaceURL": "",
 	"SupportURL": "",

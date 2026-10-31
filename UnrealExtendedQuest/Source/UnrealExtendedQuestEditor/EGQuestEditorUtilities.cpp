@@ -331,7 +331,7 @@ void FEGQuestEditorUtilities::TryToCreateDefaultGraph(UEGQuestGraph* Quest, bool
 			FString::Printf(TEXT("%s%s"), *Message, TEXT("\nWould you like to autogenerate the graph nodes from the quest nodes?\n WARNING: Graph nodes will be lost")),
 			TEXT("Autogenerate graph nodes from quest nodes?"));
 
-		// This will trigger the CreateDefaultNodesForGraph in the the GraphSchema
+		// This will trigger the CreateDefaultNodesForGraph in the GraphSchema
 		if (Response == EAppReturnType::Yes)
 		{
 			Quest->ClearGraph();

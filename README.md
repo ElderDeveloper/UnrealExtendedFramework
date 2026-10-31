@@ -560,14 +560,14 @@ The suite includes Unreal Automation tests across the foundation, core, Gameplay
 
 1. Open **Tools → Test Automation**.
 2. Disable smoke-only filtering if you want the full set.
-3. Filter for `ExtendedFoundation`, `UnrealExtended`, `UnrealExtendedSave`, `UnrealExtendedDebug`, `ExtendedSteam`, `ExtendedEOS`, `PlayFab`, `Quest`, `PerfSentinel`, or `ExtendedAtlassian`.
+3. Filter for `ExtendedFoundation`, `ExtendedFramework`, `UnrealExtended` (core, Gameplay, Save, Debug, PlayFab, EOS, Steam), `ExtendedAtlassian`, `QuestPlugin`, or `PerfSentinel`.
 4. Run the relevant group before integrating a plugin update.
 
 ### From the command line
 
 ```powershell
 UnrealEditor-Cmd.exe YourProject.uproject `
-  -ExecCmds="Automation RunTests ExtendedFoundation+UnrealExtended;Quit" `
+  -ExecCmds="Automation RunTests ExtendedFoundation+ExtendedFramework+UnrealExtended+ExtendedAtlassian+QuestPlugin+PerfSentinel;Quit" `
   -unattended -nop4 -NullRHI -TestExit="Automation Test Queue Empty"
 ```
 

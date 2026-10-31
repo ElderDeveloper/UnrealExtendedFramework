@@ -147,7 +147,7 @@ The rules for using these across the suite are in [ARCHITECTURE.md](../ARCHITECT
 
 ## Tests
 
-`Automation RunTests ExtendedFoundation` (all offline). They cover:
+`Automation RunTests ExtendedFoundation+ExtendedFramework.Log` (all offline; the Log module's tests keep their older `ExtendedFramework.Log` prefix). They cover:
 
 - message routing and re-entrancy;
 - analytics consent, batching, forwarding, the HTTP sink against the mock, and persistence of

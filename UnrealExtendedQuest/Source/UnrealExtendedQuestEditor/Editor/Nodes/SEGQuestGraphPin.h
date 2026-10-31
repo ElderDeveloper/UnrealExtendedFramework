@@ -91,7 +91,7 @@ public:
 	virtual void OnDragLeave(const FDragDropEvent& DragDropEvent) override;
 
 	/**
-	 * Called during drag and drop when the the mouse is being dragged over a widget.
+	 * Called during drag and drop when the mouse is being dragged over a widget.
 	 *
 	 * @param MyGeometry	  The geometry of the widget receiving the event.
 	 * @param DragDropEvent   The drag and drop event.

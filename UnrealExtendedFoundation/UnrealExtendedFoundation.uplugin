@@ -6,7 +6,7 @@
 	"Description": "Lightweight shared base for every Extended plugin: logging, HTTP, JSON, results, async Blueprint nodes, settings, credentials, asset preloading, a message bus, analytics, a store-neutral platform layer and test helpers. Depends on no other plugin.",
 	"Category": "Extended",
 	"CreatedBy": "Kemal Erdem YILMAZ",
-	"CreatedByURL": "moonpunchgames.com",
+	"CreatedByURL": "https://moonpunchgames.com",
 	"DocsURL": "",
 	"MarketplaceURL": "",
 	"SupportURL": "",
