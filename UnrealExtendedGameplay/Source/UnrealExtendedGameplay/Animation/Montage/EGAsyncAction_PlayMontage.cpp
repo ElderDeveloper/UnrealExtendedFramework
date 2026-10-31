@@ -27,16 +27,12 @@ UEGAsyncAction_PlayMontage* UEGAsyncAction_PlayMontage::PlayAnimationAndWaitForN
 	Action->Actor = Actor;
 	Action->MeshPurpose = MeshPurpose;
 
-	// Pick now (so a Sequential pick advances once), load in Activate.
-	const UEGAnimationSet* Set = UEGMontageLibrary::GetAnimationSet(Actor, FallbackSet);
+	// Pick now (so a Sequential pick advances once), load in Activate. Same lookup as the library.
+	TArray<const UEGAnimationSet*, TInlineAllocator<2>> Sets;
+	UEGMontageLibrary::GetAnimationSets(Actor, FallbackSet, Sets);
 	FEGAnimationSetEntry Entry;
 	TSoftObjectPtr<UAnimMontage> Picked;
-	bool bPicked = Set && Set->PickVariant(AnimationTag, VariantIndex, Picked, Entry);
-	if (!bPicked && FallbackSet && FallbackSet != Set)
-	{
-		bPicked = FallbackSet->PickVariant(AnimationTag, VariantIndex, Picked, Entry);
-	}
-	if (bPicked)
+	if (UEGAnimationSet::PickVariantInSets(Sets, AnimationTag, false, VariantIndex, Picked, Entry))
 	{
 		Action->PendingMontage = Picked;
 		Action->PlayRate = Entry.PlayRate;
@@ -108,11 +104,22 @@ void UEGAsyncAction_PlayMontage::StartPlayback()
 	AnimInstance = Instance;
 	MontageInstanceId = MontageInstance->GetInstanceID();
 
-	FOnMontageBlendingOutStarted BlendingOut = FOnMontageBlendingOutStarted::CreateUObject(this, &UEGAsyncAction_PlayMontage::HandleBlendingOut);
-	Instance->Montage_SetBlendingOutDelegate(BlendingOut, Montage);
+	if (Result == EEGMontagePlayResult::Played)
+	{
+		// We started this instance, so its single-slot delegates are ours.
+		FOnMontageBlendingOutStarted BlendingOut = FOnMontageBlendingOutStarted::CreateUObject(this, &UEGAsyncAction_PlayMontage::HandleBlendingOut);
+		Instance->Montage_SetBlendingOutDelegate(BlendingOut, Montage);
 
-	FOnMontageEnded Ended = FOnMontageEnded::CreateUObject(this, &UEGAsyncAction_PlayMontage::HandleEnded);
-	Instance->Montage_SetEndDelegate(Ended, Montage);
+		FOnMontageEnded Ended = FOnMontageEnded::CreateUObject(this, &UEGAsyncAction_PlayMontage::HandleEnded);
+		Instance->Montage_SetEndDelegate(Ended, Montage);
+	}
+	else
+	{
+		// The owner started it and may have bound those delegates; listen on the shared events.
+		bUsesSharedDelegates = true;
+		Instance->OnMontageBlendingOut.AddUniqueDynamic(this, &UEGAsyncAction_PlayMontage::HandleSharedBlendingOut);
+		Instance->OnMontageEnded.AddUniqueDynamic(this, &UEGAsyncAction_PlayMontage::HandleSharedEnded);
+	}
 
 	Instance->OnPlayMontageNotifyBegin.AddUniqueDynamic(this, &UEGAsyncAction_PlayMontage::HandleNotifyBegin);
 	Instance->OnPlayMontageNotifyEnd.AddUniqueDynamic(this, &UEGAsyncAction_PlayMontage::HandleNotifyEnd);
@@ -149,6 +156,35 @@ void UEGAsyncAction_PlayMontage::HandleBlendingOut(UAnimMontage* InMontage, bool
 	else
 	{
 		OnBlendOut.Broadcast(NAME_None);
+	}
+}
+
+bool UEGAsyncAction_PlayMontage::IsEventForOurInstance(const UAnimMontage* InMontage) const
+{
+	if (InMontage != Montage)
+	{
+		return false;
+	}
+	// Blending-out and ended instances are no longer "active", so while ours still is, the event
+	// came from an older play of the same montage.
+	const UAnimInstance* const Instance = AnimInstance.Get();
+	const FAnimMontageInstance* Active = Instance ? Instance->GetActiveInstanceForMontage(Montage) : nullptr;
+	return !(Active && Active->GetInstanceID() == MontageInstanceId);
+}
+
+void UEGAsyncAction_PlayMontage::HandleSharedBlendingOut(UAnimMontage* InMontage, bool bInterrupted)
+{
+	if (IsEventForOurInstance(InMontage))
+	{
+		HandleBlendingOut(InMontage, bInterrupted);
+	}
+}
+
+void UEGAsyncAction_PlayMontage::HandleSharedEnded(UAnimMontage* InMontage, bool bInterrupted)
+{
+	if (IsEventForOurInstance(InMontage))
+	{
+		HandleEnded(InMontage, bInterrupted);
 	}
 }
 
@@ -208,9 +244,14 @@ void UEGAsyncAction_PlayMontage::Finish()
 		Instance->OnPlayMontageNotifyBegin.RemoveDynamic(this, &UEGAsyncAction_PlayMontage::HandleNotifyBegin);
 		Instance->OnPlayMontageNotifyEnd.RemoveDynamic(this, &UEGAsyncAction_PlayMontage::HandleNotifyEnd);
 
-		// Only detach the montage delegates while they are still ours: a newer play of the same
-		// montage has its own.
-		if (Montage)
+		if (bUsesSharedDelegates)
+		{
+			Instance->OnMontageBlendingOut.RemoveDynamic(this, &UEGAsyncAction_PlayMontage::HandleSharedBlendingOut);
+			Instance->OnMontageEnded.RemoveDynamic(this, &UEGAsyncAction_PlayMontage::HandleSharedEnded);
+		}
+		// Only detach the per-montage delegates when we bound them and they are still ours: a newer
+		// play of the same montage has its own, and an owner-played montage's belong to the owner.
+		else if (Montage)
 		{
 			const FAnimMontageInstance* MontageInstance = Instance->GetActiveInstanceForMontage(Montage);
 			if (MontageInstance && MontageInstance->GetInstanceID() == MontageInstanceId)

@@ -125,6 +125,18 @@ int32 UEGMeleeTraceComponent::OpenWindowWithId(int32 WindowId, FGameplayTag Wind
 		return INDEX_NONE;
 	}
 
+	// Called from inside a sweep (a Blueprint CanHit): adding a window now would move the window
+	// the sweep is working on, so open it once the sweep is done.
+	if (bSweeping)
+	{
+		const TWeakObjectPtr<USkeletalMeshComponent> WeakSource(DefaultSource);
+		DeferredOperations.Add([this, WindowId, WindowTag, WeakSource, DamageMultiplier, AttackTags]()
+		{
+			OpenWindowWithId(WindowId, WindowTag, WeakSource.Get(), DamageMultiplier, AttackTags);
+		});
+		return WindowId;
+	}
+
 	FWindow Window;
 	Window.Id = WindowId;
 	Window.Tag = WindowTag;
@@ -158,22 +170,56 @@ int32 UEGMeleeTraceComponent::OpenWindowWithId(int32 WindowId, FGameplayTag Wind
 	}
 
 	Windows.Add(MoveTemp(Window));
+	UpdateTickEnabled();
 
-	// Catch what the shapes overlap the moment the window opens.
+	// Opened before any of its hits are delivered, so listeners see Opened, hits, Closed in order.
+	OnWindowOpened.Broadcast(WindowTag, WindowId);
+
+	// Catch what the shapes overlap the moment the window opens (unless a listener closed it).
 	if (ShouldDetect())
 	{
 		TArray<FEGMeleeHit> Hits;
-		SweepWindow(Windows.Last(), Hits);
+		if (FWindow* Opened = FindWindow(WindowId))
+		{
+			TGuardValue<bool> SweepGuard(bSweeping, true);
+			SweepWindow(*Opened, Hits);
+		}
 		DeliverHits(Hits);
+		FlushDeferredOperations();
 	}
 
-	UpdateTickEnabled();
-	OnWindowOpened.Broadcast(WindowTag, WindowId);
-	return WindowId;
+	return FindWindow(WindowId) ? WindowId : INDEX_NONE;
+}
+
+UEGMeleeTraceComponent::FWindow* UEGMeleeTraceComponent::FindWindow(int32 WindowId)
+{
+	return Windows.FindByPredicate([WindowId](const FWindow& Window) { return Window.Id == WindowId; });
+}
+
+void UEGMeleeTraceComponent::FlushDeferredOperations()
+{
+	// Each pass may queue more (a deferred close sweeps, and its CanHit may ask again); bounded so a
+	// policy that always asks cannot loop forever.
+	for (int32 Pass = 0; Pass < 8 && DeferredOperations.Num() > 0; ++Pass)
+	{
+		TArray<TFunction<void()>> Operations = MoveTemp(DeferredOperations);
+		DeferredOperations.Reset();
+		for (TFunction<void()>& Operation : Operations)
+		{
+			Operation();
+		}
+	}
+	DeferredOperations.Reset();
 }
 
 void UEGMeleeTraceComponent::CloseWindow(int32 WindowId)
 {
+	if (bSweeping)
+	{
+		DeferredOperations.Add([this, WindowId]() { CloseWindow(WindowId); });
+		return;
+	}
+
 	const int32 Index = Windows.IndexOfByPredicate([WindowId](const FWindow& Window) { return Window.Id == WindowId; });
 	if (Index == INDEX_NONE)
 	{
@@ -184,19 +230,28 @@ void UEGMeleeTraceComponent::CloseWindow(int32 WindowId)
 	TArray<FEGMeleeHit> Hits;
 	if (ShouldDetect())
 	{
+		TGuardValue<bool> SweepGuard(bSweeping, true);
 		SweepWindow(Windows[Index], Hits);
 	}
 
+	// Nothing could change Windows during the sweep (changes were deferred), so Index still holds.
 	const FGameplayTag Tag = Windows[Index].Tag;
 	Windows.RemoveAt(Index);
 	UpdateTickEnabled();
 
 	DeliverHits(Hits);
 	OnWindowClosed.Broadcast(Tag, WindowId);
+	FlushDeferredOperations();
 }
 
 void UEGMeleeTraceComponent::CloseAllWindows()
 {
+	if (bSweeping)
+	{
+		DeferredOperations.Add([this]() { CloseAllWindows(); });
+		return;
+	}
+
 	while (Windows.Num() > 0)
 	{
 		CloseWindow(Windows.Last().Id);
@@ -402,18 +457,24 @@ void UEGMeleeTraceComponent::TickComponent(float DeltaTime, ELevelTick TickType,
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
-	// Gather every window's hits first: delivering them can open or close windows.
+	// Gather every window's hits first: delivering them can open or close windows, and anything the
+	// damage policy asks for during the sweep itself waits until the sweep is over.
 	TArray<FEGMeleeHit> Hits;
-	for (FWindow& Window : Windows)
 	{
-		SweepWindow(Window, Hits);
+		TGuardValue<bool> SweepGuard(bSweeping, true);
+		for (FWindow& Window : Windows)
+		{
+			SweepWindow(Window, Hits);
+		}
 	}
 	DeliverHits(Hits);
+	FlushDeferredOperations();
 }
 
 void UEGMeleeTraceComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
 	Windows.Reset();
 	SourceOverrides.Reset();
+	DeferredOperations.Reset();
 	Super::EndPlay(EndPlayReason);
 }

@@ -11,19 +11,16 @@
 #include "UnrealExtendedGameplay/Animation/EGAnimNotifyHelpers.h"
 #include "UnrealExtendedGameplay/Animation/EGAnimTargeting.h"
 
+TMap<TPair<TWeakObjectPtr<AActor>, FName>, int32> UEGWarpTargetNotifyState::OpenWindowCounts;
+
 UEGWarpTargetNotifyState::UEGWarpTargetNotifyState()
 {
 	// Pawn in the default collision setup.
 	SearchObjectTypes.Add(ObjectTypeQuery3);
 }
 
-void UEGWarpTargetNotifyState::UpdateWarpTarget(USkeletalMeshComponent* MeshComp, bool bSearch)
+void UEGWarpTargetNotifyState::ApplyWarpTarget(USkeletalMeshComponent* MeshComp, AActor* Target) const
 {
-	if (!EGAnimNotify::CanDriveOwnerTransform(MeshComp))
-	{
-		return;
-	}
-
 	AActor* const Owner = MeshComp->GetOwner();
 	UMotionWarpingComponent* const MotionWarping = Owner->FindComponentByClass<UMotionWarpingComponent>();
 	if (!MotionWarping)
@@ -34,18 +31,6 @@ void UEGWarpTargetNotifyState::UpdateWarpTarget(USkeletalMeshComponent* MeshComp
 			EGAnimDebug::WarnOnce(this, FString::Printf(TEXT("%s plays Set Warp Target but has no UMotionWarpingComponent."), *GetNameSafe(Owner->GetClass())));
 		}
 		return;
-	}
-
-	const TWeakObjectPtr<USkeletalMeshComponent> Key(MeshComp);
-	AActor* Target = nullptr;
-	if (bSearch)
-	{
-		Target = EGAnimTargeting::FindTarget(Owner, SearchRadius, SearchHalfAngle, SearchObjectTypes);
-		Targets.Add(Key, Target);
-	}
-	else if (const TWeakObjectPtr<AActor>* Existing = Targets.Find(Key))
-	{
-		Target = Existing->Get();
 	}
 
 	if (!IsValid(Target))
@@ -93,6 +78,11 @@ void UEGWarpTargetNotifyState::NotifyBegin(USkeletalMeshComponent* MeshComp, UAn
 {
 	Super::NotifyBegin(MeshComp, Animation, TotalDuration, EventReference);
 
+	if (!EGAnimNotify::CanDriveOwnerTransform(MeshComp))
+	{
+		return;
+	}
+
 	for (auto It = Targets.CreateIterator(); It; ++It)
 	{
 		if (!It->Key.IsValid())
@@ -100,15 +90,36 @@ void UEGWarpTargetNotifyState::NotifyBegin(USkeletalMeshComponent* MeshComp, UAn
 			It.RemoveCurrent();
 		}
 	}
-	UpdateWarpTarget(MeshComp, true);
+	for (auto It = OpenWindowCounts.CreateIterator(); It; ++It)
+	{
+		if (!It->Key.Key.IsValid())
+		{
+			It.RemoveCurrent();
+		}
+	}
+
+	AActor* const Owner = MeshComp->GetOwner();
+	++OpenWindowCounts.FindOrAdd(TPair<TWeakObjectPtr<AActor>, FName>(Owner, WarpTargetName));
+
+	AActor* const Target = EGAnimTargeting::FindTarget(Owner, SearchRadius, SearchHalfAngle, SearchObjectTypes);
+	Targets.FindOrAdd(TWeakObjectPtr<USkeletalMeshComponent>(MeshComp)).Add(Target);
+	ApplyWarpTarget(MeshComp, Target);
 }
 
 void UEGWarpTargetNotifyState::NotifyTick(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, float FrameDeltaTime, const FAnimNotifyEventReference& EventReference)
 {
 	Super::NotifyTick(MeshComp, Animation, FrameDeltaTime, EventReference);
-	if (bTrackTarget)
+
+	if (!bTrackTarget || !EGAnimNotify::CanDriveOwnerTransform(MeshComp))
 	{
-		UpdateWarpTarget(MeshComp, false);
+		return;
+	}
+
+	// The tick cannot say which overlapping window it is for; follow the newest window's target.
+	const TArray<TWeakObjectPtr<AActor>>* MeshTargets = Targets.Find(TWeakObjectPtr<USkeletalMeshComponent>(MeshComp));
+	if (MeshTargets && MeshTargets->Num() > 0)
+	{
+		ApplyWarpTarget(MeshComp, MeshTargets->Last().Get());
 	}
 }
 
@@ -116,10 +127,32 @@ void UEGWarpTargetNotifyState::NotifyEnd(USkeletalMeshComponent* MeshComp, UAnim
 {
 	Super::NotifyEnd(MeshComp, Animation, EventReference);
 
-	Targets.Remove(TWeakObjectPtr<USkeletalMeshComponent>(MeshComp));
-	if (bClearOnEnd && EGAnimNotify::CanDriveOwnerTransform(MeshComp))
+	const TWeakObjectPtr<USkeletalMeshComponent> MeshKey(MeshComp);
+	TArray<TWeakObjectPtr<AActor>>* MeshTargets = Targets.Find(MeshKey);
+	if (!MeshTargets || MeshTargets->Num() == 0)
 	{
-		if (UMotionWarpingComponent* const MotionWarping = MeshComp->GetOwner()->FindComponentByClass<UMotionWarpingComponent>())
+		// Began on a machine that does not drive the owner; nothing was set here.
+		return;
+	}
+	MeshTargets->RemoveAt(0);
+	if (MeshTargets->Num() == 0)
+	{
+		Targets.Remove(MeshKey);
+	}
+
+	AActor* const Owner = MeshComp ? MeshComp->GetOwner() : nullptr;
+	const TPair<TWeakObjectPtr<AActor>, FName> CountKey(Owner, WarpTargetName);
+	int32* const OpenCount = OpenWindowCounts.Find(CountKey);
+	const bool bLastWindow = !OpenCount || --(*OpenCount) <= 0;
+	if (bLastWindow)
+	{
+		OpenWindowCounts.Remove(CountKey);
+	}
+
+	// Another window with this warp target name is still open on the owner: it owns the target now.
+	if (bLastWindow && bClearOnEnd && Owner)
+	{
+		if (UMotionWarpingComponent* const MotionWarping = Owner->FindComponentByClass<UMotionWarpingComponent>())
 		{
 			MotionWarping->RemoveWarpTarget(WarpTargetName);
 		}

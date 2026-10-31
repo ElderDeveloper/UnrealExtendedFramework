@@ -203,6 +203,26 @@ bool FEGAnimationSetLookupTest::RunTest(const FString& Parameters)
 
 	TestFalse(TEXT("Unknown tags resolve to nothing"), Child->ResolveAnimation(TAG_EGAnim_Cover_TurnLeft).IsValid());
 	TestFalse(TEXT("The parent does not see the child's entries"), Base->HasAnimation(TAG_EGAnim_Cover_GetOut));
+
+	// The most specific tag wins across the chain: a crouched clip in the parent beats a standing
+	// clip in the child, which a parent-tag-first walk would have picked.
+	UAnimMontage* const GetOutCrouched = NewObject<UAnimMontage>(GetTransientPackage(), NAME_None, RF_Transient);
+	Base->Entries.Add(TAG_EGAnim_Cover_GetOut_Crouched).Variants.Add(TSoftObjectPtr<UAnimMontage>(GetOutCrouched));
+	TestTrue(TEXT("A crouched entry in the parent beats the child's standing one"), Child->ResolveAnimation(TAG_EGAnim_Cover_GetOut_Crouched).Montage == GetOutCrouched);
+
+	// Across separate sets (a character's set, then a system fallback) the same rule holds.
+	UEGAnimationSet* const Fallback = NewObject<UEGAnimationSet>(GetTransientPackage(), NAME_None, RF_Transient);
+	UAnimMontage* const TurnLeftCrouched = NewObject<UAnimMontage>(GetTransientPackage(), NAME_None, RF_Transient);
+	Fallback->Entries.Add(TAG_EGAnim_Cover_TurnLeft_Crouched).Variants.Add(TSoftObjectPtr<UAnimMontage>(TurnLeftCrouched));
+	UAnimMontage* const TurnLeft = NewObject<UAnimMontage>(GetTransientPackage(), NAME_None, RF_Transient);
+	Child->Entries.Add(TAG_EGAnim_Cover_TurnLeft).Variants.Add(TSoftObjectPtr<UAnimMontage>(TurnLeft));
+
+	const UEGAnimationSet* const Sets[] = { Child, Fallback };
+	TSoftObjectPtr<UAnimMontage> Picked;
+	FEGAnimationSetEntry PickedEntry;
+	TestTrue(TEXT("Lookup across sets finds something"), UEGAnimationSet::PickVariantInSets(Sets, TAG_EGAnim_Cover_TurnLeft_Crouched, false, -1, Picked, PickedEntry));
+	TestTrue(TEXT("The fallback's crouched clip beats the character's standing one"), Picked.Get() == TurnLeftCrouched);
+	TestTrue(TEXT("Exact lookup skips parent tags"), UEGAnimationSet::FindEntryInSets(Sets, TAG_EGAnim_Cover_GetIn_Crouched, true) == nullptr);
 	return true;
 }
 

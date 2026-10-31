@@ -22,7 +22,8 @@ public:
 	virtual void Notify(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, const FAnimNotifyEventReference& EventReference) override;
 
 protected:
-	virtual FGameplayTag GetEventTag() const PURE_VIRTUAL(UEGAnimEventNotifyBase::GetEventTag, return FGameplayTag(););
+	/** Subclasses return their tag. The default (no tag) dispatches nothing. */
+	virtual FGameplayTag GetEventTag() const { return FGameplayTag(); }
 	virtual FEGAnimEventPayload GetEventPayload() const { return FEGAnimEventPayload(); }
 };
 

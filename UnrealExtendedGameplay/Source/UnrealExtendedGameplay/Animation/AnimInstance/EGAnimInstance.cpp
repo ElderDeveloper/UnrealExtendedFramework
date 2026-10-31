@@ -18,6 +18,15 @@ void UEGAnimInstance::NativeInitializeAnimation()
 	RefreshStateProviders();
 }
 
+void UEGAnimInstance::NativeBeginPlay()
+{
+	Super::NativeBeginPlay();
+
+	// A spawned pawn initialises its anim instance before its construction script adds Blueprint
+	// components (cover, anim events), so look again now that they exist.
+	RefreshStateProviders();
+}
+
 void UEGAnimInstance::RefreshStateProviders()
 {
 	StateProviders.Reset();

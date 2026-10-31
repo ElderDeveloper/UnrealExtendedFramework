@@ -41,9 +41,15 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Extended|Montage")
 	static UEGAnimationSet* GetAnimationSet(const AActor* Actor, UEGAnimationSet* Fallback = nullptr);
 
-	/** The actor's set (else Fallback) resolved for this tag. Loads the montage if needed. */
-	UFUNCTION(BlueprintCallable, Category = "Extended|Montage")
-	static FEGResolvedAnimation ResolveAnimation(const AActor* Actor, FGameplayTag AnimationTag, int32 VariantIndex = -1, UEGAnimationSet* Fallback = nullptr);
+	/**
+	 * This tag across the actor's set and Fallback: the most specific tag found in either wins, the
+	 * actor's set first for the same tag. bExactTag skips parent tags. Loads the montage if needed.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Extended|Montage", meta = (AdvancedDisplay = "bExactTag"))
+	static FEGResolvedAnimation ResolveAnimation(const AActor* Actor, FGameplayTag AnimationTag, int32 VariantIndex = -1, UEGAnimationSet* Fallback = nullptr, bool bExactTag = false);
+
+	/** The sets ResolveAnimation searches, in order: the actor's, then Fallback (when different). */
+	static void GetAnimationSets(const AActor* Actor, UEGAnimationSet* Fallback, TArray<const UEGAnimationSet*, TInlineAllocator<2>>& OutSets);
 
 	UFUNCTION(BlueprintCallable, Category = "Extended|Montage", meta = (AdvancedDisplay = "StartSection,StartTime,Purpose"))
 	static EEGMontagePlayResult PlayMontageOnActor(AActor* Actor, UAnimMontage* Montage, float PlayRate = 1.0f, FName StartSection = NAME_None, float StartTime = 0.0f, FGameplayTag Purpose = FGameplayTag());

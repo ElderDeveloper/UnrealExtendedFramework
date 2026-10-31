@@ -73,9 +73,10 @@ struct UNREALEXTENDEDGAMEPLAY_API FEGResolvedAnimation
  * instead of holding montage pointers of their own. A character supplies its set through
  * IEGMontagePlayerInterface::GetAnimationSet; a system may also carry a default set.
  *
- * Lookup falls back up the tag hierarchy (Cover.GetIn.Crouched, then Cover.GetIn), then to the
- * Parent set, so a variant set only lists what differs. Montages are soft references: they load
- * when first used, or ahead of time through GatherSoftPaths.
+ * The most specific tag wins: Cover.GetIn.Crouched is looked for in this set and every Parent set
+ * before falling back to Cover.GetIn, so a crouched clip in a parent beats a standing one here.
+ * For the same tag the nearest set wins, so a variant set only lists what differs. Montages are
+ * soft references: they load when first used, or ahead of time through GatherSoftPaths.
  */
 UCLASS(BlueprintType)
 class UNREALEXTENDEDGAMEPLAY_API UEGAnimationSet : public UPrimaryDataAsset
@@ -90,8 +91,20 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Animation", meta = (ForceInlineRow))
 	TMap<FGameplayTag, FEGAnimationSetEntry> Entries;
 
-	/** The entry for this tag, its nearest parent tag, or the Parent set's. Null when none. */
+	/** The entry for exactly this tag, in this set or its Parent chain (nearest first). */
+	const FEGAnimationSetEntry* FindExactEntry(FGameplayTag Tag) const;
+
+	/** The entry for this tag or its most specific parent tag, across this set and its Parent chain. */
 	const FEGAnimationSetEntry* FindEntry(FGameplayTag Tag) const;
+
+	/**
+	 * The same lookup across several sets (a character's set, then a system's fallback): the most
+	 * specific tag found in any of them wins; for one tag, earlier sets win. bExactTag skips parent tags.
+	 */
+	static const FEGAnimationSetEntry* FindEntryInSets(TArrayView<const UEGAnimationSet* const> Sets, FGameplayTag Tag, bool bExactTag, const UEGAnimationSet** OutOwner = nullptr);
+
+	/** PickVariant over several sets, with FindEntryInSets' order. */
+	static bool PickVariantInSets(TArrayView<const UEGAnimationSet* const> Sets, FGameplayTag Tag, bool bExactTag, int32 VariantIndex, TSoftObjectPtr<UAnimMontage>& OutMontage, FEGAnimationSetEntry& OutEntry);
 
 	UFUNCTION(BlueprintPure, Category = "Extended|Animation Set")
 	bool HasAnimation(FGameplayTag Tag) const { return FindEntry(Tag) != nullptr; }
@@ -114,6 +127,9 @@ public:
 #endif
 
 private:
+	const FEGAnimationSetEntry* FindExactEntryWithOwner(FGameplayTag Tag, const UEGAnimationSet*& OutOwner) const;
+	bool PickFromEntry(const FEGAnimationSetEntry& Entry, FGameplayTag CursorKey, int32 VariantIndex, TSoftObjectPtr<UAnimMontage>& OutMontage) const;
+
 	/** Sequential pick positions. Runtime only. */
 	mutable TMap<FGameplayTag, int32> SequentialCursor;
 };

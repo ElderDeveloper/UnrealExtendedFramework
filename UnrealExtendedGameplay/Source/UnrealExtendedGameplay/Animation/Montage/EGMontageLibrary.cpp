@@ -45,15 +45,33 @@ UEGAnimationSet* UEGMontageLibrary::GetAnimationSet(const AActor* Actor, UEGAnim
 	return Fallback;
 }
 
-FEGResolvedAnimation UEGMontageLibrary::ResolveAnimation(const AActor* Actor, FGameplayTag AnimationTag, int32 VariantIndex, UEGAnimationSet* Fallback)
+void UEGMontageLibrary::GetAnimationSets(const AActor* Actor, UEGAnimationSet* Fallback, TArray<const UEGAnimationSet*, TInlineAllocator<2>>& OutSets)
 {
-	const UEGAnimationSet* Set = GetAnimationSet(Actor, Fallback);
-	FEGResolvedAnimation Resolved = Set ? Set->ResolveAnimation(AnimationTag, VariantIndex) : FEGResolvedAnimation();
-
-	// The character's own set may not cover a tag the fallback does.
-	if (!Resolved.IsValid() && Fallback && Fallback != Set)
+	OutSets.Reset();
+	if (const UEGAnimationSet* ActorSet = GetAnimationSet(Actor, nullptr))
 	{
-		Resolved = Fallback->ResolveAnimation(AnimationTag, VariantIndex);
+		OutSets.Add(ActorSet);
+	}
+	if (Fallback && !OutSets.Contains(Fallback))
+	{
+		OutSets.Add(Fallback);
+	}
+}
+
+FEGResolvedAnimation UEGMontageLibrary::ResolveAnimation(const AActor* Actor, FGameplayTag AnimationTag, int32 VariantIndex, UEGAnimationSet* Fallback, bool bExactTag)
+{
+	TArray<const UEGAnimationSet*, TInlineAllocator<2>> Sets;
+	GetAnimationSets(Actor, Fallback, Sets);
+
+	FEGResolvedAnimation Resolved;
+	TSoftObjectPtr<UAnimMontage> Montage;
+	FEGAnimationSetEntry Entry;
+	if (UEGAnimationSet::PickVariantInSets(Sets, AnimationTag, bExactTag, VariantIndex, Montage, Entry))
+	{
+		Resolved.Montage = Montage.LoadSynchronous();
+		Resolved.StartSection = Entry.StartSection;
+		Resolved.PlayRate = Entry.PlayRate;
+		Resolved.StartTime = Entry.StartTime;
 	}
 	return Resolved;
 }

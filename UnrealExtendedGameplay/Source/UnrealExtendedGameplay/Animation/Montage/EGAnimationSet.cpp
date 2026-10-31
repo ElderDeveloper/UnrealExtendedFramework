@@ -16,8 +16,9 @@ namespace
 	constexpr int32 MaxParentDepth = 16;
 }
 
-const FEGAnimationSetEntry* UEGAnimationSet::FindEntry(FGameplayTag Tag) const
+const FEGAnimationSetEntry* UEGAnimationSet::FindExactEntryWithOwner(FGameplayTag Tag, const UEGAnimationSet*& OutOwner) const
 {
+	OutOwner = nullptr;
 	if (!Tag.IsValid())
 	{
 		return nullptr;
@@ -26,26 +27,60 @@ const FEGAnimationSetEntry* UEGAnimationSet::FindEntry(FGameplayTag Tag) const
 	const UEGAnimationSet* Set = this;
 	for (int32 Depth = 0; Set && Depth < MaxParentDepth; ++Depth, Set = Set->Parent)
 	{
-		for (FGameplayTag Current = Tag; Current.IsValid(); Current = Current.RequestDirectParent())
+		if (const FEGAnimationSetEntry* Entry = Set->Entries.Find(Tag))
 		{
-			if (const FEGAnimationSetEntry* Entry = Set->Entries.Find(Current))
-			{
-				return Entry;
-			}
+			OutOwner = Set;
+			return Entry;
 		}
 	}
 	return nullptr;
 }
 
-bool UEGAnimationSet::PickVariant(FGameplayTag Tag, int32 VariantIndex, TSoftObjectPtr<UAnimMontage>& OutMontage, FEGAnimationSetEntry& OutEntry) const
+const FEGAnimationSetEntry* UEGAnimationSet::FindExactEntry(FGameplayTag Tag) const
 {
-	const FEGAnimationSetEntry* Entry = FindEntry(Tag);
-	if (!Entry || Entry->Variants.Num() == 0)
+	const UEGAnimationSet* Owner = nullptr;
+	return FindExactEntryWithOwner(Tag, Owner);
+}
+
+const FEGAnimationSetEntry* UEGAnimationSet::FindEntry(FGameplayTag Tag) const
+{
+	const UEGAnimationSet* const Self = this;
+	return FindEntryInSets(MakeArrayView(&Self, 1), Tag, false);
+}
+
+const FEGAnimationSetEntry* UEGAnimationSet::FindEntryInSets(TArrayView<const UEGAnimationSet* const> Sets, FGameplayTag Tag, bool bExactTag, const UEGAnimationSet** OutOwner)
+{
+	// Tag-major: the most specific tag in any set beats a less specific one in an earlier set.
+	for (FGameplayTag Current = Tag; Current.IsValid(); Current = Current.RequestDirectParent())
+	{
+		for (const UEGAnimationSet* Set : Sets)
+		{
+			const UEGAnimationSet* Owner = nullptr;
+			if (const FEGAnimationSetEntry* Entry = Set ? Set->FindExactEntryWithOwner(Current, Owner) : nullptr)
+			{
+				if (OutOwner)
+				{
+					*OutOwner = Owner;
+				}
+				return Entry;
+			}
+		}
+		if (bExactTag)
+		{
+			break;
+		}
+	}
+	return nullptr;
+}
+
+bool UEGAnimationSet::PickFromEntry(const FEGAnimationSetEntry& Entry, FGameplayTag CursorKey, int32 VariantIndex, TSoftObjectPtr<UAnimMontage>& OutMontage) const
+{
+	const int32 Count = Entry.Variants.Num();
+	if (Count == 0)
 	{
 		return false;
 	}
 
-	const int32 Count = Entry->Variants.Num();
 	int32 Index = 0;
 	if (VariantIndex >= 0)
 	{
@@ -53,14 +88,14 @@ bool UEGAnimationSet::PickVariant(FGameplayTag Tag, int32 VariantIndex, TSoftObj
 	}
 	else
 	{
-		switch (Entry->Pick)
+		switch (Entry.Pick)
 		{
 		case EEGAnimationVariantPick::Random:
 			Index = FMath::RandRange(0, Count - 1);
 			break;
 		case EEGAnimationVariantPick::Sequential:
 		{
-			int32& Cursor = SequentialCursor.FindOrAdd(Tag);
+			int32& Cursor = SequentialCursor.FindOrAdd(CursorKey);
 			Index = Cursor % Count;
 			Cursor = (Cursor + 1) % Count;
 			break;
@@ -72,9 +107,28 @@ bool UEGAnimationSet::PickVariant(FGameplayTag Tag, int32 VariantIndex, TSoftObj
 		}
 	}
 
-	OutMontage = Entry->Variants[Index];
-	OutEntry = *Entry;
+	OutMontage = Entry.Variants[Index];
 	return !OutMontage.IsNull();
+}
+
+bool UEGAnimationSet::PickVariantInSets(TArrayView<const UEGAnimationSet* const> Sets, FGameplayTag Tag, bool bExactTag, int32 VariantIndex, TSoftObjectPtr<UAnimMontage>& OutMontage, FEGAnimationSetEntry& OutEntry)
+{
+	const UEGAnimationSet* Owner = nullptr;
+	const FEGAnimationSetEntry* Entry = FindEntryInSets(Sets, Tag, bExactTag, &Owner);
+	if (!Entry || !Owner)
+	{
+		return false;
+	}
+
+	OutEntry = *Entry;
+	// The sequential cursor lives on the set that owns the entry, keyed by the tag asked for.
+	return Owner->PickFromEntry(*Entry, Tag, VariantIndex, OutMontage);
+}
+
+bool UEGAnimationSet::PickVariant(FGameplayTag Tag, int32 VariantIndex, TSoftObjectPtr<UAnimMontage>& OutMontage, FEGAnimationSetEntry& OutEntry) const
+{
+	const UEGAnimationSet* const Self = this;
+	return PickVariantInSets(MakeArrayView(&Self, 1), Tag, false, VariantIndex, OutMontage, OutEntry);
 }
 
 FEGResolvedAnimation UEGAnimationSet::ResolveAnimation(FGameplayTag Tag, int32 VariantIndex) const

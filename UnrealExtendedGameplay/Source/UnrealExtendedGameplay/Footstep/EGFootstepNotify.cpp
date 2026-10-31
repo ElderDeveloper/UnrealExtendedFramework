@@ -4,6 +4,7 @@
 
 #include "Components/SkeletalMeshComponent.h"
 #include "EGFootstepComponent.h"
+#include "Engine/SkeletalMesh.h"
 #include "Engine/World.h"
 #include "Perception/AISense_Hearing.h"
 #include "UnrealExtendedGameplay/Animation/Debug/EGAnimDebug.h"

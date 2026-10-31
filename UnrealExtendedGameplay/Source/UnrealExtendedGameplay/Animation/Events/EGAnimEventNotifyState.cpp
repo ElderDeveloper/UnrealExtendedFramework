@@ -2,6 +2,7 @@
 
 #include "EGAnimEventNotifyState.h"
 
+#include "Animation/AnimSequenceBase.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "EGAnimEventReceiver.h"
 

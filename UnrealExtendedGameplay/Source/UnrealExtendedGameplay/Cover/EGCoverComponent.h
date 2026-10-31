@@ -29,6 +29,7 @@ DECLARE_LOG_CATEGORY_EXTERN(LogCover, Error, All);
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnCoverStateChanged , bool , CoverState);
 
+class UAnimInstance;
 class UAnimMontage;
 UCLASS(ClassGroup=(Custom), meta=(BlueprintSpawnableComponent))
 class UNREALEXTENDEDGAMEPLAY_API UEGCoverComponent : public UActorComponent, public IEGAnimStateProvider
@@ -259,11 +260,23 @@ private:
 	void StorePlayerValues();
 
 	//<<<<<<<<<<<<<<<<<<<<<< Animation >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-	FEGResolvedAnimation ResolveCoverAnimation(FGameplayTag Tag, UAnimMontage* Fallback) const;
+	FEGResolvedAnimation ResolveCoverAnimation(FGameplayTag Tag, UAnimMontage* Fallback, bool bExactTag) const;
 	void PlayCoverMontage(FGameplayTag StandingTag, FGameplayTag CrouchedTag, UAnimMontage* StandingMontage, UAnimMontage* CrouchedMontage);
 	void PlayResolvedAnimation(const FEGResolvedAnimation& Animation);
 
 	void OnCoverMontageBlendingOut(UAnimMontage* Montage, bool bInterrupted, uint32 PlayId);
+
+	/**
+	 * For montages the owner played itself (IEGMontagePlayerInterface): its single-slot montage
+	 * delegates belong to the owner, so the shared event is used instead.
+	 */
+	UFUNCTION()
+	void OnOwnerMontageBlendingOut(UAnimMontage* Montage, bool bInterrupted);
+
+	void StopTrackingOwnerMontage();
+
+	TWeakObjectPtr<UAnimMontage> OwnerPlayedMontage;
+	TWeakObjectPtr<UAnimInstance> OwnerPlayedAnimInstance;
 
 	/** Bumped for every cover montage, so a montage interrupted by the next one does not clear IsInMontage. */
 	uint32 CoverMontagePlayId = 0;

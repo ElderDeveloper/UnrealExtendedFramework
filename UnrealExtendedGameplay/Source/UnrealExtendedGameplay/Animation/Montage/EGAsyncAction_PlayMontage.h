@@ -22,7 +22,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FEGPlayMontageAsyncDelegate, FName, 
  *
  * The tag version resolves the actor's animation set and loads the montage asynchronously first.
  */
-UCLASS()
+UCLASS(meta = (ExposedAsyncProxy = "AsyncTask"))
 class UNREALEXTENDEDGAMEPLAY_API UEGAsyncAction_PlayMontage : public UBlueprintAsyncActionBase
 {
 	GENERATED_BODY()
@@ -73,6 +73,19 @@ private:
 	void HandleBlendingOut(UAnimMontage* InMontage, bool bInterrupted);
 	void HandleEnded(UAnimMontage* InMontage, bool bInterrupted);
 
+	/**
+	 * Used instead of the per-montage delegates when the owner played the montage (GAS and the like
+	 * bind those single-slot delegates themselves, and overwriting them would hang the ability).
+	 */
+	UFUNCTION()
+	void HandleSharedBlendingOut(UAnimMontage* InMontage, bool bInterrupted);
+
+	UFUNCTION()
+	void HandleSharedEnded(UAnimMontage* InMontage, bool bInterrupted);
+
+	/** False while our montage instance is still the active one (the event is about another instance). */
+	bool IsEventForOurInstance(const UAnimMontage* InMontage) const;
+
 	TWeakObjectPtr<AActor> Actor;
 
 	UPROPERTY()
@@ -88,6 +101,7 @@ private:
 
 	TWeakObjectPtr<UAnimInstance> AnimInstance;
 	int32 MontageInstanceId = INDEX_NONE;
+	bool bUsesSharedDelegates = false;
 	bool bInterruptedReported = false;
 	bool bFinished = false;
 };

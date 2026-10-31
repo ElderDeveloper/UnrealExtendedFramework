@@ -483,10 +483,10 @@ void UEGCoverComponent::StorePlayerValues()
 
 
 
-FEGResolvedAnimation UEGCoverComponent::ResolveCoverAnimation(FGameplayTag Tag, UAnimMontage* Fallback) const
+FEGResolvedAnimation UEGCoverComponent::ResolveCoverAnimation(FGameplayTag Tag, UAnimMontage* Fallback, bool bExactTag) const
 {
 	// The character's animation set, then this component's, then the montage slot.
-	FEGResolvedAnimation Resolved = UEGMontageLibrary::ResolveAnimation(GetOwner(), Tag, -1, AnimationSet);
+	FEGResolvedAnimation Resolved = UEGMontageLibrary::ResolveAnimation(GetOwner(), Tag, -1, AnimationSet, bExactTag);
 	if (!Resolved.IsValid())
 	{
 		Resolved.Montage = Fallback;
@@ -496,9 +496,17 @@ FEGResolvedAnimation UEGCoverComponent::ResolveCoverAnimation(FGameplayTag Tag, 
 
 void UEGCoverComponent::PlayCoverMontage(FGameplayTag StandingTag, FGameplayTag CrouchedTag, UAnimMontage* StandingMontage, UAnimMontage* CrouchedMontage)
 {
-	// Crouched tags fall back to their standing parent in a set; the slots do the same here.
-	UAnimMontage* const Fallback = (bInCoverCrouched && CrouchedMontage) ? CrouchedMontage : StandingMontage;
-	PlayResolvedAnimation(ResolveCoverAnimation(bInCoverCrouched ? CrouchedTag : StandingTag, Fallback));
+	// Crouched: a crouched clip from any set, then the crouched slot, before any standing clip.
+	if (bInCoverCrouched)
+	{
+		const FEGResolvedAnimation Crouched = ResolveCoverAnimation(CrouchedTag, CrouchedMontage, true);
+		if (Crouched.IsValid())
+		{
+			PlayResolvedAnimation(Crouched);
+			return;
+		}
+	}
+	PlayResolvedAnimation(ResolveCoverAnimation(StandingTag, StandingMontage, false));
 }
 
 void UEGCoverComponent::PlayResolvedAnimation(const FEGResolvedAnimation& Animation)
@@ -517,13 +525,45 @@ void UEGCoverComponent::PlayResolvedAnimation(const FEGResolvedAnimation& Animat
 		return;
 	}
 
-	// Listen to this montage only. The anim instance's OnMontageStarted/OnMontageBlendingOut fire for
-	// every montage on the character, and re-adding to them on each play double-bound the handlers.
-	const uint32 PlayId = ++CoverMontagePlayId;
+	// Track this montage only. The anim instance's shared events fire for every montage on the
+	// character, so they are filtered by montage, and bound at most once.
+	++CoverMontagePlayId;
 	IsInMontage = true;
+	StopTrackingOwnerMontage();
 
-	FOnMontageBlendingOutStarted BlendingOutDelegate = FOnMontageBlendingOutStarted::CreateUObject(this, &UEGCoverComponent::OnCoverMontageBlendingOut, PlayId);
-	AnimInstance->Montage_SetBlendingOutDelegate(BlendingOutDelegate, Animation.Montage);
+	if (Result == EEGMontagePlayResult::Played)
+	{
+		FOnMontageBlendingOutStarted BlendingOutDelegate = FOnMontageBlendingOutStarted::CreateUObject(this, &UEGCoverComponent::OnCoverMontageBlendingOut, CoverMontagePlayId);
+		AnimInstance->Montage_SetBlendingOutDelegate(BlendingOutDelegate, Animation.Montage);
+	}
+	else
+	{
+		OwnerPlayedMontage = Animation.Montage;
+		OwnerPlayedAnimInstance = AnimInstance;
+		AnimInstance->OnMontageBlendingOut.AddUniqueDynamic(this, &UEGCoverComponent::OnOwnerMontageBlendingOut);
+	}
+}
+
+void UEGCoverComponent::OnOwnerMontageBlendingOut(UAnimMontage* Montage, bool bInterrupted)
+{
+	UAnimInstance* const AnimInstance = OwnerPlayedAnimInstance.Get();
+	if (!Montage || Montage != OwnerPlayedMontage.Get() || (AnimInstance && AnimInstance->Montage_IsPlaying(Montage)))
+	{
+		// Another montage, or an older play of ours while the newest still runs.
+		return;
+	}
+	IsInMontage = false;
+	StopTrackingOwnerMontage();
+}
+
+void UEGCoverComponent::StopTrackingOwnerMontage()
+{
+	if (UAnimInstance* const AnimInstance = OwnerPlayedAnimInstance.Get())
+	{
+		AnimInstance->OnMontageBlendingOut.RemoveDynamic(this, &UEGCoverComponent::OnOwnerMontageBlendingOut);
+	}
+	OwnerPlayedMontage.Reset();
+	OwnerPlayedAnimInstance.Reset();
 }
 
 void UEGCoverComponent::OnCoverMontageBlendingOut(UAnimMontage* Montage, bool bInterrupted, uint32 PlayId)

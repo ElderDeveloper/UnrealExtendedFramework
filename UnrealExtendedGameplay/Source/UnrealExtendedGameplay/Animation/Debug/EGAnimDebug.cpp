@@ -2,6 +2,7 @@
 
 #include "EGAnimDebug.h"
 
+#include "EngineDefines.h"
 #include "HAL/IConsoleManager.h"
 #include "UnrealExtendedGameplay/Animation/EGAnimationTags.h"
 

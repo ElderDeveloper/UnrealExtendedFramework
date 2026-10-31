@@ -67,8 +67,17 @@ public:
 	virtual void NotifyEnd(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, const FAnimNotifyEventReference& EventReference) override;
 
 private:
-	void UpdateWarpTarget(USkeletalMeshComponent* MeshComp, bool bSearch);
+	void ApplyWarpTarget(USkeletalMeshComponent* MeshComp, AActor* Target) const;
 
-	/** The target chosen when each mesh's window began, so tracking follows it rather than re-searching. */
-	TMap<TWeakObjectPtr<USkeletalMeshComponent>, TWeakObjectPtr<AActor>> Targets;
+	/**
+	 * The target chosen when each window began, per mesh, oldest first (a window can overlap itself
+	 * when a montage blends into itself). Tracking follows the newest instead of re-searching.
+	 */
+	TMap<TWeakObjectPtr<USkeletalMeshComponent>, TArray<TWeakObjectPtr<AActor>>> Targets;
+
+	/**
+	 * Open windows per owner and warp target name, across every notify instance, so the end of a
+	 * blending-out attack does not remove the warp target the next attack just set.
+	 */
+	static TMap<TPair<TWeakObjectPtr<AActor>, FName>, int32> OpenWindowCounts;
 };

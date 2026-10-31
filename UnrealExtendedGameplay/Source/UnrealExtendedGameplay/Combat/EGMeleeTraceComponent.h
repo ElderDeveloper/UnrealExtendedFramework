@@ -121,6 +121,8 @@ private:
 	};
 
 	int32 OpenWindowWithId(int32 WindowId, FGameplayTag WindowTag, USkeletalMeshComponent* DefaultSource, float DamageMultiplier, const FGameplayTagContainer& AttackTags);
+	FWindow* FindWindow(int32 WindowId);
+	void FlushDeferredOperations();
 
 	bool ShouldDetect() const;
 	USceneComponent* ResolveSource(const FEGMeleeHitShape& Shape, USkeletalMeshComponent* DefaultSource) const;
@@ -133,4 +135,8 @@ private:
 
 	TArray<FWindow> Windows;
 	TMap<FGameplayTag, TWeakObjectPtr<USceneComponent>> SourceOverrides;
+
+	/** True while a sweep holds a reference into Windows; Open/Close calls made then are deferred. */
+	bool bSweeping = false;
+	TArray<TFunction<void()>> DeferredOperations;
 };

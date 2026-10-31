@@ -26,13 +26,15 @@ void UEGRootMotionMoveNotifyState::NotifyBegin(USkeletalMeshComponent* MeshComp,
 		return;
 	}
 
-	// The window lasts TotalDuration in clip time; in real time that is divided by the play rate.
+	// The window lasts TotalDuration in clip time; in real time that is divided by the effective rate
+	// (instance play rate x the montage's RateScale). A hit pause stretches the window further; the
+	// source then ends before the window does, which NotifyEnd tolerates.
 	float PlayRate = 1.0f;
 	if (const UAnimMontage* Montage = Cast<UAnimMontage>(Animation))
 	{
 		if (const UAnimInstance* AnimInstance = MeshComp->GetAnimInstance())
 		{
-			PlayRate = FMath::Abs(AnimInstance->Montage_GetPlayRate(Montage));
+			PlayRate = FMath::Abs(AnimInstance->Montage_GetPlayRate(Montage) * Montage->RateScale);
 		}
 	}
 	const float Duration = TotalDuration / FMath::Max(PlayRate, KINDA_SMALL_NUMBER);
