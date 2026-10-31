@@ -3,10 +3,6 @@
 #include "EGSlowMotionNotify.h"
 
 #include "Components/SkeletalMeshComponent.h"
-#include "Engine/World.h"
-#include "Kismet/GameplayStatics.h"
-
-TMap<TWeakObjectPtr<UWorld>, UEGSlowMotionNotify::FWorldSlowMotion> UEGSlowMotionNotify::ActiveWorlds;
 
 UEGSlowMotionNotify::UEGSlowMotionNotify()
 	: BeginSpeed(0.2f)
@@ -14,24 +10,17 @@ UEGSlowMotionNotify::UEGSlowMotionNotify()
 {
 }
 
-UWorld* UEGSlowMotionNotify::GetAuthorityWorld(const USkeletalMeshComponent* MeshComp)
-{
-	UWorld* const World = MeshComp ? MeshComp->GetWorld() : nullptr;
-	return (World && World->GetNetMode() != NM_Client) ? World : nullptr;
-}
-
 void UEGSlowMotionNotify::NotifyBegin(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, float TotalDuration, const FAnimNotifyEventReference& EventReference)
 {
 	Super::NotifyBegin(MeshComp, Animation, TotalDuration, EventReference);
 
-	UWorld* const World = GetAuthorityWorld(MeshComp);
-	if (!World)
+	UEGTimeDilationSubsystem* const TimeDilation = MeshComp ? UEGTimeDilationSubsystem::Get(MeshComp) : nullptr;
+	if (!TimeDilation)
 	{
 		return;
 	}
 
-	// Drop entries for worlds that were torn down mid-window (end of PIE, level travel).
-	for (auto It = ActiveWorlds.CreateIterator(); It; ++It)
+	for (auto It = ActiveHandles.CreateIterator(); It; ++It)
 	{
 		if (!It->Key.IsValid())
 		{
@@ -39,33 +28,41 @@ void UEGSlowMotionNotify::NotifyBegin(USkeletalMeshComponent* MeshComp, UAnimSeq
 		}
 	}
 
-	FWorldSlowMotion& State = ActiveWorlds.FindOrAdd(TWeakObjectPtr<UWorld>(World));
-	if (State.Count++ == 0)
+	FEGTimeDilationParams Params = Blend;
+	Params.Duration = 0.0f;
+
+	// Refused (invalid handle) on clients.
+	const FEGTimeDilationHandle Handle = TimeDilation->PushGlobalTimeDilation(BeginSpeed, Params);
+	if (Handle.IsValid())
 	{
-		State.PreviousTimeDilation = UGameplayStatics::GetGlobalTimeDilation(World);
+		ActiveHandles.FindOrAdd(TWeakObjectPtr<USkeletalMeshComponent>(MeshComp)).Add(Handle);
 	}
-	UGameplayStatics::SetGlobalTimeDilation(World, BeginSpeed);
 }
 
 void UEGSlowMotionNotify::NotifyEnd(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, const FAnimNotifyEventReference& EventReference)
 {
 	Super::NotifyEnd(MeshComp, Animation, EventReference);
 
-	UWorld* const World = GetAuthorityWorld(MeshComp);
-	if (!World)
+	const TWeakObjectPtr<USkeletalMeshComponent> Key(MeshComp);
+	TArray<FEGTimeDilationHandle>* Handles = ActiveHandles.Find(Key);
+	if (!Handles || Handles->Num() == 0)
 	{
 		return;
 	}
 
-	const TWeakObjectPtr<UWorld> Key(World);
-	FWorldSlowMotion* State = ActiveWorlds.Find(Key);
-	if (!State || --State->Count > 0)
+	FEGTimeDilationHandle Handle = (*Handles)[0];
+	Handles->RemoveAt(0);
+	if (Handles->Num() == 0)
 	{
-		// Another window is still running; it owns the time dilation now.
-		return;
+		ActiveHandles.Remove(Key);
 	}
 
-	const float TargetDilation = bRestorePreviousTimeDilation ? State->PreviousTimeDilation : EndSpeed;
-	ActiveWorlds.Remove(Key);
-	UGameplayStatics::SetGlobalTimeDilation(World, TargetDilation);
+	if (UEGTimeDilationSubsystem* const TimeDilation = UEGTimeDilationSubsystem::Get(MeshComp))
+	{
+		if (!bRestorePreviousTimeDilation)
+		{
+			TimeDilation->SetGlobalRestoreValue(EndSpeed);
+		}
+		TimeDilation->RemoveTimeDilation(Handle);
+	}
 }

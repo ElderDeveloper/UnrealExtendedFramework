@@ -4,16 +4,16 @@
 
 #include "Animation/AnimNotifies/AnimNotifyState.h"
 #include "CoreMinimal.h"
+#include "UnrealExtendedGameplay/Time/EGTimeDilationSubsystem.h"
 
 #include "EGSlowMotionNotify.generated.h"
 
 /**
- * Sets global time dilation for the length of the window.
+ * Global slow motion for the length of the window, through UEGTimeDilationSubsystem.
  *
- * Only the server (or standalone) changes it; time dilation replicates from the server, and a
- * client changing its own copy would run out of step until the server's value next changed.
- * Overlapping windows (two characters in a finisher, a clip blending into another) are reference
- * counted per world: the world leaves slow motion when the last window ends, not the first.
+ * Only the server (or standalone) changes it: time dilation replicates from the server. Overlapping
+ * windows (two characters in a finisher, a clip blending into another) stack in the subsystem, and
+ * the world leaves slow motion when the last one ends.
  */
 UCLASS()
 class UNREALEXTENDEDGAMEPLAY_API UEGSlowMotionNotify : public UAnimNotifyState
@@ -29,6 +29,10 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AnimNotify")
 	float BeginSpeed;
 
+	/** Priority, blend in and blend out (real seconds). Duration is ignored: the window decides. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AnimNotify")
+	FEGTimeDilationParams Blend;
+
 	/** When the last window ends, go back to the time dilation the world had before the first one began. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AnimNotify")
 	bool bRestorePreviousTimeDilation = true;
@@ -38,14 +42,6 @@ public:
 	float EndSpeed;
 
 private:
-	struct FWorldSlowMotion
-	{
-		int32 Count = 0;
-		float PreviousTimeDilation = 1.0f;
-	};
-
-	/** Shared by every instance of this notify, so windows from different clips and characters stack. */
-	static TMap<TWeakObjectPtr<UWorld>, FWorldSlowMotion> ActiveWorlds;
-
-	static UWorld* GetAuthorityWorld(const USkeletalMeshComponent* MeshComp);
+	/** Handles per mesh, oldest first; the notify object is shared by every mesh playing the clip. */
+	TMap<TWeakObjectPtr<USkeletalMeshComponent>, TArray<FEGTimeDilationHandle>> ActiveHandles;
 };
