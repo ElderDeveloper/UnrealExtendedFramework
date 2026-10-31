@@ -3,58 +3,48 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Kismet/BlueprintAsyncActionBase.h"
-#include "Engine/TimerHandle.h"
+#include "Async/EFAsyncActionBase.h"
 #include "ESteamAsyncActionBase.generated.h"
 
 /**
- * Shared base for the plugin's Blueprint async-action nodes. Centralizes the world-context handle,
- * the single-shot completion guard, and a MANDATORY safety timeout so a node can never leak while
- * waiting on a subsystem delegate that never fires (previously each node armed a timer only when
- * Timeout > 0, so a caller passing 0 could hang the node for the GameInstance lifetime).
+ * Shared base for the plugin's Blueprint async-action nodes, built on UEFAsyncActionBase (which
+ * keeps the node alive, finishes it exactly once, runs the timeout and handles cancellation through
+ * the node's Async Task pin). On top of that it keeps the plugin's MANDATORY safety timeout: a node
+ * can never leak while waiting on a subsystem delegate that never fires, even when the caller
+ * passes Timeout <= 0.
  *
  * Derived-node contract:
- *  - the static factory sets WorldContextObject and Timeout;
- *  - Activate() subscribes to the subsystem delegate, then calls ArmTimeout(Timeout);
- *  - each Complete(...) overload starts with `if (!BeginComplete()) return;`, then unsubscribes,
- *    broadcasts its success/failure pin, and calls SetReadyToDestroy();
- *  - OnTimeoutFailure() is overridden to call Complete(false, <default payload>).
+ *  - the static factory stores the node's inputs, then calls InitAsyncAction(WorldContext, Timeout);
+ *  - ExecuteAction() resolves the subsystem (RequireGameInstanceSubsystem), binds the subsystem
+ *    delegate and starts the call inside CallWithContext(); when the call cannot be issued it
+ *    calls Complete(false, <default payload>);
+ *  - each delegate handler returns early unless IsResultForThisCall() (and, where the delegate
+ *    carries one, unless the id matches the node's request), then calls Complete(...);
+ *  - each Complete(...) calls CancelWork(), returns unless FinishAction(), then broadcasts its
+ *    success/failure pin;
+ *  - BroadcastFailure() fires the failure pin with the node's default payload (cancellation,
+ *    timeout, missing subsystem), and CancelWork() removes the node's delegate bindings.
  */
 UCLASS(Abstract)
-class USteamAsyncActionBase : public UBlueprintAsyncActionBase
+class USteamAsyncActionBase : public UEFAsyncActionBase
 {
 	GENERATED_BODY()
 
 protected:
 	/**
-	 * Arms the safety timeout. A TimeoutSeconds <= 0 falls back to DefaultTimeoutCapSeconds rather
-	 * than arming nothing, so a node whose completion delegate never fires still tears down.
+	 * Call from the node's static factory instead of UEFAsyncActionBase::InitAsyncAction (which this
+	 * hides). A TimeoutSeconds <= 0 falls back to DefaultTimeoutCapSeconds rather than disabling the
+	 * timeout, so a node whose completion delegate never fires still tears down.
 	 */
-	void ArmTimeout(float TimeoutSeconds);
+	void InitAsyncAction(UObject* WorldContext, float TimeoutSeconds);
 
-	/**
-	 * Single-shot completion guard: returns true exactly once (clearing the timeout timer), and false
-	 * on every later call. Call it first in each Complete(); bail out when it returns false.
-	 */
-	bool BeginComplete();
-
-	/** Resolves the world from the stored context object (for timer management). */
-	UWorld* GetWorldSafe() const;
-
-	/** Broadcast the failure pin with default payload and SetReadyToDestroy(). Invoked on timeout. */
-	virtual void OnTimeoutFailure() {}
+	/** Source of the node's own Cancelled, TimedOut and NotAvailable results. */
+	virtual FName GetResultSource() const override { return TEXT("Steam"); }
 
 	/** Default safety cap (seconds) applied when a caller passes Timeout <= 0. */
 	static constexpr float DefaultTimeoutCapSeconds = 30.0f;
 
+	/** The context the node was created with, kept alive for the node's lifetime. */
 	UPROPERTY()
 	TObjectPtr<UObject> WorldContextObject;
-
-	float Timeout = 10.0f;
-	FTimerHandle TimeoutHandle;
-	bool bCompleted = false;
-
-private:
-	UFUNCTION()
-	void HandleTimeoutInternal();
 };

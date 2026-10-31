@@ -98,6 +98,10 @@
 	],
 	"Plugins": [
 		{
+			"Name": "UnrealExtendedFoundation",
+			"Enabled": true
+		},
+		{
 			"Name": "OnlineSubsystem",
 			"Enabled": true
 		},

@@ -23,7 +23,7 @@
 		{
 			"Name": "ExtendedFoundation",
 			"Type": "Runtime",
-			"LoadingPhase": "PreDefault"
+			"LoadingPhase": "PostConfigInit"
 		}
 	]
 }

@@ -27,6 +27,9 @@ GAS · Quest · Steam · PerfSentinel · Atlassian   depend on the foundation on
 - **The core is not a dependency dump.** Do not add a module to the core's Build.cs because a
   dependent plugin needs it; the dependent declares its own.
 - A plugin that uses a module from another plugin lists that plugin in its `.uplugin`.
+- `ExtendedFoundation` loads at `PostConfigInit`, the earliest phase any Extended module uses, so
+  every module can derive from its classes. A module must never load earlier than a module it
+  depends on.
 
 ## What the foundation gives you
 

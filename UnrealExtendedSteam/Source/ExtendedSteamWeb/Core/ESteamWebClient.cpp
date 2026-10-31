@@ -3,10 +3,8 @@
 #include "Core/ESteamWebClient.h"
 #include "Core/ESteamWebLog.h"
 #include "Core/ESteamWebSettings.h"
-#include "GenericPlatform/GenericPlatformHttp.h"
-#include "HttpModule.h"
-#include "Interfaces/IHttpRequest.h"
-#include "Interfaces/IHttpResponse.h"
+#include "Http/EFHttpClient.h"
+#include "Http/EFHttpTypes.h"
 
 void FESteamWebRequest::AddParam(const FString& Key, const FString& Value)
 {
@@ -60,7 +58,7 @@ FString FESteamWebRequest::BuildQueryString(const FString& ApiKeyOverride) const
 		const FString ApiKey = !ApiKeyOverride.IsEmpty() ? ApiKeyOverride : UESteamWebSettings::Get()->ApiKey;
 		if (!ApiKey.IsEmpty())
 		{
-			Query += TEXT("key=") + FGenericPlatformHttp::UrlEncode(ApiKey);
+			Query += TEXT("key=") + EFHttp::UrlEncode(ApiKey);
 		}
 	}
 
@@ -70,7 +68,7 @@ FString FESteamWebRequest::BuildQueryString(const FString& ApiKeyOverride) const
 		{
 			Query += TEXT("&");
 		}
-		Query += FGenericPlatformHttp::UrlEncode(Param.Key) + TEXT("=") + FGenericPlatformHttp::UrlEncode(Param.Value);
+		Query += EFHttp::UrlEncode(Param.Key) + TEXT("=") + EFHttp::UrlEncode(Param.Value);
 	}
 
 	return Query;
@@ -110,19 +108,26 @@ void FESteamWebClient::Send(const FESteamWebRequest& Request, FOnSteamWebRespons
 		return;
 	}
 
-	const TSharedRef<IHttpRequest, ESPMode::ThreadSafe> HttpRequest = FHttpModule::Get().CreateRequest();
-	HttpRequest->SetURL(Request.BuildUrl());
-	HttpRequest->SetTimeout(Settings->RequestTimeoutSeconds);
+	// The query string is built here, in the request's own parameter order, and passed as part of
+	// the URL; FEFHttpRequest::QueryParameters is a map and would not keep that order.
+	FEFHttpRequest HttpRequest;
+	HttpRequest.Url = Request.BuildUrl();
+	HttpRequest.TimeoutSeconds = Settings->RequestTimeoutSeconds;
+	// One attempt, as before: whether a Web API call is safe to repeat is the caller's decision.
+	HttpRequest.MaxRetries = 0;
 
 	if (Request.Verb == EESteamWebVerb::Post)
 	{
-		HttpRequest->SetVerb(TEXT("POST"));
-		HttpRequest->SetHeader(TEXT("Content-Type"), TEXT("application/x-www-form-urlencoded"));
-		HttpRequest->SetContentAsString(Request.BuildBody());
+		HttpRequest.Verb = EEFHttpVerb::Post;
+		// Set as a header so it is sent even when the body is empty, as before.
+		HttpRequest.ContentType = TEXT("application/x-www-form-urlencoded");
+		HttpRequest.Headers.Add(TEXT("Content-Type"), HttpRequest.ContentType);
+		HttpRequest.Body = Request.BuildBody();
 	}
 	else
 	{
-		HttpRequest->SetVerb(TEXT("GET"));
+		HttpRequest.Verb = EEFHttpVerb::Get;
+		HttpRequest.ContentType.Reset();
 	}
 
 	// Warn on a required-but-missing API key: the request would otherwise go out keyless and
@@ -137,33 +142,34 @@ void FESteamWebClient::Send(const FESteamWebRequest& Request, FOnSteamWebRespons
 	if (Settings->bVerboseLogging)
 	{
 		// Never log the full URL: for GET endpoints the query string contains key=<ApiKey>, which
-		// would leak the Web API key into Saved/Logs (and any bundled report). Log the call identity only.
+		// would leak the Web API key into Saved/Logs (and any bundled report). Log the call identity
+		// only. FEFHttpOperation's own log lines strip the query string as well.
 		UE_LOG(LogExtendedSteamWeb, Log, TEXT("Sending %s %s/%s/v%d"),
 			Request.Verb == EESteamWebVerb::Post ? TEXT("POST") : TEXT("GET"),
 			*Request.Interface, *Request.Method, Request.Version);
 	}
 
-	HttpRequest->OnProcessRequestComplete().BindLambda(
-		[Callback = MoveTemp(Callback), Interface = Request.Interface, Method = Request.Method]
-		(FHttpRequestPtr /*CompletedRequest*/, FHttpResponsePtr Response, bool bConnectedSuccessfully)
+	// FEFHttpOperation keeps itself alive until it finishes and calls back once, on the game thread.
+	FEFHttpOperation::Start(HttpRequest,
+		[OnResponse = MoveTemp(Callback), InterfaceName = Request.Interface, MethodName = Request.Method](const FEFHttpResponse& Response)
 		{
-			const int32 HttpCode = Response.IsValid() ? Response->GetResponseCode() : 0;
-			const bool bSuccess = bConnectedSuccessfully && Response.IsValid() && EHttpResponseCodes::IsOk(HttpCode);
-			const FString Json = Response.IsValid() ? Response->GetContentAsString() : FString();
+			// Same contract as before: bSuccess = connected && HTTP 2xx; HttpCode is 0 when no
+			// response arrived (connection failure, timeout); the body is whatever the server sent.
+			const bool bConnected = Response.Result == EEFHttpResult::Success || Response.Result == EEFHttpResult::HttpError;
+			const bool bSuccess = Response.IsSuccess();
+			const int32 HttpCode = Response.StatusCode;
 
 			if (!bSuccess)
 			{
 				UE_LOG(LogExtendedSteamWeb, Warning, TEXT("%s/%s failed (connected=%d, code=%d)"),
-					*Interface, *Method, bConnectedSuccessfully ? 1 : 0, HttpCode);
+					*InterfaceName, *MethodName, bConnected ? 1 : 0, HttpCode);
 			}
 			else if (UESteamWebSettings::Get()->bVerboseLogging)
 			{
 				UE_LOG(LogExtendedSteamWeb, Log, TEXT("%s/%s completed (code=%d, %d bytes)"),
-					*Interface, *Method, HttpCode, Json.Len());
+					*InterfaceName, *MethodName, HttpCode, Response.Body.Len());
 			}
 
-			Callback.ExecuteIfBound(Json, bSuccess, HttpCode);
+			OnResponse.ExecuteIfBound(Response.Body, bSuccess, HttpCode);
 		});
-
-	HttpRequest->ProcessRequest();
 }

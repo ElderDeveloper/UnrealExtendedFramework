@@ -1,77 +1,64 @@
 // Copyright Kemal Erdem YILMAZ. All Rights Reserved.
 
 #include "BlueprintActions/Inventory/ESteamInventoryAsyncActions.h"
-#include "Engine/Engine.h"
-#include "Engine/GameInstance.h"
-#include "Engine/World.h"
-
-namespace ESteamInventoryAsyncActionHelpers
-{
-	UESteamInventorySubsystem* GetInventorySubsystem(const UObject* WorldContextObject)
-	{
-		if (const UWorld* World = GEngine ? GEngine->GetWorldFromContextObject(WorldContextObject, EGetWorldErrorMode::LogAndReturnNull) : nullptr)
-		{
-			if (const UGameInstance* GameInstance = World->GetGameInstance())
-			{
-				return GameInstance->GetSubsystem<UESteamInventorySubsystem>();
-			}
-		}
-		return nullptr;
-	}
-}
 
 USteamAsyncGetAllInventoryItems* USteamAsyncGetAllInventoryItems::GetAllInventoryItems(UObject* WorldContext, float Timeout)
 {
 	USteamAsyncGetAllInventoryItems* Action = NewObject<USteamAsyncGetAllInventoryItems>();
-	Action->WorldContextObject = WorldContext;
-	Action->Timeout = Timeout;
-	Action->RegisterWithGameInstance(WorldContext);
+	Action->InitAsyncAction(WorldContext, Timeout);
 	return Action;
 }
 
-void USteamAsyncGetAllInventoryItems::Activate()
+void USteamAsyncGetAllInventoryItems::ExecuteAction()
 {
-	UESteamInventorySubsystem* Subsystem = ESteamInventoryAsyncActionHelpers::GetInventorySubsystem(WorldContextObject);
+	UESteamInventorySubsystem* Subsystem = RequireGameInstanceSubsystem<UESteamInventorySubsystem>();
 	if (!Subsystem)
 	{
-		Complete(false, TArray<FESteamInventoryItem>());
 		return;
 	}
 
 	InventorySubsystem = Subsystem;
 	Subsystem->OnInventoryItemsReceived.AddDynamic(this, &USteamAsyncGetAllInventoryItems::HandleInventoryItemsReceived);
 
-	if (!Subsystem->GetAllItems())
+	bool bStarted = false;
+	CallWithContext([&] { bStarted = Subsystem->GetAllItems(); });
+	if (!bStarted)
 	{
 		Complete(false, TArray<FESteamInventoryItem>());
-		return;
 	}
-
-	// Fail the node if the subsystem delegate never fires.
-	ArmTimeout(Timeout);
 }
 
 void USteamAsyncGetAllInventoryItems::HandleInventoryItemsReceived(bool bSuccess, const TArray<FESteamInventoryItem>& Items)
 {
-	// NOTE: shared inventory delegate carries no request id; cannot discriminate. Relies on Timeout + one-in-flight subsystem limit.
+	// The shared inventory delegate carries no request id. The subsystem tags results of calls made
+	// inside another node's call context, so those are skipped; untagged results (direct calls,
+	// Steam-initiated updates) are still accepted.
+	if (!IsResultForThisCall())
+	{
+		return;
+	}
 	Complete(bSuccess, Items);
 }
 
-void USteamAsyncGetAllInventoryItems::OnTimeoutFailure()
+void USteamAsyncGetAllInventoryItems::BroadcastFailure(const FEFResult& /*Result*/)
 {
-	Complete(false, TArray<FESteamInventoryItem>());
+	OnFailure.Broadcast(TArray<FESteamInventoryItem>());
+}
+
+void USteamAsyncGetAllInventoryItems::CancelWork()
+{
+	if (UESteamInventorySubsystem* Subsystem = InventorySubsystem.Get())
+	{
+		Subsystem->OnInventoryItemsReceived.RemoveDynamic(this, &USteamAsyncGetAllInventoryItems::HandleInventoryItemsReceived);
+	}
 }
 
 void USteamAsyncGetAllInventoryItems::Complete(bool bSuccess, const TArray<FESteamInventoryItem>& Items)
 {
-	if (!BeginComplete())
+	CancelWork();
+	if (!FinishAction())
 	{
 		return;
-	}
-
-	if (UESteamInventorySubsystem* Subsystem = InventorySubsystem.Get())
-	{
-		Subsystem->OnInventoryItemsReceived.RemoveDynamic(this, &USteamAsyncGetAllInventoryItems::HandleInventoryItemsReceived);
 	}
 
 	if (bSuccess)
@@ -82,8 +69,6 @@ void USteamAsyncGetAllInventoryItems::Complete(bool bSuccess, const TArray<FESte
 	{
 		OnFailure.Broadcast(Items);
 	}
-
-	SetReadyToDestroy();
 }
 
 // ---- RequestInventoryPrices ----
@@ -91,53 +76,57 @@ void USteamAsyncGetAllInventoryItems::Complete(bool bSuccess, const TArray<FESte
 USteamAsyncRequestInventoryPrices* USteamAsyncRequestInventoryPrices::RequestInventoryPrices(UObject* WorldContext, float Timeout)
 {
 	USteamAsyncRequestInventoryPrices* Action = NewObject<USteamAsyncRequestInventoryPrices>();
-	Action->WorldContextObject = WorldContext;
-	Action->Timeout = Timeout;
-	Action->RegisterWithGameInstance(WorldContext);
+	Action->InitAsyncAction(WorldContext, Timeout);
 	return Action;
 }
 
-void USteamAsyncRequestInventoryPrices::Activate()
+void USteamAsyncRequestInventoryPrices::ExecuteAction()
 {
-	UESteamInventorySubsystem* Subsystem = ESteamInventoryAsyncActionHelpers::GetInventorySubsystem(WorldContextObject);
+	UESteamInventorySubsystem* Subsystem = RequireGameInstanceSubsystem<UESteamInventorySubsystem>();
 	if (!Subsystem)
 	{
-		Complete(false, FString());
 		return;
 	}
 
 	InventorySubsystem = Subsystem;
 	Subsystem->OnPricesReceived.AddDynamic(this, &USteamAsyncRequestInventoryPrices::HandlePricesReceived);
 
-	if (!Subsystem->RequestPrices())
+	bool bStarted = false;
+	CallWithContext([&] { bStarted = Subsystem->RequestPrices(); });
+	if (!bStarted)
 	{
 		Complete(false, FString());
-		return;
 	}
-
-	ArmTimeout(Timeout);
 }
 
 void USteamAsyncRequestInventoryPrices::HandlePricesReceived(bool bSuccess, FString Currency)
 {
+	if (!IsResultForThisCall())
+	{
+		return;
+	}
 	Complete(bSuccess, Currency);
 }
 
-void USteamAsyncRequestInventoryPrices::OnTimeoutFailure()
+void USteamAsyncRequestInventoryPrices::BroadcastFailure(const FEFResult& /*Result*/)
 {
-	Complete(false, FString());
+	OnFailure.Broadcast(FString());
+}
+
+void USteamAsyncRequestInventoryPrices::CancelWork()
+{
+	if (UESteamInventorySubsystem* Subsystem = InventorySubsystem.Get())
+	{
+		Subsystem->OnPricesReceived.RemoveDynamic(this, &USteamAsyncRequestInventoryPrices::HandlePricesReceived);
+	}
 }
 
 void USteamAsyncRequestInventoryPrices::Complete(bool bSuccess, const FString& Currency)
 {
-	if (!BeginComplete())
+	CancelWork();
+	if (!FinishAction())
 	{
 		return;
-	}
-
-	if (UESteamInventorySubsystem* Subsystem = InventorySubsystem.Get())
-	{
-		Subsystem->OnPricesReceived.RemoveDynamic(this, &USteamAsyncRequestInventoryPrices::HandlePricesReceived);
 	}
 
 	if (bSuccess)
@@ -148,8 +137,6 @@ void USteamAsyncRequestInventoryPrices::Complete(bool bSuccess, const FString& C
 	{
 		OnFailure.Broadcast(Currency);
 	}
-
-	SetReadyToDestroy();
 }
 
 // ---- StartInventoryPurchase ----
@@ -157,55 +144,59 @@ void USteamAsyncRequestInventoryPrices::Complete(bool bSuccess, const FString& C
 USteamAsyncStartInventoryPurchase* USteamAsyncStartInventoryPurchase::StartInventoryPurchase(UObject* WorldContext, const TArray<int32>& Definitions, const TArray<int32>& Quantities, float Timeout)
 {
 	USteamAsyncStartInventoryPurchase* Action = NewObject<USteamAsyncStartInventoryPurchase>();
-	Action->WorldContextObject = WorldContext;
 	Action->Definitions = Definitions;
 	Action->Quantities = Quantities;
-	Action->Timeout = Timeout;
-	Action->RegisterWithGameInstance(WorldContext);
+	Action->InitAsyncAction(WorldContext, Timeout);
 	return Action;
 }
 
-void USteamAsyncStartInventoryPurchase::Activate()
+void USteamAsyncStartInventoryPurchase::ExecuteAction()
 {
-	UESteamInventorySubsystem* Subsystem = ESteamInventoryAsyncActionHelpers::GetInventorySubsystem(WorldContextObject);
+	UESteamInventorySubsystem* Subsystem = RequireGameInstanceSubsystem<UESteamInventorySubsystem>();
 	if (!Subsystem)
 	{
-		Complete(false, 0, 0);
 		return;
 	}
 
 	InventorySubsystem = Subsystem;
 	Subsystem->OnPurchaseStarted.AddDynamic(this, &USteamAsyncStartInventoryPurchase::HandlePurchaseStarted);
 
-	if (!Subsystem->StartPurchase(Definitions, Quantities))
+	bool bStarted = false;
+	CallWithContext([&] { bStarted = Subsystem->StartPurchase(Definitions, Quantities); });
+	if (!bStarted)
 	{
 		Complete(false, 0, 0);
-		return;
 	}
-
-	ArmTimeout(Timeout);
 }
 
 void USteamAsyncStartInventoryPurchase::HandlePurchaseStarted(bool bSuccess, int64 OrderId, int64 TransactionId)
 {
+	if (!IsResultForThisCall())
+	{
+		return;
+	}
 	Complete(bSuccess, OrderId, TransactionId);
 }
 
-void USteamAsyncStartInventoryPurchase::OnTimeoutFailure()
+void USteamAsyncStartInventoryPurchase::BroadcastFailure(const FEFResult& /*Result*/)
 {
-	Complete(false, 0, 0);
+	OnFailure.Broadcast(0, 0);
+}
+
+void USteamAsyncStartInventoryPurchase::CancelWork()
+{
+	if (UESteamInventorySubsystem* Subsystem = InventorySubsystem.Get())
+	{
+		Subsystem->OnPurchaseStarted.RemoveDynamic(this, &USteamAsyncStartInventoryPurchase::HandlePurchaseStarted);
+	}
 }
 
 void USteamAsyncStartInventoryPurchase::Complete(bool bSuccess, int64 OrderId, int64 TransactionId)
 {
-	if (!BeginComplete())
+	CancelWork();
+	if (!FinishAction())
 	{
 		return;
-	}
-
-	if (UESteamInventorySubsystem* Subsystem = InventorySubsystem.Get())
-	{
-		Subsystem->OnPurchaseStarted.RemoveDynamic(this, &USteamAsyncStartInventoryPurchase::HandlePurchaseStarted);
 	}
 
 	if (bSuccess)
@@ -216,8 +207,6 @@ void USteamAsyncStartInventoryPurchase::Complete(bool bSuccess, int64 OrderId, i
 	{
 		OnFailure.Broadcast(OrderId, TransactionId);
 	}
-
-	SetReadyToDestroy();
 }
 
 // ---- RequestEligiblePromoItemDefs ----
@@ -225,54 +214,58 @@ void USteamAsyncStartInventoryPurchase::Complete(bool bSuccess, int64 OrderId, i
 USteamAsyncRequestEligiblePromoItemDefs* USteamAsyncRequestEligiblePromoItemDefs::RequestEligiblePromoItemDefs(UObject* WorldContext, FESteamId SteamId, float Timeout)
 {
 	USteamAsyncRequestEligiblePromoItemDefs* Action = NewObject<USteamAsyncRequestEligiblePromoItemDefs>();
-	Action->WorldContextObject = WorldContext;
 	Action->SteamId = SteamId;
-	Action->Timeout = Timeout;
-	Action->RegisterWithGameInstance(WorldContext);
+	Action->InitAsyncAction(WorldContext, Timeout);
 	return Action;
 }
 
-void USteamAsyncRequestEligiblePromoItemDefs::Activate()
+void USteamAsyncRequestEligiblePromoItemDefs::ExecuteAction()
 {
-	UESteamInventorySubsystem* Subsystem = ESteamInventoryAsyncActionHelpers::GetInventorySubsystem(WorldContextObject);
+	UESteamInventorySubsystem* Subsystem = RequireGameInstanceSubsystem<UESteamInventorySubsystem>();
 	if (!Subsystem)
 	{
-		Complete(false, TArray<int32>());
 		return;
 	}
 
 	InventorySubsystem = Subsystem;
 	Subsystem->OnEligiblePromoItemDefsReceived.AddDynamic(this, &USteamAsyncRequestEligiblePromoItemDefs::HandleEligiblePromoReceived);
 
-	if (!Subsystem->RequestEligiblePromoItemDefinitionsIDs(SteamId))
+	bool bStarted = false;
+	CallWithContext([&] { bStarted = Subsystem->RequestEligiblePromoItemDefinitionsIDs(SteamId); });
+	if (!bStarted)
 	{
 		Complete(false, TArray<int32>());
-		return;
 	}
-
-	ArmTimeout(Timeout);
 }
 
 void USteamAsyncRequestEligiblePromoItemDefs::HandleEligiblePromoReceived(bool bSuccess, const TArray<int32>& DefIds)
 {
+	if (!IsResultForThisCall())
+	{
+		return;
+	}
 	Complete(bSuccess, DefIds);
 }
 
-void USteamAsyncRequestEligiblePromoItemDefs::OnTimeoutFailure()
+void USteamAsyncRequestEligiblePromoItemDefs::BroadcastFailure(const FEFResult& /*Result*/)
 {
-	Complete(false, TArray<int32>());
+	OnFailure.Broadcast(TArray<int32>());
+}
+
+void USteamAsyncRequestEligiblePromoItemDefs::CancelWork()
+{
+	if (UESteamInventorySubsystem* Subsystem = InventorySubsystem.Get())
+	{
+		Subsystem->OnEligiblePromoItemDefsReceived.RemoveDynamic(this, &USteamAsyncRequestEligiblePromoItemDefs::HandleEligiblePromoReceived);
+	}
 }
 
 void USteamAsyncRequestEligiblePromoItemDefs::Complete(bool bSuccess, const TArray<int32>& DefIds)
 {
-	if (!BeginComplete())
+	CancelWork();
+	if (!FinishAction())
 	{
 		return;
-	}
-
-	if (UESteamInventorySubsystem* Subsystem = InventorySubsystem.Get())
-	{
-		Subsystem->OnEligiblePromoItemDefsReceived.RemoveDynamic(this, &USteamAsyncRequestEligiblePromoItemDefs::HandleEligiblePromoReceived);
 	}
 
 	if (bSuccess)
@@ -283,6 +276,4 @@ void USteamAsyncRequestEligiblePromoItemDefs::Complete(bool bSuccess, const TArr
 	{
 		OnFailure.Broadcast(DefIds);
 	}
-
-	SetReadyToDestroy();
 }

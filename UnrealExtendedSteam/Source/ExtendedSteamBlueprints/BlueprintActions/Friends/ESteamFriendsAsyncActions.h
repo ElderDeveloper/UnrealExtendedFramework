@@ -37,9 +37,6 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Steam|Async|Friends", meta = (BlueprintInternalUseOnly = "true", WorldContext = "WorldContext", DisplayName = "Steam: Request User Information"))
 	static USteamAsyncRequestUserInformation* RequestUserInformation(UObject* WorldContext, FESteamId User, bool bRequireNameOnly, float Timeout = 10.0f);
 
-	//~ UBlueprintAsyncActionBase
-	virtual void Activate() override;
-
 	/** Persona information for User is available. */
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncUserInfoPin OnSuccess;
@@ -48,11 +45,15 @@ public:
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncUserInfoPin OnFailure;
 
+protected:
+	//~ UEFAsyncActionBase
+	virtual void ExecuteAction() override;
+	virtual void BroadcastFailure(const FEFResult& Result) override;
+	virtual void CancelWork() override;
+
 private:
 	UFUNCTION()
 	void HandlePersonaStateChanged(FESteamId SteamId, int32 ChangeFlags);
-
-	virtual void OnTimeoutFailure() override;
 
 	void Complete(bool bSuccess);
 
@@ -78,9 +79,6 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Steam|Async|Friends", meta = (BlueprintInternalUseOnly = "true", WorldContext = "WorldContext", DisplayName = "Steam: Get Follower Count"))
 	static USteamAsyncGetFollowerCount* GetFollowerCount(UObject* WorldContext, FESteamId User, float Timeout = 10.0f);
 
-	//~ UBlueprintAsyncActionBase
-	virtual void Activate() override;
-
 	/** The follower count is ready; Count holds it. */
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncFollowerCountPin OnSuccess;
@@ -89,11 +87,15 @@ public:
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncFollowerCountPin OnFailure;
 
+protected:
+	//~ UEFAsyncActionBase
+	virtual void ExecuteAction() override;
+	virtual void BroadcastFailure(const FEFResult& Result) override;
+	virtual void CancelWork() override;
+
 private:
 	UFUNCTION()
 	void HandleFollowerCount(bool bSuccess, FESteamId InUser, int32 Count);
-
-	virtual void OnTimeoutFailure() override;
 
 	void Complete(bool bSuccess, int32 Count);
 
@@ -118,9 +120,6 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Steam|Async|Friends", meta = (BlueprintInternalUseOnly = "true", WorldContext = "WorldContext", DisplayName = "Steam: Is Following"))
 	static USteamAsyncIsFollowing* IsFollowing(UObject* WorldContext, FESteamId User, float Timeout = 10.0f);
 
-	//~ UBlueprintAsyncActionBase
-	virtual void Activate() override;
-
 	/** The result is ready; bIsFollowing tells whether the local user follows User. */
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncIsFollowingPin OnSuccess;
@@ -129,11 +128,15 @@ public:
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncIsFollowingPin OnFailure;
 
+protected:
+	//~ UEFAsyncActionBase
+	virtual void ExecuteAction() override;
+	virtual void BroadcastFailure(const FEFResult& Result) override;
+	virtual void CancelWork() override;
+
 private:
 	UFUNCTION()
 	void HandleIsFollowing(bool bSuccess, FESteamId InUser, bool bIsFollowing);
-
-	virtual void OnTimeoutFailure() override;
 
 	void Complete(bool bSuccess, bool bIsFollowing);
 
@@ -158,9 +161,6 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Steam|Async|Friends", meta = (BlueprintInternalUseOnly = "true", WorldContext = "WorldContext", DisplayName = "Steam: Enumerate Following List"))
 	static USteamAsyncEnumerateFollowingList* EnumerateFollowingList(UObject* WorldContext, int32 StartIndex, float Timeout = 10.0f);
 
-	//~ UBlueprintAsyncActionBase
-	virtual void Activate() override;
-
 	/** The page is ready; Users holds this page, TotalCount the grand total. */
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncFollowingListPin OnSuccess;
@@ -169,11 +169,15 @@ public:
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncFollowingListPin OnFailure;
 
+protected:
+	//~ UEFAsyncActionBase
+	virtual void ExecuteAction() override;
+	virtual void BroadcastFailure(const FEFResult& Result) override;
+	virtual void CancelWork() override;
+
 private:
 	UFUNCTION()
 	void HandleFollowingListEnumerated(bool bSuccess, const TArray<FESteamId>& Users, int32 TotalCount);
-
-	virtual void OnTimeoutFailure() override;
 
 	void Complete(bool bSuccess, const TArray<FESteamId>& Users, int32 TotalCount);
 

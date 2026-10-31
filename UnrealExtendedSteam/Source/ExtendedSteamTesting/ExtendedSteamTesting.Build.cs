@@ -16,6 +16,7 @@ public class ExtendedSteamTesting : ModuleRules
 				"CoreUObject",
 				"Engine",
 				"Sockets",
+				"ExtendedFoundation",
 				"ExtendedSteamShared",
 				"ExtendedSteamSockets",
 				"ExtendedSteamWeb",

@@ -11,6 +11,7 @@
 #include "Misc/App.h"
 #include "Misc/CommandLine.h"
 #include "Misc/ConfigCacheIni.h"
+#include "Status/EFServiceStatus.h"
 #include "Misc/CoreDelegates.h"
 #include "Misc/Parse.h"
 #include "Misc/Paths.h"
@@ -75,10 +76,42 @@ void FExtendedSteamSharedModule::StartupModule()
 	// Still bound even after an early attempt: it is idempotent, and it retries the case where the
 	// Steam client was not ready yet this early in startup.
 	PostEngineInitHandle = FCoreDelegates::OnPostEngineInit.AddRaw(this, &FExtendedSteamSharedModule::HandlePostEngineInit);
+
+	// Extended.Status: client and game-server state. Unregistered in ShutdownModule, so capturing
+	// the module is safe.
+	EFStatusHandle = FEFServiceStatusRegistry::Register(TEXT("Steam"), [this]
+	{
+		FEFServiceStatus Status;
+		const bool bClient = IsSteamClientInitialized();
+		const bool bServer = IsSteamGameServerInitialized();
+		if (bClient || bServer)
+		{
+			Status.State = (bClient && !IsSteamClientRunning()) ? EEFServiceState::Degraded : EEFServiceState::Ready;
+			Status.Summary = FString::Printf(TEXT("%s%s%s (AppId %d)"),
+				bClient ? TEXT("Client") : TEXT(""), (bClient && bServer) ? TEXT(" and ") : TEXT(""), bServer ? TEXT("game server") : TEXT(""),
+				GetConfiguredAppId());
+		}
+		else if (!IsClientAutoInitAllowed())
+		{
+			Status.State = EEFServiceState::Unavailable;
+			Status.Summary = TEXT("Client start is disabled (settings, -NoSteam or run mode).");
+		}
+		else
+		{
+			Status.State = EEFServiceState::Starting;
+			Status.Summary = TEXT("Not initialized (is the Steam client running, and was the plugin built with the Steamworks SDK?).");
+		}
+		Status.Details.Add(TEXT("Client"), bClient ? (IsSteamClientRunning() ? TEXT("initialized, Steam running") : TEXT("initialized, Steam not running")) : TEXT("not initialized"));
+		Status.Details.Add(TEXT("Game server"), bServer ? TEXT("initialized") : TEXT("not initialized"));
+		return Status;
+	});
 }
 
 void FExtendedSteamSharedModule::ShutdownModule()
 {
+	FEFServiceStatusRegistry::Unregister(EFStatusHandle);
+	EFStatusHandle = 0;
+
 	FCoreDelegates::OnPostEngineInit.Remove(PostEngineInitHandle);
 
 	ShutdownSteamGameServer();

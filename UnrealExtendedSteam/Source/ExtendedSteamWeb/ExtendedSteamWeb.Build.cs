@@ -14,13 +14,17 @@ public class ExtendedSteamWeb : ModuleRules
 
 		// Deliberately SDK-free: the Steam Web API is plain HTTPS + JSON and must stay usable
 		// on dedicated servers and platforms without the Steam client.
+		// ExtendedFoundation is public: Core/ESteamWebSettings.h derives from UEFDeveloperSettings.
+		// Requests go through its FEFHttpOperation (Core/ESteamWebClient.cpp); HTTP stays listed
+		// because that header includes the engine's HTTP interfaces.
 		PublicDependencyModuleNames.AddRange(
 			new string[]
 			{
 				"Core",
 				"CoreUObject",
 				"Engine",
-				"DeveloperSettings"
+				"DeveloperSettings",
+				"ExtendedFoundation"
 			}
 		);
 
