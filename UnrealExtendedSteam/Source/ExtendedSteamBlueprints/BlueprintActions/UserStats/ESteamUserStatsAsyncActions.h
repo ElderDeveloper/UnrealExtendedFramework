@@ -26,19 +26,21 @@ public:
 		meta = (BlueprintInternalUseOnly = "true", WorldContext = "WorldContext", DisplayName = "Steam: Find Leaderboard"))
 	static USteamAsyncFindLeaderboard* FindLeaderboard(UObject* WorldContext, const FString& LeaderboardName, bool bCreateIfMissing, EESteamLeaderboardSortMethod SortMethod, EESteamLeaderboardDisplayType DisplayType, float Timeout = 10.0f);
 
-	virtual void Activate() override;
-
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncFindLeaderboardPin OnSuccess;
 
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncFindLeaderboardPin OnFailure;
 
+protected:
+	//~ UEFAsyncActionBase
+	virtual void ExecuteAction() override;
+	virtual void BroadcastFailure(const FEFResult& Result) override;
+	virtual void CancelWork() override;
+
 private:
 	UFUNCTION()
 	void HandleLeaderboardFound(bool bSuccess, int64 LeaderboardHandle, FString LeaderboardName);
-
-	virtual void OnTimeoutFailure() override;
 
 	void Complete(bool bSuccess, int64 LeaderboardHandle);
 
@@ -63,19 +65,21 @@ public:
 		meta = (BlueprintInternalUseOnly = "true", WorldContext = "WorldContext", DisplayName = "Steam: Upload Leaderboard Score"))
 	static USteamAsyncUploadLeaderboardScore* UploadLeaderboardScore(UObject* WorldContext, int64 LeaderboardHandle, int32 Score, bool bForceUpdate, float Timeout = 10.0f);
 
-	virtual void Activate() override;
-
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncUploadLeaderboardScorePin OnSuccess;
 
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncUploadLeaderboardScorePin OnFailure;
 
+protected:
+	//~ UEFAsyncActionBase
+	virtual void ExecuteAction() override;
+	virtual void BroadcastFailure(const FEFResult& Result) override;
+	virtual void CancelWork() override;
+
 private:
 	UFUNCTION()
 	void HandleScoreUploaded(bool bSuccess, int32 Score, bool bScoreChanged, int32 NewGlobalRank);
-
-	virtual void OnTimeoutFailure() override;
 
 	void Complete(bool bSuccess, int32 NewGlobalRank);
 
@@ -99,19 +103,21 @@ public:
 		meta = (BlueprintInternalUseOnly = "true", WorldContext = "WorldContext", DisplayName = "Steam: Download Leaderboard Entries"))
 	static USteamAsyncDownloadLeaderboardEntries* DownloadLeaderboardEntries(UObject* WorldContext, int64 LeaderboardHandle, EESteamLeaderboardDataRequest RequestType, int32 RangeStart, int32 RangeEnd, float Timeout = 10.0f);
 
-	virtual void Activate() override;
-
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncDownloadLeaderboardEntriesPin OnSuccess;
 
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncDownloadLeaderboardEntriesPin OnFailure;
 
+protected:
+	//~ UEFAsyncActionBase
+	virtual void ExecuteAction() override;
+	virtual void BroadcastFailure(const FEFResult& Result) override;
+	virtual void CancelWork() override;
+
 private:
 	UFUNCTION()
 	void HandleEntriesDownloaded(bool bSuccess, const TArray<FESteamLeaderboardEntry>& Entries);
-
-	virtual void OnTimeoutFailure() override;
 
 	void Complete(bool bSuccess, const TArray<FESteamLeaderboardEntry>& Entries);
 
@@ -136,19 +142,21 @@ public:
 		meta = (BlueprintInternalUseOnly = "true", WorldContext = "WorldContext", DisplayName = "Steam: Request User Stats"))
 	static USteamAsyncRequestUserStats* RequestUserStats(UObject* WorldContext, FESteamId TargetUser, float Timeout = 10.0f);
 
-	virtual void Activate() override;
-
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncRequestUserStatsPin OnSuccess;
 
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncRequestUserStatsPin OnFailure;
 
+protected:
+	//~ UEFAsyncActionBase
+	virtual void ExecuteAction() override;
+	virtual void BroadcastFailure(const FEFResult& Result) override;
+	virtual void CancelWork() override;
+
 private:
 	UFUNCTION()
 	void HandleUserStatsReceived(FESteamId SteamId, bool bSuccess);
-
-	virtual void OnTimeoutFailure() override;
 
 	void Complete(bool bSuccess);
 
@@ -170,19 +178,21 @@ public:
 		meta = (BlueprintInternalUseOnly = "true", WorldContext = "WorldContext", DisplayName = "Steam: Get Number Of Current Players"))
 	static USteamAsyncGetNumberOfCurrentPlayers* GetNumberOfCurrentPlayers(UObject* WorldContext, float Timeout = 10.0f);
 
-	virtual void Activate() override;
-
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncNumberOfCurrentPlayersPin OnSuccess;
 
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncNumberOfCurrentPlayersPin OnFailure;
 
+protected:
+	//~ UEFAsyncActionBase
+	virtual void ExecuteAction() override;
+	virtual void BroadcastFailure(const FEFResult& Result) override;
+	virtual void CancelWork() override;
+
 private:
 	UFUNCTION()
 	void HandleNumberOfCurrentPlayers(bool bSuccess, int32 PlayerCount);
-
-	virtual void OnTimeoutFailure() override;
 
 	void Complete(bool bSuccess, int32 PlayerCount);
 
@@ -206,19 +216,21 @@ public:
 		meta = (BlueprintInternalUseOnly = "true", WorldContext = "WorldContext", DisplayName = "Steam: Request Global Stats"))
 	static USteamAsyncRequestGlobalStats* RequestGlobalStats(UObject* WorldContext, int32 HistoryDays, float Timeout = 10.0f);
 
-	virtual void Activate() override;
-
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncRequestGlobalStatsPin OnSuccess;
 
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncRequestGlobalStatsPin OnFailure;
 
+protected:
+	//~ UEFAsyncActionBase
+	virtual void ExecuteAction() override;
+	virtual void BroadcastFailure(const FEFResult& Result) override;
+	virtual void CancelWork() override;
+
 private:
 	UFUNCTION()
 	void HandleGlobalStatsReceived(bool bSuccess);
-
-	virtual void OnTimeoutFailure() override;
 
 	void Complete(bool bSuccess);
 
@@ -240,19 +252,21 @@ public:
 		meta = (BlueprintInternalUseOnly = "true", WorldContext = "WorldContext", DisplayName = "Steam: Request Global Achievement Percentages"))
 	static USteamAsyncRequestGlobalAchievementPercentages* RequestGlobalAchievementPercentages(UObject* WorldContext, float Timeout = 10.0f);
 
-	virtual void Activate() override;
-
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncRequestGlobalAchievementPercentagesPin OnSuccess;
 
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncRequestGlobalAchievementPercentagesPin OnFailure;
 
+protected:
+	//~ UEFAsyncActionBase
+	virtual void ExecuteAction() override;
+	virtual void BroadcastFailure(const FEFResult& Result) override;
+	virtual void CancelWork() override;
+
 private:
 	UFUNCTION()
 	void HandlePercentagesReady(bool bSuccess);
-
-	virtual void OnTimeoutFailure() override;
 
 	void Complete(bool bSuccess);
 
@@ -271,19 +285,21 @@ public:
 		meta = (BlueprintInternalUseOnly = "true", WorldContext = "WorldContext", DisplayName = "Steam: Download Leaderboard Entries For Users"))
 	static USteamAsyncDownloadLeaderboardEntriesForUsers* DownloadLeaderboardEntriesForUsers(UObject* WorldContext, int64 LeaderboardHandle, const TArray<FESteamId>& Users, float Timeout = 10.0f);
 
-	virtual void Activate() override;
-
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncDownloadLeaderboardEntriesPin OnSuccess;
 
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncDownloadLeaderboardEntriesPin OnFailure;
 
+protected:
+	//~ UEFAsyncActionBase
+	virtual void ExecuteAction() override;
+	virtual void BroadcastFailure(const FEFResult& Result) override;
+	virtual void CancelWork() override;
+
 private:
 	UFUNCTION()
 	void HandleEntriesDownloaded(bool bSuccess, const TArray<FESteamLeaderboardEntry>& Entries);
-
-	virtual void OnTimeoutFailure() override;
 
 	void Complete(bool bSuccess, const TArray<FESteamLeaderboardEntry>& Entries);
 
@@ -306,19 +322,21 @@ public:
 		meta = (BlueprintInternalUseOnly = "true", WorldContext = "WorldContext", DisplayName = "Steam: Attach Leaderboard UGC"))
 	static USteamAsyncAttachLeaderboardUGC* AttachLeaderboardUGC(UObject* WorldContext, int64 LeaderboardHandle, int64 UGCHandle, float Timeout = 10.0f);
 
-	virtual void Activate() override;
-
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncAttachLeaderboardUGCPin OnSuccess;
 
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncAttachLeaderboardUGCPin OnFailure;
 
+protected:
+	//~ UEFAsyncActionBase
+	virtual void ExecuteAction() override;
+	virtual void BroadcastFailure(const FEFResult& Result) override;
+	virtual void CancelWork() override;
+
 private:
 	UFUNCTION()
 	void HandleUGCSet(bool bSuccess);
-
-	virtual void OnTimeoutFailure() override;
 
 	void Complete(bool bSuccess);
 

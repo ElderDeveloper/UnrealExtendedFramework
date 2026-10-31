@@ -12,8 +12,9 @@ EXTENDEDSTEAMEDITOR_API DECLARE_LOG_CATEGORY_EXTERN(LogExtendedSteamEditor, Log,
  *
  * Adds the "Extended Steam Publish" page under Project Settings -> Extended Framework, which drives
  * SteamPipe (steamcmd) build uploads directly from the editor: it extracts the bundled ContentBuilder
- * tools, stores upload credentials in a version-control-ignored file, generates the VDF build scripts
- * from the settings, and runs steamcmd. Excluded from packaged/shipping builds.
+ * tools, keeps the upload user name in a version-control-ignored file and the password in the per-user
+ * OS credential store (FEFCredentialStore), generates the VDF build scripts from the settings, and runs
+ * steamcmd. Excluded from packaged/shipping builds.
  *
  * Also owns the deferred Steam client lifecycle for the editor: with
  * UESteamSettings::bDeferEditorInitToPIE (the default), the Steam client API is brought up when a PIE

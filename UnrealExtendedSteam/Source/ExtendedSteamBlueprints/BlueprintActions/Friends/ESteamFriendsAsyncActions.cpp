@@ -1,44 +1,23 @@
 // Copyright Kemal Erdem YILMAZ. All Rights Reserved.
 
 #include "BlueprintActions/Friends/ESteamFriendsAsyncActions.h"
-#include "Engine/Engine.h"
-#include "Engine/GameInstance.h"
-#include "Engine/World.h"
-
-namespace
-{
-	UESteamFriendsSubsystem* GetFriendsSubsystem(const UObject* WorldContextObject)
-	{
-		if (const UWorld* World = GEngine ? GEngine->GetWorldFromContextObject(WorldContextObject, EGetWorldErrorMode::LogAndReturnNull) : nullptr)
-		{
-			if (const UGameInstance* GameInstance = World->GetGameInstance())
-			{
-				return GameInstance->GetSubsystem<UESteamFriendsSubsystem>();
-			}
-		}
-		return nullptr;
-	}
-}
 
 // ---- USteamAsyncRequestUserInformation ----
 
 USteamAsyncRequestUserInformation* USteamAsyncRequestUserInformation::RequestUserInformation(UObject* WorldContext, FESteamId User, bool bRequireNameOnly, float Timeout)
 {
 	USteamAsyncRequestUserInformation* Action = NewObject<USteamAsyncRequestUserInformation>();
-	Action->WorldContextObject = WorldContext;
 	Action->User = User;
 	Action->bRequireNameOnly = bRequireNameOnly;
-	Action->Timeout = Timeout;
-	Action->RegisterWithGameInstance(WorldContext);
+	Action->InitAsyncAction(WorldContext, Timeout);
 	return Action;
 }
 
-void USteamAsyncRequestUserInformation::Activate()
+void USteamAsyncRequestUserInformation::ExecuteAction()
 {
-	UESteamFriendsSubsystem* Subsystem = GetFriendsSubsystem(WorldContextObject);
+	UESteamFriendsSubsystem* Subsystem = RequireGameInstanceSubsystem<UESteamFriendsSubsystem>();
 	if (!Subsystem)
 	{
-		Complete(false);
 		return;
 	}
 
@@ -46,41 +25,43 @@ void USteamAsyncRequestUserInformation::Activate()
 	Subsystem->OnPersonaStateChanged.AddDynamic(this, &USteamAsyncRequestUserInformation::HandlePersonaStateChanged);
 
 	// RequestUserInformation returns false when the data is already available locally: succeed now.
-	if (!Subsystem->RequestUserInformation(User, bRequireNameOnly))
+	bool bRequested = false;
+	CallWithContext([&] { bRequested = Subsystem->RequestUserInformation(User, bRequireNameOnly); });
+	if (!bRequested)
 	{
 		Complete(true);
-		return;
 	}
-
-	// Fail the node if the persona update never arrives.
-	ArmTimeout(Timeout);
 }
 
 void USteamAsyncRequestUserInformation::HandlePersonaStateChanged(FESteamId SteamId, int32 ChangeFlags)
 {
 	// Only react to the user this node requested.
-	if (SteamId != User)
+	if (!IsResultForThisCall() || SteamId != User)
 	{
 		return;
 	}
 	Complete(true);
 }
 
-void USteamAsyncRequestUserInformation::OnTimeoutFailure()
+void USteamAsyncRequestUserInformation::BroadcastFailure(const FEFResult& /*Result*/)
 {
-	Complete(false);
+	OnFailure.Broadcast(User);
+}
+
+void USteamAsyncRequestUserInformation::CancelWork()
+{
+	if (UESteamFriendsSubsystem* Subsystem = FriendsSubsystem.Get())
+	{
+		Subsystem->OnPersonaStateChanged.RemoveDynamic(this, &USteamAsyncRequestUserInformation::HandlePersonaStateChanged);
+	}
 }
 
 void USteamAsyncRequestUserInformation::Complete(bool bSuccess)
 {
-	if (!BeginComplete())
+	CancelWork();
+	if (!FinishAction())
 	{
 		return;
-	}
-
-	if (UESteamFriendsSubsystem* Subsystem = FriendsSubsystem.Get())
-	{
-		Subsystem->OnPersonaStateChanged.RemoveDynamic(this, &USteamAsyncRequestUserInformation::HandlePersonaStateChanged);
 	}
 
 	if (bSuccess)
@@ -91,8 +72,6 @@ void USteamAsyncRequestUserInformation::Complete(bool bSuccess)
 	{
 		OnFailure.Broadcast(User);
 	}
-
-	SetReadyToDestroy();
 }
 
 // ---- USteamAsyncGetFollowerCount ----
@@ -100,59 +79,59 @@ void USteamAsyncRequestUserInformation::Complete(bool bSuccess)
 USteamAsyncGetFollowerCount* USteamAsyncGetFollowerCount::GetFollowerCount(UObject* WorldContext, FESteamId User, float Timeout)
 {
 	USteamAsyncGetFollowerCount* Action = NewObject<USteamAsyncGetFollowerCount>();
-	Action->WorldContextObject = WorldContext;
 	Action->User = User;
-	Action->Timeout = Timeout;
-	Action->RegisterWithGameInstance(WorldContext);
+	Action->InitAsyncAction(WorldContext, Timeout);
 	return Action;
 }
 
-void USteamAsyncGetFollowerCount::Activate()
+void USteamAsyncGetFollowerCount::ExecuteAction()
 {
-	UESteamFriendsSubsystem* Subsystem = GetFriendsSubsystem(WorldContextObject);
+	UESteamFriendsSubsystem* Subsystem = RequireGameInstanceSubsystem<UESteamFriendsSubsystem>();
 	if (!Subsystem)
 	{
-		Complete(false, 0);
 		return;
 	}
 
 	FriendsSubsystem = Subsystem;
 	Subsystem->OnFollowerCount.AddDynamic(this, &USteamAsyncGetFollowerCount::HandleFollowerCount);
 
-	if (!Subsystem->GetFollowerCount(User))
+	bool bStarted = false;
+	CallWithContext([&] { bStarted = Subsystem->GetFollowerCount(User); });
+	if (!bStarted)
 	{
 		Complete(false, 0);
-		return;
 	}
-
-	ArmTimeout(Timeout);
 }
 
 void USteamAsyncGetFollowerCount::HandleFollowerCount(bool bSuccess, FESteamId InUser, int32 Count)
 {
-	// The subsystem echoes the queried user, so filter to this node's request.
-	if (InUser != User)
+	// The subsystem echoes the queried user and tags the result with this node's call context.
+	if (!IsResultForThisCall() || InUser != User)
 	{
 		return;
 	}
 	Complete(bSuccess, Count);
 }
 
-void USteamAsyncGetFollowerCount::OnTimeoutFailure()
+void USteamAsyncGetFollowerCount::BroadcastFailure(const FEFResult& /*Result*/)
 {
-	Complete(false, 0);
+	OnFailure.Broadcast(User, 0);
+}
+
+void USteamAsyncGetFollowerCount::CancelWork()
+{
+	if (UESteamFriendsSubsystem* Subsystem = FriendsSubsystem.Get())
+	{
+		Subsystem->OnFollowerCount.RemoveDynamic(this, &USteamAsyncGetFollowerCount::HandleFollowerCount);
+	}
 }
 
 void USteamAsyncGetFollowerCount::Complete(bool bSuccess, int32 Count)
 {
-	if (!BeginComplete())
+	CancelWork();
+	if (!FinishAction())
 	{
 		return;
-	}
-
-	if (UESteamFriendsSubsystem* Subsystem = FriendsSubsystem.Get())
-	{
-		Subsystem->OnFollowerCount.RemoveDynamic(this, &USteamAsyncGetFollowerCount::HandleFollowerCount);
 	}
 
 	if (bSuccess)
@@ -163,8 +142,6 @@ void USteamAsyncGetFollowerCount::Complete(bool bSuccess, int32 Count)
 	{
 		OnFailure.Broadcast(User, Count);
 	}
-
-	SetReadyToDestroy();
 }
 
 // ---- USteamAsyncIsFollowing ----
@@ -172,58 +149,58 @@ void USteamAsyncGetFollowerCount::Complete(bool bSuccess, int32 Count)
 USteamAsyncIsFollowing* USteamAsyncIsFollowing::IsFollowing(UObject* WorldContext, FESteamId User, float Timeout)
 {
 	USteamAsyncIsFollowing* Action = NewObject<USteamAsyncIsFollowing>();
-	Action->WorldContextObject = WorldContext;
 	Action->User = User;
-	Action->Timeout = Timeout;
-	Action->RegisterWithGameInstance(WorldContext);
+	Action->InitAsyncAction(WorldContext, Timeout);
 	return Action;
 }
 
-void USteamAsyncIsFollowing::Activate()
+void USteamAsyncIsFollowing::ExecuteAction()
 {
-	UESteamFriendsSubsystem* Subsystem = GetFriendsSubsystem(WorldContextObject);
+	UESteamFriendsSubsystem* Subsystem = RequireGameInstanceSubsystem<UESteamFriendsSubsystem>();
 	if (!Subsystem)
 	{
-		Complete(false, false);
 		return;
 	}
 
 	FriendsSubsystem = Subsystem;
 	Subsystem->OnIsFollowing.AddDynamic(this, &USteamAsyncIsFollowing::HandleIsFollowing);
 
-	if (!Subsystem->IsFollowing(User))
+	bool bStarted = false;
+	CallWithContext([&] { bStarted = Subsystem->IsFollowing(User); });
+	if (!bStarted)
 	{
 		Complete(false, false);
-		return;
 	}
-
-	ArmTimeout(Timeout);
 }
 
 void USteamAsyncIsFollowing::HandleIsFollowing(bool bSuccess, FESteamId InUser, bool bIsFollowing)
 {
-	if (InUser != User)
+	if (!IsResultForThisCall() || InUser != User)
 	{
 		return;
 	}
 	Complete(bSuccess, bIsFollowing);
 }
 
-void USteamAsyncIsFollowing::OnTimeoutFailure()
+void USteamAsyncIsFollowing::BroadcastFailure(const FEFResult& /*Result*/)
 {
-	Complete(false, false);
+	OnFailure.Broadcast(User, false);
+}
+
+void USteamAsyncIsFollowing::CancelWork()
+{
+	if (UESteamFriendsSubsystem* Subsystem = FriendsSubsystem.Get())
+	{
+		Subsystem->OnIsFollowing.RemoveDynamic(this, &USteamAsyncIsFollowing::HandleIsFollowing);
+	}
 }
 
 void USteamAsyncIsFollowing::Complete(bool bSuccess, bool bIsFollowing)
 {
-	if (!BeginComplete())
+	CancelWork();
+	if (!FinishAction())
 	{
 		return;
-	}
-
-	if (UESteamFriendsSubsystem* Subsystem = FriendsSubsystem.Get())
-	{
-		Subsystem->OnIsFollowing.RemoveDynamic(this, &USteamAsyncIsFollowing::HandleIsFollowing);
 	}
 
 	if (bSuccess)
@@ -234,8 +211,6 @@ void USteamAsyncIsFollowing::Complete(bool bSuccess, bool bIsFollowing)
 	{
 		OnFailure.Broadcast(User, bIsFollowing);
 	}
-
-	SetReadyToDestroy();
 }
 
 // ---- USteamAsyncEnumerateFollowingList ----
@@ -243,56 +218,60 @@ void USteamAsyncIsFollowing::Complete(bool bSuccess, bool bIsFollowing)
 USteamAsyncEnumerateFollowingList* USteamAsyncEnumerateFollowingList::EnumerateFollowingList(UObject* WorldContext, int32 StartIndex, float Timeout)
 {
 	USteamAsyncEnumerateFollowingList* Action = NewObject<USteamAsyncEnumerateFollowingList>();
-	Action->WorldContextObject = WorldContext;
 	Action->StartIndex = StartIndex;
-	Action->Timeout = Timeout;
-	Action->RegisterWithGameInstance(WorldContext);
+	Action->InitAsyncAction(WorldContext, Timeout);
 	return Action;
 }
 
-void USteamAsyncEnumerateFollowingList::Activate()
+void USteamAsyncEnumerateFollowingList::ExecuteAction()
 {
-	UESteamFriendsSubsystem* Subsystem = GetFriendsSubsystem(WorldContextObject);
+	UESteamFriendsSubsystem* Subsystem = RequireGameInstanceSubsystem<UESteamFriendsSubsystem>();
 	if (!Subsystem)
 	{
-		Complete(false, TArray<FESteamId>(), 0);
 		return;
 	}
 
 	FriendsSubsystem = Subsystem;
 	Subsystem->OnFollowingListEnumerated.AddDynamic(this, &USteamAsyncEnumerateFollowingList::HandleFollowingListEnumerated);
 
-	if (!Subsystem->EnumerateFollowingList(StartIndex))
+	bool bStarted = false;
+	CallWithContext([&] { bStarted = Subsystem->EnumerateFollowingList(StartIndex); });
+	if (!bStarted)
 	{
 		Complete(false, TArray<FESteamId>(), 0);
-		return;
 	}
-
-	ArmTimeout(Timeout);
 }
 
 void USteamAsyncEnumerateFollowingList::HandleFollowingListEnumerated(bool bSuccess, const TArray<FESteamId>& Users, int32 TotalCount)
 {
-	// NOTE: FOnSteamFollowingListEnumerated carries no start index; cannot discriminate concurrent
-	// enumerations. Relies on Timeout + the subsystem's serialized (one-in-flight) FIFO ordering.
+	// FOnSteamFollowingListEnumerated carries no start index; the subsystem tags each result with
+	// the call context of the request it answers, so concurrent enumerations are told apart here.
+	if (!IsResultForThisCall())
+	{
+		return;
+	}
 	Complete(bSuccess, Users, TotalCount);
 }
 
-void USteamAsyncEnumerateFollowingList::OnTimeoutFailure()
+void USteamAsyncEnumerateFollowingList::BroadcastFailure(const FEFResult& /*Result*/)
 {
-	Complete(false, TArray<FESteamId>(), 0);
+	OnFailure.Broadcast(TArray<FESteamId>(), 0);
+}
+
+void USteamAsyncEnumerateFollowingList::CancelWork()
+{
+	if (UESteamFriendsSubsystem* Subsystem = FriendsSubsystem.Get())
+	{
+		Subsystem->OnFollowingListEnumerated.RemoveDynamic(this, &USteamAsyncEnumerateFollowingList::HandleFollowingListEnumerated);
+	}
 }
 
 void USteamAsyncEnumerateFollowingList::Complete(bool bSuccess, const TArray<FESteamId>& Users, int32 TotalCount)
 {
-	if (!BeginComplete())
+	CancelWork();
+	if (!FinishAction())
 	{
 		return;
-	}
-
-	if (UESteamFriendsSubsystem* Subsystem = FriendsSubsystem.Get())
-	{
-		Subsystem->OnFollowingListEnumerated.RemoveDynamic(this, &USteamAsyncEnumerateFollowingList::HandleFollowingListEnumerated);
 	}
 
 	if (bSuccess)
@@ -303,6 +282,4 @@ void USteamAsyncEnumerateFollowingList::Complete(bool bSuccess, const TArray<FES
 	{
 		OnFailure.Broadcast(Users, TotalCount);
 	}
-
-	SetReadyToDestroy();
 }

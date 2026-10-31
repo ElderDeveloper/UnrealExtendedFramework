@@ -3,6 +3,7 @@
 #include "Apps/ESteamAppsSubsystem.h"
 #include "Shared/ESteamLog.h"
 #include "Shared/ESteamSDK.h"
+#include "Async/EFCallContext.h"
 
 #if WITH_EXTENDEDSTEAM_SDK
 THIRD_PARTY_INCLUDES_START
@@ -21,8 +22,11 @@ public:
 	{
 	}
 
+	// Also remembers the EFCallContext active when the call was made; it is made active again while
+	// the result is broadcast, so async nodes can tell concurrent calls apart.
 	void TrackFileDetailsRequest(SteamAPICall_t Call)
 	{
+		FileDetailsContext = EFCallContext::GetActive();
 		FileDetailsResult.Set(Call, this, &FESteamAppsCallbacks::HandleFileDetailsResponse);
 	}
 
@@ -61,6 +65,7 @@ private:
 
 	void HandleFileDetailsResponse(FileDetailsResult_t* Data, bool bIOFailure)
 	{
+		EFCallContext::FScope Scope(FileDetailsContext);
 		UESteamAppsSubsystem* Subsystem = Owner.Get();
 		if (!Subsystem)
 		{
@@ -85,6 +90,7 @@ private:
 	CCallback<FESteamAppsCallbacks, NewUrlLaunchParameters_t> NewUrlLaunchParameters;
 	CCallback<FESteamAppsCallbacks, TimedTrialStatus_t> TimedTrialStatus;
 	CCallResult<FESteamAppsCallbacks, FileDetailsResult_t> FileDetailsResult;
+	int64 FileDetailsContext = 0;
 };
 #else
 class FESteamAppsCallbacks

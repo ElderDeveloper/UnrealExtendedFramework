@@ -12,6 +12,7 @@ public class ExtendedSteamShared : ModuleRules
 		// resolve "Shared/ESteamTypes.h" and internal files resolve their siblings.
 		PublicIncludePaths.Add(ModuleDirectory);
 
+		// ExtendedFoundation is public: Shared/ESteamSettings.h derives from UEFDeveloperSettings.
 		PublicDependencyModuleNames.AddRange(
 			new string[]
 			{
@@ -19,6 +20,7 @@ public class ExtendedSteamShared : ModuleRules
 				"CoreUObject",
 				"Engine",
 				"DeveloperSettings",
+				"ExtendedFoundation",
 				"OnlineSubsystem"
 			}
 		);

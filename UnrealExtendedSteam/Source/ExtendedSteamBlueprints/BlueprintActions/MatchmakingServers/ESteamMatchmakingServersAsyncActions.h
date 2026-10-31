@@ -30,9 +30,6 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Steam|Async|ServerBrowser", meta = (BlueprintInternalUseOnly = "true", WorldContext = "WorldContext", DisplayName = "Steam: Ping Server"))
 	static USteamAsyncPingServer* PingServer(UObject* WorldContext, const FString& Ip, int32 Port, float Timeout = 10.0f);
 
-	//~ UBlueprintAsyncActionBase
-	virtual void Activate() override;
-
 	/** The server responded; Server holds its details. */
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncServerPingPin OnSuccess;
@@ -41,11 +38,15 @@ public:
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncServerPingPin OnFailure;
 
+protected:
+	//~ UEFAsyncActionBase
+	virtual void ExecuteAction() override;
+	virtual void BroadcastFailure(const FEFResult& Result) override;
+	virtual void CancelWork() override;
+
 private:
 	UFUNCTION()
 	void HandlePingResponded(bool bSuccess, const FESteamServerInfo& Server);
-
-	virtual void OnTimeoutFailure() override;
 
 	void Complete(bool bSuccess, const FESteamServerInfo& Server);
 
@@ -71,9 +72,6 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Steam|Async|ServerBrowser", meta = (BlueprintInternalUseOnly = "true", WorldContext = "WorldContext", DisplayName = "Steam: Request Server Rules"))
 	static USteamAsyncRequestServerRules* RequestServerRules(UObject* WorldContext, const FString& Ip, int32 Port, float Timeout = 10.0f);
 
-	//~ UBlueprintAsyncActionBase
-	virtual void Activate() override;
-
 	/** The rules arrived; Keys and Values are parallel arrays. */
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncServerRulesPin OnSuccess;
@@ -82,11 +80,15 @@ public:
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncServerRulesPin OnFailure;
 
+protected:
+	//~ UEFAsyncActionBase
+	virtual void ExecuteAction() override;
+	virtual void BroadcastFailure(const FEFResult& Result) override;
+	virtual void CancelWork() override;
+
 private:
 	UFUNCTION()
 	void HandleRulesReceived(bool bSuccess, const TArray<FString>& Keys, const TArray<FString>& Values);
-
-	virtual void OnTimeoutFailure() override;
 
 	void Complete(bool bSuccess, const TArray<FString>& Keys, const TArray<FString>& Values);
 

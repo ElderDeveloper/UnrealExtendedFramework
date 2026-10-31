@@ -31,9 +31,6 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Steam|Async|Matchmaking", meta = (BlueprintInternalUseOnly = "true", WorldContext = "WorldContext", DisplayName = "Steam: Create Lobby"))
 	static USteamAsyncCreateLobby* CreateLobby(UObject* WorldContext, EESteamLobbyType LobbyType, int32 MaxMembers, float Timeout = 10.0f);
 
-	//~ UBlueprintAsyncActionBase
-	virtual void Activate() override;
-
 	/** The lobby was created and joined; LobbyId identifies it. */
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncLobbyPin OnSuccess;
@@ -42,11 +39,15 @@ public:
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncLobbyPin OnFailure;
 
+protected:
+	//~ UEFAsyncActionBase
+	virtual void ExecuteAction() override;
+	virtual void BroadcastFailure(const FEFResult& Result) override;
+	virtual void CancelWork() override;
+
 private:
 	UFUNCTION()
 	void HandleLobbyCreated(bool bSuccess, FESteamId LobbyId);
-
-	virtual void OnTimeoutFailure() override;
 
 	void Complete(bool bSuccess, FESteamId LobbyId);
 
@@ -72,9 +73,6 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Steam|Async|Matchmaking", meta = (BlueprintInternalUseOnly = "true", WorldContext = "WorldContext", DisplayName = "Steam: Join Lobby"))
 	static USteamAsyncJoinLobby* JoinLobby(UObject* WorldContext, FESteamId LobbyId, float Timeout = 10.0f);
 
-	//~ UBlueprintAsyncActionBase
-	virtual void Activate() override;
-
 	/** The lobby was joined; LobbyId identifies it. */
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncLobbyPin OnSuccess;
@@ -83,11 +81,15 @@ public:
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncLobbyPin OnFailure;
 
+protected:
+	//~ UEFAsyncActionBase
+	virtual void ExecuteAction() override;
+	virtual void BroadcastFailure(const FEFResult& Result) override;
+	virtual void CancelWork() override;
+
 private:
 	UFUNCTION()
 	void HandleLobbyEntered(bool bSuccess, FESteamId EnteredLobbyId);
-
-	virtual void OnTimeoutFailure() override;
 
 	void Complete(bool bSuccess, FESteamId EnteredLobbyId);
 
@@ -113,9 +115,6 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Steam|Async|Matchmaking", meta = (BlueprintInternalUseOnly = "true", WorldContext = "WorldContext", DisplayName = "Steam: Request Lobby List"))
 	static USteamAsyncRequestLobbyList* RequestLobbyList(UObject* WorldContext, EESteamLobbyDistanceFilter DistanceFilter, int32 MaxResults, float Timeout = 10.0f);
 
-	//~ UBlueprintAsyncActionBase
-	virtual void Activate() override;
-
 	/** The search completed; Lobbies holds the matches (possibly empty). */
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncLobbyListPin OnSuccess;
@@ -124,11 +123,15 @@ public:
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncLobbyListPin OnFailure;
 
+protected:
+	//~ UEFAsyncActionBase
+	virtual void ExecuteAction() override;
+	virtual void BroadcastFailure(const FEFResult& Result) override;
+	virtual void CancelWork() override;
+
 private:
 	UFUNCTION()
 	void HandleLobbyListReceived(bool bSuccess, const TArray<FESteamId>& Lobbies);
-
-	virtual void OnTimeoutFailure() override;
 
 	void Complete(bool bSuccess, const TArray<FESteamId>& Lobbies);
 

@@ -27,9 +27,6 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Steam|Async|Storage", meta = (BlueprintInternalUseOnly = "true", WorldContext = "WorldContext", DisplayName = "Steam: Write Cloud File Async"))
 	static USteamAsyncWriteCloudFile* WriteCloudFileAsync(UObject* WorldContext, const FString& FileName, const TArray<uint8>& Data, float Timeout = 10.0f);
 
-	//~ UBlueprintAsyncActionBase
-	virtual void Activate() override;
-
 	/** The write completed and the file is persisting to the cloud. */
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncFileWritePin OnSuccess;
@@ -38,11 +35,15 @@ public:
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncFileWritePin OnFailure;
 
+protected:
+	//~ UEFAsyncActionBase
+	virtual void ExecuteAction() override;
+	virtual void BroadcastFailure(const FEFResult& Result) override;
+	virtual void CancelWork() override;
+
 private:
 	UFUNCTION()
 	void HandleWriteComplete(bool bSuccess, const FString& InFileName);
-
-	virtual void OnTimeoutFailure() override;
 
 	void Complete(bool bSuccess);
 
@@ -70,9 +71,6 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Steam|Async|Storage", meta = (BlueprintInternalUseOnly = "true", WorldContext = "WorldContext", DisplayName = "Steam: Read Cloud File Async"))
 	static USteamAsyncReadCloudFile* ReadCloudFileAsync(UObject* WorldContext, const FString& FileName, float Timeout = 10.0f);
 
-	//~ UBlueprintAsyncActionBase
-	virtual void Activate() override;
-
 	/** The read completed; Data holds the file contents. */
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncFileReadPin OnSuccess;
@@ -81,11 +79,15 @@ public:
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncFileReadPin OnFailure;
 
+protected:
+	//~ UEFAsyncActionBase
+	virtual void ExecuteAction() override;
+	virtual void BroadcastFailure(const FEFResult& Result) override;
+	virtual void CancelWork() override;
+
 private:
 	UFUNCTION()
 	void HandleReadComplete(bool bSuccess, const FString& InFileName, const TArray<uint8>& InData);
-
-	virtual void OnTimeoutFailure() override;
 
 	void Complete(bool bSuccess, const TArray<uint8>& InData);
 
@@ -113,9 +115,6 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Steam|Async|Storage", meta = (BlueprintInternalUseOnly = "true", WorldContext = "WorldContext", DisplayName = "Steam: Share Cloud File"))
 	static USteamAsyncShareCloudFile* ShareCloudFile(UObject* WorldContext, const FString& FileName, float Timeout = 10.0f);
 
-	//~ UBlueprintAsyncActionBase
-	virtual void Activate() override;
-
 	/** The file was shared; UGCHandle identifies it for download by other users. */
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncFileSharePin OnSuccess;
@@ -124,11 +123,15 @@ public:
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncFileSharePin OnFailure;
 
+protected:
+	//~ UEFAsyncActionBase
+	virtual void ExecuteAction() override;
+	virtual void BroadcastFailure(const FEFResult& Result) override;
+	virtual void CancelWork() override;
+
 private:
 	UFUNCTION()
 	void HandleShared(bool bSuccess, const FString& InFileName, int64 InUGCHandle);
-
-	virtual void OnTimeoutFailure() override;
 
 	void Complete(bool bSuccess, int64 InUGCHandle);
 
@@ -159,9 +162,6 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Steam|Async|Storage", meta = (BlueprintInternalUseOnly = "true", WorldContext = "WorldContext", DisplayName = "Steam: Download UGC"))
 	static USteamAsyncDownloadUGC* DownloadUGC(UObject* WorldContext, int64 UGCHandle, int32 Priority, float Timeout = 10.0f);
 
-	//~ UBlueprintAsyncActionBase
-	virtual void Activate() override;
-
 	/** The file finished downloading; read it with the subsystem's UGCRead. */
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncUGCDownloadPin OnSuccess;
@@ -170,11 +170,15 @@ public:
 	UPROPERTY(BlueprintAssignable)
 	FSteamAsyncUGCDownloadPin OnFailure;
 
+protected:
+	//~ UEFAsyncActionBase
+	virtual void ExecuteAction() override;
+	virtual void BroadcastFailure(const FEFResult& Result) override;
+	virtual void CancelWork() override;
+
 private:
 	UFUNCTION()
 	void HandleDownloaded(bool bSuccess, int64 InUGCHandle, const FString& InFileName, int32 InFileSize);
-
-	virtual void OnTimeoutFailure() override;
 
 	void Complete(bool bSuccess, const FString& InFileName, int32 InFileSize);
 

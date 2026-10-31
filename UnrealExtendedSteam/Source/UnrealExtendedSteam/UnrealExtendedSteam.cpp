@@ -1,7 +1,10 @@
 // Copyright Kemal Erdem YILMAZ. All Rights Reserved.
 
 #include "UnrealExtendedSteam.h"
+#include "EFFoundationVersion.h"
 #include "Shared/ESteamLog.h"
+
+EF_REQUIRE_FOUNDATION_VERSION(1, 0, "UnrealExtendedSteam");
 
 void FUnrealExtendedSteamModule::StartupModule()
 {
