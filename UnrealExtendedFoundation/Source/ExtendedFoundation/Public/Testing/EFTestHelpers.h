@@ -44,6 +44,12 @@ namespace EFTest
 		UGameInstance* Get() const { return GameInstance.Get(); }
 		UWorld* GetWorld() const;
 
+		/**
+		 * Advances the world's timers by DeltaSeconds. Nothing ticks a test world on its own, so tests
+		 * of timer-driven code call this (typically once per frame from a latent command).
+		 */
+		void TickTimers(float DeltaSeconds);
+
 		template <typename TSubsystem>
 		TSubsystem* GetSubsystem() const
 		{
