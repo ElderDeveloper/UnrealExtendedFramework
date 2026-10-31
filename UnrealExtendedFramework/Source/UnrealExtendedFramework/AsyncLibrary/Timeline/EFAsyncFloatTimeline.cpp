@@ -30,6 +30,10 @@ UEFAsyncFloatTimeline* UEFAsyncFloatTimeline::ExtendedFloatTimeline(const FName 
 	{
 		UE_LOG(LogBlueprint,Warning,TEXT("Float Curve Is Valid But Its Empty")); return nullptr;
 	}
+	if (PassTime <= 0.f && TimelinePlayType != Ext_StopTimeline)
+	{
+		UE_LOG(LogBlueprint,Warning,TEXT("Float Timeline Pass Time Must Be Greater Than Zero")); return nullptr;
+	}
 
 
 	// Store The Current Timeline Time If We Use Play Or Reverse
@@ -47,11 +51,6 @@ UEFAsyncFloatTimeline* UEFAsyncFloatTimeline::ExtendedFloatTimeline(const FName 
 	if (TimelinePlayType == Ext_StopTimeline)
 	{
 		return nullptr;
-	}
-
-	if (PassTime <= 0.f)
-	{
-		UE_LOG(LogBlueprint,Warning,TEXT("Float Timeline Pass Time Must Be Greater Than Zero")); return nullptr;
 	}
 
 
