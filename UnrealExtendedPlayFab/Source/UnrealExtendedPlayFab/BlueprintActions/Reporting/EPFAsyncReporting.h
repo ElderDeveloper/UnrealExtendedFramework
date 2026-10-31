@@ -8,7 +8,7 @@
 
 
 UCLASS(meta = (DisplayName = "PlayFab: Report Player"))
-class UNREALEXTENDEDPLAYFAB_API UEPFAsyncReportPlayer : public UBlueprintAsyncActionBase
+class UNREALEXTENDEDPLAYFAB_API UEPFAsyncReportPlayer : public UEPFAsyncActionBase
 {
 	GENERATED_BODY()
 
@@ -17,12 +17,12 @@ public:
 	static UEPFAsyncReportPlayer* ReportPlayer(UObject* WorldContext, const FString& ReporteePlayFabId, const FString& Comment = TEXT(""));
 
 	UPROPERTY(BlueprintAssignable) FOnEPFAsyncSimpleSuccess OnSuccess;
-	UPROPERTY(BlueprintAssignable) FOnEPFAsyncFailed OnFailure;
 
-	virtual void Activate() override;
+protected:
+	virtual void ExecuteAction() override;
+	virtual void CancelWork() override;
 
 private:
-	FString ReporteeId, Comment;
-	TWeakObjectPtr<UObject> WorldContext;
+	FString ReporteeId, ReportComment;
 	UFUNCTION() void HandleComplete(const FEPFResult& Result);
 };

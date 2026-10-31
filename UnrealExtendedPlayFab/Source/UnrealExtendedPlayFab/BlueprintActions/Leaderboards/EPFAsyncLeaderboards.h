@@ -13,7 +13,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnEPFAsyncLeaderboardReceived, cons
 // ── Global ───────────────────────────────────────────────────────────────────
 
 UCLASS(meta = (DisplayName = "PlayFab: Get Leaderboard"))
-class UNREALEXTENDEDPLAYFAB_API UEPFAsyncGetLeaderboard : public UBlueprintAsyncActionBase
+class UNREALEXTENDEDPLAYFAB_API UEPFAsyncGetLeaderboard : public UEPFAsyncActionBase
 {
 	GENERATED_BODY()
 
@@ -22,21 +22,22 @@ public:
 	static UEPFAsyncGetLeaderboard* GetLeaderboard(UObject* WorldContext, const FString& StatisticName, int32 StartPosition = 0, int32 MaxResultsCount = 10);
 
 	UPROPERTY(BlueprintAssignable) FOnEPFAsyncLeaderboardReceived OnSuccess;
-	UPROPERTY(BlueprintAssignable) FOnEPFAsyncFailed OnFailure;
-	virtual void Activate() override;
+
+protected:
+	virtual void ExecuteAction() override;
+	virtual void CancelWork() override;
 
 private:
-	FString StatisticName;
-	int32 StartPosition;
-	int32 MaxResultsCount;
-	TWeakObjectPtr<UObject> WorldContext;
+	FString RequestedStatisticName;
+	int32 RequestedStartPosition = 0;
+	int32 RequestedMaxResults = 10;
 	UFUNCTION() void HandleComplete(const FEPFResult& Result, const TArray<FEPFLeaderboardEntry>& Entries);
 };
 
 // ── Around Player ────────────────────────────────────────────────────────────
 
 UCLASS(meta = (DisplayName = "PlayFab: Get Leaderboard Around Player"))
-class UNREALEXTENDEDPLAYFAB_API UEPFAsyncGetLeaderboardAroundPlayer : public UBlueprintAsyncActionBase
+class UNREALEXTENDEDPLAYFAB_API UEPFAsyncGetLeaderboardAroundPlayer : public UEPFAsyncActionBase
 {
 	GENERATED_BODY()
 
@@ -45,20 +46,21 @@ public:
 	static UEPFAsyncGetLeaderboardAroundPlayer* GetLeaderboardAroundPlayer(UObject* WorldContext, const FString& StatisticName, int32 MaxResultsCount = 10);
 
 	UPROPERTY(BlueprintAssignable) FOnEPFAsyncLeaderboardReceived OnSuccess;
-	UPROPERTY(BlueprintAssignable) FOnEPFAsyncFailed OnFailure;
-	virtual void Activate() override;
+
+protected:
+	virtual void ExecuteAction() override;
+	virtual void CancelWork() override;
 
 private:
-	FString StatisticName;
-	int32 MaxResultsCount;
-	TWeakObjectPtr<UObject> WorldContext;
+	FString RequestedStatisticName;
+	int32 RequestedMaxResults = 10;
 	UFUNCTION() void HandleComplete(const FEPFResult& Result, const TArray<FEPFLeaderboardEntry>& Entries);
 };
 
 // ── Friends ──────────────────────────────────────────────────────────────────
 
 UCLASS(meta = (DisplayName = "PlayFab: Get Friends Leaderboard"))
-class UNREALEXTENDEDPLAYFAB_API UEPFAsyncGetFriendsLeaderboard : public UBlueprintAsyncActionBase
+class UNREALEXTENDEDPLAYFAB_API UEPFAsyncGetFriendsLeaderboard : public UEPFAsyncActionBase
 {
 	GENERATED_BODY()
 
@@ -67,12 +69,13 @@ public:
 	static UEPFAsyncGetFriendsLeaderboard* GetFriendsLeaderboard(UObject* WorldContext, const FString& StatisticName, int32 MaxResultsCount = 10);
 
 	UPROPERTY(BlueprintAssignable) FOnEPFAsyncLeaderboardReceived OnSuccess;
-	UPROPERTY(BlueprintAssignable) FOnEPFAsyncFailed OnFailure;
-	virtual void Activate() override;
+
+protected:
+	virtual void ExecuteAction() override;
+	virtual void CancelWork() override;
 
 private:
-	FString StatisticName;
-	int32 MaxResultsCount;
-	TWeakObjectPtr<UObject> WorldContext;
+	FString RequestedStatisticName;
+	int32 RequestedMaxResults = 10;
 	UFUNCTION() void HandleComplete(const FEPFResult& Result, const TArray<FEPFLeaderboardEntry>& Entries);
 };

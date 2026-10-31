@@ -1,67 +1,87 @@
 // Copyright Kemal Erdem YILMAZ. All Rights Reserved.
 
 #include "EPFAsyncMatchmaking.h"
-#include "Engine/GameInstance.h"
 
 // ── Create Ticket ────────────────────────────────────────────────────────────
 
 UEPFAsyncCreateTicket* UEPFAsyncCreateTicket::CreateTicket(UObject* WorldContext, const FString& QueueName, const TMap<FString, FString>& Attributes, int32 GiveUpAfterSeconds)
 {
-	auto* A = NewObject<UEPFAsyncCreateTicket>(); A->QueueName = QueueName; A->Attributes = Attributes; A->Timeout = GiveUpAfterSeconds; A->WorldContext = WorldContext; A->RegisterWithGameInstance(WorldContext); return A;
+	auto* A = NewObject<UEPFAsyncCreateTicket>(); A->TicketQueueName = QueueName; A->TicketAttributes = Attributes; A->Timeout = GiveUpAfterSeconds; A->InitAsyncAction(WorldContext); return A;
 }
-void UEPFAsyncCreateTicket::Activate()
+void UEPFAsyncCreateTicket::ExecuteAction()
 {
-	if (QueueName.IsEmpty()) { BroadcastEPFFailure(OnFailure, TEXT("Queue name cannot be empty")); SetReadyToDestroy(); return; }
-	auto* S = GetEPFSubsystemFromContext<UEPFMatchmakingSubsystem>(WorldContext.Get());
-	if (!S) { BroadcastEPFFailure(OnFailure, TEXT("Matchmaking subsystem not available")); SetReadyToDestroy(); return; }
+	if (TicketQueueName.IsEmpty()) { FailInvalidArgument(TEXT("Queue name cannot be empty")); return; }
+	auto* S = RequireGameInstanceSubsystem<UEPFMatchmakingSubsystem>();
+	if (!S) return;
 	S->OnTicketCreated.AddDynamic(this, &UEPFAsyncCreateTicket::HandleComplete);
-	S->CreateTicket(QueueName, Attributes, Timeout);
+	CallWithContext([&] { S->CreateTicket(TicketQueueName, TicketAttributes, Timeout); });
+}
+void UEPFAsyncCreateTicket::CancelWork()
+{
+	if (auto* S = GetGameInstanceSubsystem<UEPFMatchmakingSubsystem>()) S->OnTicketCreated.RemoveDynamic(this, &UEPFAsyncCreateTicket::HandleComplete);
 }
 void UEPFAsyncCreateTicket::HandleComplete(const FEPFResult& Result, const FString& TicketId)
 {
-	if (auto* S = GetEPFSubsystemFromContext<UEPFMatchmakingSubsystem>(WorldContext.Get())) S->OnTicketCreated.RemoveDynamic(this, &UEPFAsyncCreateTicket::HandleComplete);
+	if (!IsResultForThisCall()) return;
+	CancelWork();
+	if (!FinishAction()) return;
 	Result.bSuccess ? OnSuccess.Broadcast(TicketId) : BroadcastEPFFailure(OnFailure, MakeEPFAsyncError(Result, TEXT("Failed to create matchmaking ticket")));
-	SetReadyToDestroy();
 }
 
 // ── Get Ticket Status ────────────────────────────────────────────────────────
 
 UEPFAsyncGetTicketStatus* UEPFAsyncGetTicketStatus::GetTicketStatus(UObject* WorldContext, const FString& QueueName, const FString& TicketId)
 {
-	auto* A = NewObject<UEPFAsyncGetTicketStatus>(); A->QueueName = QueueName; A->TicketId = TicketId; A->WorldContext = WorldContext; A->RegisterWithGameInstance(WorldContext); return A;
+	auto* A = NewObject<UEPFAsyncGetTicketStatus>(); A->TicketQueueName = QueueName; A->TargetTicketId = TicketId; A->InitAsyncAction(WorldContext); return A;
 }
-void UEPFAsyncGetTicketStatus::Activate()
+void UEPFAsyncGetTicketStatus::ExecuteAction()
 {
-	if (QueueName.IsEmpty() || TicketId.IsEmpty()) { BroadcastEPFFailure(OnFailure, TEXT("Queue name and ticket ID required")); SetReadyToDestroy(); return; }
-	auto* S = GetEPFSubsystemFromContext<UEPFMatchmakingSubsystem>(WorldContext.Get());
-	if (!S) { BroadcastEPFFailure(OnFailure, TEXT("Matchmaking subsystem not available")); SetReadyToDestroy(); return; }
+	if (TicketQueueName.IsEmpty() || TargetTicketId.IsEmpty()) { FailInvalidArgument(TEXT("Queue name and ticket ID required")); return; }
+	auto* S = RequireGameInstanceSubsystem<UEPFMatchmakingSubsystem>();
+	if (!S) return;
 	S->OnTicketStatusReceived.AddDynamic(this, &UEPFAsyncGetTicketStatus::HandleComplete);
-	S->GetTicketStatus(QueueName, TicketId);
+	// The subsystem's status polling (StartPolling) broadcasts on the same delegate under a context of
+	// its own, so this node only finishes on the status call it made.
+	CallWithContext([&] { S->GetTicketStatus(TicketQueueName, TargetTicketId); });
+}
+void UEPFAsyncGetTicketStatus::CancelWork()
+{
+	if (auto* S = GetGameInstanceSubsystem<UEPFMatchmakingSubsystem>()) S->OnTicketStatusReceived.RemoveDynamic(this, &UEPFAsyncGetTicketStatus::HandleComplete);
 }
 void UEPFAsyncGetTicketStatus::HandleComplete(const FEPFResult& Result, const FEPFMatchmakingResult& MatchmakingResult)
 {
-	if (auto* S = GetEPFSubsystemFromContext<UEPFMatchmakingSubsystem>(WorldContext.Get())) S->OnTicketStatusReceived.RemoveDynamic(this, &UEPFAsyncGetTicketStatus::HandleComplete);
+	if (!IsResultForThisCall()) return;
+	CancelWork();
+	if (!FinishAction()) return;
 	Result.bSuccess ? OnSuccess.Broadcast(MatchmakingResult) : BroadcastEPFFailure(OnFailure, MakeEPFAsyncError(Result, TEXT("Failed to get ticket status")));
-	SetReadyToDestroy();
 }
 
 // ── Cancel Matchmaking ───────────────────────────────────────────────────────
 
 UEPFAsyncCancelMatchmaking* UEPFAsyncCancelMatchmaking::CancelMatchmaking(UObject* WorldContext, const FString& QueueName, const FString& TicketId)
 {
-	auto* A = NewObject<UEPFAsyncCancelMatchmaking>(); A->QueueName = QueueName; A->TicketId = TicketId; A->WorldContext = WorldContext; A->RegisterWithGameInstance(WorldContext); return A;
+	auto* A = NewObject<UEPFAsyncCancelMatchmaking>(); A->TicketQueueName = QueueName; A->TargetTicketId = TicketId; A->InitAsyncAction(WorldContext); return A;
 }
-void UEPFAsyncCancelMatchmaking::Activate()
+void UEPFAsyncCancelMatchmaking::ExecuteAction()
 {
-	if (QueueName.IsEmpty()) { BroadcastEPFFailure(OnFailure, TEXT("Queue name cannot be empty")); SetReadyToDestroy(); return; }
-	auto* S = GetEPFSubsystemFromContext<UEPFMatchmakingSubsystem>(WorldContext.Get());
-	if (!S) { BroadcastEPFFailure(OnFailure, TEXT("Matchmaking subsystem not available")); SetReadyToDestroy(); return; }
+	if (TicketQueueName.IsEmpty()) { FailInvalidArgument(TEXT("Queue name cannot be empty")); return; }
+	auto* S = RequireGameInstanceSubsystem<UEPFMatchmakingSubsystem>();
+	if (!S) return;
 	S->OnMatchmakingCanceled.AddDynamic(this, &UEPFAsyncCancelMatchmaking::HandleComplete);
-	TicketId.IsEmpty() ? S->CancelAllTickets(QueueName) : S->CancelTicket(QueueName, TicketId);
+	CallWithContext([&]
+	{
+		if (TargetTicketId.IsEmpty()) { S->CancelAllTickets(TicketQueueName); }
+		else { S->CancelTicket(TicketQueueName, TargetTicketId); }
+	});
+}
+void UEPFAsyncCancelMatchmaking::CancelWork()
+{
+	if (auto* S = GetGameInstanceSubsystem<UEPFMatchmakingSubsystem>()) S->OnMatchmakingCanceled.RemoveDynamic(this, &UEPFAsyncCancelMatchmaking::HandleComplete);
 }
 void UEPFAsyncCancelMatchmaking::HandleComplete(const FEPFResult& Result)
 {
-	if (auto* S = GetEPFSubsystemFromContext<UEPFMatchmakingSubsystem>(WorldContext.Get())) S->OnMatchmakingCanceled.RemoveDynamic(this, &UEPFAsyncCancelMatchmaking::HandleComplete);
+	if (!IsResultForThisCall()) return;
+	CancelWork();
+	if (!FinishAction()) return;
 	Result.bSuccess ? OnSuccess.Broadcast() : BroadcastEPFFailure(OnFailure, MakeEPFAsyncError(Result, TEXT("Failed to cancel matchmaking")));
-	SetReadyToDestroy();
 }

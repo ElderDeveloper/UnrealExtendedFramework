@@ -10,7 +10,7 @@
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnEPFAsyncCloudScriptSuccess, const FString&, ResultJson);
 
 UCLASS(meta = (DisplayName = "PlayFab: Execute CloudScript"))
-class UNREALEXTENDEDPLAYFAB_API UEPFAsyncExecuteCloudScript : public UBlueprintAsyncActionBase
+class UNREALEXTENDEDPLAYFAB_API UEPFAsyncExecuteCloudScript : public UEPFAsyncActionBase
 {
 	GENERATED_BODY()
 
@@ -19,12 +19,13 @@ public:
 	static UEPFAsyncExecuteCloudScript* ExecuteCloudScript(UObject* WorldContext, const FString& FunctionName, const TMap<FString, FString>& Params);
 
 	UPROPERTY(BlueprintAssignable) FOnEPFAsyncCloudScriptSuccess OnSuccess;
-	UPROPERTY(BlueprintAssignable) FOnEPFAsyncFailed OnFailure;
-	virtual void Activate() override;
+
+protected:
+	virtual void ExecuteAction() override;
+	virtual void CancelWork() override;
 
 private:
-	FString FunctionName;
-	TMap<FString, FString> Params;
-	TWeakObjectPtr<UObject> WorldContext;
+	FString CloudFunctionName;
+	TMap<FString, FString> FunctionParams;
 	UFUNCTION() void HandleComplete(const FEPFResult& Result, const FString& ResultJson);
 };

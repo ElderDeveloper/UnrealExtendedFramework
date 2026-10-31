@@ -265,6 +265,8 @@ void UEPFSubsystem::ExecuteRequest(
 	HttpRequest.Body = RequestBodyString;
 	// Retries stay here, not in FEFHttpOperation: this subsystem also re-authenticates and replays.
 	HttpRequest.MaxRetries = 0;
+	// This subsystem logs its own retries and errors with the PlayFab error details.
+	HttpRequest.bLogFailuresAsWarnings = false;
 	HttpRequest.Headers.Add(TEXT("X-ReportErrorAsSuccess"), TEXT("true"));
 
 	if (Settings->bIncludeSdkHeader && !Settings->SDKHeaderValue.IsEmpty())

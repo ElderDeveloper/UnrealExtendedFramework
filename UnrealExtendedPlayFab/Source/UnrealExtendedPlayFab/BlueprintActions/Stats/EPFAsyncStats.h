@@ -14,7 +14,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnEPFAsyncStatsUpdated);
 // ── Get ──────────────────────────────────────────────────────────────────────
 
 UCLASS(meta = (DisplayName = "PlayFab: Get Stats"))
-class UNREALEXTENDEDPLAYFAB_API UEPFAsyncGetStats : public UBlueprintAsyncActionBase
+class UNREALEXTENDEDPLAYFAB_API UEPFAsyncGetStats : public UEPFAsyncActionBase
 {
 	GENERATED_BODY()
 
@@ -23,19 +23,20 @@ public:
 	static UEPFAsyncGetStats* GetStats(UObject* WorldContext, const TArray<FString>& StatNames);
 
 	UPROPERTY(BlueprintAssignable) FOnEPFAsyncStatsReceived OnSuccess;
-	UPROPERTY(BlueprintAssignable) FOnEPFAsyncFailed OnFailure;
-	virtual void Activate() override;
+
+protected:
+	virtual void ExecuteAction() override;
+	virtual void CancelWork() override;
 
 private:
-	TArray<FString> StatNames;
-	TWeakObjectPtr<UObject> WorldContext;
+	TArray<FString> RequestedStatNames;
 	UFUNCTION() void HandleComplete(const FEPFResult& Result, const TArray<FEPFStatistic>& Stats);
 };
 
 // ── Update ───────────────────────────────────────────────────────────────────
 
 UCLASS(meta = (DisplayName = "PlayFab: Update Stats"))
-class UNREALEXTENDEDPLAYFAB_API UEPFAsyncUpdateStats : public UBlueprintAsyncActionBase
+class UNREALEXTENDEDPLAYFAB_API UEPFAsyncUpdateStats : public UEPFAsyncActionBase
 {
 	GENERATED_BODY()
 
@@ -44,11 +45,12 @@ public:
 	static UEPFAsyncUpdateStats* UpdateStats(UObject* WorldContext, const TMap<FString, int32>& Stats);
 
 	UPROPERTY(BlueprintAssignable) FOnEPFAsyncStatsUpdated OnSuccess;
-	UPROPERTY(BlueprintAssignable) FOnEPFAsyncFailed OnFailure;
-	virtual void Activate() override;
+
+protected:
+	virtual void ExecuteAction() override;
+	virtual void CancelWork() override;
 
 private:
-	TMap<FString, int32> Stats;
-	TWeakObjectPtr<UObject> WorldContext;
+	TMap<FString, int32> StatsToUpdate;
 	UFUNCTION() void HandleComplete(const FEPFResult& Result);
 };

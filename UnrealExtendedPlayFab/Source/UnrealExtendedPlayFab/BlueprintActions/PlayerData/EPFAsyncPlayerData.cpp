@@ -2,33 +2,41 @@
 
 #include "EPFAsyncPlayerData.h"
 #include "PlayerData/EPFPlayerDataSubsystem.h"
-#include "Engine/GameInstance.h"
 
 // ── Get ──────────────────────────────────────────────────────────────────────
 
 UEPFAsyncGetPlayerData* UEPFAsyncGetPlayerData::GetPlayerData(UObject* WorldContext, const TArray<FString>& Keys)
 {
 	auto* Action = NewObject<UEPFAsyncGetPlayerData>();
-	Action->Keys = Keys;
-	Action->WorldContext = WorldContext;
-	Action->RegisterWithGameInstance(WorldContext);
+	Action->RequestedKeys = Keys;
+	Action->InitAsyncAction(WorldContext);
 	return Action;
 }
 
-void UEPFAsyncGetPlayerData::Activate()
+void UEPFAsyncGetPlayerData::ExecuteAction()
 {
-	auto* Sub = GetEPFSubsystemFromContext<UEPFPlayerDataSubsystem>(WorldContext.Get());
-	if (!Sub) { BroadcastEPFFailure(OnFailure, TEXT("PlayerData subsystem not available")); SetReadyToDestroy(); return; }
+	auto* Sub = RequireGameInstanceSubsystem<UEPFPlayerDataSubsystem>();
+	if (!Sub) return;
 	Sub->OnPlayerDataReceived.AddDynamic(this, &UEPFAsyncGetPlayerData::HandleComplete);
-	Keys.Num() > 0 ? Sub->GetPlayerData(Keys) : Sub->GetAllPlayerData();
+	CallWithContext([&]
+	{
+		if (RequestedKeys.Num() > 0) { Sub->GetPlayerData(RequestedKeys); }
+		else { Sub->GetAllPlayerData(); }
+	});
+}
+
+void UEPFAsyncGetPlayerData::CancelWork()
+{
+	if (auto* Sub = GetGameInstanceSubsystem<UEPFPlayerDataSubsystem>())
+		Sub->OnPlayerDataReceived.RemoveDynamic(this, &UEPFAsyncGetPlayerData::HandleComplete);
 }
 
 void UEPFAsyncGetPlayerData::HandleComplete(const FEPFResult& Result)
 {
-	if (auto* Sub = GetEPFSubsystemFromContext<UEPFPlayerDataSubsystem>(WorldContext.Get()))
-		Sub->OnPlayerDataReceived.RemoveDynamic(this, &UEPFAsyncGetPlayerData::HandleComplete);
+	if (!IsResultForThisCall()) return;
+	CancelWork();
+	if (!FinishAction()) return;
 	Result.bSuccess ? OnSuccess.Broadcast() : BroadcastEPFFailure(OnFailure, MakeEPFAsyncError(Result, TEXT("Failed to get player data")));
-	SetReadyToDestroy();
 }
 
 // ── Set ──────────────────────────────────────────────────────────────────────
@@ -36,27 +44,32 @@ void UEPFAsyncGetPlayerData::HandleComplete(const FEPFResult& Result)
 UEPFAsyncSetPlayerData* UEPFAsyncSetPlayerData::SetPlayerData(UObject* WorldContext, const TMap<FString, FString>& Data)
 {
 	auto* Action = NewObject<UEPFAsyncSetPlayerData>();
-	Action->Data = Data;
-	Action->WorldContext = WorldContext;
-	Action->RegisterWithGameInstance(WorldContext);
+	Action->UpdatedData = Data;
+	Action->InitAsyncAction(WorldContext);
 	return Action;
 }
 
-void UEPFAsyncSetPlayerData::Activate()
+void UEPFAsyncSetPlayerData::ExecuteAction()
 {
-	if (Data.Num() == 0) { BroadcastEPFFailure(OnFailure, TEXT("Data map cannot be empty")); SetReadyToDestroy(); return; }
-	auto* Sub = GetEPFSubsystemFromContext<UEPFPlayerDataSubsystem>(WorldContext.Get());
-	if (!Sub) { BroadcastEPFFailure(OnFailure, TEXT("PlayerData subsystem not available")); SetReadyToDestroy(); return; }
+	if (UpdatedData.Num() == 0) { FailInvalidArgument(TEXT("Data map cannot be empty")); return; }
+	auto* Sub = RequireGameInstanceSubsystem<UEPFPlayerDataSubsystem>();
+	if (!Sub) return;
 	Sub->OnPlayerDataUpdated.AddDynamic(this, &UEPFAsyncSetPlayerData::HandleComplete);
-	Sub->SetPlayerData(Data);
+	CallWithContext([&] { Sub->SetPlayerData(UpdatedData); });
+}
+
+void UEPFAsyncSetPlayerData::CancelWork()
+{
+	if (auto* Sub = GetGameInstanceSubsystem<UEPFPlayerDataSubsystem>())
+		Sub->OnPlayerDataUpdated.RemoveDynamic(this, &UEPFAsyncSetPlayerData::HandleComplete);
 }
 
 void UEPFAsyncSetPlayerData::HandleComplete(const FEPFResult& Result)
 {
-	if (auto* Sub = GetEPFSubsystemFromContext<UEPFPlayerDataSubsystem>(WorldContext.Get()))
-		Sub->OnPlayerDataUpdated.RemoveDynamic(this, &UEPFAsyncSetPlayerData::HandleComplete);
+	if (!IsResultForThisCall()) return;
+	CancelWork();
+	if (!FinishAction()) return;
 	Result.bSuccess ? OnSuccess.Broadcast() : BroadcastEPFFailure(OnFailure, MakeEPFAsyncError(Result, TEXT("Failed to set player data")));
-	SetReadyToDestroy();
 }
 
 // ── Delete ───────────────────────────────────────────────────────────────────
@@ -64,25 +77,30 @@ void UEPFAsyncSetPlayerData::HandleComplete(const FEPFResult& Result)
 UEPFAsyncDeletePlayerData* UEPFAsyncDeletePlayerData::DeletePlayerData(UObject* WorldContext, const FString& Key)
 {
 	auto* Action = NewObject<UEPFAsyncDeletePlayerData>();
-	Action->Key = Key;
-	Action->WorldContext = WorldContext;
-	Action->RegisterWithGameInstance(WorldContext);
+	Action->DataKey = Key;
+	Action->InitAsyncAction(WorldContext);
 	return Action;
 }
 
-void UEPFAsyncDeletePlayerData::Activate()
+void UEPFAsyncDeletePlayerData::ExecuteAction()
 {
-	if (Key.IsEmpty()) { BroadcastEPFFailure(OnFailure, TEXT("Key cannot be empty")); SetReadyToDestroy(); return; }
-	auto* Sub = GetEPFSubsystemFromContext<UEPFPlayerDataSubsystem>(WorldContext.Get());
-	if (!Sub) { BroadcastEPFFailure(OnFailure, TEXT("PlayerData subsystem not available")); SetReadyToDestroy(); return; }
+	if (DataKey.IsEmpty()) { FailInvalidArgument(TEXT("Key cannot be empty")); return; }
+	auto* Sub = RequireGameInstanceSubsystem<UEPFPlayerDataSubsystem>();
+	if (!Sub) return;
 	Sub->OnPlayerDataUpdated.AddDynamic(this, &UEPFAsyncDeletePlayerData::HandleComplete);
-	Sub->DeletePlayerData(Key);
+	CallWithContext([&] { Sub->DeletePlayerData(DataKey); });
+}
+
+void UEPFAsyncDeletePlayerData::CancelWork()
+{
+	if (auto* Sub = GetGameInstanceSubsystem<UEPFPlayerDataSubsystem>())
+		Sub->OnPlayerDataUpdated.RemoveDynamic(this, &UEPFAsyncDeletePlayerData::HandleComplete);
 }
 
 void UEPFAsyncDeletePlayerData::HandleComplete(const FEPFResult& Result)
 {
-	if (auto* Sub = GetEPFSubsystemFromContext<UEPFPlayerDataSubsystem>(WorldContext.Get()))
-		Sub->OnPlayerDataUpdated.RemoveDynamic(this, &UEPFAsyncDeletePlayerData::HandleComplete);
+	if (!IsResultForThisCall()) return;
+	CancelWork();
+	if (!FinishAction()) return;
 	Result.bSuccess ? OnSuccess.Broadcast() : BroadcastEPFFailure(OnFailure, MakeEPFAsyncError(Result, TEXT("Failed to delete player data")));
-	SetReadyToDestroy();
 }

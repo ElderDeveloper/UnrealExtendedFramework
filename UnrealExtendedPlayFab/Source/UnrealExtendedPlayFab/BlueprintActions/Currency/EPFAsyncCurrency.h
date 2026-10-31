@@ -14,7 +14,7 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnEPFAsyncCurrencyModified, const F
 // ── Get Balances ─────────────────────────────────────────────────────────────
 
 UCLASS(meta = (DisplayName = "PlayFab: Get Currency Balances"))
-class UNREALEXTENDEDPLAYFAB_API UEPFAsyncGetBalances : public UBlueprintAsyncActionBase
+class UNREALEXTENDEDPLAYFAB_API UEPFAsyncGetBalances : public UEPFAsyncActionBase
 {
 	GENERATED_BODY()
 
@@ -23,18 +23,19 @@ public:
 	static UEPFAsyncGetBalances* GetBalances(UObject* WorldContext);
 
 	UPROPERTY(BlueprintAssignable) FOnEPFAsyncBalancesReceived OnSuccess;
-	UPROPERTY(BlueprintAssignable) FOnEPFAsyncFailed OnFailure;
-	virtual void Activate() override;
+
+protected:
+	virtual void ExecuteAction() override;
+	virtual void CancelWork() override;
 
 private:
-	TWeakObjectPtr<UObject> WorldContext;
 	UFUNCTION() void HandleComplete(const FEPFResult& Result, const TArray<FEPFCurrencyBalance>& Balances);
 };
 
 // ── Add Currency ─────────────────────────────────────────────────────────────
 
 UCLASS(meta = (DisplayName = "PlayFab: Add Currency"))
-class UNREALEXTENDEDPLAYFAB_API UEPFAsyncAddCurrency : public UBlueprintAsyncActionBase
+class UNREALEXTENDEDPLAYFAB_API UEPFAsyncAddCurrency : public UEPFAsyncActionBase
 {
 	GENERATED_BODY()
 
@@ -43,20 +44,21 @@ public:
 	static UEPFAsyncAddCurrency* AddCurrency(UObject* WorldContext, const FString& CurrencyCode, int32 Amount);
 
 	UPROPERTY(BlueprintAssignable) FOnEPFAsyncCurrencyModified OnSuccess;
-	UPROPERTY(BlueprintAssignable) FOnEPFAsyncFailed OnFailure;
-	virtual void Activate() override;
+
+protected:
+	virtual void ExecuteAction() override;
+	virtual void CancelWork() override;
 
 private:
-	FString CurrencyCode;
-	int32 Amount;
-	TWeakObjectPtr<UObject> WorldContext;
+	FString RequestedCurrencyCode;
+	int32 RequestedAmount = 0;
 	UFUNCTION() void HandleComplete(const FEPFResult& Result, const FString& Code);
 };
 
 // ── Subtract Currency ────────────────────────────────────────────────────────
 
 UCLASS(meta = (DisplayName = "PlayFab: Subtract Currency"))
-class UNREALEXTENDEDPLAYFAB_API UEPFAsyncSubtractCurrency : public UBlueprintAsyncActionBase
+class UNREALEXTENDEDPLAYFAB_API UEPFAsyncSubtractCurrency : public UEPFAsyncActionBase
 {
 	GENERATED_BODY()
 
@@ -65,12 +67,13 @@ public:
 	static UEPFAsyncSubtractCurrency* SubtractCurrency(UObject* WorldContext, const FString& CurrencyCode, int32 Amount);
 
 	UPROPERTY(BlueprintAssignable) FOnEPFAsyncCurrencyModified OnSuccess;
-	UPROPERTY(BlueprintAssignable) FOnEPFAsyncFailed OnFailure;
-	virtual void Activate() override;
+
+protected:
+	virtual void ExecuteAction() override;
+	virtual void CancelWork() override;
 
 private:
-	FString CurrencyCode;
-	int32 Amount;
-	TWeakObjectPtr<UObject> WorldContext;
+	FString RequestedCurrencyCode;
+	int32 RequestedAmount = 0;
 	UFUNCTION() void HandleComplete(const FEPFResult& Result, const FString& Code);
 };

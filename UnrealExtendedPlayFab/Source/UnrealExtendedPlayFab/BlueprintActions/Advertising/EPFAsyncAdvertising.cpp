@@ -1,7 +1,6 @@
 // Copyright Kemal Erdem YILMAZ. All Rights Reserved.
 
 #include "EPFAsyncAdvertising.h"
-#include "Engine/GameInstance.h"
 
 
 // ── Attribute Install ────────────────────────────────────────────────────────
@@ -11,25 +10,30 @@ UEPFAsyncAttributeInstall* UEPFAsyncAttributeInstall::AttributeInstall(UObject* 
 	auto* Action = NewObject<UEPFAsyncAttributeInstall>();
 	Action->IdType = AdvertisingIdType;
 	Action->IdValue = AdvertisingId;
-	Action->WorldContext = WorldContext;
-	Action->RegisterWithGameInstance(WorldContext);
+	Action->InitAsyncAction(WorldContext);
 	return Action;
 }
 
-void UEPFAsyncAttributeInstall::Activate()
+void UEPFAsyncAttributeInstall::ExecuteAction()
 {
-	auto* Sub = GetEPFSubsystemFromContext<UEPFAdvertisingSubsystem>(WorldContext.Get());
-	if (!Sub) { BroadcastEPFFailure(OnFailure, MakeEPFAsyncError(TEXT("Advertising subsystem not available"))); SetReadyToDestroy(); return; }
+	auto* Sub = RequireGameInstanceSubsystem<UEPFAdvertisingSubsystem>();
+	if (!Sub) return;
 	Sub->OnInstallAttributed.AddDynamic(this, &UEPFAsyncAttributeInstall::HandleComplete);
-	Sub->AttributeInstall(IdType, IdValue);
+	CallWithContext([&] { Sub->AttributeInstall(IdType, IdValue); });
+}
+
+void UEPFAsyncAttributeInstall::CancelWork()
+{
+	if (auto* Sub = GetGameInstanceSubsystem<UEPFAdvertisingSubsystem>())
+		Sub->OnInstallAttributed.RemoveDynamic(this, &UEPFAsyncAttributeInstall::HandleComplete);
 }
 
 void UEPFAsyncAttributeInstall::HandleComplete(const FEPFResult& Result)
 {
-	if (auto* Sub = GetEPFSubsystemFromContext<UEPFAdvertisingSubsystem>(WorldContext.Get()))
-		Sub->OnInstallAttributed.RemoveDynamic(this, &UEPFAsyncAttributeInstall::HandleComplete);
+	if (!IsResultForThisCall()) return;
+	CancelWork();
+	if (!FinishAction()) return;
 	Result.bSuccess ? OnSuccess.Broadcast() : BroadcastEPFFailure(OnFailure, MakeEPFAsyncError(Result, TEXT("Failed to attribute install")));
-	SetReadyToDestroy();
 }
 
 
@@ -38,25 +42,30 @@ void UEPFAsyncAttributeInstall::HandleComplete(const FEPFResult& Result)
 UEPFAsyncGetAdPlacements* UEPFAsyncGetAdPlacements::GetAdPlacements(UObject* WorldContext, const FString& AppId, const FString& Identifier)
 {
 	auto* Action = NewObject<UEPFAsyncGetAdPlacements>();
-	Action->AppId = AppId;
-	Action->Identifier = Identifier;
-	Action->WorldContext = WorldContext;
-	Action->RegisterWithGameInstance(WorldContext);
+	Action->PlacementAppId = AppId;
+	Action->PlacementIdentifier = Identifier;
+	Action->InitAsyncAction(WorldContext);
 	return Action;
 }
 
-void UEPFAsyncGetAdPlacements::Activate()
+void UEPFAsyncGetAdPlacements::ExecuteAction()
 {
-	auto* Sub = GetEPFSubsystemFromContext<UEPFAdvertisingSubsystem>(WorldContext.Get());
-	if (!Sub) { BroadcastEPFFailure(OnFailure, MakeEPFAsyncError(TEXT("Advertising subsystem not available"))); SetReadyToDestroy(); return; }
+	auto* Sub = RequireGameInstanceSubsystem<UEPFAdvertisingSubsystem>();
+	if (!Sub) return;
 	Sub->OnAdPlacementsReceived.AddDynamic(this, &UEPFAsyncGetAdPlacements::HandleComplete);
-	Sub->GetAdPlacements(AppId, Identifier);
+	CallWithContext([&] { Sub->GetAdPlacements(PlacementAppId, PlacementIdentifier); });
+}
+
+void UEPFAsyncGetAdPlacements::CancelWork()
+{
+	if (auto* Sub = GetGameInstanceSubsystem<UEPFAdvertisingSubsystem>())
+		Sub->OnAdPlacementsReceived.RemoveDynamic(this, &UEPFAsyncGetAdPlacements::HandleComplete);
 }
 
 void UEPFAsyncGetAdPlacements::HandleComplete(const FEPFResult& Result, const TArray<FEPFAdPlacement>& Placements)
 {
-	if (auto* Sub = GetEPFSubsystemFromContext<UEPFAdvertisingSubsystem>(WorldContext.Get()))
-		Sub->OnAdPlacementsReceived.RemoveDynamic(this, &UEPFAsyncGetAdPlacements::HandleComplete);
+	if (!IsResultForThisCall()) return;
+	CancelWork();
+	if (!FinishAction()) return;
 	Result.bSuccess ? OnSuccess.Broadcast(Placements) : BroadcastEPFFailure(OnFailure, MakeEPFAsyncError(Result, TEXT("Failed to get ad placements")));
-	SetReadyToDestroy();
 }
