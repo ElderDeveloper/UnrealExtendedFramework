@@ -8,6 +8,7 @@
 #include "EFFileLibraryPrivate.h"
 #include "HAL/PlatformProcess.h"
 #include "Misc/Paths.h"
+#include "UObject/Class.h"
 #include "UnrealExtendedFramework.h"
 
 namespace EFFileLibraryAccess

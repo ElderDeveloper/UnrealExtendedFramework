@@ -11,6 +11,7 @@
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
+#include "UObject/UObjectGlobals.h"
 #include "UObject/UnrealType.h"
 #include "XmlFile.h"
 
