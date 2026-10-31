@@ -8,6 +8,7 @@
 #include "UnrealExtendedFramework/Libraries/Math/EFMathLibrary.h"
 #include "UnrealExtendedFramework/Libraries/Trace/EFTraceLibrary.h"
 #include "UnrealExtendedGameplay/Animation/EGAnimNotifyHelpers.h"
+#include "UnrealExtendedGameplay/Animation/EGAnimTargeting.h"
 
 void UEGSoftLockNotify::NotifyBegin(USkeletalMeshComponent* MeshComp, UAnimSequenceBase* Animation, float TotalDuration, const FAnimNotifyEventReference& EventReference)
 {
@@ -115,6 +116,12 @@ AActor* UEGSoftLockNotify::FindSoftLockActor(USkeletalMeshComponent* MeshComp) c
 	if (!IsValid(Owner) || World == nullptr)
 	{
 		return nullptr;
+	}
+
+	// Agree with the lock-on systems before running a search of our own.
+	if (AActor* const Locked = EGAnimTargeting::GetLockedTarget(Owner))
+	{
+		return Locked;
 	}
 
 	FSphereTraceStruct SoftLockTrace = SoftLockActorTrace;

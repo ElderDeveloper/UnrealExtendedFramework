@@ -10,6 +10,9 @@
 /**
  * Moves the owner along its forward (turned by ForwardRotationPlus) for the length of the window.
  * Runs on the server and the owning client; simulated proxies get the move through replication.
+ *
+ * Sets the actor location directly, around character movement. For characters prefer Root Motion
+ * Move, which the movement component simulates and predicts.
  */
 UCLASS()
 class UNREALEXTENDEDGAMEPLAY_API UEGMoveForwardNotifyWindow : public UAnimNotifyState

@@ -1,4 +1,4 @@
-// Copyright Epic Games, Inc. All Rights Reserved.
+﻿// Copyright Epic Games, Inc. All Rights Reserved.
 
 using UnrealBuildTool;
 
@@ -39,6 +39,7 @@ public class UnrealExtendedGameplay : ModuleRules
 				"OnlineSubsystemUtils",
 				"OnlineSubsystemNull",
 				"Niagara",
+				"MotionWarping",
 				"PhysicsCore",
 				"AIModule",
 				"GameplayTags",

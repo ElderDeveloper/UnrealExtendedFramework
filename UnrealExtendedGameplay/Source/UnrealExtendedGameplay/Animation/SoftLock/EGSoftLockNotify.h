@@ -9,8 +9,12 @@
 #include "EGSoftLockNotify.generated.h"
 
 /**
- * Turns the owner towards the closest pawn in range for the length of the window. Runs on the
- * server and the owning client; simulated proxies get the rotation through replication.
+ * Turns the owner towards its lock-on target (UEGTargetingComponent / UEGDynamicTargetingComponent),
+ * else the closest pawn in range, for the length of the window. Runs on the server and the owning
+ * client; simulated proxies get the rotation through replication.
+ *
+ * For attacks driven by root motion, Set Warp Target with Motion Warping reaches the target too,
+ * instead of only turning towards it.
  */
 UCLASS()
 class UNREALEXTENDEDGAMEPLAY_API UEGSoftLockNotify : public UAnimNotifyState

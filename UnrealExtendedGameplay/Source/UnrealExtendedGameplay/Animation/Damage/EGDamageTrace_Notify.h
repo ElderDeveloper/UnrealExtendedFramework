@@ -98,6 +98,10 @@ public:
 /**
  * Traces between the trail's two sockets for the length of the window and damages each actor it
  * touches once per window. Inherits the trail notify, so a trail effect can be set as well.
+ *
+ * Superseded by the Melee Window notify with UEGMeleeTraceComponent, which sweeps between frames
+ * (fast swings cannot skip a target), supports weapons as separate actors and takes a pluggable
+ * damage policy. Kept so existing animations keep working.
  */
 UCLASS()
 class UNREALEXTENDEDGAMEPLAY_API UEGDamageTrace_Notify : public UAnimNotifyState_Trail
