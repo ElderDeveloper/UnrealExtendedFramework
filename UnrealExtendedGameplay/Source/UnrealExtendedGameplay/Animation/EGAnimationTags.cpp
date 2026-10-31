@@ -26,3 +26,13 @@ UE_DEFINE_GAMEPLAY_TAG(TAG_EGAnim_State_Cover_Moving, "ExtendedGameplay.Anim.Sta
 UE_DEFINE_GAMEPLAY_TAG(TAG_EGAnim_State_Cover_Left, "ExtendedGameplay.Anim.State.Cover.Left");
 UE_DEFINE_GAMEPLAY_TAG(TAG_EGAnim_State_Cover_Right, "ExtendedGameplay.Anim.State.Cover.Right");
 UE_DEFINE_GAMEPLAY_TAG(TAG_EGAnim_State_Cover_Montage, "ExtendedGameplay.Anim.State.Cover.Montage");
+
+UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_EGTurnInPlace_Mode_Movement, "ExtendedGameplay.TurnInPlace.Mode.Movement", "Turn angles used while orienting to movement.");
+UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_EGTurnInPlace_Mode_Strafe, "ExtendedGameplay.TurnInPlace.Mode.Strafe", "Turn angles used while strafing (facing the control rotation).");
+UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_EGTurnInPlace_Pause, "ExtendedGameplay.TurnInPlace.Pause", "Anim event window: turn in place is paused while it is open.");
+UE_DEFINE_GAMEPLAY_TAG_COMMENT(TAG_EGTurnInPlace_Lock, "ExtendedGameplay.TurnInPlace.Lock", "Anim event window: turn in place is locked while it is open.");
+UE_DEFINE_GAMEPLAY_TAG(TAG_EGTurnInPlace_State_Turning, "ExtendedGameplay.TurnInPlace.State.Turning");
+UE_DEFINE_GAMEPLAY_TAG(TAG_EGTurnInPlace_State_Locked, "ExtendedGameplay.TurnInPlace.State.Locked");
+UE_DEFINE_GAMEPLAY_TAG(TAG_EGTurnInPlace_State_Paused, "ExtendedGameplay.TurnInPlace.State.Paused");
+UE_DEFINE_GAMEPLAY_TAG(TAG_EGTurnInPlace_State_Left, "ExtendedGameplay.TurnInPlace.State.Left");
+UE_DEFINE_GAMEPLAY_TAG(TAG_EGTurnInPlace_State_Right, "ExtendedGameplay.TurnInPlace.State.Right");

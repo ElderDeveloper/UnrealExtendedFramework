@@ -55,6 +55,7 @@ public class UnrealExtendedGameplay : ModuleRules
 			{
 				"CoreUObject",
 				"Engine",
+				"NetCore",
 				"EngineSettings",
 				"Slate",
 				"SlateCore",
