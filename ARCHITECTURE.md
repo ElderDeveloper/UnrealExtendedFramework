@@ -123,14 +123,15 @@ copyright line; third-party and vendored code keeps its original notice.
 ## Tests and checks
 
 - Automation tests live in each module's `Private/Tests` (or the plugin's test module), run offline,
-  and use `FEFScopedHttpMock` instead of real services. Test names start with the plugin or module
-  name, so `Automation RunTests ExtendedFoundation` or `Automation RunTests UnrealExtendedPlayFab`
-  runs one plugin.
+  and use `FEFScopedHttpMock` instead of real services. New test names start with the plugin name
+  (`UnrealExtendedPlayFab.`, `ExtendedFoundation.`), so `Automation RunTests <prefix>` runs one plugin.
+  Older suites use `ExtendedFramework.` (Log, Log Viewer, UI Lab), `ExtendedAtlassian.`,
+  `QuestPlugin.` and `PerfSentinel.`.
 - `python3 Scripts/lint_repository.py` checks descriptors, cross-plugin and cross-module
   dependencies, copyright headers and redirect syntax without Unreal. CI runs it on every push.
 - Building and running the automation tests needs Unreal Engine, so it runs on a developer machine
   or a self-hosted runner:
 
   ```text
-  UnrealEditor-Cmd.exe YourProject.uproject -ExecCmds="Automation RunTests ExtendedFoundation+UnrealExtended;Quit" -unattended -nop4 -NullRHI -TestExit="Automation Test Queue Empty"
+  UnrealEditor-Cmd.exe YourProject.uproject -ExecCmds="Automation RunTests ExtendedFoundation+ExtendedFramework+UnrealExtended+ExtendedAtlassian+QuestPlugin+PerfSentinel;Quit" -unattended -nop4 -NullRHI -TestExit="Automation Test Queue Empty"
   ```

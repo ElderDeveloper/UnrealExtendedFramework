@@ -51,7 +51,7 @@ enum class EEGQuestTextInputKeyForNewLine : uint8
 	ShiftPlusEnter		UMETA(DisplayName = "Shift + Enter"),
 };
 
-// Defines how the overriden namespace will be set
+// Defines how the overridden namespace will be set
 UENUM()
 enum class EEGQuestTextNamespaceLocalization : uint8
 {

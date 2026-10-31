@@ -8,7 +8,7 @@
 #include "EFLogViewerSettings.generated.h"
 
 /**
- * Editor Preferences > Plugins > Extended Log Viewer. Per user, per project: which tabs were open
+ * Editor Preferences > Extended Framework > Extended Log Viewer. Per user, per project: which tabs were open
  * and which were closed on purpose live here too, so the window comes back as it was left.
  */
 UCLASS(config = EditorPerProjectUserSettings, meta = (DisplayName = "Extended Log Viewer"))

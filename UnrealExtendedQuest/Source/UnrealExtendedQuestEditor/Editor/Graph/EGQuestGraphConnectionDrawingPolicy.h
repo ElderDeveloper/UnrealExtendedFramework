@@ -11,7 +11,7 @@ class FSlateWindowElementList;
 class UEdGraph;
 
 // This class draws the connections for an UEdGraph using a Quest schema
-// Aka how the wires look and and the flow look.
+// Aka how the wires and the flow look.
 class FEGQuestGraphConnectionDrawingPolicy : public FConnectionDrawingPolicy
 {
 	typedef FConnectionDrawingPolicy Super;
