@@ -15,7 +15,6 @@
 #include "Framework/MultiBox/MultiBoxBuilder.h"
 #include "Kismet2/KismetEditorUtilities.h"
 #include "K2Node_Event.h"
-#include "Runtime/Launch/Resources/Version.h"
 
 #include "Factories/EGQuestGraphFactories.h"
 #include "AssetTypeActions/EGQuestGraphAssetTypeActions.h"
@@ -50,21 +49,15 @@ FEGQuestPluginEditorModule::FEGQuestPluginEditorModule() : QuestPluginAssetCateg
 
 void FEGQuestPluginEditorModule::StartupModule()
 {
-#if NY_ENGINE_VERSION >= 424
 	// Ensure custom Blueprint object types are registered before editor use.
 	const FString LongName = FPackageName::ConvertToLongScriptPackageName(TEXT("UnrealExtendedQuestEditor"));
 	if (UPackage* Package = Cast<UPackage>(StaticFindObjectFast(UPackage::StaticClass(), nullptr, *LongName)))
 	{
 		Package->SetPackageFlags(PKG_EditorOnly);
 	}
-#endif
 
 	UE_LOG(LogEGQuestPluginEditor, Log, TEXT("QuestPluginEditorModule: StartupModule"));
-#if NY_ENGINE_VERSION >= 508
 	OnPostEngineInitHandle = FCoreDelegates::GetOnPostEngineInit().AddRaw(this, &Self::HandleOnPostEngineInit);
-#else
-	OnPostEngineInitHandle = FCoreDelegates::OnPostEngineInit.AddRaw(this, &Self::HandleOnPostEngineInit);
-#endif
 	OnBeginPIEHandle = FEditorDelegates::BeginPIE.AddRaw(this, &Self::HandleOnBeginPIE);
 	OnPostPIEStartedHandle = FEditorDelegates::PostPIEStarted.AddRaw(this, &Self::HandleOnPostPIEStarted);
 	OnEndPIEHandle = FEditorDelegates::EndPIE.AddRaw(this, &Self::HandleOnEndPIEHandle);
@@ -247,11 +240,7 @@ void FEGQuestPluginEditorModule::ShutdownModule()
 	}
 	if (OnPostEngineInitHandle.IsValid())
 	{
-#if NY_ENGINE_VERSION >= 508
 		FCoreDelegates::GetOnPostEngineInit().Remove(OnPostEngineInitHandle);
-#else
-		FCoreDelegates::OnPostEngineInit.Remove(OnPostEngineInitHandle);
-#endif
 	}
 
 	UE_LOG(LogEGQuestPluginEditor, Log, TEXT("QuestPluginEditorModule: ShutdownModule"));

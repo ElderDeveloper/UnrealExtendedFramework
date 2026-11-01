@@ -15,7 +15,7 @@
 UEdGraphNode* FEGQuestNewNode_GraphSchemaAction::PerformAction(
 	UEdGraph* ParentGraph,
 	UEdGraphPin* FromPin,
-	FNYLocationVector2f Location,
+	const FVector2f& Location,
 	bool bSelectNewNode/* = true*/
 )
 {
@@ -46,7 +46,7 @@ UEdGraphNode* FEGQuestNewNode_GraphSchemaAction::CreateNode(
 	UEGQuestGraph* Quest,
 	UEdGraph* ParentGraph,
 	UEdGraphPin* FromPin,
-	FNYVector2f Location,
+	FVector2f Location,
 	bool bSelectNewNode
 )
 {

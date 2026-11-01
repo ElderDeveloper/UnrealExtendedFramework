@@ -6,7 +6,6 @@
 #include "IPropertyUtilities.h"
 
 #include "UnrealExtendedQuest/EGQuestLocalizationHelper.h"
-#include "UnrealExtendedQuest/NYEngineVersionHelpers.h"
 
 // FROM: FTextCustomization
 // Allows us to edit a property handle
@@ -108,11 +107,7 @@ public:
 	}
 #endif // USE_STABLE_LOCALIZATION_KEYS
 
-#if NY_ENGINE_VERSION >= 501
 	void RequestRefresh()
-#else
-	void RequestRefresh() override
-#endif // NY_ENGINE_VERSION <= 500
 	{
 		if (PropertyUtilities.IsValid())
 		{

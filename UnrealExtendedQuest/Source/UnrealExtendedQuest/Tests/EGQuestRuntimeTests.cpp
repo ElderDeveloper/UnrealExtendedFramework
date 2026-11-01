@@ -544,8 +544,7 @@ bool FEGQuestLevelQuestAssetsAutomationTest::RunTest(const FString& Parameters)
 		}
 		for (int32 Index = 0; Index < Objectives.Num() && Index < Expected.EventTags.Num(); ++Index)
 		{
-			// Legacy assets migrate their fields into trackers in PostLoad and new assets author
-			// trackers directly, so the presented accessor reads the tag either way.
+			// Objectives author their trackers directly; the presented accessor reads the counted tag.
 			TestTrue(TEXT("Objective counts a gameplay event"), Objectives[Index]->GetPresentedEventTag().IsValid());
 			TestEqual(TEXT("Objective completion tag is in authored order"),
 				Objectives[Index]->GetPresentedEventTag().ToString(), FString(Expected.EventTags[Index]));
@@ -1195,22 +1194,6 @@ bool FEGQuestTrackerLibrarySimulatorAutomationTest::RunTest(const FString& Param
 	const FGameplayTag Ritual = FGameplayTag::RequestGameplayTag(TEXT("DOP.Quest.Ritual.Completed"), false);
 	const FGameplayTag Gate = FGameplayTag::RequestGameplayTag(TEXT("DOP.Quest.Castle.GateOpened"), false);
 	const FGameplayTag Book = FGameplayTag::RequestGameplayTag(TEXT("DOP.Quest.Castle.BookAcquired"), false);
-
-	// Legacy fields migrate to an ordinary inline EventCount tracker. The fields are load-only with
-	// no setters, so write them the way serialization does: through the property system.
-	UEGQuestNode_Objective* Legacy = NewObject<UEGQuestNode_Objective>();
-	{
-		FStructProperty* TagProperty = CastFieldChecked<FStructProperty>(
-			UEGQuestNode_Objective::StaticClass()->FindPropertyByName(TEXT("EventTag")));
-		*TagProperty->ContainerPtrToValuePtr<FGameplayTag>(Legacy) = Ritual;
-		FIntProperty* CountProperty = CastFieldChecked<FIntProperty>(
-			UEGQuestNode_Objective::StaticClass()->FindPropertyByName(TEXT("RequiredCount")));
-		CountProperty->SetPropertyValue_InContainer(Legacy, 3);
-	}
-	Legacy->PostLoad();
-	const UEGQuestTracker_EventCount* Migrated = Cast<UEGQuestTracker_EventCount>(Legacy->GetTracker());
-	TestNotNull(TEXT("Legacy event fields migrate to EventCount"), Migrated);
-	if (Migrated) TestEqual(TEXT("Migration preserves required count"), Migrated->RequiredCount, 3);
 
 	// Fact is retroactive: activation observes truth that predates the quest.
 	Facts->SetFact(Ritual, 2);

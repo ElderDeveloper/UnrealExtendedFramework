@@ -9,7 +9,6 @@
 #include "FileHelpers.h"
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "Kismet2/SClassPickerDialog.h"
-#include "Runtime/Launch/Resources/Version.h"
 #include "Engine/Blueprint.h"
 
 #include "EGQuestPluginEditorModule.h"
@@ -180,11 +179,7 @@ UEdGraph* FEGQuestEditorUtilities::CreateNewGraph(
 	bool bRename = false;
 
 	// UE 5.8 no longer resets loaders in Rename and deprecated the flag that skipped it.
-#if NY_ENGINE_VERSION >= 508
 	constexpr ERenameFlags GraphRenameFlags = REN_DoNotDirty;
-#else
-	constexpr ERenameFlags GraphRenameFlags = REN_DoNotDirty | REN_ForceNoResetLoaders;
-#endif
 
 	// Ensure this name isn't already being used for a graph
 	if (GraphName != NAME_None)
@@ -559,11 +554,7 @@ void FEGQuestEditorUtilities::CloseOtherEditors(UObject* Asset, IAssetEditorInst
 		return;
 	}
 
-#if NY_ENGINE_VERSION >= 424
 	GEditor->GetEditorSubsystem<UAssetEditorSubsystem>()->CloseOtherEditors(Asset, OnlyEditor);
-#else
-	FAssetEditorManager::Get().CloseOtherEditors(Asset, OnlyEditor);
-#endif
 }
 
 bool FEGQuestEditorUtilities::OpenEditorForAsset(const UObject* Asset)
@@ -573,11 +564,7 @@ bool FEGQuestEditorUtilities::OpenEditorForAsset(const UObject* Asset)
 		return false;
 	}
 
-#if NY_ENGINE_VERSION >= 424
 	return GEditor->GetEditorSubsystem<UAssetEditorSubsystem>()->OpenEditorForAsset(const_cast<UObject*>(Asset));
-#else
-	return FAssetEditorManager::Get().OpenEditorForAsset(const_cast<UObject*>(Asset));
-#endif
 }
 
 IAssetEditorInstance* FEGQuestEditorUtilities::FindEditorForAsset(UObject* Asset, bool bFocusIfOpen)
@@ -587,11 +574,7 @@ IAssetEditorInstance* FEGQuestEditorUtilities::FindEditorForAsset(UObject* Asset
 		return nullptr;
 	}
 
-#if NY_ENGINE_VERSION >= 424
 	return GEditor->GetEditorSubsystem<UAssetEditorSubsystem>()->FindEditorForAsset(Asset, bFocusIfOpen);
-#else
-	return FAssetEditorManager::Get().FindEditorForAsset(Asset, bFocusIfOpen);
-#endif
 }
 
 bool FEGQuestEditorUtilities::OpenEditorAndJumpToGraphNode(const UEdGraphNode* GraphNode, bool bFocusIfOpen /*= false*/)
@@ -726,11 +709,7 @@ bool FEGQuestEditorUtilities::PickChildrenOfClass(const FText& TitleText, UClass
 
 	const UEGQuestPluginSettings* Settings = GetDefault<UEGQuestPluginSettings>();
 	Options.DisplayMode = Settings->GetUnrealClassPickerDisplayMode();
-#if NY_ENGINE_VERSION >= 500
 	Options.ClassFilters.Add(Filter.ToSharedRef());
-#else
-	Options.ClassFilter = Filter;
-#endif
 	Options.bShowUnloadedBlueprints = true;
 	Options.bExpandRootNodes = true;
 	Options.NameTypeToDisplay = EClassViewerNameTypeToDisplay::Dynamic;
@@ -892,7 +871,7 @@ UK2Node_Event* FEGQuestEditorUtilities::BlueprintGetEvent(UBlueprint* Blueprint,
 	return nullptr;
 }
 
-UEdGraphNode_Comment* FEGQuestEditorUtilities::BlueprintAddComment(UBlueprint* Blueprint, const FString& CommentString, FNYVector2f Location)
+UEdGraphNode_Comment* FEGQuestEditorUtilities::BlueprintAddComment(UBlueprint* Blueprint, const FString& CommentString, FVector2f Location)
 {
 	if (!Blueprint || Blueprint->BlueprintType != BPTYPE_Normal || Blueprint->UbergraphPages.Num() == 0)
 	{

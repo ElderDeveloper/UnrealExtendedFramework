@@ -60,11 +60,6 @@ void UEGASAsync_WaitGameplayEffectStackChanged::EndAction()
 	Super::EndAction();
 }
 
-void UEGASAsync_WaitGameplayEffectStackChanged::EndTask()
-{
-	EndAction();
-}
-
 void UEGASAsync_WaitGameplayEffectStackChanged::HandleActiveGameplayEffectAdded(
 	UAbilitySystemComponent* Target,
 	const FGameplayEffectSpec& SpecApplied,

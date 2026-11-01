@@ -17,6 +17,7 @@
 #include "SEGQuestGraphPin.h"
 #include "UnrealExtendedQuestEditor/EGQuestStyle.h"
 #include "UnrealExtendedQuest/EGQuestGraph.h"
+#include "Styling/AppStyle.h"
 
 #define LOCTEXT_NAMESPACE "QuestEditor"
 
@@ -34,7 +35,7 @@ void SEGQuestGraphNode::Construct(const FArguments& InArgs, UEGQuestGraphNode* I
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Begin SNodePanel::SNode Interface
-TArray<FOverlayWidgetInfo> SEGQuestGraphNode::GetOverlayWidgets(bool bSelected, const FNYVector2f& WidgetSize) const
+TArray<FOverlayWidgetInfo> SEGQuestGraphNode::GetOverlayWidgets(bool bSelected, const FVector2f& WidgetSize) const
 {
 	TArray<FOverlayWidgetInfo> Widgets;
 
@@ -42,7 +43,7 @@ TArray<FOverlayWidgetInfo> SEGQuestGraphNode::GetOverlayWidgets(bool bSelected, 
 	if (JoinOverlayWidget.IsValid() && IsJoinDestination())
 	{
 		FOverlayWidgetInfo Overlay(JoinOverlayWidget);
-		Overlay.OverlayOffset = FNYVector2f(-JoinOverlayWidget->GetDesiredSize().X / 1.5f, 0.0f);
+		Overlay.OverlayOffset = FVector2f(-JoinOverlayWidget->GetDesiredSize().X / 1.5f, 0.0f);
 		Widgets.Add(Overlay);
 	}
 
@@ -79,7 +80,7 @@ void SEGQuestGraphNode::UpdateGraphNode()
 				SNew(STextBlock)
 				.Text(LOCTEXT("JoinBadge", "ALL"))
 				.ColorAndOpacity(FLinearColor::White)
-				.Font(FNYAppStyle::GetFontStyle("BTEditor.Graph.BTNode.IndexText"))
+				.Font(FAppStyle::GetFontStyle("BTEditor.Graph.BTNode.IndexText"))
 			]
 		)
 		.ToolTipText(LOCTEXT("JoinBadgeTooltip", "This node is a join: it fires only when every arrow pointing into it is satisfied."))
@@ -106,7 +107,7 @@ void SEGQuestGraphNode::UpdateGraphNode()
 				.VAlign(VAlign_Center)
 				[
 					SNew(SBorder)
-					.BorderImage(FNYAppStyle::GetBrush("Graph.StateNode.Body"))
+					.BorderImage(FAppStyle::GetBrush("Graph.StateNode.Body"))
 					.Padding(0)
 					.BorderBackgroundColor(Settings->BorderBackgroundColor)
 					[
@@ -123,7 +124,7 @@ void SEGQuestGraphNode::UpdateGraphNode()
 				.VAlign(VAlign_Center)
 				[
 					SNew(SBorder)
-					.BorderImage(FNYAppStyle::GetBrush("Graph.StateNode.Body"))
+					.BorderImage(FAppStyle::GetBrush("Graph.StateNode.Body"))
 					.Padding(0)
 					.BorderBackgroundColor(Settings->BorderBackgroundColor)
 					[
@@ -168,13 +169,8 @@ void SEGQuestGraphNode::UpdateGraphNode()
 
 		// Add it at the top, right above
 		GetOrAddSlot(ENodeZone::TopCenter)
-#if NY_ENGINE_VERSION >= 506
 			.SlotOffset2f(TAttribute<FVector2f>(CommentBubble.Get(), &SCommentBubble::GetOffset2f))
 			.SlotSize2f(TAttribute<FVector2f>(CommentBubble.Get(), &SCommentBubble::GetSize2f))
-#else
-			.SlotOffset(TAttribute<FVector2D>(CommentBubble.Get(), &SCommentBubble::GetOffset))
-			.SlotSize(TAttribute<FVector2D>(CommentBubble.Get(), &SCommentBubble::GetSize))
-#endif
 			.AllowScaling(TAttribute<bool>(CommentBubble.Get(), &SCommentBubble::IsScalingAllowed))
 			.VAlign(VAlign_Top)
 			[
@@ -222,7 +218,7 @@ TSharedRef<SWidget> SEGQuestGraphNode::GetNodeBodyWidget()
 
 	NodeBodyWidget =
 		SNew(SBorder)
-		.BorderImage(FNYAppStyle::GetBrush("BTEditor.Graph.BTNode.Body"))
+		.BorderImage(FAppStyle::GetBrush("BTEditor.Graph.BTNode.Body"))
 		.BorderBackgroundColor(this, &Self::GetBackgroundColor)
 		.HAlign(HAlign_Fill)
 		.VAlign(VAlign_Center)
@@ -301,7 +297,7 @@ TSharedRef<SWidget> SEGQuestGraphNode::GetNodeBodyWidget()
 		.Padding(6.0f, 2.0f, 6.0f, 5.0f)
 		[
 			SNew(SButton)
-			.ButtonStyle(FNYAppStyle::Get(), "NoBorder")
+			.ButtonStyle(FAppStyle::Get(), "NoBorder")
 			.ContentPadding(FMargin(2.0f, 0.0f))
 			.OnClicked(this, &Self::OnAddObjectiveClicked)
 			.ToolTipText(LOCTEXT("AddObjectiveTooltip", "Adds an objective to this stage's checklist"))
@@ -368,7 +364,7 @@ TSharedRef<SWidget> SEGQuestGraphNode::GetTitleWidget()
 				.AutoHeight()
 				[
 					SNew(STextBlock)
-					.TextStyle(FNYAppStyle::Get(), "Graph.StateNode.NodeTitle")
+					.TextStyle(FAppStyle::Get(), "Graph.StateNode.NodeTitle")
 					.Text(NodeTitleMultipleLines.Get(), &SNodeTitle::GetHeadTitle)
 				]
 
@@ -444,7 +440,7 @@ TSharedRef<SWidget> SEGQuestGraphNode::BuildObjectiveRow(UEGQuestNode_Objective*
 					return FText::FromString(Row->GetEditorDisplayString(Node->GetQuest()));
 				})
 				.ColorAndOpacity(FLinearColor(1.f, 1.f, 1.f, 0.45f))
-				.Font(FNYAppStyle::GetFontStyle("Graph.StateNode.NodeTitleExtraLines"))
+				.Font(FAppStyle::GetFontStyle("Graph.StateNode.NodeTitleExtraLines"))
 				.WrapTextAt(Settings->DescriptionWrapTextAt)
 			]
 
@@ -507,7 +503,7 @@ TSharedRef<SWidget> SEGQuestGraphNode::BuildRoutePriorityRows(UEGQuestNode* Sour
 				.Text(FText::Format(LOCTEXT("RoutePriorityLabel", "{0} -> {1}"),
 					FText::FromString(OutcomeLabel), FText::FromString(DestinationLabel)))
 				.ColorAndOpacity(FLinearColor(1.f, 1.f, 1.f, 0.4f))
-				.Font(FNYAppStyle::GetFontStyle("Graph.StateNode.NodeTitleExtraLines"))
+				.Font(FAppStyle::GetFontStyle("Graph.StateNode.NodeTitleExtraLines"))
 			]
 
 			+SHorizontalBox::Slot()
@@ -605,7 +601,7 @@ void SEGQuestGraphNode::AddEnterEventRows(const TSharedRef<SVerticalBox>& NodeVe
 					return FText::FromString(Events[EventIndex]->GetEditorDisplayString(Node->GetQuest()));
 				})
 				.ColorAndOpacity(FLinearColor(1.f, 1.f, 1.f, 0.5f))
-				.Font(FNYAppStyle::GetFontStyle("Graph.StateNode.NodeTitleExtraLines"))
+				.Font(FAppStyle::GetFontStyle("Graph.StateNode.NodeTitleExtraLines"))
 				.WrapTextAt(Settings->DescriptionWrapTextAt)
 				.ToolTipText(NSLOCTEXT("QuestEditor", "EnterEventRowTooltip", "Enter event: fires when this node is entered."))
 			]

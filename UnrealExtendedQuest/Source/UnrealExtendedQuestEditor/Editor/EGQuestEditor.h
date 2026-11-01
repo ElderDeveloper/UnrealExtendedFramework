@@ -12,7 +12,6 @@
 #include "UnrealExtendedQuestEditor/EGQuestEditorUtilities.h"
 #include "UnrealExtendedQuest/EGQuestGraph.h"
 #include "UnrealExtendedQuest/EGQuestPluginSettings.h"
-#include "UnrealExtendedQuest/NYEngineVersionHelpers.h"
 
 class IDetailsView;
 class UEGQuestGraph;
@@ -87,12 +86,10 @@ public:
 		Collector.AddReferencedObject(QuestBeingEdited);
 	}
 
-#if NY_ENGINE_VERSION >= 500
 	virtual FString GetReferencerName() const override
 	{
 		return TEXT("FEGQuestEditor");
 	}
-#endif
 
 
 	//
@@ -246,7 +243,7 @@ private:
 	void OnCommandPasteNodes();
 
 	// Paste the nodes at the specified Location.
-	void PasteNodesHere(const FNYVector2f& Location);
+	void PasteNodesHere(const FVector2f& Location);
 
 	// Whether we are able to paste from the clipboard
 	bool CanPasteNodes() const;
@@ -270,7 +267,7 @@ private:
 
 	// Called to create context menu when right-clicking on graph
 	FActionMenuContent OnCreateGraphActionMenu(UEdGraph* InGraph,
-		const FNYVector2f& InNodePosition,
+		const FVector2f& InNodePosition,
 		const TArray<UEdGraphPin*>& InDraggedPins,
 		bool bAutoExpand,
 		SGraphEditor::FActionMenuClosed InOnMenuClosed);

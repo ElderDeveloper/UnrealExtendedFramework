@@ -13,6 +13,7 @@
 #include "UnrealExtendedQuestEditor/Editor/EGQuestEditor.h"
 #include "EGQuestSearchResult.h"
 #include "EGQuestSearchManager.h"
+#include "Styling/AppStyle.h"
 
 
 #define LOCTEXT_NAMESPACE "SEGQuestFindInQuests"
@@ -65,7 +66,7 @@ void SEGQuestFindInQuests::Construct(const FArguments& InArgs, const TSharedPtr<
 			.Padding(2.0f, 2.0f)
 			[
 				SNew(SComboButton)
-				.ComboButtonStyle(FNYAppStyle::Get(), "GenericFilters.ComboButtonStyle")
+				.ComboButtonStyle(FAppStyle::Get(), "GenericFilters.ComboButtonStyle")
 				.ForegroundColor(FLinearColor::White)
 				.ContentPadding(0)
 				.ToolTipText(LOCTEXT("Filters_Tooltip", "Filter options for the Quest Search."))
@@ -79,8 +80,8 @@ void SEGQuestFindInQuests::Construct(const FArguments& InArgs, const TSharedPtr<
 					.AutoWidth()
 					[
 						SNew(STextBlock)
-						.TextStyle(FNYAppStyle::Get(), "GenericFilters.TextStyle")
-						.Font(FNYAppStyle::Get().GetFontStyle("FontAwesome.9"))
+						.TextStyle(FAppStyle::Get(), "GenericFilters.TextStyle")
+						.Font(FAppStyle::Get().GetFontStyle("FontAwesome.9"))
 						.Text(FText::FromString(FString(TEXT("\xf0b0"))) /*fa-filter*/)
 					]
 					+SHorizontalBox::Slot()
@@ -88,7 +89,7 @@ void SEGQuestFindInQuests::Construct(const FArguments& InArgs, const TSharedPtr<
 					.Padding(2, 0, 0, 0)
 					[
 						SNew(STextBlock)
-						.TextStyle(FNYAppStyle::Get(), "GenericFilters.TextStyle")
+						.TextStyle(FAppStyle::Get(), "GenericFilters.TextStyle")
 						.Text(LOCTEXT("Filters", "Filters"))
 					]
 				]
@@ -106,7 +107,7 @@ void SEGQuestFindInQuests::Construct(const FArguments& InArgs, const TSharedPtr<
 				.ToolTipText(LOCTEXT("OpenInGlobalFindResultsButtonTooltip", "Find in all Quests"))
 				[
 					SNew(STextBlock)
-					.TextStyle(FNYAppStyle::Get(), "FindResults.FindInBlueprints")
+					.TextStyle(FAppStyle::Get(), "FindResults.FindInBlueprints")
 					.Text(FText::FromString(FString(TEXT("\xf1e5"))) /*fa-binoculars*/)
 				]
 			]
@@ -133,7 +134,7 @@ void SEGQuestFindInQuests::Construct(const FArguments& InArgs, const TSharedPtr<
 		.Padding(0.f, 4.f, 0.f, 0.f)
 		[
 			SNew(SBorder)
-			.BorderImage(FNYAppStyle::GetBrush("Menu.Background"))
+			.BorderImage(FAppStyle::GetBrush("Menu.Background"))
 			[
 				SAssignNew(TreeView, STreeView<TSharedPtr<FEGQuestSearchResult>>)
 				// .ItemHeight(24)
@@ -328,9 +329,9 @@ TSharedRef<ITableRow> SEGQuestFindInQuests::HandleGenerateRow(TSharedPtr<FEGQues
 			[
 				SNew(SBorder)
 				.VAlign(VAlign_Center)
-				.BorderImage(FNYAppStyle::GetBrush("PropertyWindow.CategoryBackground"))
+				.BorderImage(FAppStyle::GetBrush("PropertyWindow.CategoryBackground"))
 				.Padding(FMargin(2.0f))
-				.ForegroundColor(FNYAppStyle::GetColor("PropertyWindow.CategoryForeground"))
+				.ForegroundColor(FAppStyle::GetColor("PropertyWindow.CategoryForeground"))
 				[
 					SNew(SHorizontalBox)
 

@@ -13,7 +13,7 @@ void UEPFAdvertisingSubsystem::AttributeInstall(const FString& AdvertisingIdType
 	TSharedRef<FJsonObject> Body = MakeShared<FJsonObject>();
 	Body->SetStringField(*AdvertisingIdType, AdvertisingId);
 
-	SendPlayFabRequestDetailed(TEXT("/Client/AttributeInstall"), Body, true,
+	SendPlayFabRequestDetailed(TEXT("/Client/AttributeInstall"), Body, EEPFAuthMode::SessionTicket,
 		FOnPlayFabResponseDetailed::CreateLambda([this](const FEPFResult& Result, TSharedPtr<FJsonObject>)
 		{
 			if (Result.bSuccess) EF_LOG(ExtendedPlayFab, Log, TEXT("EPFAdvertising — Install attributed"));
@@ -31,7 +31,7 @@ void UEPFAdvertisingSubsystem::GetAdPlacements(const FString& AppId, const FStri
 	IdObj->SetStringField(TEXT("Name"), Identifier.IsEmpty() ? TEXT("default") : Identifier);
 	Body->SetObjectField(TEXT("Identifier"), IdObj);
 
-	SendPlayFabRequestDetailed(TEXT("/Client/GetAdPlacements"), Body, true,
+	SendPlayFabRequestDetailed(TEXT("/Client/GetAdPlacements"), Body, EEPFAuthMode::SessionTicket,
 		FOnPlayFabResponseDetailed::CreateLambda([this](const FEPFResult& Result, TSharedPtr<FJsonObject> Response)
 		{
 			TArray<FEPFAdPlacement> Placements;
@@ -70,7 +70,7 @@ void UEPFAdvertisingSubsystem::ReportAdActivity(const FString& PlacementId, cons
 	Body->SetStringField(TEXT("RewardId"), RewardId);
 	Body->SetStringField(TEXT("Activity"), Activity);
 
-	SendPlayFabRequestDetailed(TEXT("/Client/ReportAdActivity"), Body, true,
+	SendPlayFabRequestDetailed(TEXT("/Client/ReportAdActivity"), Body, EEPFAuthMode::SessionTicket,
 		FOnPlayFabResponseDetailed::CreateLambda([this](const FEPFResult& Result, TSharedPtr<FJsonObject>)
 		{
 			OnAdActivityReported.Broadcast(Result);
@@ -84,7 +84,7 @@ void UEPFAdvertisingSubsystem::RewardAdActivity(const FString& PlacementId, cons
 	Body->SetStringField(TEXT("PlacementId"), PlacementId);
 	Body->SetStringField(TEXT("RewardId"), RewardId);
 
-	SendPlayFabRequestDetailed(TEXT("/Client/RewardAdActivity"), Body, true,
+	SendPlayFabRequestDetailed(TEXT("/Client/RewardAdActivity"), Body, EEPFAuthMode::SessionTicket,
 		FOnPlayFabResponseDetailed::CreateLambda([this](const FEPFResult& Result, TSharedPtr<FJsonObject>)
 		{
 			if (Result.bSuccess) EF_LOG(ExtendedPlayFab, Log, TEXT("EPFAdvertising — Ad activity rewarded"));

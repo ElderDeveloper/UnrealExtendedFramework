@@ -9,47 +9,8 @@
 #include "UnrealExtendedQuest/EGQuestTracker.h"
 
 
-void UEGQuestNode_Objective::PostLoad()
-{
-	Super::PostLoad();
-	EnsureTrackers();
-}
-
-void UEGQuestNode_Objective::EnsureTrackers()
-{
-	// Legacy-asset migration: quests saved before tracker-only authoring store EventTag/RequiredCount
-	// style fields rather than a Tracker subobject, and this turns them into ordinary tracker
-	// templates. New authoring writes the Tracker slots directly and never touches the fields.
-	//
-	// An authored Tracker always wins, and running twice is a no-op, so both entry points can call it.
-	if (!Tracker)
-	{
-		if (bCompleteOnStageEnter)
-		{
-			Tracker = NewObject<UEGQuestTracker_Immediate>(this, NAME_None, RF_Transactional);
-		}
-		else if (EventTag.IsValid())
-		{
-			UEGQuestTracker_EventCount* Counting = NewObject<UEGQuestTracker_EventCount>(this, NAME_None, RF_Transactional);
-			Counting->ExactEventTag = EventTag;
-			Counting->RequiredCount = FMath::Max(1, RequiredCount);
-			Tracker = Counting;
-		}
-	}
-	if (!FailureTracker && FailEventTag.IsValid())
-	{
-		UEGQuestTracker_EventCount* Counting = NewObject<UEGQuestTracker_EventCount>(this, NAME_None, RF_Transactional);
-		Counting->ExactEventTag = FailEventTag;
-		Counting->RequiredCount = FMath::Max(1, FailRequiredCount);
-		Counting->OutcomeOnSatisfied = EEGQuestObjectiveOutcome::Failed;
-		FailureTracker = Counting;
-	}
-}
-
 bool UEGQuestNode_Objective::CanEverFail() const
 {
-	// A legacy asset's FailEventTag becomes a FailureTracker in EnsureTrackers before anything asks,
-	// so the trackers are the whole answer.
 	return FailureTracker != nullptr ||
 		(Tracker && Tracker->OutcomeOnSatisfied == EEGQuestObjectiveOutcome::Failed);
 }
@@ -62,8 +23,7 @@ int32 UEGQuestNode_Objective::GetPresentedRequiredCount() const
 		return FMath::Max(1, Distinct->RequiredDistinctCount);
 	if (const UEGQuestTracker_Sequence* Sequence = Cast<UEGQuestTracker_Sequence>(Tracker))
 		return FMath::Max(1, Sequence->OrderedTags.Num());
-	// Legacy fallback: an unmigrated node presents its authored count until EnsureTrackers runs.
-	return FMath::Max(1, RequiredCount);
+	return 1;
 }
 
 FGameplayTag UEGQuestNode_Objective::GetPresentedEventTag() const
@@ -72,7 +32,7 @@ FGameplayTag UEGQuestNode_Objective::GetPresentedEventTag() const
 		return Counting->ExactEventTag;
 	if (const UEGQuestTracker_Distinct* Distinct = Cast<UEGQuestTracker_Distinct>(Tracker))
 		return Distinct->ExactEventTag;
-	return EventTag;
+	return FGameplayTag();
 }
 
 #if WITH_EDITOR
@@ -251,11 +211,6 @@ void UEGQuestNode_Objective::ActivateEvaluator(UEGQuestComponent& InOwner, const
 {
 	EvaluatorOwner = &InOwner;
 	EvaluatorInstanceGuid = InInstanceGuid;
-	// Belt and braces. Evaluators are duplicated, and StaticDuplicateObject routes ConditionalPostLoad
-	// on the game thread, so in practice the synthesis has already happened by here. That is an engine
-	// detail with exceptions (bSkipPostLoad, off-thread duplication), and the emptiness of the two
-	// hooks below depends on the invariant holding, so assert it where it is used rather than inherit it.
-	EnsureTrackers();
 	if (Tracker || FailureTracker)
 	{
 		if (Tracker) Tracker->Activate(*this, Reason);
@@ -311,10 +266,9 @@ void UEGQuestNode_Objective::PulseEvaluator()
 	if (!IsResolved() && FailureTracker) FailureTracker->Pulse();
 }
 
-// The two hooks below only run for an objective with no tracker at all, which after EnsureTrackers
-// means one that authors nothing to evaluate: the manual archetype, completed by authority code, or
-// a Blueprint subclass that overrides them. Both native defaults are therefore empty by construction
-// - every authored field they used to read now reaches evaluation as a tracker instead.
+// The two hooks below only run for an objective with no tracker at all: one that authors nothing
+// to evaluate, such as the manual archetype completed by authority code, or a Blueprint subclass
+// that overrides them. Both native defaults are therefore empty.
 
 void UEGQuestNode_Objective::OnActivated_Implementation()
 {

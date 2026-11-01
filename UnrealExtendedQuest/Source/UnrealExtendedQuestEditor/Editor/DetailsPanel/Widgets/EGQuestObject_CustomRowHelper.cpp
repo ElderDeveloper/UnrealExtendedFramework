@@ -16,6 +16,7 @@
 #include "Widgets/Images/SImage.h"
 #include "K2Node_Event.h"
 #include "SourceCodeNavigation.h"
+#include "Styling/AppStyle.h"
 
 #define LOCTEXT_NAMESPACE "QuestObject_CustomRowHelper"
 #define DEFAULT_FONT(...) FCoreStyle::GetDefaultFontStyle(__VA_ARGS__)
@@ -70,7 +71,7 @@ void FEGQuestObject_CustomRowHelper::Update()
 	.Padding(4.f)
 	[
 		SNew(SButton)
-		.ButtonStyle(FNYAppStyle::Get(), "HoverHintOnly")
+		.ButtonStyle(FAppStyle::Get(), "HoverHintOnly")
 		.ToolTipText(this, &Self::GetBrowseObjectText)
 		.ContentPadding(4.f)
 		.ForegroundColor(FSlateColor::UseForeground())
@@ -78,7 +79,7 @@ void FEGQuestObject_CustomRowHelper::Update()
 		.OnClicked(this, &Self::OnBrowseClicked)
 		[
 			SNew(SImage)
-			.Image(FNYAppStyle::GetBrush("PropertyWindow.Button_Browse"))
+			.Image(FAppStyle::GetBrush("PropertyWindow.Button_Browse"))
 			.ColorAndOpacity(FSlateColor::UseForeground())
 		]
 	];
@@ -90,7 +91,7 @@ void FEGQuestObject_CustomRowHelper::Update()
 	.Padding(4.f, 2.f)
 	[
 		SNew(SButton)
-		.ButtonStyle(FNYAppStyle::Get(), "HoverHintOnly")
+		.ButtonStyle(FAppStyle::Get(), "HoverHintOnly")
 		.ToolTipText(this, &Self::GetJumpToObjectText)
 		.ContentPadding(4.f)
 		.ForegroundColor(FSlateColor::UseForeground())
@@ -98,7 +99,7 @@ void FEGQuestObject_CustomRowHelper::Update()
 		.OnClicked(this, &Self::OnOpenClicked)
 		[
 			SNew(SImage)
-			 .Image(FNYAppStyle::GetBrush("PropertyWindow.Button_Edit"))
+			 .Image(FAppStyle::GetBrush("PropertyWindow.Button_Edit"))
 			 .ColorAndOpacity( FSlateColor::UseForeground() )
 
 			// SNew(STextBlock)

@@ -6,7 +6,6 @@
 #include "Engine/GameInstance.h"
 #include "ExtendedSteamSharedModule.h"
 #include "Parties/ESteamPartiesSubsystem.h"
-#include "GameSearch/ESteamGameSearchSubsystem.h"
 #include "RemotePlay/ESteamRemotePlaySubsystem.h"
 #include "ParentalSettings/ESteamParentalSettingsSubsystem.h"
 #include "NetworkingUtils/ESteamNetworkingUtilsSubsystem.h"
@@ -70,29 +69,6 @@ bool FESteamPartiesOfflineStateTest::RunTest(const FString& Parameters)
 	TestFalse(TEXT("CreateBeacon fails offline"), Parties->CreateBeacon(4, TEXT("+connect test"), FString()));
 	TestFalse(TEXT("ChangeNumOpenSlots fails offline"), Parties->ChangeNumOpenSlots(1, 8));
 	TestFalse(TEXT("DestroyBeacon fails offline"), Parties->DestroyBeacon(1));
-	return true;
-}
-
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FESteamGameSearchOfflineStateTest,
-	"UnrealExtendedSteam.GameSearch.OfflineState",
-	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
-
-bool FESteamGameSearchOfflineStateTest::RunTest(const FString& Parameters)
-{
-	UGameInstance* GameInstance = NewObject<UGameInstance>(GEngine);
-	UESteamGameSearchSubsystem* GameSearch = NewObject<UESteamGameSearchSubsystem>(GameInstance);
-	TestNotNull(TEXT("GameSearch subsystem constructed"), GameSearch);
-
-	// ISteamGameSearch was removed from the Steamworks SDK (1.62+): the wrapper is a stub that
-	// fails regardless of the Steam client state, in both branches. It logs the removal notice at
-	// Verbose (not Warning), so no AddExpectedMessage is needed — the automation framework only
-	// flags Warning/Error.
-	TestEqual(TEXT("AddGameSearchParams reports Failed"),
-		GameSearch->AddGameSearchParams(TEXT("map"), TEXT("de_dust")), EESteamGameSearchResult::Failed);
-	TestEqual(TEXT("SearchForGameWithLobby reports Failed"),
-		GameSearch->SearchForGameWithLobby(FESteamId(), 1, 4), EESteamGameSearchResult::Failed);
-	TestEqual(TEXT("SearchForGameSolo reports Failed"),
-		GameSearch->SearchForGameSolo(1, 4), EESteamGameSearchResult::Failed);
 	return true;
 }
 

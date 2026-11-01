@@ -21,7 +21,7 @@ void UEPFContentDeliverySubsystem::GetContentDownloadUrl(const FString& Key, boo
 	Body->SetBoolField(TEXT("ThruCDN"), bThruCDN);
 	if (!HttpMethod.IsEmpty()) Body->SetStringField(TEXT("HttpMethod"), HttpMethod);
 
-	SendPlayFabRequestDetailed(TEXT("/Client/GetContentDownloadUrl"), Body, true,
+	SendPlayFabRequestDetailed(TEXT("/Client/GetContentDownloadUrl"), Body, EEPFAuthMode::SessionTicket,
 		FOnPlayFabResponseDetailed::CreateLambda([this](const FEPFResult& Result, TSharedPtr<FJsonObject> Response)
 		{
 			FString Url;
@@ -45,7 +45,7 @@ void UEPFContentDeliverySubsystem::DownloadContentAsString(const FString& Key)
 	Body->SetStringField(TEXT("Key"), Key);
 	Body->SetBoolField(TEXT("ThruCDN"), true);
 
-	SendPlayFabRequestDetailed(TEXT("/Client/GetContentDownloadUrl"), Body, true,
+	SendPlayFabRequestDetailed(TEXT("/Client/GetContentDownloadUrl"), Body, EEPFAuthMode::SessionTicket,
 		FOnPlayFabResponseDetailed::CreateLambda([this](const FEPFResult& Result, TSharedPtr<FJsonObject> Response)
 		{
 			if (!Result.bSuccess || !Response.IsValid())

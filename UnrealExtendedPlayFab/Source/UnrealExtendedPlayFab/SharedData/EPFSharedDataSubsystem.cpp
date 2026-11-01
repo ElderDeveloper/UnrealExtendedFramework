@@ -16,7 +16,7 @@ void UEPFSharedDataSubsystem::CreateSharedGroup(const FString& SharedGroupId)
 	TSharedRef<FJsonObject> Body = MakeShared<FJsonObject>();
 	Body->SetStringField(TEXT("SharedGroupId"), SharedGroupId);
 
-	SendPlayFabRequestDetailed(TEXT("/Client/CreateSharedGroup"), Body, true,
+	SendPlayFabRequestDetailed(TEXT("/Client/CreateSharedGroup"), Body, EEPFAuthMode::SessionTicket,
 		FOnPlayFabResponseDetailed::CreateLambda([this](const FEPFResult& Result, TSharedPtr<FJsonObject> Response)
 		{
 			FString Id;
@@ -42,7 +42,7 @@ void UEPFSharedDataSubsystem::GetSharedGroupData(const FString& SharedGroupId, c
 		Body->SetArrayField(TEXT("Keys"), KeysArr);
 	}
 
-	SendPlayFabRequestDetailed(TEXT("/Client/GetSharedGroupData"), Body, true,
+	SendPlayFabRequestDetailed(TEXT("/Client/GetSharedGroupData"), Body, EEPFAuthMode::SessionTicket,
 		FOnPlayFabResponseDetailed::CreateLambda([this, SharedGroupId](const FEPFResult& Result, TSharedPtr<FJsonObject> Response)
 		{
 			TMap<FString, FString> Data;
@@ -79,7 +79,7 @@ void UEPFSharedDataSubsystem::UpdateSharedGroupData(const FString& SharedGroupId
 	for (const auto& Pair : Data) DataObj->SetStringField(Pair.Key, Pair.Value);
 	Body->SetObjectField(TEXT("Data"), DataObj);
 
-	SendPlayFabRequestDetailed(TEXT("/Client/UpdateSharedGroupData"), Body, true,
+	SendPlayFabRequestDetailed(TEXT("/Client/UpdateSharedGroupData"), Body, EEPFAuthMode::SessionTicket,
 		FOnPlayFabResponseDetailed::CreateLambda([this, SharedGroupId, Data](const FEPFResult& Result, TSharedPtr<FJsonObject>)
 		{
 			if (Result.bSuccess)
@@ -104,7 +104,7 @@ void UEPFSharedDataSubsystem::RemoveSharedGroupData(const FString& SharedGroupId
 	for (const auto& K : KeysToRemove) KeysArr.Add(MakeShared<FJsonValueString>(K));
 	Body->SetArrayField(TEXT("KeysToRemove"), KeysArr);
 
-	SendPlayFabRequestDetailed(TEXT("/Client/UpdateSharedGroupData"), Body, true,
+	SendPlayFabRequestDetailed(TEXT("/Client/UpdateSharedGroupData"), Body, EEPFAuthMode::SessionTicket,
 		FOnPlayFabResponseDetailed::CreateLambda([this, SharedGroupId, KeysToRemove](const FEPFResult& Result, TSharedPtr<FJsonObject>)
 		{
 			if (Result.bSuccess)
@@ -128,7 +128,7 @@ void UEPFSharedDataSubsystem::AddSharedGroupMembers(const FString& SharedGroupId
 	for (const auto& Id : PlayFabIds) Ids.Add(MakeShared<FJsonValueString>(Id));
 	Body->SetArrayField(TEXT("PlayFabIds"), Ids);
 
-	SendPlayFabRequestDetailed(TEXT("/Client/AddSharedGroupMembers"), Body, true,
+	SendPlayFabRequestDetailed(TEXT("/Client/AddSharedGroupMembers"), Body, EEPFAuthMode::SessionTicket,
 		FOnPlayFabResponseDetailed::CreateLambda([this](const FEPFResult& Result, TSharedPtr<FJsonObject>) { OnMembersChanged.Broadcast(Result); }));
 }
 
@@ -142,7 +142,7 @@ void UEPFSharedDataSubsystem::RemoveSharedGroupMembers(const FString& SharedGrou
 	for (const auto& Id : PlayFabIds) Ids.Add(MakeShared<FJsonValueString>(Id));
 	Body->SetArrayField(TEXT("PlayFabIds"), Ids);
 
-	SendPlayFabRequestDetailed(TEXT("/Client/RemoveSharedGroupMembers"), Body, true,
+	SendPlayFabRequestDetailed(TEXT("/Client/RemoveSharedGroupMembers"), Body, EEPFAuthMode::SessionTicket,
 		FOnPlayFabResponseDetailed::CreateLambda([this](const FEPFResult& Result, TSharedPtr<FJsonObject>) { OnMembersChanged.Broadcast(Result); }));
 }
 

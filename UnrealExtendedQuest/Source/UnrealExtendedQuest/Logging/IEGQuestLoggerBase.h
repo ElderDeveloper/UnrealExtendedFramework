@@ -5,7 +5,6 @@
 #include "Logging/TokenizedMessage.h"
 #include "Logging/LogCategory.h"
 
-#include "UnrealExtendedQuest/NYEngineVersionHelpers.h"
 
 #include "IEGQuestLoggerBase.generated.h"
 
@@ -296,11 +295,7 @@ public:
 	template <typename FmtType, typename... Types>
 	void Logf(EEGQuestLogLevel Level, const FmtType& Fmt, Types... Args)
 	{
-#if NY_ENGINE_VERSION >= 501
 		static_assert(TIsArrayOrRefOfTypeByPredicate<FmtType, TIsCharEncodingCompatibleWithTCHAR>::Value, "Formatting string must be a TCHAR array.");
-#else
-		static_assert(TIsArrayOrRefOfType<FmtType, TCHAR>::Value, "Formatting string must be a TCHAR array.");
-#endif
 		static_assert(TAnd<TIsValidVariadicFunctionArg<Types>...>::Value, "Invalid argument(s) passed to IEGQuestLoggerBase::Logf");
 		LogfImplementation(Level, Fmt, Args...);
 	}

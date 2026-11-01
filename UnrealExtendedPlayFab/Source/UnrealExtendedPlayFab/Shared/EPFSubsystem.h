@@ -66,13 +66,6 @@ protected:
 	void SendPlayFabRequest(
 		const FString& ApiPath,
 		const TSharedRef<FJsonObject>& RequestBody,
-		bool bRequiresAuth,
-		const FOnPlayFabResponse& OnComplete
-	);
-
-	void SendPlayFabRequest(
-		const FString& ApiPath,
-		const TSharedRef<FJsonObject>& RequestBody,
 		EEPFAuthMode AuthMode,
 		const FOnPlayFabResponse& OnComplete
 	);
@@ -83,29 +76,12 @@ protected:
 		EEPFAuthMode AuthMode,
 		const FOnPlayFabResponseDetailed& OnComplete
 	);
-
-	/** Legacy bool overload: true → SessionTicket, false → None. */
-	void SendPlayFabRequestDetailed(
-		const FString& ApiPath,
-		const TSharedRef<FJsonObject>& RequestBody,
-		bool bRequiresAuth,
-		const FOnPlayFabResponseDetailed& OnComplete
-	)
-	{
-		SendPlayFabRequestDetailed(ApiPath, RequestBody,
-			bRequiresAuth ? EEPFAuthMode::SessionTicket : EEPFAuthMode::None,
-			OnComplete);
-	}
 
 	const UEPFSettings* GetSettings() const;
 	void LogNotConfigured(const FString& FunctionName) const;
 	bool IsConfigured() const;
 	void SetSharedAuthContext(const FEPFAuthContext& InAuthContext);
 	void ClearSharedAuthContext();
-
-	// Legacy compatibility fields for existing subsystem code paths.
-	static FString SharedSessionTicket;
-	static FString SharedPlayFabId;
 
 	static FEPFAuthContext SharedAuthContext;
 

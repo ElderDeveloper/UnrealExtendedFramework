@@ -9,6 +9,7 @@
 #include "Internationalization/TextNamespaceUtil.h"
 #include "UnrealExtendedQuestEditor/Editor/DetailsPanel/Widgets/EGQuestEditableTextPropertyHandle.h"
 #include "UnrealExtendedQuestEditor/Editor/DetailsPanel/EGQuestDetailsPanelUtils.h"
+#include "Styling/AppStyle.h"
 
 #define LOCTEXT_NAMESPACE "QuestIntTextBox_CustomRowHelper"
 #define DEFAULT_FONT(...) FCoreStyle::GetDefaultFontStyle(__VA_ARGS__)
@@ -51,14 +52,14 @@ void FEGQuestIntTextBox_CustomRowHelper::UpdateInternal()
 			SNew(SButton)
 			.IsFocusable(false)
 			.ToolTipText(this, &Self::GetResetToolTip)
-			.ButtonStyle(FNYAppStyle::Get(), "NoBorder")
+			.ButtonStyle(FAppStyle::Get(), "NoBorder")
 			.ContentPadding(0)
 			.Visibility(this, &Self::GetDiffersFromDefaultAsVisibility)
 			.OnClicked(this, &Self::OnResetClicked)
 			.Content()
 			[
 				SNew(SImage)
-				.Image(FNYAppStyle::GetBrush("PropertyWindow.DiffersFromDefault"))
+				.Image(FAppStyle::GetBrush("PropertyWindow.DiffersFromDefault"))
 			]
 		];
 	}

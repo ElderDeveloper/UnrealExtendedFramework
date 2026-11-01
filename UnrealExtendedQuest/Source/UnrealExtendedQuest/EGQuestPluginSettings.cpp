@@ -2,7 +2,6 @@
 #include "EGQuestPluginSettings.h"
 
 #include "GameFramework/Character.h"
-#include "Runtime/Launch/Resources/Version.h"
 
 #include "EGQuestManager.h"
 #include "Logging/EGQuestLogger.h"

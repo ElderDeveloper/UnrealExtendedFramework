@@ -30,9 +30,6 @@ public:
 	virtual void Activate() override;
 	virtual void EndAction() override;
 
-	UFUNCTION(BlueprintCallable, Category = "Unreal Extended GAS|Async")
-	void EndTask();
-
 	UPROPERTY(BlueprintAssignable)
 	FEGASAsyncGameplayEffectStackChangedDelegate OnGameplayEffectStackChange;
 

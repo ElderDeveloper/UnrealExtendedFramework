@@ -12,12 +12,11 @@
 #include "Widgets/Input/SEditableTextBox.h"
 #include "Widgets/Input/SComboButton.h"
 #include "Widgets/Input/SCheckBox.h"
-#include "EditorStyleSet.h"
+#include "Styling/AppStyle.h"
 #include "Internationalization/StringTableCore.h"
 #include "Internationalization/StringTableRegistry.h"
 
 #include "UnrealExtendedQuest/EGQuestLocalizationHelper.h"
-#include "UnrealExtendedQuest/NYEngineVersionHelpers.h"
 #include "UnrealExtendedQuestEditor/Editor/DetailsPanel/Widgets/EGQuestEditableTextPropertyHandle.h"
 
 #define LOCTEXT_NAMESPACE "STextPropertyEditableTextBox"
@@ -86,7 +85,7 @@ void SEGQuestTextPropertyEditableTextBox::Construct(
 			.HAlign(HAlign_Center)
 			.VAlign(VAlign_Center)
 			.ContentPadding(FMargin(4, 0))
-			.ButtonStyle(FNYAppStyle::Get(), "HoverHintOnly")
+			.ButtonStyle(FAppStyle::Get(), "HoverHintOnly")
 			.ForegroundColor(FSlateColor::UseForeground())
 			.ToolTipText(LOCTEXT("AdvancedTextSettingsComboToolTip", "Edit advanced text settings."))
 			.MenuContent()
@@ -106,7 +105,7 @@ void SEGQuestTextPropertyEditableTextBox::Construct(
 					.VAlign(VAlign_Center)
 					[
 						SNew(STextBlock)
-						.TextStyle(FNYAppStyle::Get(), "LargeText")
+						.TextStyle(FAppStyle::Get(), "LargeText")
 						.Text(LOCTEXT("TextInlineTextLabel", "Inline Text"))
 					]
 
@@ -134,7 +133,7 @@ void SEGQuestTextPropertyEditableTextBox::Construct(
 							+SUniformGridPanel::Slot(0, 0)
 							[
 								SNew(SCheckBox)
-								.Style(FNYAppStyle::Get(), "ToggleButtonCheckbox")
+								.Style(FAppStyle::Get(), "ToggleButtonCheckbox")
 								.ToolTipText(LOCTEXT("TextLocalizableToggleYesToolTip", "Assign this text a key and allow it to be gathered for localization."))
 								.Padding(FMargin(4, 2))
 								.HAlign(HAlign_Center)
@@ -150,7 +149,7 @@ void SEGQuestTextPropertyEditableTextBox::Construct(
 							+SUniformGridPanel::Slot(1, 0)
 							[
 								SNew(SCheckBox)
-								.Style(FNYAppStyle::Get(), "ToggleButtonCheckbox")
+								.Style(FAppStyle::Get(), "ToggleButtonCheckbox")
 								.ToolTipText(LOCTEXT("TextLocalizableToggleNoToolTip", "Mark this text as 'culture invariant' to prevent it being gathered for localization."))
 								.Padding(FMargin(4, 2))
 								.HAlign(HAlign_Center)
@@ -256,7 +255,7 @@ void SEGQuestTextPropertyEditableTextBox::Construct(
 					.VAlign(VAlign_Center)
 					[
 						SNew(STextBlock)
-						.TextStyle(FNYAppStyle::Get(), "LargeText")
+						.TextStyle(FAppStyle::Get(), "LargeText")
 						.Text(LOCTEXT("TextReferencedTextLabel", "Referenced Text"))
 						.Visibility(this, &Self::GetLocalizableVisibility)
 					]
@@ -307,14 +306,14 @@ void SEGQuestTextPropertyEditableTextBox::Construct(
 			SNew(SButton)
 			.IsFocusable(false)
 			.ToolTipText(this, &Self::GetResetToolTip)
-			.ButtonStyle(FNYAppStyle::Get(), "NoBorder")
+			.ButtonStyle(FAppStyle::Get(), "NoBorder")
 			.ContentPadding(0)
 			.Visibility(this, &Self::GetDiffersFromDefaultAsVisibility)
 			.OnClicked(this, &Self::OnResetClicked)
 			.Content()
 			[
 				SNew(SImage)
-				.Image(FNYAppStyle::GetBrush("PropertyWindow.DiffersFromDefault"))
+				.Image(FAppStyle::GetBrush("PropertyWindow.DiffersFromDefault"))
 			]
 		];
 	}
@@ -481,11 +480,7 @@ FText SEGQuestTextPropertyEditableTextBox::GetToolTipText() const
 			FName TableId;
 			FString Key;
 
-#if NY_ENGINE_VERSION >= 500
 			FTextInspector::GetTableIdAndKey(TextValue, TableId, Key);
-#else
-			FStringTableRegistry::Get().FindTableIdAndKey(TextValue, TableId, Key);
-#endif
 
 			LocalizedTextToolTip = FText::Format(
 				LOCTEXT("StringTableTextToolTipFmt", "--- String Table Reference ---\nTable ID: {0}\nKey: {1}"),
@@ -501,7 +496,6 @@ FText SEGQuestTextPropertyEditableTextBox::GetToolTipText() const
 
 			if (SourceString && TextValue.ShouldGatherForLocalization())
 			{
-#if NY_ENGINE_VERSION >= 505
 				const FTextId TextId = FTextInspector::GetTextId(TextValue);
 				bIsLocalized = !TextId.IsEmpty();
 				if (bIsLocalized)
@@ -509,17 +503,6 @@ FText SEGQuestTextPropertyEditableTextBox::GetToolTipText() const
 					Namespace = TextId.GetNamespace().ToString();
 					Key = TextId.GetKey().ToString();
 				}
-#elif NY_ENGINE_VERSION >= 500
-				const FTextId TextId = FTextInspector::GetTextId(TextValue);
-				bIsLocalized = !TextId.IsEmpty();
-				if (bIsLocalized)
-				{
-					Namespace = TextId.GetNamespace().GetChars();
-					Key = TextId.GetKey().GetChars();
-				}
-#else
-				bIsLocalized = FTextLocalizationManager::Get().FindNamespaceAndKeyFromDisplayString(FTextInspector::GetSharedDisplayString(TextValue), Namespace, Key);
-#endif
 
 			}
 
@@ -966,11 +949,7 @@ void SEGQuestTextPropertyEditableTextBox::HandleLocalizableCheckStateChanged(ECh
 					NewKey
 					);
 
-#if NY_ENGINE_VERSION >= 505
 				EditableTextProperty->SetText(TextIndex, FText::AsLocalizable_Advanced(*NewNamespace, *NewKey, *PropertyValue.ToString()));
-#else
-				EditableTextProperty->SetText(TextIndex, FInternationalization::Get().ForUseOnlyByLocMacroAndGraphNodeTextLiterals_CreateText(*PropertyValue.ToString(), *NewNamespace, *NewKey));
-#endif // NY_ENGINE_VERSION >= 505
 
 			}
 		}

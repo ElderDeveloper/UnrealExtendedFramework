@@ -34,13 +34,7 @@ public:
 				TSharedRef<SWidget> Widget = Super::RebuildWidget();
 				RootWidget->SetBrushFromTexture(Image);
 				
-				#if ENGINE_MAJOR_VERSION != 5
-					RootWidget->SetBrushSize(ImageSize);
-				#endif
-
-				#if ENGINE_MAJOR_VERSION == 5
-					RootWidget->SetDesiredSizeOverride(ImageSize);
-				#endif
+				RootWidget->SetDesiredSizeOverride(ImageSize);
 
 				
 				UE_LOG(LogBlueprint,Log,TEXT("UEExtended Targeting Widget Initialized"));

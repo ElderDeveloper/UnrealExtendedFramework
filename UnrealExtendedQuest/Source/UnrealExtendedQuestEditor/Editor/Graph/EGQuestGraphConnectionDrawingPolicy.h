@@ -59,16 +59,16 @@ public:
 
 	// How should we draw the spline and arrow arrow?
 	virtual void DrawSplineWithArrow(const FGeometry& StartGeom, const FGeometry& EndGeom, const FConnectionParams& Params) override;
-	virtual void DrawSplineWithArrow(const FNYVector2f& StartPoint, const FNYVector2f& EndPoint, const FConnectionParams& Params) override;
+	virtual void DrawSplineWithArrow(const FVector2f& StartPoint, const FVector2f& EndPoint, const FConnectionParams& Params) override;
 
 	// The method that actually draws the spline
-	virtual void DrawConnection(int32 LayerId, const FNYVector2f& Start, const FNYVector2f& End, const FConnectionParams& Params) override;
+	virtual void DrawConnection(int32 LayerId, const FVector2f& Start, const FVector2f& End, const FConnectionParams& Params) override;
 
 	// Sometimes the panel draws a preview connector; e.g. when the user is connecting pins
-	virtual void DrawPreviewConnector(const FGeometry& PinGeometry, const FNYVector2f& StartPoint, const FNYVector2f& EndPoint, UEdGraphPin* Pin) override;
+	virtual void DrawPreviewConnector(const FGeometry& PinGeometry, const FVector2f& StartPoint, const FVector2f& EndPoint, UEdGraphPin* Pin) override;
 
 	// Compute the tangent of the spline.
-	virtual FNYVector2f ComputeSplineTangent(const FNYVector2f& Start, const FNYVector2f& End) const override;
+	virtual FVector2f ComputeSplineTangent(const FVector2f& Start, const FVector2f& End) const override;
 
 	// Draws the wire
 	virtual void Draw(TMap<TSharedRef<SWidget>, FArrangedWidget>& PinGeometries, FArrangedChildren& ArrangedNodes) override;
@@ -76,7 +76,7 @@ public:
 	// End of FConnectionDrawingPolicy interface
 
 protected:
-	void Internal_DrawLineWithArrow(const FNYVector2f& StartAnchorPoint, const FNYVector2f& EndAnchorPoint, const FConnectionParams& Params);
+	void Internal_DrawLineWithArrow(const FVector2f& StartAnchorPoint, const FVector2f& EndAnchorPoint, const FConnectionParams& Params);
 
 	// Map for widgets
 	UEdGraph* Graph = nullptr;

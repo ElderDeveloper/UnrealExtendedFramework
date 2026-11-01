@@ -91,13 +91,6 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "Subtitle")
 	FOnSubtitleSequenceFinished OnSubtitleSequenceFinished;
 
-	// ── DEPRECATED (backward compatibility) ──
-
-	UE_DEPRECATED(5.0, "Use ExecuteSubtitle instead.")
-	UFUNCTION(BlueprintCallable, meta=(WorldContext="WorldContextObject", DeprecatedFunction,
-		DeprecationMessage="Use ExecuteSubtitle instead"), Category = "Subtitle")
-	void ExecuteExtendedSubtitle(const UObject* WorldContextObject, const FString SubtitleKey);
-
 private:
 	// ── Data Resolution ──
 

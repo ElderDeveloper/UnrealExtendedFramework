@@ -6,7 +6,6 @@
 #include "Math/UnitConversion.h"
 #include "GraphEditorDragDropAction.h"
 #include "DragAndDrop/AssetDragDropOp.h"
-#include "UnrealExtendedQuest/NYEngineVersionHelpers.h"
 
 #include "EGQuestGraphNode.h"
 #include "UnrealExtendedQuestEditor/Editor/Graph/EGQuestEdGraphSchema.h"
@@ -109,11 +108,7 @@ FReply SEGQuestGraphPin::OnMouseMove(const FGeometry& MyGeometry, const FPointer
 
 void SEGQuestGraphPin::OnMouseEnter(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent)
 {
-#if NY_ENGINE_VERSION >= 500
 	const bool bLocalIsHovered = IsHovered();
-#else
-	const bool bLocalIsHovered = bIsHovered;
-#endif
 
 	if (!bLocalIsHovered && GraphPinObj && !GraphPinObj->IsPendingKill() && GraphPinObj->GetOuter())
 	{
@@ -151,9 +146,6 @@ void SEGQuestGraphPin::OnMouseLeave(const FPointerEvent& MouseEvent)
 void SEGQuestGraphPin::OnDragEnter(const FGeometry& MyGeometry, const FDragDropEvent& DragDropEvent)
 {
 	// NOTE: Super default implementation will not work properly with nodes that are not GetIsConnectable
-#if NY_ENGINE_VERSION < 500
-	Super::OnDragEnter(MyGeometry, DragDropEvent);
-#else
 	TSharedPtr<FDragDropOperation> Operation = DragDropEvent.GetOperation();
 	if (!Operation.IsValid())
 	{
@@ -174,15 +166,11 @@ void SEGQuestGraphPin::OnDragEnter(const FGeometry& MyGeometry, const FDragDropE
 		// Pins treat being dragged over the same as being hovered outside of drag and drop if they know how to respond to the drag action.
 		SBorder::OnMouseEnter(MyGeometry, DragDropEvent);
 	}
-#endif  // NY_ENGINE_VERSION < 500
 }
 
 void SEGQuestGraphPin::OnDragLeave(const FDragDropEvent& DragDropEvent)
 {
 	// NOTE: Super default implementation will not work properly with nodes that are not GetIsConnectable
-#if NY_ENGINE_VERSION < 500
-	Super::OnDragLeave(DragDropEvent);
-#else
 	TSharedPtr<FDragDropOperation> Operation = DragDropEvent.GetOperation();
 	if (!Operation.IsValid())
 	{
@@ -204,7 +192,6 @@ void SEGQuestGraphPin::OnDragLeave(const FDragDropEvent& DragDropEvent)
 		TSharedPtr<FAssetDragDropOp> AssetOp = StaticCastSharedPtr<FAssetDragDropOp>(Operation);
 		AssetOp->ResetToDefaultToolTip();
 	}
-#endif // NY_ENGINE_VERSION < 500
 }
 
 FReply SEGQuestGraphPin::OnDragOver(const FGeometry& MyGeometry, const FDragDropEvent& DragDropEvent)
@@ -215,9 +202,6 @@ FReply SEGQuestGraphPin::OnDragOver(const FGeometry& MyGeometry, const FDragDrop
 FReply SEGQuestGraphPin::OnDrop(const FGeometry& MyGeometry, const FDragDropEvent& DragDropEvent)
 {
 	// NOTE: Super default implementation will not work properly with nodes that are not GetIsConnectable
-#if NY_ENGINE_VERSION < 500
-	return Super::OnDrop(MyGeometry, DragDropEvent);
-#else
 	TSharedPtr<SGraphNode> NodeWidget = OwnerNodePtr.Pin();
 	bool bReadOnly = NodeWidget.IsValid() ? !NodeWidget->IsNodeEditable() : false;
 
@@ -232,15 +216,11 @@ FReply SEGQuestGraphPin::OnDrop(const FGeometry& MyGeometry, const FDragDropEven
 	{
 		TSharedPtr<FGraphEditorDragDropAction> DragConnectionOp = StaticCastSharedPtr<FGraphEditorDragDropAction>(Operation);
 
-		FNYVector2f NodeAddPosition = FNYVector2f::ZeroVector;
+		FVector2f NodeAddPosition = FVector2f::ZeroVector;
 		TSharedPtr<SGraphNode> OwnerNode = OwnerNodePtr.Pin();
 		if (OwnerNode.IsValid())
 		{
-#if NY_ENGINE_VERSION >= 506
 			NodeAddPosition	= OwnerNode->GetPosition2f() + MyGeometry.Position;
-#else
-			NodeAddPosition	= OwnerNode->GetPosition() + FNYVector2f{MyGeometry.Position};
-#endif
 
 			//Don't have access to bounding information for node, using fixed offset that should work for most cases.
 			const float FixedOffset = 200.0f;
@@ -251,13 +231,9 @@ FReply SEGQuestGraphPin::OnDrop(const FGeometry& MyGeometry, const FDragDropEven
 			// if the pin widget is nested into another compound
 			if (MyGeometry.Position == FVector2f::ZeroVector)
 			{
-				const FNYVector2f PinOffsetPosition = FNYVector2f{MyGeometry.AbsolutePosition} - FNYVector2f{NodeWidget->GetTickSpaceGeometry().AbsolutePosition};
+				const FVector2f PinOffsetPosition = FVector2f{MyGeometry.AbsolutePosition} - FVector2f{NodeWidget->GetTickSpaceGeometry().AbsolutePosition};
 
-#if NY_ENGINE_VERSION >= 506
 				NodeAddPosition = OwnerNode->GetPosition2f() + PinOffsetPosition;
-#else
-				NodeAddPosition = OwnerNode->GetPosition() + PinOffsetPosition;
-#endif
 			}
 
 			if(GetDirection() == EEdGraphPinDirection::EGPD_Input)
@@ -286,18 +262,13 @@ FReply SEGQuestGraphPin::OnDrop(const FGeometry& MyGeometry, const FDragDropEven
 			TSharedPtr<FAssetDragDropOp> AssetOp = StaticCastSharedPtr<FAssetDragDropOp>(Operation);
 			if (AssetOp->HasAssets())
 			{
-#if NY_ENGINE_VERSION >= 506
 				Node->GetSchema()->DroppedAssetsOnPin(AssetOp->GetAssets(), NodeWidget->GetPosition2f() + MyGeometry.Position, GraphPinObj);
-#else
-				Node->GetSchema()->DroppedAssetsOnPin(AssetOp->GetAssets(), NodeWidget->GetPosition() + FVector2D(MyGeometry.Position), GraphPinObj);
-#endif
 			}
 		}
 		return FReply::Handled();
 	}
 
 	return FReply::Unhandled();
-#endif // NY_ENGINE_VERSION < 500
 }
 
 FSlateColor SEGQuestGraphPin::GetPinColor() const
@@ -340,7 +311,7 @@ FReply SEGQuestGraphPin::OnAltAndLeftMouseButtonDown(const FGeometry& SenderGeom
 	TSharedPtr<SGraphNode> ThisOwnerNodeWidget = OwnerNodePtr.Pin();
 	check(ThisOwnerNodeWidget.IsValid());
 	const UEGQuestEdGraphSchema* Schema = CastChecked<UEGQuestEdGraphSchema>(GraphPinObj->GetSchema());
-	const FNYVector2f& MouseLocation = MouseEvent.GetScreenSpacePosition();
+	const FVector2f& MouseLocation = MouseEvent.GetScreenSpacePosition();
 
 	// Is the click inside the node?
 	if (FEGQuestEditorUtilities::IsPointInsideGeometry(MouseLocation, ThisOwnerNodeWidget->GetCachedGeometry()))
@@ -412,7 +383,7 @@ FText SEGQuestGraphPin::GetTooltipText() const
 //	return HoverText;
 }
 
-UEdGraphPin* SEGQuestGraphPin::GetBestLinkedToPinFromSplineMousePosition(const FNYVector2f& MousePosition) const
+UEdGraphPin* SEGQuestGraphPin::GetBestLinkedToPinFromSplineMousePosition(const FVector2f& MousePosition) const
 {
 	/*
 	ASSUMPTION: that the MousePosition is on a spline (wire) or near a wire
@@ -442,11 +413,11 @@ UEdGraphPin* SEGQuestGraphPin::GetBestLinkedToPinFromSplineMousePosition(const F
 	check(ThisGraphNodeWidget.IsValid());
 
 	// Find P and MP
-	const FNYVector2f ThisGraphNodeClosestPosition = FGeometryHelper::FindClosestPointOnGeom(
+	const FVector2f ThisGraphNodeClosestPosition = FGeometryHelper::FindClosestPointOnGeom(
 		ThisGraphNodeWidget->GetCachedGeometry(),
 		MousePosition
 	);
-	const FNYVector2f MP = (ThisGraphNodeClosestPosition - MousePosition).GetSafeNormal();
+	const FVector2f MP = (ThisGraphNodeClosestPosition - MousePosition).GetSafeNormal();
 
 	// Iterate over all linked destinations, find the best one
 	int32 BestLinkIndex = 0;
@@ -468,11 +439,11 @@ UEdGraphPin* SEGQuestGraphPin::GetBestLinkedToPinFromSplineMousePosition(const F
 		}
 
 		// Find C (aka ClosestPointOnChild)
-		const FNYVector2f ClosestPointOnChild = FGeometryHelper::FindClosestPointOnGeom(ChildNodeWidget->GetCachedGeometry(), MousePosition);
+		const FVector2f ClosestPointOnChild = FGeometryHelper::FindClosestPointOnGeom(ChildNodeWidget->GetCachedGeometry(), MousePosition);
 
 		// Find angle between vectors
-		const FNYVector2f MC = (ClosestPointOnChild - MousePosition).GetSafeNormal();
-		const float DotProduct = FMath::Abs(FNYVector2f::DotProduct(MC, MP));
+		const FVector2f MC = (ClosestPointOnChild - MousePosition).GetSafeNormal();
+		const float DotProduct = FMath::Abs(FVector2f::DotProduct(MC, MP));
 		if (DotProduct > BestDotProduct)
 		{
 			// found new angle approaching 180 degrees

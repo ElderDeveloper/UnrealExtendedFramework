@@ -142,16 +142,4 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "ExtendedFramework|AI|Perception")
 	static bool SetHearingRange(UAIPerceptionComponent* Perception, float HearingRange);
-
-	/** Returns the current Line-of-Sight Hearing Range. Returns 0 on failure. @deprecated LoSHearingRange is deprecated since UE 5.2. */
-	UFUNCTION(BlueprintPure, Category = "ExtendedFramework|AI|Perception", meta=(DeprecatedFunction, DeprecationMessage="LoSHearingRange is deprecated since UE 5.2. Use HearingRange instead."))
-	static float GetLoSHearingRange(UAIPerceptionComponent* Perception);
-
-	/**
-	 * Sets a new Line-of-Sight Hearing Range. Calls RequestStimuliListenerUpdate.
-	 * @return True on success
-	 * @deprecated LoSHearingRange is deprecated since UE 5.2.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "ExtendedFramework|AI|Perception", meta=(DeprecatedFunction, DeprecationMessage="LoSHearingRange is deprecated since UE 5.2. Use HearingRange instead."))
-	static bool SetLoSHearingRange(UAIPerceptionComponent* Perception, float LoSHearingRange);
 };

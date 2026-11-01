@@ -9,7 +9,6 @@
 #include <functional>
 
 #include "EGQuestEventCustom.h"
-#include "NYEngineVersionHelpers.h"
 
 class SDockTab;
 class FTabManager;

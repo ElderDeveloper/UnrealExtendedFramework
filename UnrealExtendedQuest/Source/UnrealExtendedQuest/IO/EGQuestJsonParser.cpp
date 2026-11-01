@@ -378,12 +378,8 @@ bool FEGQuestJsonParser::ConvertScalarJsonValueToProperty(const TSharedPtr<FJson
 
 					// NOTE if key is a FStructProperty no need to Import the text item here as it will do that below in UStruct
 					// Add key
-#if UE_VERSION_NEWER_THAN_OR_EQUAL(5, 8, 0)
 					// UE 5.8: map keys are UE::FSharedString; FJsonValueString wants an FString.
 					const TSharedPtr<FJsonValueString> KeyAsString = MakeShared<FJsonValueString>(FString(Entry.Key.ToView()));
-#else
-					const TSharedPtr<FJsonValueString> KeyAsString = MakeShared<FJsonValueString>(Entry.Key);
-#endif
 					const bool bKeySuccess = JsonValueToProperty(KeyAsString, Helper.GetKeyProperty(), ContainerPtr, Helper.GetKeyPtr(NewIndex));
 
 					// Add value
@@ -502,11 +498,7 @@ bool FEGQuestJsonParser::ConvertScalarJsonValueToProperty(const TSharedPtr<FJson
 			if (!TheCppStructOps->ImportTextItem(ImportTextPtr, ValuePtr, PPF_None, nullptr, static_cast<FOutputDevice*>(GWarn)))
 			{
 				// Fall back to trying the tagged property approach if custom ImportTextItem couldn't get it done
-#if NY_ENGINE_VERSION >= 501
 				Property->ImportText_Direct(ImportTextPtr, ValuePtr, nullptr, PPF_None);
-#else
-				Property->ImportText(ImportTextPtr, ValuePtr, PPF_None, nullptr);
-#endif
 
 			}
 		}
@@ -516,11 +508,7 @@ bool FEGQuestJsonParser::ConvertScalarJsonValueToProperty(const TSharedPtr<FJson
 			// UTextBuffer* ImportErrors = NewObject<UTextBuffer>();
 			const FString ImportTextString = JsonValue->AsString();
 			const TCHAR* ImportTextPtr = *ImportTextString;
-#if NY_ENGINE_VERSION >= 501
 			Property->ImportText_Direct(ImportTextPtr, ValuePtr, nullptr, PPF_None);
-#else
-			Property->ImportText(ImportTextPtr, ValuePtr, PPF_None, nullptr);
-#endif
 		}
 		else
 		{
@@ -650,11 +638,7 @@ bool FEGQuestJsonParser::ConvertScalarJsonValueToProperty(const TSharedPtr<FJson
 	check(JsonValue->Type != EJson::Object);
 	const FString Buffer = JsonValue->AsString();
 
-#if NY_ENGINE_VERSION >= 501
 	if (Property->ImportText_Direct(*Buffer, ValuePtr, nullptr, PPF_None) == nullptr)
-#else
-	if (Property->ImportText(*Buffer, ValuePtr, PPF_None, nullptr) == nullptr)
-#endif
 	{
 		UE_LOG(
 			LogQuestJsonParser,
@@ -739,11 +723,7 @@ bool FEGQuestJsonParser::JsonValueToProperty(const TSharedPtr<FJsonValue>& JsonV
 	for (int32 Index = 0; Index < ItemsToRead; ++Index)
 	{
 		// ValuePtr + Index * Property->ElementSize is literally FScriptArrayHelper::GetRawPtr
-#if NY_ENGINE_VERSION >= 505
 		const int32 ElementSize = Property->GetElementSize();
-#else
-		const int32 ElementSize = Property->ElementSize;
-#endif
 
 		bReturnStatus &= ConvertScalarJsonValueToProperty(ArrayValue[Index], Property, ContainerPtr, ValueIntPtr + Index * ElementSize);
 	}

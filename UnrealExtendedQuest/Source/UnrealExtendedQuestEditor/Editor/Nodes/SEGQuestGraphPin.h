@@ -7,6 +7,7 @@
 
 #include "UnrealExtendedQuest/EGQuestPluginSettings.h"
 #include "EGQuestGraphNode.h"
+#include "Styling/AppStyle.h"
 
 /** Own SGraphPin  custom class, allows us to customize the pins as we like. */
 class UNREALEXTENDEDQUESTEDITOR_API SEGQuestGraphPin : public SGraphPin
@@ -131,11 +132,11 @@ protected:
 	FText GetTooltipText() const;
 
 	/** Gets the Index in the current pin LinkeTo array that corresponds to the MousePosition on the wire/spline. */
-	UEdGraphPin* GetBestLinkedToPinFromSplineMousePosition(const FNYVector2f& MousePosition) const;
+	UEdGraphPin* GetBestLinkedToPinFromSplineMousePosition(const FVector2f& MousePosition) const;
 
 	/** Gets the pin border */
 	const FSlateBrush* GetPinBorder() const
 	{
-		return FNYAppStyle::GetBrush(TEXT("Graph.StateNode.Body"));
+		return FAppStyle::GetBrush(TEXT("Graph.StateNode.Body"));
 	}
 };

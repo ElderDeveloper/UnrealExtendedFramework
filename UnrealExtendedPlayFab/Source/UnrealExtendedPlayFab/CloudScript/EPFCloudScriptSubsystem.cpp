@@ -32,7 +32,7 @@ void UEPFCloudScriptSubsystem::ExecuteFunction(const FString& FunctionName, cons
 	SendPlayFabRequestDetailed(
 		TEXT("/Client/ExecuteCloudScript"),
 		Body,
-		true,
+		EEPFAuthMode::SessionTicket,
 		FOnPlayFabResponseDetailed::CreateLambda([this, FunctionName](const FEPFResult& Result, TSharedPtr<FJsonObject> Response)
 		{
 			LastResult = FEPFCloudScriptResult();

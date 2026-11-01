@@ -97,7 +97,7 @@ void UEPFConnectionMonitor::PerformPing()
 	SendPlayFabRequest(
 		TEXT("/Client/GetTime"),
 		Body,
-		false, // GetTime does not require auth
+		EEPFAuthMode::None, // GetTime does not require auth
 		FOnPlayFabResponse::CreateUObject(this, &UEPFConnectionMonitor::HandlePingResponse)
 	);
 }

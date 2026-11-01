@@ -32,7 +32,7 @@ void UEPFTitleDataSubsystem::GetTitleData(const TArray<FString>& Keys)
 	SendPlayFabRequestDetailed(
 		TEXT("/Client/GetTitleData"),
 		Body,
-		true,
+		EEPFAuthMode::SessionTicket,
 		FOnPlayFabResponseDetailed::CreateLambda([this](const FEPFResult& Result, TSharedPtr<FJsonObject> Response)
 		{
 			if (Result.bSuccess && Response.IsValid())

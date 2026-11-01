@@ -19,6 +19,7 @@
 #if WITH_EDITOR
 #include "WorkspaceMenuStructureModule.h"
 #include "WorkspaceMenuStructure.h"
+#include "Styling/AppStyle.h"
 #endif // WITH_EDITOR
 
 #include "EGQuestConstants.h"
@@ -84,7 +85,7 @@ void FEGQuestPluginModule::StartupModule()
 				];
 
 #if WITH_EDITOR
-			const auto* IconBrush = FNYAppStyle::GetBrush(TEXT("DebugTools.TabIcon"));
+			const auto* IconBrush = FAppStyle::GetBrush(TEXT("DebugTools.TabIcon"));
 			QuestDataDisplayTab->SetTabIcon(IconBrush);
 #endif
 

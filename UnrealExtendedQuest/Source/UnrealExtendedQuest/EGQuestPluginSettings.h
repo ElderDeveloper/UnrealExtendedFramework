@@ -2,13 +2,11 @@
 #pragma once
 #include "CoreMinimal.h"
 #include "Misc/Build.h"
-#include "Runtime/Launch/Resources/Version.h"
 #include "Templates/SubclassOf.h"
 #include "GameplayTagContainer.h"
 
 #include "Settings/EFDeveloperSettings.h"
 #include "Layout/Margin.h"
-#include "NYEngineVersionHelpers.h"
 
 #include "Logging/IEGQuestLoggerBase.h"
 
@@ -140,11 +138,7 @@ public:
 		const UClass* ThisClass = GetClass();
 		if (ThisClass->HasAnyClassFlags(CLASS_DefaultConfig))
 		{
-#if NY_ENGINE_VERSION >= 500
 			TryUpdateDefaultConfigFile();
-#else
-			UpdateDefaultConfigFile();
-#endif
 		}
 		else if (ThisClass->HasAnyClassFlags(CLASS_GlobalUserConfig))
 		{

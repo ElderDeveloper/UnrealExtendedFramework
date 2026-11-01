@@ -74,14 +74,6 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Extended Framework|Backend|Http")
 	FEFHttpRequest PrepareRequest(const FEFHttpRequest& Request) const;
 
-	// ─── Deprecated: kept so Blueprints made with the old Backend Http nodes keep loading ──
-
-	UFUNCTION(BlueprintCallable, Category = "Extended Framework|Backend|Http|Deprecated", meta = (DeprecatedFunction, DeprecationMessage = "Use Send Request or the Http Request node; they report the response."))
-	void SendHttpRequest(const FString& Url, const FString& RequestContent);
-
-	UFUNCTION(BlueprintCallable, Category = "Extended Framework|Backend|Http|Deprecated", meta = (DeprecatedFunction, DeprecationMessage = "Build the body with Make Json Object and Set String Field, then Json Object To String."))
-	FString JsonString(TArray<FString> StringArray);
-
 private:
 	TMap<int64, TSharedRef<FEFHttpOperation>> ActiveOperations;
 	TMap<FString, FString> DefaultHeaders;

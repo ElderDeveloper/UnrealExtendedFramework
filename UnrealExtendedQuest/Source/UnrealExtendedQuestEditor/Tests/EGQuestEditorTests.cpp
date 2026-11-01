@@ -49,9 +49,9 @@ bool FEGQuestEditorAuthoringAutomationTest::RunTest(const FString& Parameters)
 	if (!Root) return false;
 
 	UEGQuestGraphNode* Stage = FEGQuestNewNode_GraphSchemaAction::SpawnGraphNodeWithQuestNodeFromTemplate<UEGQuestGraphNode>(
-		Graph, UEGQuestNode_Stage::StaticClass(), FNYVector2f(350.f, 0.f), false);
+		Graph, UEGQuestNode_Stage::StaticClass(), FVector2f(350.f, 0.f), false);
 	UEGQuestGraphNode* End = FEGQuestNewNode_GraphSchemaAction::SpawnGraphNodeWithQuestNodeFromTemplate<UEGQuestGraphNode>(
-		Graph, UEGQuestNode_End::StaticClass(), FNYVector2f(700.f, 0.f), false);
+		Graph, UEGQuestNode_End::StaticClass(), FVector2f(700.f, 0.f), false);
 	TestNotNull(TEXT("Stage palette action creates a node"), Stage);
 	TestNotNull(TEXT("End palette action creates a node"), End);
 	if (!Stage || !End) return false;
@@ -111,11 +111,11 @@ bool FEGQuestExplicitRoutePriorityAutomationTest::RunTest(const FString& Paramet
 	if (!Root || !Schema) return false;
 
 	UEGQuestGraphNode* Stage = FEGQuestNewNode_GraphSchemaAction::SpawnGraphNodeWithQuestNodeFromTemplate<UEGQuestGraphNode>(
-		Graph, UEGQuestNode_Stage::StaticClass(), FNYVector2f(300.f, 0.f), false);
+		Graph, UEGQuestNode_Stage::StaticClass(), FVector2f(300.f, 0.f), false);
 	UEGQuestGraphNode* EndA = FEGQuestNewNode_GraphSchemaAction::SpawnGraphNodeWithQuestNodeFromTemplate<UEGQuestGraphNode>(
-		Graph, UEGQuestNode_End::StaticClass(), FNYVector2f(650.f, -100.f), false);
+		Graph, UEGQuestNode_End::StaticClass(), FVector2f(650.f, -100.f), false);
 	UEGQuestGraphNode* EndB = FEGQuestNewNode_GraphSchemaAction::SpawnGraphNodeWithQuestNodeFromTemplate<UEGQuestGraphNode>(
-		Graph, UEGQuestNode_End::StaticClass(), FNYVector2f(650.f, 100.f), false);
+		Graph, UEGQuestNode_End::StaticClass(), FVector2f(650.f, 100.f), false);
 	TestNotNull(TEXT("Stage created"), Stage);
 	TestNotNull(TEXT("First end created"), EndA);
 	TestNotNull(TEXT("Second end created"), EndB);

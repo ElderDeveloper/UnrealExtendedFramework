@@ -6,7 +6,6 @@
 
 #include "Editor/Graph/EGQuestEdGraph.h"
 #include "UnrealExtendedQuest/Nodes/EGQuestNode.h"
-#include "UnrealExtendedQuest/NYEngineVersionHelpers.h"
 #include "Subsystems/AssetEditorSubsystem.h"
 
 enum class EEGQuestBlueprintOpenType : uint8
@@ -154,11 +153,11 @@ public:
 	static EAppReturnType::Type ShowMessageBox(EAppMsgType::Type MsgType, const FString& Text, const FString& Caption);
 
 	// Returns true if the TestPoint is inside the Geometry.
-	static bool IsPointInsideGeometry(const FNYVector2f& TestPoint, const FGeometry& Geometry)
+	static bool IsPointInsideGeometry(const FVector2f& TestPoint, const FGeometry& Geometry)
 	{
-		TArray<FNYVector2f> GeometryPoints;
+		TArray<FVector2f> GeometryPoints;
 		FGeometryHelper::ConvertToPoints(Geometry, GeometryPoints);
-		return FNYBox2f(GeometryPoints).IsInside(TestPoint);
+		return FBox2f(GeometryPoints).IsInside(TestPoint);
 	}
 
 	// Gets the Quest for the provided UEdGraphNode
@@ -207,7 +206,7 @@ public:
 	static UK2Node_Event* BlueprintGetEvent(UBlueprint* Blueprint, FName EventName, UClass* EventClassSignature);
 
 	// Adds a comment to the Blueprint
-	static UEdGraphNode_Comment* BlueprintAddComment(UBlueprint* Blueprint, const FString& CommentString, FNYVector2f Location = FNYVector2f::ZeroVector);
+	static UEdGraphNode_Comment* BlueprintAddComment(UBlueprint* Blueprint, const FString& CommentString, FVector2f Location = FVector2f::ZeroVector);
 
 	static void RefreshQuestEditorForGraph(const UEdGraph* Graph);
 

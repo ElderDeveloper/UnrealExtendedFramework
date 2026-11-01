@@ -25,10 +25,6 @@ public:
 	virtual void Activate() override;
 	virtual void EndAction() override;
 
-	/** Compatibility alias for the legacy async node. */
-	UFUNCTION(BlueprintCallable, Category = "Unreal Extended GAS|Async")
-	void EndTask();
-
 	UPROPERTY(BlueprintAssignable)
 	FEGASAsyncAttributeChangedDelegate OnAttributeChanged;
 

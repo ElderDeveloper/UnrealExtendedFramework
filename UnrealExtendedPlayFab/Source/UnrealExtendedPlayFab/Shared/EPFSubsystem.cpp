@@ -15,47 +15,6 @@
 #include "Engine/GameInstance.h"
 #include "Engine/World.h"
 
-namespace
-{
-	static EEPFAuthMode ResolveAuthModeForPath(const FString& ApiPath, bool bRequiresAuth)
-	{
-		if (!bRequiresAuth)
-		{
-			return EEPFAuthMode::None;
-		}
-
-		if (
-			ApiPath.StartsWith(TEXT("/Server/")) ||
-			ApiPath.StartsWith(TEXT("/Admin/"))
-		)
-		{
-			return EEPFAuthMode::SecretKey;
-		}
-
-		if (
-			ApiPath.StartsWith(TEXT("/Group/")) ||
-			ApiPath.StartsWith(TEXT("/Object/")) ||
-			ApiPath.StartsWith(TEXT("/Match/")) ||
-			ApiPath.StartsWith(TEXT("/Authentication/")) ||
-			ApiPath.StartsWith(TEXT("/Data/")) ||
-			ApiPath.StartsWith(TEXT("/Profiles/")) ||
-			ApiPath.StartsWith(TEXT("/Economy/")) ||
-			ApiPath.StartsWith(TEXT("/Event/")) ||
-			ApiPath.StartsWith(TEXT("/Events/")) ||
-			ApiPath.StartsWith(TEXT("/Insights/")) ||
-			ApiPath.StartsWith(TEXT("/Progression/")) ||
-			ApiPath.StartsWith(TEXT("/Multiplayer/"))
-		)
-		{
-			return EEPFAuthMode::EntityToken;
-		}
-
-		return EEPFAuthMode::SessionTicket;
-	}
-}
-
-FString UEPFSubsystem::SharedSessionTicket;
-FString UEPFSubsystem::SharedPlayFabId;
 FEPFAuthContext UEPFSubsystem::SharedAuthContext;
 
 void UEPFSubsystem::Initialize(FSubsystemCollectionBase& Collection)
@@ -130,24 +89,11 @@ void UEPFSubsystem::LogNotConfigured(const FString& FunctionName) const
 void UEPFSubsystem::SetSharedAuthContext(const FEPFAuthContext& InAuthContext)
 {
 	SharedAuthContext = InAuthContext;
-	SharedSessionTicket = InAuthContext.SessionTicket;
-	SharedPlayFabId = InAuthContext.PlayFabId;
 }
 
 void UEPFSubsystem::ClearSharedAuthContext()
 {
 	SharedAuthContext.Reset();
-	SharedSessionTicket.Empty();
-	SharedPlayFabId.Empty();
-}
-
-void UEPFSubsystem::SendPlayFabRequest(
-	const FString& ApiPath,
-	const TSharedRef<FJsonObject>& RequestBody,
-	bool bRequiresAuth,
-	const FOnPlayFabResponse& OnComplete)
-{
-	SendPlayFabRequest(ApiPath, RequestBody, ResolveAuthModeForPath(ApiPath, bRequiresAuth), OnComplete);
 }
 
 void UEPFSubsystem::SendPlayFabRequest(

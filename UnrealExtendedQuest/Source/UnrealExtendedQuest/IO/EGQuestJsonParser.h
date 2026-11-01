@@ -1,13 +1,11 @@
 // Copyright Csaba Molnar, Daniel Butum. All Rights Reserved.
 #pragma once
 
-#include "Misc/EngineVersionComparison.h"
 #include "Logging/LogMacros.h"
 #include "Dom/JsonValue.h"
 #include "Dom/JsonObject.h"
 
 #include "IEGQuestParser.h"
-#include "UnrealExtendedQuest/NYEngineVersionHelpers.h"
 
 DECLARE_LOG_CATEGORY_EXTERN(LogQuestJsonParser, All, All);
 
@@ -93,11 +91,7 @@ private: // JSON -> UStruct
 		JsonAttributes.Reserve(JsonObject->Values.Num());
 		for (const auto& Pair : JsonObject->Values)
 		{
-#if UE_VERSION_NEWER_THAN_OR_EQUAL(5, 8, 0)
 			JsonAttributes.Add(FString(Pair.Key.ToView()), Pair.Value);
-#else
-			JsonAttributes.Add(Pair.Key, Pair.Value);
-#endif
 		}
 		return JsonAttributesToUStruct(JsonAttributes, StructDefinition, ContainerPtr);
 	}

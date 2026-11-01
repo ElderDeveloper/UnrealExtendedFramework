@@ -8,8 +8,6 @@
 #include "GameFramework/PlayerController.h"
 #include "Engine/Engine.h"
 #include "Logging/MessageLog.h"
-#include "UnrealExtendedQuest/NYEngineVersionHelpers.h"
-#include "Runtime/Launch/Resources/Version.h"
 
 #if WITH_UNREAL_DEVELOPER_TOOLS
 #include "MessageLogInitializationOptions.h"
@@ -21,7 +19,6 @@
 // Pulled the two FOutputDevice::Logf functions into shared code. Needs to be a #define
 // since it uses GET_TYPED_VARARGS_RESULT which uses the va_list stuff which operates on the
 // current function, so we can't easily call a function
-#if NY_ENGINE_VERSION >= 504
 	#define NY_GROWABLE_LOGF(SerializeFunc) \
 		int32	BufferSize	= 1024; \
 		TCHAR*	Buffer		= NULL; \
@@ -32,7 +29,7 @@
 	\
 		/* first, try using the stack buffer */ \
 		Buffer = StackBuffer; \
-		GET_TYPED_VARARGS_RESULT( TCHAR, Buffer, NY_ARRAY_COUNT(StackBuffer), NY_ARRAY_COUNT(StackBuffer) - 1, Fmt, Fmt, Result ); \
+		GET_TYPED_VARARGS_RESULT( TCHAR, Buffer, UE_ARRAY_COUNT(StackBuffer), UE_ARRAY_COUNT(StackBuffer) - 1, Fmt, Fmt, Result ); \
 	\
 		/* if that fails, then use heap allocation to make enough space */ \
 		while(Result == -1) \
@@ -52,34 +49,6 @@
 	\
 		SerializeFunc; \
 		FMemory::SystemFree(AllocatedBuffer);
-#else
-	#define NY_GROWABLE_LOGF(SerializeFunc) \
-		int32	BufferSize	= 1024; \
-		TCHAR*	Buffer		= NULL; \
-		int32	Result		= -1; \
-		/* allocate some stack space to use on the first pass, which matches most strings */ \
-		TCHAR	StackBuffer[512]; \
-		TCHAR*	AllocatedBuffer = NULL; \
-	\
-		/* first, try using the stack buffer */ \
-		Buffer = StackBuffer; \
-		GET_VARARGS_RESULT( Buffer, NY_ARRAY_COUNT(StackBuffer), NY_ARRAY_COUNT(StackBuffer) - 1, Fmt, Fmt, Result ); \
-	\
-		/* if that fails, then use heap allocation to make enough space */ \
-		while(Result == -1) \
-		{ \
-			FMemory::SystemFree(AllocatedBuffer); \
-			/* We need to use malloc here directly as GMalloc might not be safe. */ \
-			Buffer = AllocatedBuffer = (TCHAR*) FMemory::SystemMalloc( BufferSize * sizeof(TCHAR) ); \
-			GET_VARARGS_RESULT( Buffer, BufferSize, BufferSize-1, Fmt, Fmt, Result ); \
-			BufferSize *= 2; \
-		}; \
-		Buffer[Result] = 0; \
-		; \
-	\
-		SerializeFunc; \
-		FMemory::SystemFree(AllocatedBuffer);
-#endif
 
 IEGQuestLoggerBase& IEGQuestLoggerBase::SetClientConsolePlayerController(APlayerController* PC)
 {
@@ -327,4 +296,4 @@ void IEGQuestLoggerBase::ClearAllOnScreenLogs()
 	GEngine->ClearOnScreenDebugMessages();
 }
 
-#undef NY_ARRAY_COUNT
+#undef UE_ARRAY_COUNT

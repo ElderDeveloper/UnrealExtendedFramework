@@ -10,8 +10,6 @@
 #include "GameServerStats/ESteamWebGameServerStatsSubsystem.h"
 #include "LobbyMatchmaking/ESteamWebLobbyMatchmakingSubsystem.h"
 #include "PublishedFile/ESteamWebPublishedFileSubsystem.h"
-#include "PublishedItemSearch/ESteamWebPublishedItemSearchSubsystem.h"
-#include "PublishedItemVoting/ESteamWebPublishedItemVotingSubsystem.h"
 #include "RemoteStorage/ESteamWebRemoteStorageSubsystem.h"
 #include "UserAuth/ESteamWebUserAuthSubsystem.h"
 
@@ -33,8 +31,6 @@ bool FESteamWebBatch3ConstructionTest::RunTest(const FString& Parameters)
 	TestNotNull(TEXT("GameInventory subsystem"), NewObject<UESteamWebGameInventorySubsystem>(GameInstance));
 	TestNotNull(TEXT("LobbyMatchmaking subsystem"), NewObject<UESteamWebLobbyMatchmakingSubsystem>(GameInstance));
 	TestNotNull(TEXT("PublishedFile subsystem"), NewObject<UESteamWebPublishedFileSubsystem>(GameInstance));
-	TestNotNull(TEXT("PublishedItemSearch subsystem"), NewObject<UESteamWebPublishedItemSearchSubsystem>(GameInstance));
-	TestNotNull(TEXT("PublishedItemVoting subsystem"), NewObject<UESteamWebPublishedItemVotingSubsystem>(GameInstance));
 	TestNotNull(TEXT("Community subsystem"), NewObject<UESteamWebCommunitySubsystem>(GameInstance));
 	TestNotNull(TEXT("GameServerStats subsystem"), NewObject<UESteamWebGameServerStatsSubsystem>(GameInstance));
 	TestNotNull(TEXT("RemoteStorage subsystem"), NewObject<UESteamWebRemoteStorageSubsystem>(GameInstance));

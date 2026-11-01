@@ -7,6 +7,7 @@
 #include "UnrealExtendedQuestEditor/Editor/Graph/EGQuestEdGraphSchema.h"
 #include "UnrealExtendedQuestEditor/Editor/Graph/EGQuestEdGraph.h"
 
+#include "Styling/AppStyle.h"
 #include "EGQuestGraphNode_Base.generated.h"
 
 class UEdGraphPin;
@@ -90,7 +91,7 @@ public:
 	/** @return Icon to use in menu or on node */
 	virtual FSlateIcon GetIconAndTint(FLinearColor& OutColor) const override
 	{
-		static const FSlateIcon Icon = FSlateIcon(NY_GET_APP_STYLE_NAME(), "Graph.StateNode.Icon");
+		static const FSlateIcon Icon = FSlateIcon(FAppStyle::GetAppStyleSetName(), "Graph.StateNode.Icon");
 		OutColor = GetNodeBackgroundColor();
 		return Icon;
 	}

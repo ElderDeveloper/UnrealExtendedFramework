@@ -32,7 +32,7 @@ void UEPFMessagesSubsystem::FetchMessages()
 	SendPlayFabRequestDetailed(
 		TEXT("/Client/GetUserReadOnlyData"),
 		Body,
-		true,
+		EEPFAuthMode::SessionTicket,
 		FOnPlayFabResponseDetailed::CreateLambda([this](const FEPFResult& Result, TSharedPtr<FJsonObject> Response)
 		{
 			if (Result.bSuccess && Response.IsValid())
@@ -133,7 +133,7 @@ void UEPFMessagesSubsystem::MarkAsRead(const FString& MessageId)
 	DataMap->SetStringField(MessageKeyPrefix + MessageId, MsgJsonStr);
 	Body->SetObjectField(TEXT("Data"), DataMap);
 
-	SendPlayFabRequestDetailed(TEXT("/Client/UpdateUserData"), Body, true,
+	SendPlayFabRequestDetailed(TEXT("/Client/UpdateUserData"), Body, EEPFAuthMode::SessionTicket,
 		FOnPlayFabResponseDetailed::CreateLambda([this](const FEPFResult& Result, TSharedPtr<FJsonObject>)
 		{
 			OnMessageMarkedRead.Broadcast(Result);
@@ -152,7 +152,7 @@ void UEPFMessagesSubsystem::DeleteMessage(const FString& MessageId)
 	KeysArr.Add(MakeShared<FJsonValueString>(MessageKeyPrefix + MessageId));
 	Body->SetArrayField(TEXT("KeysToRemove"), KeysArr);
 
-	SendPlayFabRequestDetailed(TEXT("/Client/UpdateUserData"), Body, true,
+	SendPlayFabRequestDetailed(TEXT("/Client/UpdateUserData"), Body, EEPFAuthMode::SessionTicket,
 		FOnPlayFabResponseDetailed::CreateLambda([this, MessageId](const FEPFResult& Result, TSharedPtr<FJsonObject>)
 		{
 			if (Result.bSuccess)

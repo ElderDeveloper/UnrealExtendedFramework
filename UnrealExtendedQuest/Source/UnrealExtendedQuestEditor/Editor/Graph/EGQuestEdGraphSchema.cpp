@@ -6,11 +6,8 @@
 #include "ScopedTransaction.h"
 #include "AssetRegistry/AssetData.h"
 #include "GraphEditorActions.h"
-#include "Runtime/Launch/Resources/Version.h"
 
-#if NY_ENGINE_VERSION >= 424
 #include "ToolMenu.h"
-#endif
 
 #include "EGQuestEdGraph.h"
 #include "UnrealExtendedQuestEditor/Editor/Nodes/EGQuestGraphNode.h"
@@ -51,7 +48,6 @@ void UEGQuestEdGraphSchema::GetGraphContextActions(FGraphContextMenuBuilder& Con
 	GetCommentAction(ContextMenuBuilder, ContextMenuBuilder.CurrentGraph);
 }
 
-#if NY_ENGINE_VERSION >= 424
 void UEGQuestEdGraphSchema::GetContextMenuActions(UToolMenu* Menu, UGraphNodeContextMenuContext* Context) const
 {
 	if (Context->Node && !Context->bIsDebugging)
@@ -67,31 +63,6 @@ void UEGQuestEdGraphSchema::GetContextMenuActions(UToolMenu* Menu, UGraphNodeCon
 	Super::GetContextMenuActions(Menu, Context);
 }
 
-#else
-
-void UEGQuestEdGraphSchema::GetContextMenuActions(
-	const UEdGraph* CurrentGraph,
-	const UEdGraphNode* InGraphNode,
-	const UEdGraphPin* InGraphPin,
-	FMenuBuilder* MenuBuilder,
-	bool bIsDebugging
-) const
-{
-	if (InGraphNode && !bIsDebugging)
-	{
-		// Menu for right clicking on node
-		MenuBuilder->BeginSection("QuestEdGraphSchemaNodeActions", LOCTEXT("NodeActionsMenuHeader", "Node Actions"));
-		{
-			// This action is handled in UEGQuestEdGraphSchema::BreakNodeLinks, and the action is registered in SGraphEditorImpl (not by us)
-			MenuBuilder->AddMenuEntry(FGraphEditorCommands::Get().BreakNodeLinks);
-		}
-		MenuBuilder->EndSection();
-	}
-
-	// The rest of the menus are implemented in the each nodes GetContextMenuActions method
-	Super::GetContextMenuActions(CurrentGraph, InGraphNode, InGraphPin, MenuBuilder, bIsDebugging);
-}
-#endif // NY_ENGINE_VERSION >= 424
 
 void UEGQuestEdGraphSchema::CreateDefaultNodesForGraph(UEdGraph& Graph) const
 {

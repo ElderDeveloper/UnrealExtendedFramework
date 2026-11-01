@@ -71,11 +71,6 @@ void UEGASAsync_WaitAttributeChanged::EndAction()
 	Super::EndAction();
 }
 
-void UEGASAsync_WaitAttributeChanged::EndTask()
-{
-	EndAction();
-}
-
 void UEGASAsync_WaitAttributeChanged::HandleAttributeChanged(const FOnAttributeChangeData& ChangeData)
 {
 	if (ShouldBroadcastDelegates())

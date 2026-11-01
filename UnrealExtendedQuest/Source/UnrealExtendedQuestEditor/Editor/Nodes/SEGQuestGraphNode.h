@@ -34,7 +34,7 @@ public:
 	// Begin SNodePanel::SNode Interface
 
 	/** Populate the widgets array with any overlay widgets to render */
-	virtual TArray<FOverlayWidgetInfo> GetOverlayWidgets(bool bSelected, const FNYVector2f& WidgetSize) const override;
+	virtual TArray<FOverlayWidgetInfo> GetOverlayWidgets(bool bSelected, const FVector2f& WidgetSize) const override;
 
 	// Begin SGraphNode Interface
 

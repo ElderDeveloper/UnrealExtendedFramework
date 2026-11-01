@@ -2,10 +2,8 @@
 #pragma once
 
 #include "EdGraph/EdGraphSchema.h"
-#include "Runtime/Launch/Resources/Version.h"
 
 #include "UnrealExtendedQuest/Nodes/EGQuestNode.h"
-#include "UnrealExtendedQuest/NYEngineVersionHelpers.h"
 #include "UnrealExtendedQuestEditor/EGQuestEditorUtilities.h"
 #include "EGQuestGraphConnectionDrawingPolicy.h"
 #include "SchemaActions/EGQuestNewComment_GraphSchemaAction.h"
@@ -41,17 +39,7 @@ public:
 	 * @param	Menu				The menu to append actions to.
 	 * @param	Context				The menu's context.
 	 */
-#if NY_ENGINE_VERSION >= 424
 	virtual void GetContextMenuActions(UToolMenu* Menu, UGraphNodeContextMenuContext* Context) const override;
-#else
-	virtual void GetContextMenuActions(
-		const UEdGraph* CurrentGraph,
-		const UEdGraphNode* InGraphNode,
-		const UEdGraphPin* InGraphPin,
-		FMenuBuilder* MenuBuilder,
-		bool bIsDebugging
-	) const override;
-#endif
 
 	/**
 	 * Populate new graph with any default nodes

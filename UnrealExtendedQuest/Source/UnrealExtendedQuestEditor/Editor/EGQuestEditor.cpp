@@ -32,6 +32,7 @@
 #include "UnrealExtendedQuestEditor/EGQuestCommands.h"
 #include "UnrealExtendedQuestEditor/Search/EGQuestSearchManager.h"
 #include "UnrealExtendedQuestEditor/Search/SEGQuestFindInQuests.h"
+#include "Styling/AppStyle.h"
 
 #define LOCTEXT_NAMESPACE "QuestEditor"
 
@@ -69,7 +70,7 @@ void FEGQuestEditor::RegisterTabSpawners(const TSharedRef<class FTabManager>& In
 	)
 	.SetDisplayName(LOCTEXT("GraphCanvasTab", "Viewport"))
 	.SetGroup(WorkspaceMenuCategoryRef)
-	.SetIcon(FSlateIcon(NY_GET_APP_STYLE_NAME(), "GraphEditor.EventGraph_16x"));
+	.SetIcon(FSlateIcon(FAppStyle::GetAppStyleSetName(), "GraphEditor.EventGraph_16x"));
 
 	InTabManager->RegisterTabSpawner(
 		DetailsTabID,
@@ -77,7 +78,7 @@ void FEGQuestEditor::RegisterTabSpawners(const TSharedRef<class FTabManager>& In
 	)
 	.SetDisplayName(LOCTEXT("DetailsTabLabel", "Details"))
 	.SetGroup(WorkspaceMenuCategoryRef)
-	.SetIcon(FSlateIcon(NY_GET_APP_STYLE_NAME(), "LevelEditor.Tabs.Details"));
+	.SetIcon(FSlateIcon(FAppStyle::GetAppStyleSetName(), "LevelEditor.Tabs.Details"));
 
 	InTabManager->RegisterTabSpawner(
 		FindInQuestTabId,
@@ -85,7 +86,7 @@ void FEGQuestEditor::RegisterTabSpawners(const TSharedRef<class FTabManager>& In
 	)
 	.SetDisplayName(LOCTEXT("FindInQuestTab", "Find Results"))
 	.SetGroup(WorkspaceMenuCategoryRef)
-	.SetIcon(FSlateIcon(NY_GET_APP_STYLE_NAME(), "Kismet.Tabs.FindResults"));
+	.SetIcon(FSlateIcon(FAppStyle::GetAppStyleSetName(), "Kismet.Tabs.FindResults"));
 }
 
 void FEGQuestEditor::UnregisterTabSpawners(const TSharedRef<class FTabManager>& InTabManager)
@@ -325,9 +326,6 @@ void FEGQuestEditor::InitQuestEditor(
 				// Toolbar
 				FTabManager::NewStack()
 				->SetSizeCoefficient(0.1f)
-#if NY_ENGINE_VERSION < 500
-				->AddTab(GetToolbarTabId(), ETabState::OpenedTab)
-#endif
 				->SetHideTabWell(true)
 			)
 			->Split
@@ -450,11 +448,7 @@ TSharedRef<SGraphEditor> FEGQuestEditor::CreateGraphEditorWidget()
 	SGraphEditor::FGraphEditorEvents InEvents;
 	InEvents.OnTextCommitted = FOnNodeTextCommitted::CreateSP(this, &FEGQuestEditor::OnNodeTitleCommitted);
 	InEvents.OnSelectionChanged = SGraphEditor::FOnSelectionChanged::CreateSP(this, &FEGQuestEditor::OnSelectedNodesChanged);
-#if NY_ENGINE_VERSION >= 506
 	InEvents.OnCreateActionMenuAtLocation = SGraphEditor::FOnCreateActionMenuAtLocation::CreateSP(this, &FEGQuestEditor::OnCreateGraphActionMenu);
-#else
-	InEvents.OnCreateActionMenu = SGraphEditor::FOnCreateActionMenu::CreateSP(this, &FEGQuestEditor::OnCreateGraphActionMenu);
-#endif
 
 	return SNew(SGraphEditor)
 		.AdditionalCommands(GraphEditorCommands)
@@ -481,11 +475,7 @@ void FEGQuestEditor::BindEditorCommands()
 		FExecuteAction::CreateLambda([this]
 		{
 			FEGQuestNewComment_GraphSchemaAction CommentAction;
-#if NY_ENGINE_VERSION >= 506
 			FVector2f PasteLocation = GraphEditorView->GetPasteLocation2f();
-#else
-			FVector2D PasteLocation = GraphEditorView->GetPasteLocation();
-#endif
 			CommentAction.PerformAction(QuestBeingEdited->GetGraph(), nullptr, PasteLocation);
 		})
 	);
@@ -646,7 +636,7 @@ void FEGQuestEditor::ExtendToolbar()
 						NAME_None,
 						TAttribute<FText>(),
 						TAttribute<FText>(),
-						FSlateIcon(NY_GET_APP_STYLE_NAME(), "GraphEditor.EventGraph_24x", "GraphEditor.EventGraph_16x")
+						FSlateIcon(FAppStyle::GetAppStyleSetName(), "GraphEditor.EventGraph_24x", "GraphEditor.EventGraph_16x")
 					);
 					ToolbarBuilder.AddToolBarButton(FEGQuestCommands::Get().FindInQuest);
 				}
@@ -669,7 +659,7 @@ TSharedRef<SDockTab> FEGQuestEditor::SpawnTab_Details(const FSpawnTabArgs& Args)
 		];
 
 	// TODO use QuestEditor.Tabs.Properties
-	const auto* IconBrush = FNYAppStyle::GetBrush(TEXT("GenericEditor.Tabs.Properties"));
+	const auto* IconBrush = FAppStyle::GetBrush(TEXT("GenericEditor.Tabs.Properties"));
 	NewTab->SetTabIcon(IconBrush);
 
 	return NewTab;
@@ -695,7 +685,7 @@ TSharedRef<SDockTab> FEGQuestEditor::SpawnTab_FindInQuest(const FSpawnTabArgs& A
 			FindResultsView.ToSharedRef()
 		];
 
-	const auto* IconBrush = FNYAppStyle::GetBrush(TEXT("Kismet.Tabs.FindResults"));
+	const auto* IconBrush = FAppStyle::GetBrush(TEXT("Kismet.Tabs.FindResults"));
 	NewTab->SetTabIcon(IconBrush);
 
 	return NewTab;
@@ -855,21 +845,17 @@ void FEGQuestEditor::OnCommandDuplicateNodes()
 
 	// Land the copies offset from the originals, so a duplicate is visibly a duplicate rather than
 	// a perfect overlap.
-	FNYVector2f PasteLocation;
+	FVector2f PasteLocation;
 	FSlateRect SelectionBounds;
 	if (GetBoundsForSelectedNodes(SelectionBounds, 0.f))
 	{
-		PasteLocation = FNYVector2f(
+		PasteLocation = FVector2f(
 			(SelectionBounds.Left + SelectionBounds.Right) * 0.5f + 40.f,
 			(SelectionBounds.Top + SelectionBounds.Bottom) * 0.5f + 40.f);
 	}
 	else
 	{
-#if NY_ENGINE_VERSION >= 506
 		PasteLocation = GraphEditorView->GetPasteLocation2f();
-#else
-		PasteLocation = GraphEditorView->GetPasteLocation();
-#endif
 	}
 
 	PasteNodesHere(PasteLocation);
@@ -877,15 +863,11 @@ void FEGQuestEditor::OnCommandDuplicateNodes()
 
 void FEGQuestEditor::OnCommandPasteNodes()
 {
-#if NY_ENGINE_VERSION >= 506
 	FVector2f PasteLocation = GraphEditorView->GetPasteLocation2f();
-#else
-	FVector2D PasteLocation = GraphEditorView->GetPasteLocation();
-#endif
 	PasteNodesHere(PasteLocation);
 }
 
-void FEGQuestEditor::PasteNodesHere(const FNYVector2f& Location)
+void FEGQuestEditor::PasteNodesHere(const FVector2f& Location)
 {
 	// Undo/Redo support
 	const FScopedTransaction Transaction(FGenericCommands::Get().Paste->GetDescription());
@@ -1032,7 +1014,7 @@ void FEGQuestEditor::OnSelectedNodesChanged(const TSet<UObject*>& NewSelection)
 
 FActionMenuContent FEGQuestEditor::OnCreateGraphActionMenu(
 	UEdGraph* InGraph,
-	const FNYVector2f& InNodePosition,
+	const FVector2f& InNodePosition,
 	const TArray<UEdGraphPin*>& InDraggedPins,
 	bool bAutoExpand,
 	SGraphEditor::FActionMenuClosed InOnMenuClosed

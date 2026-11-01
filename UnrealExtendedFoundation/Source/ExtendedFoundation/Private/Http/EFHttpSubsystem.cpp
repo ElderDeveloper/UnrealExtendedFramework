@@ -2,7 +2,6 @@
 
 #include "Http/EFHttpSubsystem.h"
 
-#include "Json/EFJsonLibrary.h"
 #include "Engine/Engine.h"
 #include "Engine/GameInstance.h"
 #include "Engine/World.h"
@@ -135,34 +134,4 @@ FEFHttpRequest UEFHttpSubsystem::PrepareRequest(const FEFHttpRequest& Request) c
 		}
 	}
 	return Prepared;
-}
-
-// ─── Deprecated ─────────────────────────────────────────────────────────────────
-
-void UEFHttpSubsystem::SendHttpRequest(const FString& Url, const FString& RequestContent)
-{
-	// The old node sent a POST and only logged the response. It took RequestContent but never sent
-	// it; it is sent as the body now, as the parameter promised.
-	FEFHttpRequest Request;
-	Request.Url = Url;
-	Request.Verb = EEFHttpVerb::Post;
-	Request.Body = RequestContent;
-	Request.ContentType = TEXT("text/plain; charset=utf-8");
-
-	Send(Request, [](const FEFHttpResponse& Response)
-	{
-		UE_LOG(LogEFHttp, Log, TEXT("SendHttpRequest: HTTP %d, %d characters received."), Response.StatusCode, Response.Body.Len());
-	});
-}
-
-FString UEFHttpSubsystem::JsonString(TArray<FString> StringArray)
-{
-	// Pairs of [key, value, key, value, ...] into a flat object of string fields. A trailing key
-	// without a value is ignored. The old version wrote unescaped text and read past the array.
-	FEFJsonObject Object = FEFJsonObject::MakeEmpty();
-	for (int32 Index = 0; Index + 1 < StringArray.Num(); Index += 2)
-	{
-		UEFJsonLibrary::SetStringField(Object, StringArray[Index], StringArray[Index + 1]);
-	}
-	return UEFJsonLibrary::JsonObjectToString(Object);
 }

@@ -26,7 +26,7 @@ void UEPFSegmentsSubsystem::GetPlayerSegments()
 	SendPlayFabRequestDetailed(
 		TEXT("/Client/GetPlayerSegments"),
 		Body,
-		true,
+		EEPFAuthMode::SessionTicket,
 		FOnPlayFabResponseDetailed::CreateLambda([this](const FEPFResult& Result, TSharedPtr<FJsonObject> Response)
 		{
 			if (Result.bSuccess && Response.IsValid())
@@ -69,7 +69,7 @@ void UEPFSegmentsSubsystem::GetPlayerTags(const FString& Namespace)
 	SendPlayFabRequestDetailed(
 		TEXT("/Client/GetPlayerTags"),
 		Body,
-		true,
+		EEPFAuthMode::SessionTicket,
 		FOnPlayFabResponseDetailed::CreateLambda([this](const FEPFResult& Result, TSharedPtr<FJsonObject> Response)
 		{
 			if (Result.bSuccess && Response.IsValid())
@@ -106,7 +106,7 @@ void UEPFSegmentsSubsystem::AddPlayerTag(const FString& TagName, const FString& 
 	Body->SetStringField(TEXT("TagName"), TagName);
 	if (!Namespace.IsEmpty()) Body->SetStringField(TEXT("Namespace"), Namespace);
 
-	SendPlayFabRequestDetailed(TEXT("/Client/AddPlayerTag"), Body, true,
+	SendPlayFabRequestDetailed(TEXT("/Client/AddPlayerTag"), Body, EEPFAuthMode::SessionTicket,
 		FOnPlayFabResponseDetailed::CreateLambda([this, TagName](const FEPFResult& Result, TSharedPtr<FJsonObject>)
 		{
 			if (Result.bSuccess && !CachedTags.Contains(TagName)) CachedTags.Add(TagName);
@@ -123,7 +123,7 @@ void UEPFSegmentsSubsystem::RemovePlayerTag(const FString& TagName, const FStrin
 	Body->SetStringField(TEXT("TagName"), TagName);
 	if (!Namespace.IsEmpty()) Body->SetStringField(TEXT("Namespace"), Namespace);
 
-	SendPlayFabRequestDetailed(TEXT("/Client/RemovePlayerTag"), Body, true,
+	SendPlayFabRequestDetailed(TEXT("/Client/RemovePlayerTag"), Body, EEPFAuthMode::SessionTicket,
 		FOnPlayFabResponseDetailed::CreateLambda([this, TagName](const FEPFResult& Result, TSharedPtr<FJsonObject>)
 		{
 			if (Result.bSuccess) CachedTags.Remove(TagName);

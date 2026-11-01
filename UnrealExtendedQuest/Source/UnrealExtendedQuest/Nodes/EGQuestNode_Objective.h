@@ -35,9 +35,9 @@ struct UNREALEXTENDEDQUEST_API FEGQuestObjectiveMilestone
  * instance and activates it. The evaluator reports the result with CompleteObjective(bSuccess).
  *
  * The built-in evaluation covers the common cases with no subclass needed:
- *  - EventTag set: succeeds once RequiredCount matching gameplay events are accepted.
- *  - FailEventTag set: fails once FailRequiredCount matching events are accepted.
- *  - bCompleteOnStageEnter: succeeds the moment its stage is entered (utility traversal).
+ *  - Tracker set: the tracker decides when the objective succeeds (or fails, for a tracker whose
+ *    outcome is Failed). EventCount counts gameplay events, Immediate succeeds on stage entry.
+ *  - FailureTracker set: fails the objective once it is satisfied.
  *  - Nothing set: waits for authority code (UEGQuestComponent::CompleteActiveObjective, a quest
  *    script, or a Blueprint subclass) to complete it.
  *
@@ -110,8 +110,6 @@ public:
 	{
 		return TEXT("Localized quest objective that evaluates its own success and failure.");
 	}
-
-	void PostLoad() override;
 
 #if WITH_EDITOR
 	/**
@@ -245,10 +243,8 @@ protected:
 	//
 
 	//
-	// These two run only for an objective with no tracker - one that authors nothing to evaluate.
-	// The authored fields are synthesised into trackers before activation (see EnsureTrackers), so
-	// both native defaults are empty and exist purely as the Blueprint subclass hook.
-	//
+	// These two run only for an objective with no tracker - one that authors nothing to evaluate -
+	// so both native defaults are empty and exist purely as the Blueprint subclass hook.
 
 	/** The stage was entered and this evaluator is live. */
 	UFUNCTION(BlueprintNativeEvent, Category = "Quest|Objective")
@@ -269,29 +265,6 @@ protected:
 	virtual void OnDeactivated_Implementation() {}
 
 protected:
-	//
-	// Legacy authored fields, load-only. Quests saved before tracker-only authoring store these
-	// instead of a Tracker subobject; EnsureTrackers turns them into tracker templates on load.
-	// Hidden from the editor and Blueprint on purpose - the tracker is the single authority for
-	// what completes or fails an objective. Deletable once every asset has been resaved (verify
-	// with a name-table scan: no uasset containing "EventTag" under an objective).
-	//
-
-	UPROPERTY()
-	FGameplayTag EventTag;
-
-	UPROPERTY()
-	int32 RequiredCount = 1;
-
-	UPROPERTY()
-	bool bCompleteOnStageEnter = false;
-
-	UPROPERTY()
-	FGameplayTag FailEventTag;
-
-	UPROPERTY()
-	int32 FailRequiredCount = 1;
-
 	// Localized objective text.
 	// If you want replaceable portions inside your Text nodes just add {identifier} inside it and set the value it should have at runtime.
 	UPROPERTY(EditAnywhere, Category = "Objective", Meta = (MultiLine = true))
@@ -318,17 +291,6 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Objective|Feedback") TArray<FEGQuestObjectiveMilestone> Milestones;
 
 private:
-	/**
-	 * Synthesises the inline tracker templates the authored fields describe. Idempotent: an authored
-	 * Tracker always wins, and calling this twice is a no-op.
-	 *
-	 * Assets on disk store EventTag/RequiredCount rather than a Tracker subobject, so this is how
-	 * every quest in the project actually acquires its trackers. Runs from PostLoad and again from
-	 * ActivateEvaluator, so that "an objective has its trackers by the time it evaluates" is a
-	 * property this class enforces rather than one inherited from where its instances come from.
-	 */
-	void EnsureTrackers();
-
 	// Set only on the transient evaluator copies (see the class comment). Authored asset nodes keep
 	// holding no runtime state; the counters themselves live in the replicated snapshot line.
 	UPROPERTY(Transient)

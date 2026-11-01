@@ -7,11 +7,8 @@
 #include "Engine/Font.h"
 #include "Logging/TokenizedMessage.h"
 #include "ScopedTransaction.h"
-#include "Runtime/Launch/Resources/Version.h"
 
-#if NY_ENGINE_VERSION >= 424
 #include "ToolMenu.h"
-#endif
 
 #include "UnrealExtendedQuestEditor/EGQuestPluginEditorModule.h"
 #include "UnrealExtendedQuest/EGQuestDiagnostics.h"
@@ -469,7 +466,6 @@ void UEGQuestGraphNode::CreateObjectivePins(const UEGQuestNode_Objective& Object
 	}
 }
 
-#if NY_ENGINE_VERSION >= 424
 void UEGQuestGraphNode::GetNodeContextMenuActions(UToolMenu* Menu, UGraphNodeContextMenuContext* Context) const
 {
 	// These actions (commands) are handled and registered in the FEGQuestEditor class
@@ -485,26 +481,6 @@ void UEGQuestGraphNode::GetNodeContextMenuActions(UToolMenu* Menu, UGraphNodeCon
 	}
 }
 
-#else
-
-void UEGQuestGraphNode::GetContextMenuActions(const FGraphNodeContextMenuBuilder& Context) const
-{
-	// These actions (commands) are handled and registered in the FEGQuestEditor class
-	if (Context.Node && !Context.bIsDebugging && !IsRootNode())
-	{
-		// Menu for right clicking on node
-		Context.MenuBuilder->BeginSection("QuestGraphNode_BaseNodeEditCRUD");
-		{
-			Context.MenuBuilder->AddMenuEntry(FGenericCommands::Get().Delete);
-			Context.MenuBuilder->AddMenuEntry(FGenericCommands::Get().Cut);
-			Context.MenuBuilder->AddMenuEntry(FGenericCommands::Get().Copy);
-			Context.MenuBuilder->AddMenuEntry(FGenericCommands::Get().Paste);
-			Context.MenuBuilder->AddMenuEntry(FGenericCommands::Get().Duplicate);
-		}
-		Context.MenuBuilder->EndSection();
-	}
-}
-#endif // NY_ENGINE_VERSION >= 424
 
 void UEGQuestGraphNode::AutowireNewNode(UEdGraphPin* FromPin)
 {

@@ -3,7 +3,6 @@
 
 #include "JsonObjectConverter.h"
 #include "JsonObjectWrapper.h"
-#include "Misc/EngineVersionComparison.h"
 #include "Policies/CondensedJsonPrintPolicy.h"
 #include "UObject/UnrealType.h"
 #include "UObject/EnumProperty.h"
@@ -217,11 +216,7 @@ TSharedPtr<FJsonValue> FEGQuestJsonWriter::ConvertScalarPropertyToJsonValue(cons
 				if (auto* KeyStructProperty = FNYReflectionHelper::CastProperty<FStructProperty>(MapProperty->KeyProp))
 				{
 					// Key is a struct
-#if NY_ENGINE_VERSION >= 501
 					MapProperty->KeyProp->ExportTextItem_Direct(KeyString, MapKeyPtr, MapKeyPtr, nullptr, PPF_None);
-#else
-					MapProperty->KeyProp->ExportTextItem(KeyString, MapKeyPtr, MapKeyPtr, nullptr, PPF_None);
-#endif
 				}
 				else
 				{
@@ -233,11 +228,7 @@ TSharedPtr<FJsonValue> FEGQuestJsonWriter::ConvertScalarPropertyToJsonValue(cons
 				if (KeyString.IsEmpty())
 				{
 
-#if NY_ENGINE_VERSION >= 501
 					MapProperty->KeyProp->ExportTextItem_Direct(KeyString, MapKeyPtr, MapKeyPtr, nullptr, PPF_None);
-#else
-					MapProperty->KeyProp->ExportTextItem(KeyString, MapKeyPtr, MapKeyPtr, nullptr, PPF_None);
-#endif
 
 					if (KeyString.IsEmpty())
 					{
@@ -344,11 +335,7 @@ TSharedPtr<FJsonValue> FEGQuestJsonWriter::ConvertScalarPropertyToJsonValue(cons
 
 	// Default, convert to string
 	FString ValueString;
-#if NY_ENGINE_VERSION >= 501
 	Property->ExportTextItem_Direct(ValueString, ValuePtr, ValuePtr, nullptr, PPF_None);
-#else
-	Property->ExportTextItem(ValueString, ValuePtr, ValuePtr, nullptr, PPF_None);
-#endif
 
 	return MakeShared<FJsonValueString>(ValueString);
 }
@@ -406,11 +393,7 @@ TSharedPtr<FJsonValue> FEGQuestJsonWriter::PropertyToJsonValue(const FProperty* 
 		IndexInArray = Index;
 
 		// ValuePtr + Index * Property->ElementSize is literally FScriptArrayHelper::GetRawPtr
-#if NY_ENGINE_VERSION >= 505
 		const int32 ElementSize = Property->GetElementSize();
-#else
-		const int32 ElementSize = Property->ElementSize;
-#endif
 
 		const TSharedPtr<FJsonValue> JsonValue = ConvertScalarPropertyToJsonValue(Property, ContainerPtr, ValueIntPtr + Index * ElementSize);
 		if (JsonValue.IsValid())
@@ -446,11 +429,7 @@ bool FEGQuestJsonWriter::UStructToJsonAttributes(const UStruct* StructDefinition
 			OutJsonAttributes.Empty(ProxyObject->JsonObject->Values.Num());
 			for (const auto& Pair : ProxyObject->JsonObject->Values)
 			{
-#if UE_VERSION_NEWER_THAN_OR_EQUAL(5, 8, 0)
 				OutJsonAttributes.Add(FString(Pair.Key.ToView()), Pair.Value);
-#else
-				OutJsonAttributes.Add(Pair.Key, Pair.Value);
-#endif
 			}
 		}
 

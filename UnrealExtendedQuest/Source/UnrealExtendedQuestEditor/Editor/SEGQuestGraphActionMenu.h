@@ -6,7 +6,6 @@
 #include "GraphEditor.h"
 #include "SGraphActionMenu.h"
 #include "Widgets/Input/SEditableTextBox.h"
-#include "UnrealExtendedQuest/NYEngineVersionHelpers.h"
 
 //////////////////////////////////////////////////////////////////////////
 /**
@@ -21,12 +20,12 @@ public:
 
 	SLATE_BEGIN_ARGS(Self)
 		: _Graph(nullptr)
-		, _NewNodePosition(FNYVector2f::ZeroVector)
+		, _NewNodePosition(FVector2f::ZeroVector)
 		, _AutoExpandActionMenu(true)
 	{}
 
 		SLATE_ARGUMENT(UEdGraph*, Graph)
-		SLATE_ARGUMENT(FNYVector2f, NewNodePosition)
+		SLATE_ARGUMENT(FVector2f, NewNodePosition)
 		SLATE_ARGUMENT(TArray<UEdGraphPin*>, DraggedFromPins)
 		SLATE_ARGUMENT(SGraphEditor::FActionMenuClosed, OnClosedCallback)
 		SLATE_ARGUMENT(bool, AutoExpandActionMenu)
@@ -51,7 +50,7 @@ protected:
 	TArray<UEdGraphPin*> DraggedFromPins;
 
 	/** The position of this new node */
-	FNYVector2f NewNodePosition;
+	FVector2f NewNodePosition;
 
 	/** Should expand the new menu? */
 	bool AutoExpandActionMenu = true;

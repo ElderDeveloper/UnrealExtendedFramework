@@ -26,7 +26,7 @@ void UEPFAccountLinkingSubsystem::LinkSteamAccount(const FString& SteamTicket, b
 	Body->SetStringField(TEXT("SteamTicket"), SteamTicket);
 	Body->SetBoolField(TEXT("ForceLink"), bForceLink);
 
-	SendPlayFabRequestDetailed(TEXT("/Client/LinkSteamAccount"), Body, true,
+	SendPlayFabRequestDetailed(TEXT("/Client/LinkSteamAccount"), Body, EEPFAuthMode::SessionTicket,
 		FOnPlayFabResponseDetailed::CreateLambda([this](const FEPFResult& Result, TSharedPtr<FJsonObject>)
 		{
 			if (Result.bSuccess) EF_LOG(ExtendedPlayFab, Log, TEXT("EPFAccountLinking — Steam linked"));
@@ -45,7 +45,7 @@ void UEPFAccountLinkingSubsystem::LinkCustomId(const FString& CustomId, bool bFo
 	Body->SetStringField(TEXT("CustomId"), CustomId);
 	Body->SetBoolField(TEXT("ForceLink"), bForceLink);
 
-	SendPlayFabRequestDetailed(TEXT("/Client/LinkCustomID"), Body, true,
+	SendPlayFabRequestDetailed(TEXT("/Client/LinkCustomID"), Body, EEPFAuthMode::SessionTicket,
 		FOnPlayFabResponseDetailed::CreateLambda([this](const FEPFResult& Result, TSharedPtr<FJsonObject>)
 		{
 			if (Result.bSuccess) EF_LOG(ExtendedPlayFab, Log, TEXT("EPFAccountLinking — CustomId linked"));
@@ -65,7 +65,7 @@ void UEPFAccountLinkingSubsystem::LinkDeviceId(bool bForceLink)
 	Body->SetStringField(TEXT("CustomId"), DeviceId);
 	Body->SetBoolField(TEXT("ForceLink"), bForceLink);
 
-	SendPlayFabRequestDetailed(TEXT("/Client/LinkCustomID"), Body, true,
+	SendPlayFabRequestDetailed(TEXT("/Client/LinkCustomID"), Body, EEPFAuthMode::SessionTicket,
 		FOnPlayFabResponseDetailed::CreateLambda([this](const FEPFResult& Result, TSharedPtr<FJsonObject>)
 		{
 			if (Result.bSuccess) EF_LOG(ExtendedPlayFab, Log, TEXT("EPFAccountLinking — DeviceId linked"));
@@ -80,7 +80,7 @@ void UEPFAccountLinkingSubsystem::UnlinkSteamAccount()
 {
 	TSharedRef<FJsonObject> Body = MakeShared<FJsonObject>();
 
-	SendPlayFabRequestDetailed(TEXT("/Client/UnlinkSteamAccount"), Body, true,
+	SendPlayFabRequestDetailed(TEXT("/Client/UnlinkSteamAccount"), Body, EEPFAuthMode::SessionTicket,
 		FOnPlayFabResponseDetailed::CreateLambda([this](const FEPFResult& Result, TSharedPtr<FJsonObject>)
 		{
 			if (Result.bSuccess) EF_LOG(ExtendedPlayFab, Log, TEXT("EPFAccountLinking — Steam unlinked"));
@@ -96,7 +96,7 @@ void UEPFAccountLinkingSubsystem::UnlinkCustomId(const FString& CustomId)
 	TSharedRef<FJsonObject> Body = MakeShared<FJsonObject>();
 	if (!CustomId.IsEmpty()) Body->SetStringField(TEXT("CustomId"), CustomId);
 
-	SendPlayFabRequestDetailed(TEXT("/Client/UnlinkCustomID"), Body, true,
+	SendPlayFabRequestDetailed(TEXT("/Client/UnlinkCustomID"), Body, EEPFAuthMode::SessionTicket,
 		FOnPlayFabResponseDetailed::CreateLambda([this](const FEPFResult& Result, TSharedPtr<FJsonObject>)
 		{
 			if (Result.bSuccess) EF_LOG(ExtendedPlayFab, Log, TEXT("EPFAccountLinking — CustomId unlinked"));

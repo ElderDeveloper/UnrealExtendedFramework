@@ -62,7 +62,7 @@ void UEPFIdLookupSubsystem::SendIdLookupRequest(const FString& Endpoint, const F
 	for (const auto& Id : Ids) IdsArr.Add(MakeShared<FJsonValueString>(Id));
 	Body->SetArrayField(ArrayFieldName, IdsArr);
 
-	SendPlayFabRequestDetailed(Endpoint, Body, true,
+	SendPlayFabRequestDetailed(Endpoint, Body, EEPFAuthMode::SessionTicket,
 		FOnPlayFabResponseDetailed::CreateLambda([this, PlatformIdField, ResponseArrayField](const FEPFResult& Result, TSharedPtr<FJsonObject> Response)
 		{
 			TArray<FEPFIdMapping> Mappings;

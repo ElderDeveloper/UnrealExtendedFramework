@@ -5,7 +5,6 @@
 #include "Templates/SubclassOf.h"
 
 #include "UnrealExtendedQuest/Nodes/EGQuestNode.h"
-#include "UnrealExtendedQuest/NYEngineVersionHelpers.h"
 
 #include "EGQuestNewNode_GraphSchemaAction.generated.h"
 
@@ -31,7 +30,7 @@ public:
 	) : FEdGraphSchemaAction(InNodeCategory, InMenuDesc, InToolTip, InGrouping), CreateNodeType(InCreateNodeType) {}
 
 	//~ Begin FEdGraphSchemaAction Interface
-	UEdGraphNode* PerformAction(UEdGraph* ParentGraph, UEdGraphPin* FromPin, FNYLocationVector2f Location, bool bSelectNewNode = true) override;
+	UEdGraphNode* PerformAction(UEdGraph* ParentGraph, UEdGraphPin* FromPin, const FVector2f& Location, bool bSelectNewNode = true) override;
 	//~ End FEdGraphSchemaAction Interface
 
 	// Spawns a new UEGQuestGraphNode of type GraphNodeType that must have a valid QuestNode of TSubclassOf<UEGQuestNode>
@@ -39,7 +38,7 @@ public:
 	static GraphNodeType* SpawnGraphNodeWithQuestNodeFromTemplate(
 		UEdGraph* ParentGraph,
 		TSubclassOf<UEGQuestNode> CreateNodeType,
-		const FNYVector2f Location,
+		const FVector2f Location,
 		bool bSelectNewNode = true
 	)
 	{
@@ -49,7 +48,7 @@ public:
 
 private:
 	/** Creates a new quest node from the template */
-	UEdGraphNode* CreateNode(UEGQuestGraph* Quest, UEdGraph* ParentGraph, UEdGraphPin* FromPin, FNYVector2f Location, bool bSelectNewNode);
+	UEdGraphNode* CreateNode(UEGQuestGraph* Quest, UEdGraph* ParentGraph, UEdGraphPin* FromPin, FVector2f Location, bool bSelectNewNode);
 
 	/** Connects new node to output of selected nodes */
 //	void ConnectToSelectedNodes(UEGQuestNode* NewNodeclass, UEdGraph* ParentGraph) const;

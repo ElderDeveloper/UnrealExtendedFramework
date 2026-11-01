@@ -2,11 +2,10 @@
 #include "SEGQuestGraphActionMenu.h"
 
 #include "EdGraph/EdGraph.h"
-#include "EditorStyleSet.h"
+#include "Styling/AppStyle.h"
 #include "Framework/Application/SlateApplication.h"
 #include "EdGraph/EdGraphSchema.h"
 
-#include "UnrealExtendedQuest/NYEngineVersionHelpers.h"
 
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -29,7 +28,7 @@ void SEGQuestGraphActionMenu::Construct(const FArguments& InArgs)
 
 	// Build the widget layout
 	SBorder::Construct(SBorder::FArguments()
-		.BorderImage(FNYAppStyle::GetBrush("Menu.Background"))
+		.BorderImage(FAppStyle::GetBrush("Menu.Background"))
 		.Padding(5)
 		[
 			// Achieving fixed width by nesting items within a fixed width box.

@@ -94,15 +94,9 @@ static FName MakeSeededQuestDefinitionId(const UEGQuestGraph* Quest)
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Begin UObject interface
-#if NY_ENGINE_VERSION >= 500
 void UEGQuestGraph::PreSave(FObjectPreSaveContext SaveContext)
 {
 	Super::PreSave(SaveContext);
-#else
-void UEGQuestGraph::PreSave(const class ITargetPlatform* TargetPlatform)
-{
-	Super::PreSave(TargetPlatform);
-#endif
 
 	Name = GetQuestFName();
 	bWasLoaded = true;

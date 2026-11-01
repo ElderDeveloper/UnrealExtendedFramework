@@ -6,6 +6,7 @@
 #include "Internationalization/TextNamespaceUtil.h"
 #include "UnrealExtendedQuestEditor/Editor/DetailsPanel/Widgets/EGQuestEditableTextPropertyHandle.h"
 #include "UnrealExtendedQuestEditor/Editor/DetailsPanel/EGQuestDetailsPanelUtils.h"
+#include "Styling/AppStyle.h"
 
 #define LOCTEXT_NAMESPACE "MultiLineEditableTextBox_CustomRowHelper"
 
@@ -25,7 +26,7 @@ void FEGQuestMultiLineEditableTextBoxOptions::SetDefaults()
 
 	// Set values that can't be set in the class definition
 	Style = FCoreStyle::Get().GetWidgetStyle<FEditableTextBoxStyle>("NormalEditableTextBox");
-	Font = FNYAppStyle::GetFontStyle(TEXT("PropertyWindow.NormalFont"));
+	Font = FAppStyle::GetFontStyle(TEXT("PropertyWindow.NormalFont"));
 	// ForegroundColor =
 }
 

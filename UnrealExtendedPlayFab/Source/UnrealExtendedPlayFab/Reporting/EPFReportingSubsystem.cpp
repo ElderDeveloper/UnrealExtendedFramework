@@ -15,7 +15,7 @@ void UEPFReportingSubsystem::ReportPlayer(const FString& ReporteePlayFabId, cons
 	Body->SetStringField(TEXT("ReporteeId"), ReporteePlayFabId);
 	if (!Comment.IsEmpty()) Body->SetStringField(TEXT("Comment"), Comment);
 
-	SendPlayFabRequestDetailed(TEXT("/Client/ReportPlayer"), Body, true,
+	SendPlayFabRequestDetailed(TEXT("/Client/ReportPlayer"), Body, EEPFAuthMode::SessionTicket,
 		FOnPlayFabResponseDetailed::CreateLambda([this, ReporteePlayFabId](const FEPFResult& Result, TSharedPtr<FJsonObject>)
 		{
 			if (Result.bSuccess) EF_LOG(ExtendedPlayFab, Log, TEXT("EPFReporting — Player reported: %s"), *ReporteePlayFabId);

@@ -32,8 +32,6 @@ struct FEPFSharedAuthTestScope
 		SavedPlatformCallTimeoutSeconds = Settings->PlatformCallTimeoutSeconds;
 
 		SavedAuthContext = UEPFSubsystem::SharedAuthContext;
-		SavedSessionTicket = UEPFSubsystem::SharedSessionTicket;
-		SavedPlayFabId = UEPFSubsystem::SharedPlayFabId;
 	}
 
 	~FEPFSharedAuthTestScope()
@@ -72,16 +70,12 @@ struct FEPFSharedAuthTestScope
 		Context.EntityId = InEntityId;
 		Context.EntityType = InEntityToken.IsEmpty() ? FString() : InEntityType;
 		UEPFSubsystem::SharedAuthContext = Context;
-		UEPFSubsystem::SharedSessionTicket = InSessionTicket;
-		UEPFSubsystem::SharedPlayFabId = InPlayFabId;
 	}
 
 	/** No session at all, whatever an earlier test or a real login left behind. */
 	void SignOut()
 	{
 		UEPFSubsystem::SharedAuthContext.Reset();
-		UEPFSubsystem::SharedSessionTicket.Empty();
-		UEPFSubsystem::SharedPlayFabId.Empty();
 	}
 
 	void Restore()
@@ -102,8 +96,6 @@ struct FEPFSharedAuthTestScope
 		Settings->PlatformCallTimeoutSeconds = SavedPlatformCallTimeoutSeconds;
 
 		UEPFSubsystem::SharedAuthContext = SavedAuthContext;
-		UEPFSubsystem::SharedSessionTicket = SavedSessionTicket;
-		UEPFSubsystem::SharedPlayFabId = SavedPlayFabId;
 	}
 
 private:
@@ -115,8 +107,6 @@ private:
 	bool bSavedEnablePlatformProvider = true;
 	float SavedPlatformCallTimeoutSeconds = 30.0f;
 	FEPFAuthContext SavedAuthContext;
-	FString SavedSessionTicket;
-	FString SavedPlayFabId;
 	bool bRestored = false;
 };
 

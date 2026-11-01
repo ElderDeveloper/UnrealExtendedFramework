@@ -195,14 +195,6 @@ bool FEFHttpSubsystemPrepareTest::RunTest(const FString& Parameters)
 	FString ContentType;
 	TestTrue(TEXT("response header lookup ignores case"), UEFHttpLibrary::GetResponseHeader(Response, TEXT("content-type"), ContentType));
 
-	// The deprecated JsonString node: key/value pairs, escaped, a trailing key ignored.
-	FEFJsonObject Legacy;
-	TestTrue(TEXT("legacy JsonString output parses"), UEFJsonLibrary::ParseJsonObject(Http->JsonString({ TEXT("a"), TEXT("say \"hi\""), TEXT("dangling") }), Legacy));
-	FString LegacyValue;
-	UEFJsonLibrary::TryGetStringField(Legacy, TEXT("a"), LegacyValue);
-	TestEqual(TEXT("legacy JsonString escapes values"), LegacyValue, FString(TEXT("say \"hi\"")));
-	TestFalse(TEXT("legacy JsonString ignores a trailing key"), UEFJsonLibrary::HasField(Legacy, TEXT("dangling")));
-
 	return true;
 }
 

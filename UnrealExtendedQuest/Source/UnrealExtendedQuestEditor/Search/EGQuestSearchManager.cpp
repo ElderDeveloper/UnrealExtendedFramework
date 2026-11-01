@@ -7,7 +7,6 @@
 #include "WorkspaceMenuStructureModule.h"
 #include "WorkspaceMenuStructure.h"
 #include "EdGraphNode_Comment.h"
-#include "Runtime/Launch/Resources/Version.h"
 
 #include "UnrealExtendedQuest/EGQuestGraph.h"
 #include "UnrealExtendedQuest/EGQuestManager.h"
@@ -37,7 +36,7 @@ FEGQuestSearchManager* FEGQuestSearchManager::Get()
 FEGQuestSearchManager::FEGQuestSearchManager()
 {
 	// Create the Tab Ids
-	for (int32 TabIdx = 0; TabIdx < NY_ARRAY_COUNT(GlobalFindResultsTabIDs); TabIdx++)
+	for (int32 TabIdx = 0; TabIdx < UE_ARRAY_COUNT(GlobalFindResultsTabIDs); TabIdx++)
 	{
 		const FName TabID = FName(*FString::Printf(TEXT("GlobalQuestFindResults_%02d"), TabIdx + 1));
 		GlobalFindResultsTabIDs[TabIdx] = TabID;
@@ -553,7 +552,7 @@ TSharedPtr<SEGQuestFindInQuests> FEGQuestSearchManager::OpenGlobalFindResultsTab
 	}
 
 	// Find the unopened tab, that we can open
-	for (int32 Idx = 0; Idx < NY_ARRAY_COUNT(GlobalFindResultsTabIDs); ++Idx)
+	for (int32 Idx = 0; Idx < UE_ARRAY_COUNT(GlobalFindResultsTabIDs); ++Idx)
 	{
 		const FName GlobalTabId = GlobalFindResultsTabIDs[Idx];
 		if (!OpenGlobalTabIDs.Contains(GlobalTabId))
@@ -619,16 +618,12 @@ void FEGQuestSearchManager::EnableGlobalFindResults(TSharedPtr<FWorkspaceItem> P
 	);
 
 	// Register tab spawners
-	for (int32 TabIdx = 0; TabIdx < NY_ARRAY_COUNT(GlobalFindResultsTabIDs); TabIdx++)
+	for (int32 TabIdx = 0; TabIdx < UE_ARRAY_COUNT(GlobalFindResultsTabIDs); TabIdx++)
 	{
 		const FName TabID = GlobalFindResultsTabIDs[TabIdx];
 
 		// Tab not registered yet, good.
-#if NY_ENGINE_VERSION >= 423
 		if (!GlobalTabManager->HasTabSpawner(TabID))
-#else
-		if (!GlobalTabManager->CanSpawnTab(TabID))
-#endif
 		{
 			const FText DisplayName = FText::Format(
 				LOCTEXT("GlobalFindResultsDisplayName", "Find in Quests {0}"),
@@ -661,15 +656,11 @@ void FEGQuestSearchManager::DisableGlobalFindResults()
 	GlobalFindResultsWidgets.Empty();
 
 	// Unregister tab spawners
-	for (int32 TabIdx = 0; TabIdx < NY_ARRAY_COUNT(GlobalFindResultsTabIDs); TabIdx++)
+	for (int32 TabIdx = 0; TabIdx < UE_ARRAY_COUNT(GlobalFindResultsTabIDs); TabIdx++)
 	{
 		const FName TabID = GlobalFindResultsTabIDs[TabIdx];
 
-#if NY_ENGINE_VERSION >= 423
 		if (!GlobalTabManager->HasTabSpawner(TabID))
-#else
-		if (!GlobalTabManager->CanSpawnTab(TabID))
-#endif
 		{
 			GlobalTabManager->UnregisterNomadTabSpawner(TabID);
 		}
@@ -823,4 +814,4 @@ void FEGQuestSearchManager::HandleOnAssetRegistryFilesLoaded()
 }
 
 #undef LOCTEXT_NAMESPACE
-#undef NY_ARRAY_COUNT
+#undef UE_ARRAY_COUNT

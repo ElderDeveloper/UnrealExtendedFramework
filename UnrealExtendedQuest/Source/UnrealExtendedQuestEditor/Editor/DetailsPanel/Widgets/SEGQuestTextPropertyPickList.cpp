@@ -7,7 +7,7 @@
 #include "Framework/Application/SlateApplication.h"
 #include "Layout/WidgetPath.h"
 
-#include "UnrealExtendedQuest/NYEngineVersionHelpers.h"
+#include "Styling/AppStyle.h"
 
 #define LOCTEXT_NAMESPACE "SEGQuestTextPropertyPickList"
 
@@ -57,8 +57,8 @@ void SEGQuestTextPropertyPickList::Construct(const FArguments& InArgs)
 	// TODO maybe have a look at SNameComboBox and SComboBox
 	// Build the button and text view
 	ComboButtonWidget = SNew(SComboButton)
-		.ButtonStyle(FNYAppStyle::Get(), "PropertyEditor.AssetComboStyle")
-		.ForegroundColor(FNYAppStyle::GetColor("PropertyEditor.AssetName.ColorAndOpacity"))
+		.ButtonStyle(FAppStyle::Get(), "PropertyEditor.AssetComboStyle")
+		.ForegroundColor(FAppStyle::GetColor("PropertyEditor.AssetName.ColorAndOpacity"))
 		.OnGetMenuContent(this, &Self::GetMenuWidget)
 		.OnMenuOpenChanged(this, &Self::HandleMenuOpenChanged)
 		.OnComboBoxOpened(this, &Self::HandleComboBoxOpened)
@@ -69,7 +69,7 @@ void SEGQuestTextPropertyPickList::Construct(const FArguments& InArgs)
 		[
 			// Show the name of the asset or actor
 			SAssignNew(ComboButtonTextWidget, STextBlock)
-			.TextStyle(FNYAppStyle::Get(), "PropertyEditor.AssetClass")
+			.TextStyle(FAppStyle::Get(), "PropertyEditor.AssetClass")
 			.Text(TextAttribute)
 		];
 
@@ -272,7 +272,7 @@ TSharedRef<SWidget> SEGQuestTextPropertyPickList::GetListViewWidget()
 	// Cache it
 	ListViewContainerWidget = SNew(SBorder)
 		.Padding(0)
-		.BorderImage(FNYAppStyle::GetBrush("NoBorder"));
+		.BorderImage(FAppStyle::GetBrush("NoBorder"));
 
 	ListViewWidget = SNew(STileView<TextListItem>)
 		.SelectionMode(ESelectionMode::Single)

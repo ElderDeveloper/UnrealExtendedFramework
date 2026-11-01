@@ -47,11 +47,7 @@ public:
 			FilterAddNativeParentClassPath(InFilter, ChildNativeClass);
 		}
 
-#if NY_ENGINE_VERSION >= 501
 		InFilter.ClassPaths.Add(UBlueprint::StaticClass()->GetClassPathName());
-#else
-		InFilter.ClassNames.Add(UBlueprint::StaticClass()->GetFName());
-#endif
 
 		InFilter.bRecursiveClasses = true;
 	}

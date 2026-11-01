@@ -536,11 +536,3 @@ UEFSubtitleReceiverComponent* UEFSubtitleSubsystem::GetOrAddReceiverComponent(AP
 	}
 	return Receiver;
 }
-
-
-// ── Deprecated ──
-
-void UEFSubtitleSubsystem::ExecuteExtendedSubtitle(const UObject* WorldContextObject, const FString SubtitleKey)
-{
-	ExecuteSubtitle(WorldContextObject, FName(*SubtitleKey));
-}

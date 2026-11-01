@@ -6,10 +6,8 @@
 #define NY_REFLECTION_HELPER
 
 #include "CoreMinimal.h"
-#include "Runtime/Launch/Resources/Version.h"
 #include "UObject/WeakObjectPtrTemplates.h"
 #include "UObject/UnrealType.h"
-#include "NYEngineVersionHelpers.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogEGQuestPluginReflectionHelper, All, All)
 
@@ -17,8 +15,6 @@ class UNREALEXTENDEDQUEST_API FNYReflectionHelper
 {
 public:
 
-#if NY_ENGINE_VERSION >= 425
-	// From 4.25 UProperties are different
 	template<typename FieldType>
 	FORCEINLINE static FieldType* CastProperty(FField* Src)
 	{
@@ -53,40 +49,6 @@ public:
 		return Result;
 	}
 
-#else
-	template <typename To, typename From>
-	FORCEINLINE static To* CastProperty(From* Src)
-	{
-		return TCastImpl<From, To>::DoCast(Src);
-	}
-	// Const Version
-	template <typename To, typename From>
-	FORCEINLINE static const To* CastProperty(const From* Src)
-	{
-		return CastProperty<To>(const_cast<From*>(Src));
-	}
-
-	FORCEINLINE static UField* GetStructChildren(const UStruct* Struct)
-	{
-		return Struct ? Struct->Children : nullptr;
-	}
-
-	// the old removed engine function this code still uses a lot:
-	template <typename To, typename From>
-	static To* SmartCastProperty(From* Src)
-	{
-		To* Result = dynamic_cast<To*>(Src);
-		if (Result == nullptr)
-		{
-			FArrayProperty* ArrayProp = dynamic_cast<FArrayProperty*>(Src);
-			if (ArrayProp != nullptr)
-			{
-				Result = dynamic_cast<To*>(ArrayProp->Inner);
-			}
-		}
-		return Result;
-	}
-#endif // NY_ENGINE_VERSION >= 425
 
 	// Attempts to get the property VariableName from Object
 	template <typename PropertyType, typename VariableType>

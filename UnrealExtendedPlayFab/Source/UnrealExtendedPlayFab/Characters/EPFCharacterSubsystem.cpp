@@ -14,7 +14,7 @@ void UEPFCharacterSubsystem::GetAllCharacters()
 	TSharedRef<FJsonObject> Body = MakeShared<FJsonObject>();
 	Body->SetStringField(TEXT("PlayFabId"), GetPlayFabId());
 
-	SendPlayFabRequestDetailed(TEXT("/Client/GetAllUsersCharacters"), Body, true,
+	SendPlayFabRequestDetailed(TEXT("/Client/GetAllUsersCharacters"), Body, EEPFAuthMode::SessionTicket,
 		FOnPlayFabResponseDetailed::CreateLambda([this](const FEPFResult& Result, TSharedPtr<FJsonObject> Response)
 		{
 			if (Result.bSuccess && Response.IsValid())
@@ -53,7 +53,7 @@ void UEPFCharacterSubsystem::GrantCharacter(const FString& CharacterName, const 
 	Body->SetStringField(TEXT("ItemId"), ItemId);
 	Body->SetStringField(TEXT("CatalogVersion"), TEXT(""));
 
-	SendPlayFabRequestDetailed(TEXT("/Client/GrantCharacterToUser"), Body, true,
+	SendPlayFabRequestDetailed(TEXT("/Client/GrantCharacterToUser"), Body, EEPFAuthMode::SessionTicket,
 		FOnPlayFabResponseDetailed::CreateLambda([this, CharacterName](const FEPFResult& Result, TSharedPtr<FJsonObject> Response)
 		{
 			FString CharId;
@@ -79,7 +79,7 @@ void UEPFCharacterSubsystem::DeleteCharacter(const FString& CharacterId, bool bS
 	Body->SetStringField(TEXT("PlayFabId"), GetPlayFabId());
 	Body->SetBoolField(TEXT("SaveCharacterInventory"), bSaveCharacterInventory);
 
-	SendPlayFabRequestDetailed(TEXT("/Client/DeleteCharacterFromUser"), Body, true,
+	SendPlayFabRequestDetailed(TEXT("/Client/DeleteCharacterFromUser"), Body, EEPFAuthMode::SessionTicket,
 		FOnPlayFabResponseDetailed::CreateLambda([this, CharacterId](const FEPFResult& Result, TSharedPtr<FJsonObject>)
 		{
 			if (Result.bSuccess) CachedCharacters.RemoveAll([&](const FEPFCharacter& C) { return C.CharacterId == CharacterId; });
@@ -103,7 +103,7 @@ void UEPFCharacterSubsystem::GetCharacterData(const FString& CharacterId, const 
 		Body->SetArrayField(TEXT("Keys"), KeysArr);
 	}
 
-	SendPlayFabRequestDetailed(TEXT("/Client/GetCharacterData"), Body, true,
+	SendPlayFabRequestDetailed(TEXT("/Client/GetCharacterData"), Body, EEPFAuthMode::SessionTicket,
 		FOnPlayFabResponseDetailed::CreateLambda([this](const FEPFResult& Result, TSharedPtr<FJsonObject> Response)
 		{
 			TMap<FString, FString> Data;
@@ -133,7 +133,7 @@ void UEPFCharacterSubsystem::UpdateCharacterData(const FString& CharacterId, con
 	for (const auto& Pair : Data) DataObj->SetStringField(Pair.Key, Pair.Value);
 	Body->SetObjectField(TEXT("Data"), DataObj);
 
-	SendPlayFabRequestDetailed(TEXT("/Client/UpdateCharacterData"), Body, true,
+	SendPlayFabRequestDetailed(TEXT("/Client/UpdateCharacterData"), Body, EEPFAuthMode::SessionTicket,
 		FOnPlayFabResponseDetailed::CreateLambda([this](const FEPFResult& Result, TSharedPtr<FJsonObject>) { OnCharacterDataUpdated.Broadcast(Result); }));
 }
 
@@ -146,7 +146,7 @@ void UEPFCharacterSubsystem::GetCharacterStatistics(const FString& CharacterId)
 	TSharedRef<FJsonObject> Body = MakeShared<FJsonObject>();
 	Body->SetStringField(TEXT("CharacterId"), CharacterId);
 
-	SendPlayFabRequestDetailed(TEXT("/Client/GetCharacterStatistics"), Body, true,
+	SendPlayFabRequestDetailed(TEXT("/Client/GetCharacterStatistics"), Body, EEPFAuthMode::SessionTicket,
 		FOnPlayFabResponseDetailed::CreateLambda([this](const FEPFResult& Result, TSharedPtr<FJsonObject> Response)
 		{
 			TMap<FString, int32> Stats;
@@ -175,7 +175,7 @@ void UEPFCharacterSubsystem::UpdateCharacterStatistics(const FString& CharacterI
 	for (const auto& Pair : Stats) StatsObj->SetNumberField(Pair.Key, Pair.Value);
 	Body->SetObjectField(TEXT("CharacterStatistics"), StatsObj);
 
-	SendPlayFabRequestDetailed(TEXT("/Client/UpdateCharacterStatistics"), Body, true,
+	SendPlayFabRequestDetailed(TEXT("/Client/UpdateCharacterStatistics"), Body, EEPFAuthMode::SessionTicket,
 		FOnPlayFabResponseDetailed::CreateLambda([this](const FEPFResult& Result, TSharedPtr<FJsonObject>) { OnCharacterDataUpdated.Broadcast(Result); }));
 }
 
@@ -203,7 +203,7 @@ void UEPFCharacterSubsystem::GetCharacterReadOnlyData(const FString& CharacterId
 		Body->SetArrayField(TEXT("Keys"), KeysArr);
 	}
 
-	SendPlayFabRequestDetailed(TEXT("/Client/GetCharacterReadOnlyData"), Body, true,
+	SendPlayFabRequestDetailed(TEXT("/Client/GetCharacterReadOnlyData"), Body, EEPFAuthMode::SessionTicket,
 		FOnPlayFabResponseDetailed::CreateLambda([this](const FEPFResult& Result, TSharedPtr<FJsonObject> Response)
 		{
 			OnCharacterDataReceived.Broadcast(Result);
@@ -219,7 +219,7 @@ void UEPFCharacterSubsystem::GetCharacterLeaderboard(const FString& StatisticNam
 	Body->SetNumberField(TEXT("StartPosition"), StartPosition);
 	Body->SetNumberField(TEXT("MaxResultsCount"), MaxResultsCount);
 
-	SendPlayFabRequestDetailed(TEXT("/Client/GetCharacterLeaderboard"), Body, true,
+	SendPlayFabRequestDetailed(TEXT("/Client/GetCharacterLeaderboard"), Body, EEPFAuthMode::SessionTicket,
 		FOnPlayFabResponseDetailed::CreateUObject(this, &UEPFCharacterSubsystem::ParseCharacterLeaderboard));
 }
 
@@ -232,7 +232,7 @@ void UEPFCharacterSubsystem::GetLeaderboardAroundCharacter(const FString& Statis
 	Body->SetStringField(TEXT("CharacterId"), CharacterId);
 	Body->SetNumberField(TEXT("MaxResultsCount"), MaxResultsCount);
 
-	SendPlayFabRequestDetailed(TEXT("/Client/GetLeaderboardAroundCharacter"), Body, true,
+	SendPlayFabRequestDetailed(TEXT("/Client/GetLeaderboardAroundCharacter"), Body, EEPFAuthMode::SessionTicket,
 		FOnPlayFabResponseDetailed::CreateUObject(this, &UEPFCharacterSubsystem::ParseCharacterLeaderboard));
 }
 
@@ -241,7 +241,7 @@ void UEPFCharacterSubsystem::GetLeaderboardForUserCharacters(const FString& Stat
 	TSharedRef<FJsonObject> Body = MakeShared<FJsonObject>();
 	Body->SetStringField(TEXT("StatisticName"), StatisticName);
 
-	SendPlayFabRequestDetailed(TEXT("/Client/GetLeaderboardForUserCharacters"), Body, true,
+	SendPlayFabRequestDetailed(TEXT("/Client/GetLeaderboardForUserCharacters"), Body, EEPFAuthMode::SessionTicket,
 		FOnPlayFabResponseDetailed::CreateUObject(this, &UEPFCharacterSubsystem::ParseCharacterLeaderboard));
 }
 

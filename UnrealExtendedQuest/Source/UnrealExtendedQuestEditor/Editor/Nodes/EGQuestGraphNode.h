@@ -3,7 +3,6 @@
 
 #include "CoreTypes.h"
 #include "UObject/ObjectMacros.h"
-#include "Runtime/Launch/Resources/Version.h"
 
 #include "UnrealExtendedQuest/Nodes/EGQuestNode_End.h"
 #include "UnrealExtendedQuest/Nodes/EGQuestNode_Objective.h"
@@ -11,7 +10,6 @@
 #include "UnrealExtendedQuest/Nodes/EGQuestNode_Custom.h"
 #include "UnrealExtendedQuest/EGQuestTypes.h"
 #include "EGQuestGraphNode_Base.h"
-#include "UnrealExtendedQuest/NYEngineVersionHelpers.h"
 
 #include "EGQuestGraphNode.generated.h"
 
@@ -83,11 +81,7 @@ public:
 	virtual void AllocateDefaultPins() override;
 
 	/** Gets a list of actions that can be done to this particular node */
-#if NY_ENGINE_VERSION >= 424
 	virtual void GetNodeContextMenuActions(UToolMenu* Menu, UGraphNodeContextMenuContext* Context) const override;
-#else
-	virtual void GetContextMenuActions(const FGraphNodeContextMenuBuilder& Context) const override;
-#endif
 
 	/**
 	 * Autowire a newly created node.

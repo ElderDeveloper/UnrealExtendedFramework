@@ -11,9 +11,7 @@
 // EEGQuestAutoTrackPolicy is a UPROPERTY below, so the type must be complete here.
 #include "EGQuestTypes.h"
 
-#if NY_ENGINE_VERSION >= 500
 #include "UObject/ObjectSaveContext.h"
-#endif
 
 #include "EGQuestGraph.generated.h"
 
@@ -114,11 +112,7 @@ public:
 	 *
 	 * @warning: Objects created from within PreSave will NOT have PreSave called on them!!!
 	 */
-#if NY_ENGINE_VERSION >= 500
 	void PreSave(FObjectPreSaveContext SaveContext) override;
-#else
-	void PreSave(const class ITargetPlatform* TargetPlatform) override;
-#endif
 	/** UObject serializer. */
 	void Serialize(FArchive& Ar) override;
 

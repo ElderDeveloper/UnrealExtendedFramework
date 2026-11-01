@@ -2,7 +2,6 @@
 #pragma once
 
 #include "ThumbnailRendering/DefaultSizedThumbnailRenderer.h"
-#include "Runtime/Launch/Resources/Version.h"
 
 #include "EGQuestThumbnailRenderer.generated.h"
 
@@ -15,10 +14,4 @@ class UNREALEXTENDEDQUESTEDITOR_API UEGQuestThumbnailRenderer : public UDefaultS
 public:
 	UEGQuestThumbnailRenderer(const FObjectInitializer& ObjectInitializer);
 
-	// UThumbnailRenderer interface
-// #if NY_ENGINE_VERSION >= 425
-// 	void Draw(UObject* Object, int32 X, int32 Y, uint32 Width, uint32 Height, FRenderTarget* Target, FCanvas* Canvas, bool bAdditionalViewFamily) override;
-// #else
-// 	void Draw(UObject* Object, int32 X, int32 Y, uint32 Width, uint32 Height, FRenderTarget* Target, FCanvas* Canvas,) override;
-// #endif
 };

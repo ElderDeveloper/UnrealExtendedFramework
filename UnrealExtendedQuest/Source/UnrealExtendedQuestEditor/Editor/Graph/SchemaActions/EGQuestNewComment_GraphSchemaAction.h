@@ -3,7 +3,6 @@
 
 #include "EdGraph/EdGraphSchema.h"
 #include "Templates/SubclassOf.h"
-#include "UnrealExtendedQuest/NYEngineVersionHelpers.h"
 
 #include "EGQuestNewComment_GraphSchemaAction.generated.h"
 
@@ -20,6 +19,6 @@ struct UNREALEXTENDEDQUESTEDITOR_API FEGQuestNewComment_GraphSchemaAction : publ
 		: FEdGraphSchemaAction(InNodeCategory, InMenuDesc, InToolTip, InGrouping) {}
 
 	//~ Begin FEdGraphSchemaAction Interface
-	UEdGraphNode* PerformAction(UEdGraph* ParentGraph, UEdGraphPin* FromPin, FNYLocationVector2f Location, bool bSelectNewNode = true) override;
+	UEdGraphNode* PerformAction(UEdGraph* ParentGraph, UEdGraphPin* FromPin, const FVector2f& Location, bool bSelectNewNode = true) override;
 	//~ End FEdGraphSchemaAction Interface
 };

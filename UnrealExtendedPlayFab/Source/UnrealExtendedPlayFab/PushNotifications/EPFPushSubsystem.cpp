@@ -18,7 +18,7 @@ void UEPFPushSubsystem::RegisterForIOSPush(const FString& DeviceToken, bool bSen
 	Body->SetStringField(TEXT("DeviceToken"), DeviceToken);
 	Body->SetBoolField(TEXT("SendPushNotificationConfirmation"), bSendPushNotificationConfirmation);
 
-	SendPlayFabRequestDetailed(TEXT("/Client/RegisterForIOSPushNotification"), Body, true,
+	SendPlayFabRequestDetailed(TEXT("/Client/RegisterForIOSPushNotification"), Body, EEPFAuthMode::SessionTicket,
 		FOnPlayFabResponseDetailed::CreateLambda([this](const FEPFResult& Result, TSharedPtr<FJsonObject>)
 		{
 			if (Result.bSuccess) EF_LOG(ExtendedPlayFab, Log, TEXT("EPFPush — iOS push registered"));
@@ -37,7 +37,7 @@ void UEPFPushSubsystem::RegisterForAndroidPush(const FString& DeviceToken, bool 
 	Body->SetStringField(TEXT("DeviceToken"), DeviceToken);
 	Body->SetBoolField(TEXT("SendPushNotificationConfirmation"), bSendPushNotificationConfirmation);
 
-	SendPlayFabRequestDetailed(TEXT("/Client/AndroidDevicePushNotificationRegistration"), Body, true,
+	SendPlayFabRequestDetailed(TEXT("/Client/AndroidDevicePushNotificationRegistration"), Body, EEPFAuthMode::SessionTicket,
 		FOnPlayFabResponseDetailed::CreateLambda([this](const FEPFResult& Result, TSharedPtr<FJsonObject>)
 		{
 			if (Result.bSuccess) EF_LOG(ExtendedPlayFab, Log, TEXT("EPFPush — Android push registered"));
@@ -57,7 +57,7 @@ void UEPFPushSubsystem::SendPushNotification(const FString& RecipientPlayFabId, 
 	Body->SetStringField(TEXT("Message"), Message);
 	if (!Subject.IsEmpty()) Body->SetStringField(TEXT("Subject"), Subject);
 
-	SendPlayFabRequestDetailed(TEXT("/Client/SendPushNotification"), Body, true,
+	SendPlayFabRequestDetailed(TEXT("/Client/SendPushNotification"), Body, EEPFAuthMode::SessionTicket,
 		FOnPlayFabResponseDetailed::CreateLambda([this](const FEPFResult& Result, TSharedPtr<FJsonObject>)
 		{
 			if (Result.bSuccess) EF_LOG(ExtendedPlayFab, Log, TEXT("EPFPush — Push notification sent"));

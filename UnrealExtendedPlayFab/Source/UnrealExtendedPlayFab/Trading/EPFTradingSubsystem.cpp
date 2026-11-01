@@ -83,7 +83,7 @@ void UEPFTradingSubsystem::OpenTrade(const TArray<FString>& OfferedItemInstanceI
 		Body->SetArrayField(TEXT("AllowedPlayerIds"), AllowedArr);
 	}
 
-	SendPlayFabRequestDetailed(TEXT("/Client/OpenTrade"), Body, true,
+	SendPlayFabRequestDetailed(TEXT("/Client/OpenTrade"), Body, EEPFAuthMode::SessionTicket,
 		FOnPlayFabResponseDetailed::CreateLambda([this](const FEPFResult& Result, TSharedPtr<FJsonObject> Response)
 		{
 			FString TradeId;
@@ -120,7 +120,7 @@ void UEPFTradingSubsystem::AcceptTrade(const FString& TradeId, const FString& Of
 		Body->SetArrayField(TEXT("AcceptedInventoryInstanceIds"), AcceptedArr);
 	}
 
-	SendPlayFabRequestDetailed(TEXT("/Client/AcceptTrade"), Body, true,
+	SendPlayFabRequestDetailed(TEXT("/Client/AcceptTrade"), Body, EEPFAuthMode::SessionTicket,
 		FOnPlayFabResponseDetailed::CreateLambda([this](const FEPFResult& Result, TSharedPtr<FJsonObject> Response)
 		{
 			FEPFTradeInfo Trade;
@@ -147,7 +147,7 @@ void UEPFTradingSubsystem::CancelTrade(const FString& TradeId)
 	TSharedRef<FJsonObject> Body = MakeShared<FJsonObject>();
 	Body->SetStringField(TEXT("TradeId"), TradeId);
 
-	SendPlayFabRequestDetailed(TEXT("/Client/CancelTrade"), Body, true,
+	SendPlayFabRequestDetailed(TEXT("/Client/CancelTrade"), Body, EEPFAuthMode::SessionTicket,
 		FOnPlayFabResponseDetailed::CreateLambda([this, TradeId](const FEPFResult& Result, TSharedPtr<FJsonObject>)
 		{
 			if (Result.bSuccess)
@@ -166,7 +166,7 @@ void UEPFTradingSubsystem::GetPlayerTrades()
 {
 	TSharedRef<FJsonObject> Body = MakeShared<FJsonObject>();
 
-	SendPlayFabRequestDetailed(TEXT("/Client/GetPlayerTrades"), Body, true,
+	SendPlayFabRequestDetailed(TEXT("/Client/GetPlayerTrades"), Body, EEPFAuthMode::SessionTicket,
 		FOnPlayFabResponseDetailed::CreateLambda([this](const FEPFResult& Result, TSharedPtr<FJsonObject> Response)
 		{
 			if (Result.bSuccess && Response.IsValid())
@@ -212,7 +212,7 @@ void UEPFTradingSubsystem::GetTradeStatus(const FString& TradeId, const FString&
 	Body->SetStringField(TEXT("TradeId"), TradeId);
 	Body->SetStringField(TEXT("OfferingPlayerId"), OfferingPlayerId);
 
-	SendPlayFabRequestDetailed(TEXT("/Client/GetTradeStatus"), Body, true,
+	SendPlayFabRequestDetailed(TEXT("/Client/GetTradeStatus"), Body, EEPFAuthMode::SessionTicket,
 		FOnPlayFabResponseDetailed::CreateLambda([this](const FEPFResult& Result, TSharedPtr<FJsonObject> Response)
 		{
 			FEPFTradeInfo Trade;

@@ -60,11 +60,6 @@ void UEGASAsync_WaitCooldownChanged::EndAction()
 	Super::EndAction();
 }
 
-void UEGASAsync_WaitCooldownChanged::EndTask()
-{
-	EndAction();
-}
-
 void UEGASAsync_WaitCooldownChanged::HandleActiveGameplayEffectAdded(
 	UAbilitySystemComponent* Target,
 	const FGameplayEffectSpec& SpecApplied,
