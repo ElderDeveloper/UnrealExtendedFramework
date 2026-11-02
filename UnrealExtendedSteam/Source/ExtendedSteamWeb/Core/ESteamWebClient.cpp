@@ -115,6 +115,8 @@ void FESteamWebClient::Send(const FESteamWebRequest& Request, FOnSteamWebRespons
 	HttpRequest.TimeoutSeconds = Settings->RequestTimeoutSeconds;
 	// One attempt, as before: whether a Web API call is safe to repeat is the caller's decision.
 	HttpRequest.MaxRetries = 0;
+	// Only the text is read, whatever Content-Type Steam answers with.
+	HttpRequest.ResponseBodyMode = EEFHttpResponseBodyMode::Text;
 
 	if (Request.Verb == EESteamWebVerb::Post)
 	{

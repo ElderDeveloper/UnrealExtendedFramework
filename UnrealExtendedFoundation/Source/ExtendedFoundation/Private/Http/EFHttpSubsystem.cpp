@@ -89,6 +89,30 @@ void UEFHttpSubsystem::CancelAllRequests()
 	}
 }
 
+int32 UEFHttpSubsystem::CancelRequestsWithTag(FName Tag, bool bNotify)
+{
+	if (Tag.IsNone())
+	{
+		return 0;
+	}
+
+	// Cancel() can call back synchronously and remove entries, so collect the matches first.
+	TArray<TPair<int64, TSharedRef<FEFHttpOperation>>> Matches;
+	for (const TPair<int64, TSharedRef<FEFHttpOperation>>& Pair : ActiveOperations)
+	{
+		if (Pair.Value->GetRequest().Tags.Contains(Tag))
+		{
+			Matches.Emplace(Pair.Key, Pair.Value);
+		}
+	}
+	for (const TPair<int64, TSharedRef<FEFHttpOperation>>& Match : Matches)
+	{
+		ActiveOperations.Remove(Match.Key);
+		Match.Value->Cancel(bNotify);
+	}
+	return Matches.Num();
+}
+
 bool UEFHttpSubsystem::IsRequestActive(FEFHttpRequestHandle Handle) const
 {
 	return ActiveOperations.Contains(Handle.Id);
@@ -97,6 +121,19 @@ bool UEFHttpSubsystem::IsRequestActive(FEFHttpRequestHandle Handle) const
 int32 UEFHttpSubsystem::GetActiveRequestCount() const
 {
 	return ActiveOperations.Num();
+}
+
+int32 UEFHttpSubsystem::GetActiveRequestCountWithTag(FName Tag) const
+{
+	int32 Count = 0;
+	if (!Tag.IsNone())
+	{
+		for (const TPair<int64, TSharedRef<FEFHttpOperation>>& Pair : ActiveOperations)
+		{
+			Count += Pair.Value->GetRequest().Tags.Contains(Tag) ? 1 : 0;
+		}
+	}
+	return Count;
 }
 
 void UEFHttpSubsystem::SetBaseUrl(const FString& InBaseUrl)

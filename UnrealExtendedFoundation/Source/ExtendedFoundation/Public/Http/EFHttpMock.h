@@ -10,6 +10,8 @@
 struct FEFHttpMockRecordedRequest
 {
 	EEFHttpVerb Verb = EEFHttpVerb::Get;
+	/** The verb as sent, e.g. "GET", or the upper-cased CustomVerb. */
+	FString VerbString;
 	FString Url;
 	TMap<FString, FString> Headers;
 	FString Body;
@@ -34,6 +36,10 @@ public:
 	/** Answers with Status, Body and Headers. With bOnce the rule is used up after one match. */
 	FEFHttpMockTransport& AddResponse(EEFHttpVerb Verb, const FString& UrlContains, int32 Status, const FString& Body = FString(),
 		const TMap<FString, FString>& Headers = TMap<FString, FString>(), bool bOnce = false);
+
+	/** Answers with Status and a raw body, e.g. an image. */
+	FEFHttpMockTransport& AddBinaryResponse(EEFHttpVerb Verb, const FString& UrlContains, int32 Status, const TArray<uint8>& BodyBytes,
+		const FString& ContentType = TEXT("application/octet-stream"), bool bOnce = false);
 
 	/** Answers with no response at all: Result is ConnectionError, or TimedOut with bTimeout. */
 	FEFHttpMockTransport& AddFailure(EEFHttpVerb Verb, const FString& UrlContains, bool bTimeout = false, bool bOnce = false);

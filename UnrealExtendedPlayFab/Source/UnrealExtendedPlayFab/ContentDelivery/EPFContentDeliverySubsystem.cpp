@@ -67,6 +67,8 @@ void UEPFContentDeliverySubsystem::DownloadContentAsString(const FString& Key)
 			Download.Url = Url;
 			Download.Verb = EEFHttpVerb::Get;
 			Download.MaxRetries = 2;
+			// The content is handed on as a string, and CDN files are often labelled octet-stream.
+			Download.ResponseBodyMode = EEFHttpResponseBodyMode::Text;
 			TWeakObjectPtr<UEPFContentDeliverySubsystem> WeakThis(this);
 			TFunction<void(const FEFHttpResponse&)> Deliver = EFCallContext::Bind<const FEFHttpResponse&>([WeakThis](const FEFHttpResponse& HttpResponse)
 			{

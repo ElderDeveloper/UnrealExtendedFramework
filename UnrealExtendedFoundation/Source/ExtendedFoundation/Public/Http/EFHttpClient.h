@@ -21,8 +21,9 @@ public:
 
 	/**
 	 * Answers one attempt. Call OnResponse exactly once, on the game thread, now or later. Set
-	 * StatusCode, Body, Headers and ContentType for an answer (Result is then derived from the
-	 * status), or set Result to ConnectionError or TimedOut for no answer.
+	 * StatusCode, Body or BodyBytes, Headers and ContentType for an answer, or set Result to
+	 * ConnectionError or TimedOut for no answer. Result is then derived from the status, and the body
+	 * is converted to the forms the request's ResponseBodyMode keeps, as for a real response.
 	 */
 	virtual void Send(const FEFHttpRequest& Request, const FString& FinalUrl, TFunction<void(const FEFHttpResponse&)> OnResponse) = 0;
 };
@@ -102,9 +103,16 @@ namespace EFHttp
 	EXTENDEDFOUNDATION_API void SetTransportOverride(TSharedPtr<IEFHttpTransport> Transport);
 	EXTENDEDFOUNDATION_API TSharedPtr<IEFHttpTransport> GetTransportOverride();
 
+	/** "GET", "POST" and so on. Custom has no fixed name and returns "CUSTOM"; use GetVerbString for a request. */
 	EXTENDEDFOUNDATION_API const TCHAR* VerbToString(EEFHttpVerb Verb);
 
-	/** POST and PATCH are the verbs whose repetition can change the result. */
+	/** The verb the request sends: its CustomVerb upper-cased when Verb is Custom. */
+	EXTENDEDFOUNDATION_API FString GetVerbString(const FEFHttpRequest& Request);
+
+	/** True for a CustomVerb that can be sent: letters, digits, '-' and '_', at least one character. */
+	EXTENDEDFOUNDATION_API bool IsValidCustomVerb(const FString& CustomVerb);
+
+	/** POST, PATCH and custom verbs are the ones whose repetition can change the result. */
 	EXTENDEDFOUNDATION_API bool IsIdempotent(EEFHttpVerb Verb);
 
 	EXTENDEDFOUNDATION_API bool IsSuccessStatus(int32 StatusCode);
@@ -117,6 +125,9 @@ namespace EFHttp
 
 	/** Percent-encodes a query component. */
 	EXTENDEDFOUNDATION_API FString UrlEncode(const FString& Value);
+
+	/** An application/x-www-form-urlencoded body: name=value pairs, URL-encoded, joined with '&'. */
+	EXTENDEDFOUNDATION_API FString BuildFormBody(const TMap<FString, FString>& Fields);
 
 	/** Appends URL-encoded query parameters, keeping any existing query and #fragment. */
 	EXTENDEDFOUNDATION_API FString BuildUrl(const FString& BaseUrl, const TMap<FString, FString>& QueryParameters);
@@ -133,6 +144,18 @@ namespace EFHttp
 	 * instead, capped at 60 seconds.
 	 */
 	EXTENDEDFOUNDATION_API float ComputeRetryDelay(int32 RetryNumber, float BaseDelaySeconds, float RetryAfterSeconds = 0.f);
+
+	/**
+	 * True for content that is text: text/*, JSON, XML, YAML, JavaScript, form data and the +json,
+	 * +xml and +yaml types, any type with a charset parameter, and an empty Content-Type.
+	 */
+	EXTENDEDFOUNDATION_API bool IsTextContentType(const FString& ContentType);
+
+	/** The body forms a response with ContentType keeps: Auto becomes Text or Bytes, other modes stay as they are. */
+	EXTENDEDFOUNDATION_API EEFHttpResponseBodyMode ResolveResponseBodyMode(EEFHttpResponseBodyMode Mode, const FString& ContentType);
+
+	/** The response body as text: Body, or BodyBytes decoded as UTF-8 when only the bytes were kept. */
+	EXTENDEDFOUNDATION_API FString GetResponseText(const FEFHttpResponse& Response);
 
 	/** Parses "Name: Value" lines into a map, joining repeated names with ", ". */
 	EXTENDEDFOUNDATION_API TMap<FString, FString> ParseHeaderLines(const TArray<FString>& HeaderLines);

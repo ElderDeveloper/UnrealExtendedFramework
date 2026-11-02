@@ -18,8 +18,9 @@ UnrealExtendedFramework (core)  settings system, libraries, AI/EQS, subtitles, l
         ▲
         │  only plugins that need the core's features depend on it
         │
-Gameplay · PlayFab · EOS        service and gameplay plugins
-GAS · Quest · Steam · Save · Debug · PerfSentinel · Atlassian   depend on the foundation only (or nothing)
+Gameplay                        uses the core's trace and math libraries
+GAS · Quest · Save · Debug · PerfSentinel · Atlassian   depend on the foundation only (or nothing)
+PlayFab · EOS · Steam           service plugins: the foundation only
 ```
 
 - **The foundation stays light.** It may depend only on modules every engine install has without a
@@ -42,7 +43,7 @@ GAS · Quest · Steam · Save · Debug · PerfSentinel · Atlassian   depend on 
 
 | Need | Use | Header |
 |:--|:--|:--|
-| HTTP call with retries, timeouts, cancellation, safe logging | `FEFHttpOperation::Start`, `UEFHttpSubsystem`, **Http Request** node | `Http/EFHttpClient.h`, `Http/EFHttpSubsystem.h` |
+| HTTP call with retries, timeouts, cancellation, safe logging; JSON, form or binary bodies (responses keep only the form they need), custom verbs, tags | `FEFHttpOperation::Start`, `UEFHttpSubsystem`, **Http Request** node | `Http/EFHttpClient.h`, `Http/EFHttpSubsystem.h` |
 | Offline HTTP in tests or demos | `FEFScopedHttpMock` | `Http/EFHttpMock.h` |
 | JSON read/write/path lookup/struct conversion | `UEFJsonLibrary`, `EFJson::` | `Json/EFJsonLibrary.h` |
 | A success/failure every plugin understands | `FEFResult`, `EFResultCodes` | `Result/EFResult.h` |

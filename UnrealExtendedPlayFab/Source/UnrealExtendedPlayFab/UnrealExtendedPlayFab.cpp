@@ -4,7 +4,7 @@
 #include "EFFoundationVersion.h"
 
 // 1.1: the platform layer (UEFPlatformProviderSubsystem) and analytics sinks (IEFAnalyticsSink).
-EF_REQUIRE_FOUNDATION_VERSION(1, 2, "UnrealExtendedPlayFab");
+EF_REQUIRE_FOUNDATION_VERSION(1, 3, "UnrealExtendedPlayFab");
 
 #define LOCTEXT_NAMESPACE "FUnrealExtendedPlayFabModule"
 

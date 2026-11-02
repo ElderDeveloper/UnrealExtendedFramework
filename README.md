@@ -106,8 +106,6 @@ flowchart TB
     Foundation --> PlayFab
     Foundation --> EOS
     Core -->|required| Gameplay
-    Core -->|required| PlayFab
-    Core -->|required| EOS
     Vendor -. compile-time integration .-> Core
     Perf -. profiles the whole project .-> Core
 
@@ -122,7 +120,7 @@ flowchart TB
 ```
 
 > [!NOTE]
-> `UnrealExtendedFoundation` depends on no other plugin, so every plugin can use it. Only Gameplay, PlayFab, and EOS also require the core framework. Steam, EOS and PlayFab each implement the foundation's platform provider, so game code talks to one API and never to a specific store. See [ARCHITECTURE.md](ARCHITECTURE.md) for the layering rules.
+> `UnrealExtendedFoundation` depends on no other plugin, so every plugin can use it. Only Gameplay also requires the core framework. Steam, EOS and PlayFab each implement the foundation's platform provider, so game code talks to one API and never to a specific store. See [ARCHITECTURE.md](ARCHITECTURE.md) for the layering rules.
 
 ## 🚀 Feature Highlights
 
@@ -130,7 +128,7 @@ flowchart TB
 
 The small shared base every plugin builds on. It uses only engine modules that every install has.
 
-- **HTTP**: `FEFHttpOperation` (all common verbs, headers, query parameters, text or binary bodies, timeouts, retries with capped backoff that honors `Retry-After`, no automatic retry of POST/PATCH, cancellation, URLs logged without query strings or credentials), `UEFHttpSubsystem` with a base URL and default headers, and the **Http Request** async node.
+- **HTTP**: `FEFHttpOperation` (all common verbs plus custom ones, headers, query parameters, JSON, form or binary request bodies, text or binary response bodies (each response keeps only the form it needs), tags, timeouts, retries with capped backoff that honors `Retry-After`, no automatic retry of POST/PATCH, cancellation, URLs logged without query strings or credentials), `UEFHttpSubsystem` with a base URL, default headers and cancelling by tag, and the **Http Request** async node.
 - **HTTP mock**: `FEFScopedHttpMock` answers requests from canned rules and records them, so any client built on `FEFHttpOperation` can be tested offline.
 - **JSON**: read, build, path lookup (`data.items[2].name`), deep copy, file I/O, and converting any native or Blueprint struct to and from JSON.
 - **Results**: `FEFResult`, one success/failure shape (source, code, message, HTTP status, retryable) that PlayFab, EOS, Steam and HTTP results convert to.
@@ -399,8 +397,8 @@ All required non-vendor dependencies below ship with the local UE 5.8 installati
 | UnrealExtendedQuest | Foundation | GameplayTagsEditor *(editor only)* |
 | UnrealExtendedSave | Foundation | — |
 | UnrealExtendedDebug | Foundation | — *(engine modules only: Slate, InputCore)* |
-| UnrealExtendedPlayFab | Foundation, Framework | — |
-| UnrealExtendedEOS | Foundation, Framework | OnlineSubsystem, OnlineSubsystemUtils, OnlineSubsystemEOS, EOSShared, EOSVoiceChat, AudioCapture |
+| UnrealExtendedPlayFab | Foundation | — |
+| UnrealExtendedEOS | Foundation | OnlineSubsystem, OnlineSubsystemUtils, OnlineSubsystemEOS, EOSShared, EOSVoiceChat, AudioCapture |
 | UnrealExtendedSteam | Foundation | OnlineSubsystem, OnlineSubsystemUtils |
 | UnrealExtendedPerfSentinel | Foundation | ToolsetRegistry *(editor only)* |
 | UnrealExtendedAtlassian | Foundation | — *(engine modules only: HTTP, Json, Slate, UnrealEd)* |
@@ -443,7 +441,7 @@ void AMyPlayerController::LoadPlayerSettings()
 
 ### Call a web API
 
-From Blueprint, use **Http Request** (an async node with On Success / On Failure), or build the request with **Make Json Http Request** and read the result with **Get Response Json**. From C++, add `ExtendedFoundation` to your module's dependencies and:
+From Blueprint, use **Http Request** (an async node with On Success / On Failure), or build the request with **Make Json Http Request** (or **Make Form Http Request** for an HTML form, **Make Custom Verb Http Request** for a verb such as PURGE) and read the result with **Get Response Json**, or its raw bytes from **Body Bytes** for an image or file. A response keeps only one form of its body: text for JSON and other text types, Body Bytes for everything else. Set the request's **Response Body Mode** to choose, and **Get Response Text** reads the text from either. From C++, add `ExtendedFoundation` to your module's dependencies and:
 
 ```cpp
 #include "Http/EFHttpLibrary.h"

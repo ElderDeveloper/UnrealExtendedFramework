@@ -1,7 +1,7 @@
 {
 	"FileVersion": 3,
-	"Version": 2,
-	"VersionName": "1.2.0",
+	"Version": 3,
+	"VersionName": "1.3.0",
 	"FriendlyName": "Unreal Extended Foundation",
 	"Description": "Lightweight shared base for every Extended plugin: logging, HTTP, JSON, results, async Blueprint nodes, settings, credentials, asset preloading, a message bus, analytics, a store-neutral platform layer and test helpers. Depends on no other plugin.",
 	"Category": "Extended",

@@ -212,6 +212,8 @@ void UEPFSubsystem::ExecuteRequest(
 	HttpRequest.MaxRetries = 0;
 	// This subsystem logs its own retries and errors with the PlayFab error details.
 	HttpRequest.bLogFailuresAsWarnings = false;
+	// Only the JSON text is read.
+	HttpRequest.ResponseBodyMode = EEFHttpResponseBodyMode::Text;
 	HttpRequest.Headers.Add(TEXT("X-ReportErrorAsSuccess"), TEXT("true"));
 
 	if (Settings->bIncludeSdkHeader && !Settings->SDKHeaderValue.IsEmpty())

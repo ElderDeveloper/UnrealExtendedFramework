@@ -17,6 +17,12 @@ namespace EFHttpPrivate
 
 	/** Operations started and not yet finished, for Extended.Status. Game thread only. */
 	int32 ActiveOperationCount = 0;
+
+	FString DecodeUtf8(const TArray<uint8>& Bytes)
+	{
+		const FUTF8ToTCHAR Text(reinterpret_cast<const ANSICHAR*>(Bytes.GetData()), Bytes.Num());
+		return FString::ConstructFromPtrSize(Text.Get(), Text.Length());
+	}
 }
 
 int32 FEFHttpOperation::GetActiveCount()
@@ -60,6 +66,16 @@ TSharedRef<FEFHttpOperation> FEFHttpOperation::Start(const FEFHttpRequest& InReq
 			: FString::Printf(TEXT("'%s' is not an http:// or https:// URL."), *EFHttp::RedactUrlForLog(InRequest.Url));
 		Operation->Finish(MoveTemp(Response));
 	}
+	else if (InRequest.Verb == EEFHttpVerb::Custom && !EFHttp::IsValidCustomVerb(InRequest.CustomVerb))
+	{
+		FEFHttpResponse Response;
+		Response.Result = EEFHttpResult::InvalidRequest;
+		Response.Url = Operation->FinalUrl;
+		Response.ErrorMessage = InRequest.CustomVerb.IsEmpty()
+			? FString(TEXT("The request's verb is Custom but it has no CustomVerb."))
+			: FString::Printf(TEXT("'%s' is not a valid HTTP verb."), *InRequest.CustomVerb);
+		Operation->Finish(MoveTemp(Response));
+	}
 	else
 	{
 		Operation->BeginAttempt();
@@ -90,7 +106,7 @@ void FEFHttpOperation::Cancel(bool bNotify)
 		bFinished = true;
 		--EFHttpPrivate::ActiveOperationCount;
 		OnComplete = nullptr;
-		UE_LOG(LogEFHttp, Verbose, TEXT("%s %s cancelled."), EFHttp::VerbToString(Request.Verb), *EFHttp::RedactUrlForLog(FinalUrl));
+		UE_LOG(LogEFHttp, Verbose, TEXT("%s %s cancelled."), *EFHttp::GetVerbString(Request), *EFHttp::RedactUrlForLog(FinalUrl));
 		return;
 	}
 
@@ -114,7 +130,7 @@ void FEFHttpOperation::BeginAttempt()
 	// A transport override (tests, offline mocks) replaces the engine's HTTP module entirely.
 	if (const TSharedPtr<IEFHttpTransport> Transport = EFHttp::GetTransportOverride())
 	{
-		UE_LOG(LogEFHttp, Verbose, TEXT("%s %s (attempt %d, transport override)"), EFHttp::VerbToString(Request.Verb), *EFHttp::RedactUrlForLog(FinalUrl), AttemptNumber);
+		UE_LOG(LogEFHttp, Verbose, TEXT("%s %s (attempt %d, transport override)"), *EFHttp::GetVerbString(Request), *EFHttp::RedactUrlForLog(FinalUrl), AttemptNumber);
 
 		const TSharedRef<FEFHttpOperation> Self = AsShared();
 		Transport->Send(Request, FinalUrl, [Self, AttemptNumber](const FEFHttpResponse& Response)
@@ -126,7 +142,7 @@ void FEFHttpOperation::BeginAttempt()
 
 	const TSharedRef<IHttpRequest, ESPMode::ThreadSafe> NewRequest = FHttpModule::Get().CreateRequest();
 	NewRequest->SetURL(FinalUrl);
-	NewRequest->SetVerb(EFHttp::VerbToString(Request.Verb));
+	NewRequest->SetVerb(EFHttp::GetVerbString(Request));
 
 	for (const TPair<FString, FString>& Header : Request.Headers)
 	{
@@ -163,7 +179,7 @@ void FEFHttpOperation::BeginAttempt()
 
 	HttpRequest = NewRequest;
 
-	UE_LOG(LogEFHttp, Verbose, TEXT("%s %s (attempt %d)"), EFHttp::VerbToString(Request.Verb), *EFHttp::RedactUrlForLog(FinalUrl), AttemptNumber);
+	UE_LOG(LogEFHttp, Verbose, TEXT("%s %s (attempt %d)"), *EFHttp::GetVerbString(Request), *EFHttp::RedactUrlForLog(FinalUrl), AttemptNumber);
 
 	if (!NewRequest->ProcessRequest())
 	{
@@ -206,8 +222,16 @@ void FEFHttpOperation::HandleAttemptComplete(int32 AttemptNumber, FHttpRequestPt
 	if (bConnectedSuccessfully && HttpResponse.IsValid())
 	{
 		Response.StatusCode = HttpResponse->GetResponseCode();
-		Response.Body = HttpResponse->GetContentAsString();
 		Response.ContentType = HttpResponse->GetContentType();
+		const EEFHttpResponseBodyMode BodyMode = EFHttp::ResolveResponseBodyMode(Request.ResponseBodyMode, Response.ContentType);
+		if (BodyMode != EEFHttpResponseBodyMode::Bytes)
+		{
+			Response.Body = HttpResponse->GetContentAsString();
+		}
+		if (BodyMode != EEFHttpResponseBodyMode::Text)
+		{
+			Response.BodyBytes = HttpResponse->GetContent();
+		}
 		Response.Headers = EFHttp::ParseHeaderLines(HttpResponse->GetAllHeaders());
 
 		if (EFHttp::IsSuccessStatus(Response.StatusCode))
@@ -253,6 +277,29 @@ void FEFHttpOperation::HandleTransportResponse(int32 AttemptNumber, FEFHttpRespo
 	const TSharedRef<FEFHttpOperation> KeepAlive = AsShared();
 
 	Response.Url = FinalUrl;
+
+	// A transport may answer with text or with bytes; keep the forms the request asked for, as a real response does.
+	const EEFHttpResponseBodyMode BodyMode = EFHttp::ResolveResponseBodyMode(Request.ResponseBodyMode, Response.ContentType);
+	const bool bKeepText = BodyMode != EEFHttpResponseBodyMode::Bytes;
+	const bool bKeepBytes = BodyMode != EEFHttpResponseBodyMode::Text;
+	if (bKeepText && Response.Body.IsEmpty() && Response.BodyBytes.Num() > 0)
+	{
+		Response.Body = EFHttpPrivate::DecodeUtf8(Response.BodyBytes);
+	}
+	if (bKeepBytes && Response.BodyBytes.Num() == 0 && !Response.Body.IsEmpty())
+	{
+		const FTCHARToUTF8 Utf8(*Response.Body);
+		Response.BodyBytes.Append(reinterpret_cast<const uint8*>(Utf8.Get()), Utf8.Length());
+	}
+	if (!bKeepText)
+	{
+		Response.Body.Empty();
+	}
+	if (!bKeepBytes)
+	{
+		Response.BodyBytes.Empty();
+	}
+
 	if (Response.Result == EEFHttpResult::Success || Response.Result == EEFHttpResult::HttpError)
 	{
 		// A transport that produced a status decides nothing else: the status does.
@@ -296,7 +343,7 @@ void FEFHttpOperation::ScheduleRetry(const FEFHttpResponse& FailedResponse)
 	const float Delay = EFHttp::ComputeRetryDelay(AttemptCount, Request.RetryDelaySeconds, RetryAfter ? EFHttp::ParseRetryAfterSeconds(*RetryAfter) : 0.f);
 
 	UE_LOG(LogEFHttp, Log, TEXT("%s %s: %s Retrying in %.2fs (retry %d of %d)."),
-		EFHttp::VerbToString(Request.Verb), *EFHttp::RedactUrlForLog(FinalUrl), *FailedResponse.ErrorMessage, Delay, AttemptCount, Request.MaxRetries);
+		*EFHttp::GetVerbString(Request), *EFHttp::RedactUrlForLog(FinalUrl), *FailedResponse.ErrorMessage, Delay, AttemptCount, Request.MaxRetries);
 
 	const TSharedRef<FEFHttpOperation> Self = AsShared();
 	PendingTickerHandle = FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda(
@@ -341,29 +388,30 @@ void FEFHttpOperation::Finish(FEFHttpResponse Response)
 
 	Response.Attempts = AttemptCount;
 	Response.ElapsedSeconds = static_cast<float>(FPlatformTime::Seconds() - StartTimeSeconds);
+	Response.Tags = Request.Tags;
 	if (Response.Url.IsEmpty())
 	{
 		Response.Url = FinalUrl;
 	}
 
-	const TCHAR* Verb = EFHttp::VerbToString(Request.Verb);
+	const FString Verb = EFHttp::GetVerbString(Request);
 	const FString LogUrl = EFHttp::RedactUrlForLog(FinalUrl);
 	switch (Response.Result)
 	{
 	case EEFHttpResult::Success:
-		UE_LOG(LogEFHttp, Verbose, TEXT("%s %s -> %d (%.2fs)"), Verb, *LogUrl, Response.StatusCode, Response.ElapsedSeconds);
+		UE_LOG(LogEFHttp, Verbose, TEXT("%s %s -> %d (%.2fs)"), *Verb, *LogUrl, Response.StatusCode, Response.ElapsedSeconds);
 		break;
 	case EEFHttpResult::Cancelled:
-		UE_LOG(LogEFHttp, Verbose, TEXT("%s %s cancelled."), Verb, *LogUrl);
+		UE_LOG(LogEFHttp, Verbose, TEXT("%s %s cancelled."), *Verb, *LogUrl);
 		break;
 	default:
 		if (Request.bLogFailuresAsWarnings)
 		{
-			UE_LOG(LogEFHttp, Warning, TEXT("%s %s failed: %s (attempts: %d, %.2fs)"), Verb, *LogUrl, *Response.ErrorMessage, Response.Attempts, Response.ElapsedSeconds);
+			UE_LOG(LogEFHttp, Warning, TEXT("%s %s failed: %s (attempts: %d, %.2fs)"), *Verb, *LogUrl, *Response.ErrorMessage, Response.Attempts, Response.ElapsedSeconds);
 		}
 		else
 		{
-			UE_LOG(LogEFHttp, Verbose, TEXT("%s %s failed: %s (attempts: %d, %.2fs)"), Verb, *LogUrl, *Response.ErrorMessage, Response.Attempts, Response.ElapsedSeconds);
+			UE_LOG(LogEFHttp, Verbose, TEXT("%s %s failed: %s (attempts: %d, %.2fs)"), *Verb, *LogUrl, *Response.ErrorMessage, Response.Attempts, Response.ElapsedSeconds);
 		}
 		break;
 	}
@@ -425,13 +473,35 @@ const TCHAR* EFHttp::VerbToString(EEFHttpVerb Verb)
 	case EEFHttpVerb::Delete:  return TEXT("DELETE");
 	case EEFHttpVerb::Head:    return TEXT("HEAD");
 	case EEFHttpVerb::Options: return TEXT("OPTIONS");
+	case EEFHttpVerb::Custom:  return TEXT("CUSTOM");
 	default:                   return TEXT("GET");
 	}
 }
 
+FString EFHttp::GetVerbString(const FEFHttpRequest& Request)
+{
+	return Request.Verb == EEFHttpVerb::Custom ? Request.CustomVerb.ToUpper() : FString(VerbToString(Request.Verb));
+}
+
+bool EFHttp::IsValidCustomVerb(const FString& CustomVerb)
+{
+	if (CustomVerb.IsEmpty())
+	{
+		return false;
+	}
+	for (const TCHAR Character : CustomVerb)
+	{
+		if (!FChar::IsAlnum(Character) && Character != TEXT('-') && Character != TEXT('_'))
+		{
+			return false;
+		}
+	}
+	return true;
+}
+
 bool EFHttp::IsIdempotent(EEFHttpVerb Verb)
 {
-	return Verb != EEFHttpVerb::Post && Verb != EEFHttpVerb::Patch;
+	return Verb != EEFHttpVerb::Post && Verb != EEFHttpVerb::Patch && Verb != EEFHttpVerb::Custom;
 }
 
 bool EFHttp::IsSuccessStatus(int32 StatusCode)
@@ -455,6 +525,22 @@ bool EFHttp::HasHttpScheme(const FString& Url)
 FString EFHttp::UrlEncode(const FString& Value)
 {
 	return FGenericPlatformHttp::UrlEncode(Value);
+}
+
+FString EFHttp::BuildFormBody(const TMap<FString, FString>& Fields)
+{
+	FString Body;
+	for (const TPair<FString, FString>& Field : Fields)
+	{
+		if (!Body.IsEmpty())
+		{
+			Body += TEXT("&");
+		}
+		Body += UrlEncode(Field.Key);
+		Body += TEXT("=");
+		Body += UrlEncode(Field.Value);
+	}
+	return Body;
 }
 
 FString EFHttp::BuildUrl(const FString& BaseUrl, const TMap<FString, FString>& QueryParameters)
@@ -566,6 +652,61 @@ float EFHttp::ComputeRetryDelay(int32 RetryNumber, float BaseDelaySeconds, float
 
 	const int32 Exponent = FMath::Clamp(RetryNumber - 1, 0, 16);
 	return FMath::Min(FMath::Max(BaseDelaySeconds, 0.f) * static_cast<float>(1 << Exponent), EFHttpPrivate::MaxBackoffSeconds);
+}
+
+bool EFHttp::IsTextContentType(const FString& ContentType)
+{
+	FString MediaType = ContentType;
+	FString Parameters;
+	ContentType.Split(TEXT(";"), &MediaType, &Parameters);
+	MediaType.TrimStartAndEndInline();
+	MediaType.ToLowerInline();
+
+	if (MediaType.IsEmpty() || MediaType.StartsWith(TEXT("text/")) || Parameters.Contains(TEXT("charset="), ESearchCase::IgnoreCase))
+	{
+		return true;
+	}
+
+	static const TCHAR* const TextSuffixes[] = { TEXT("+json"), TEXT("+xml"), TEXT("+yaml") };
+	for (const TCHAR* Suffix : TextSuffixes)
+	{
+		if (MediaType.EndsWith(Suffix))
+		{
+			return true;
+		}
+	}
+
+	static const TCHAR* const TextTypes[] = {
+		TEXT("application/json"), TEXT("application/x-ndjson"), TEXT("application/xml"), TEXT("application/yaml"),
+		TEXT("application/x-yaml"), TEXT("application/javascript"), TEXT("application/ecmascript"),
+		TEXT("application/x-www-form-urlencoded"), TEXT("application/graphql"), TEXT("application/sql")
+	};
+	for (const TCHAR* TextType : TextTypes)
+	{
+		if (MediaType == TextType)
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
+EEFHttpResponseBodyMode EFHttp::ResolveResponseBodyMode(EEFHttpResponseBodyMode Mode, const FString& ContentType)
+{
+	if (Mode != EEFHttpResponseBodyMode::Auto)
+	{
+		return Mode;
+	}
+	return IsTextContentType(ContentType) ? EEFHttpResponseBodyMode::Text : EEFHttpResponseBodyMode::Bytes;
+}
+
+FString EFHttp::GetResponseText(const FEFHttpResponse& Response)
+{
+	if (!Response.Body.IsEmpty() || Response.BodyBytes.Num() == 0)
+	{
+		return Response.Body;
+	}
+	return EFHttpPrivate::DecodeUtf8(Response.BodyBytes);
 }
 
 TMap<FString, FString> EFHttp::ParseHeaderLines(const TArray<FString>& HeaderLines)

@@ -47,11 +47,22 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Extended Framework|Backend|Http")
 	void CancelAllRequests();
 
+	/**
+	 * Cancels every running request that carries Tag (see FEFHttpRequest::Tags). With bNotify each
+	 * callback runs with a Cancelled result. Returns how many requests were cancelled.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Extended Framework|Backend|Http")
+	int32 CancelRequestsWithTag(FName Tag, bool bNotify = true);
+
 	UFUNCTION(BlueprintPure, Category = "Extended Framework|Backend|Http")
 	bool IsRequestActive(FEFHttpRequestHandle Handle) const;
 
 	UFUNCTION(BlueprintPure, Category = "Extended Framework|Backend|Http")
 	int32 GetActiveRequestCount() const;
+
+	/** How many running requests carry Tag. */
+	UFUNCTION(BlueprintPure, Category = "Extended Framework|Backend|Http")
+	int32 GetActiveRequestCountWithTag(FName Tag) const;
 
 	/** Prefix for request URLs that do not start with http:// or https://, e.g. "https://api.example.com/v1". */
 	UFUNCTION(BlueprintCallable, Category = "Extended Framework|Backend|Http")

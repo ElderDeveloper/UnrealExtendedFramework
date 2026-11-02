@@ -6,7 +6,7 @@
 #include "ExtendedAtlassianClient.h"
 #include "ExtendedAtlassianLog.h"
 
-EF_REQUIRE_FOUNDATION_VERSION(1, 0, "UnrealExtendedAtlassian");
+EF_REQUIRE_FOUNDATION_VERSION(1, 3, "UnrealExtendedAtlassian");
 
 #define LOCTEXT_NAMESPACE "FUnrealExtendedAtlassianModule"
 

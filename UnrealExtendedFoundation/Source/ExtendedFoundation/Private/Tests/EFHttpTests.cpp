@@ -6,8 +6,10 @@
 
 #include "Http/EFHttpClient.h"
 #include "Http/EFHttpLibrary.h"
+#include "Http/EFHttpMock.h"
 #include "Http/EFHttpSubsystem.h"
 #include "Json/EFJsonLibrary.h"
+#include "Testing/EFTestHelpers.h"
 
 // Every test here is offline: none of them opens a connection.
 
@@ -194,6 +196,189 @@ bool FEFHttpSubsystemPrepareTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("response JSON parses"), UEFHttpLibrary::GetResponseJson(Response, Parsed));
 	FString ContentType;
 	TestTrue(TEXT("response header lookup ignores case"), UEFHttpLibrary::GetResponseHeader(Response, TEXT("content-type"), ContentType));
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEFHttpRequestBuildersTest, "ExtendedFoundation.Http.RequestBuilders",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FEFHttpRequestBuildersTest::RunTest(const FString& Parameters)
+{
+	// Custom verbs: sent upper-cased, validated, never retried by default.
+	const FEFHttpRequest Purge = UEFHttpLibrary::MakeCustomVerbHttpRequest(TEXT("https://a.test/cache"), TEXT(" purge "));
+	TestTrue(TEXT("custom request uses the Custom verb"), Purge.Verb == EEFHttpVerb::Custom);
+	TestEqual(TEXT("custom verb is sent upper-cased"), EFHttp::GetVerbString(Purge), FString(TEXT("PURGE")));
+	TestEqual(TEXT("built-in verbs keep their name"), EFHttp::GetVerbString(UEFHttpLibrary::MakeHttpRequest(TEXT("x"), EEFHttpVerb::Patch)), FString(TEXT("PATCH")));
+	TestTrue(TEXT("token characters are a valid verb"), EFHttp::IsValidCustomVerb(TEXT("VERSION-CONTROL")));
+	TestFalse(TEXT("an empty verb is invalid"), EFHttp::IsValidCustomVerb(FString()));
+	TestFalse(TEXT("a verb with a space is invalid"), EFHttp::IsValidCustomVerb(TEXT("GET X")));
+	TestFalse(TEXT("custom verbs are not idempotent"), EFHttp::IsIdempotent(EEFHttpVerb::Custom));
+
+	// Form bodies.
+	TMap<FString, FString> Fields;
+	Fields.Add(TEXT("user"), TEXT("Ada Lovelace"));
+	Fields.Add(TEXT("note"), TEXT("a&b=c"));
+	TestEqual(TEXT("form body encodes names and values"), EFHttp::BuildFormBody(Fields), FString(TEXT("user=Ada%20Lovelace&note=a%26b%3Dc")));
+	TestTrue(TEXT("an empty form has an empty body"), EFHttp::BuildFormBody({}).IsEmpty());
+	const FEFHttpRequest Form = UEFHttpLibrary::MakeFormHttpRequest(TEXT("https://a.test/login"), EEFHttpVerb::Post, Fields);
+	TestEqual(TEXT("form content type"), Form.ContentType, FString(TEXT("application/x-www-form-urlencoded")));
+	TestEqual(TEXT("form body"), Form.Body, EFHttp::BuildFormBody(Fields));
+
+	// Tags.
+	FEFHttpRequest Tagged = UEFHttpLibrary::AddRequestTag(Form, TEXT("Login"));
+	Tagged = UEFHttpLibrary::AddRequestTag(Tagged, TEXT("Login"));
+	Tagged = UEFHttpLibrary::AddRequestTag(Tagged, NAME_None);
+	TestEqual(TEXT("a tag is added once and None is ignored"), Tagged.Tags.Num(), 1);
+	FEFHttpResponse TaggedResponse;
+	TaggedResponse.Tags = Tagged.Tags;
+	TestTrue(TEXT("the response has the tag"), UEFHttpLibrary::ResponseHasTag(TaggedResponse, TEXT("Login")));
+	TestFalse(TEXT("the response lacks other tags"), UEFHttpLibrary::ResponseHasTag(TaggedResponse, TEXT("Logout")));
+
+	// Response body modes.
+	TestTrue(TEXT("JSON is text"), EFHttp::IsTextContentType(TEXT("application/json")));
+	TestTrue(TEXT("parameters and case are ignored"), EFHttp::IsTextContentType(TEXT(" Text/HTML ; charset=UTF-8")));
+	TestTrue(TEXT("+json types are text"), EFHttp::IsTextContentType(TEXT("application/problem+json")));
+	TestTrue(TEXT("a charset makes any type text"), EFHttp::IsTextContentType(TEXT("application/octet-stream; charset=utf-8")));
+	TestTrue(TEXT("no content type counts as text"), EFHttp::IsTextContentType(TEXT("")));
+	TestFalse(TEXT("images are not text"), EFHttp::IsTextContentType(TEXT("image/png")));
+	TestFalse(TEXT("octet-stream is not text"), EFHttp::IsTextContentType(TEXT("application/octet-stream")));
+	TestTrue(TEXT("Auto keeps text for JSON"),
+		EFHttp::ResolveResponseBodyMode(EEFHttpResponseBodyMode::Auto, TEXT("application/json")) == EEFHttpResponseBodyMode::Text);
+	TestTrue(TEXT("Auto keeps bytes for images"),
+		EFHttp::ResolveResponseBodyMode(EEFHttpResponseBodyMode::Auto, TEXT("image/png")) == EEFHttpResponseBodyMode::Bytes);
+	TestTrue(TEXT("an explicit mode is kept"),
+		EFHttp::ResolveResponseBodyMode(EEFHttpResponseBodyMode::TextAndBytes, TEXT("image/png")) == EEFHttpResponseBodyMode::TextAndBytes);
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEFHttpMockedResponsesTest, "ExtendedFoundation.Http.BinaryBodiesVerbsAndTags",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FEFHttpMockedResponsesTest::RunTest(const FString& Parameters)
+{
+	struct FState
+	{
+		TSharedPtr<FEFScopedHttpMock> Mock = MakeShared<FEFScopedHttpMock>();
+		FEFHttpResponse Binary;
+		FEFHttpResponse Text;
+		FEFHttpResponse MislabelledAuto;
+		FEFHttpResponse MislabelledText;
+		FEFHttpResponse Both;
+		FEFHttpResponse BadVerb;
+		TArray<EEFHttpResult> TaggedResults;
+		FEFHttpResponse Untagged;
+		int32 Done = 0;
+	};
+	const TSharedRef<FState> State = MakeShared<FState>();
+
+	// Bytes that are not valid UTF-8 must come back untouched.
+	const TArray<uint8> Png = { 0x89, 'P', 'N', 'G', 0x00, 0xFF, 0x10 };
+	State->Mock->Get().AddBinaryResponse(EEFHttpVerb::Get, TEXT("/image.png"), 200, Png, TEXT("image/png"));
+	State->Mock->Get().AddResponse(EEFHttpVerb::Custom, TEXT("/cache"), 200, TEXT("purged"));
+	State->Mock->Get().AddResponse(EEFHttpVerb::Get, TEXT("/slow"), 200, TEXT("{}"));
+	State->Mock->Get().AddResponse(EEFHttpVerb::Get, TEXT("/both"), 200, TEXT("hello!"));
+	// JSON a server labels as binary, as CDNs often do.
+	const FString Json = TEXT("{\"level\":3}");
+	const FTCHARToUTF8 JsonUtf8(*Json);
+	const TArray<uint8> JsonBytes(reinterpret_cast<const uint8*>(JsonUtf8.Get()), JsonUtf8.Length());
+	State->Mock->Get().AddBinaryResponse(EEFHttpVerb::Get, TEXT("/data.json"), 200, JsonBytes);
+
+	FEFHttpOperation::Start(UEFHttpLibrary::MakeHttpRequest(TEXT("https://a.test/image.png")), [State](const FEFHttpResponse& Response)
+	{
+		State->Binary = Response;
+		++State->Done;
+	});
+
+	FEFHttpOperation::Start(UEFHttpLibrary::MakeHttpRequest(TEXT("https://a.test/data.json")), [State](const FEFHttpResponse& Response)
+	{
+		State->MislabelledAuto = Response;
+		++State->Done;
+	});
+
+	FEFHttpRequest AsText = UEFHttpLibrary::MakeHttpRequest(TEXT("https://a.test/data.json"));
+	AsText.ResponseBodyMode = EEFHttpResponseBodyMode::Text;
+	FEFHttpOperation::Start(AsText, [State](const FEFHttpResponse& Response)
+	{
+		State->MislabelledText = Response;
+		++State->Done;
+	});
+
+	FEFHttpRequest AsBoth = UEFHttpLibrary::MakeHttpRequest(TEXT("https://a.test/both"));
+	AsBoth.ResponseBodyMode = EEFHttpResponseBodyMode::TextAndBytes;
+	FEFHttpOperation::Start(AsBoth, [State](const FEFHttpResponse& Response)
+	{
+		State->Both = Response;
+		++State->Done;
+	});
+
+	FEFHttpRequest Purge = UEFHttpLibrary::MakeCustomVerbHttpRequest(TEXT("https://a.test/cache"), TEXT("purge"));
+	Purge = UEFHttpLibrary::AddRequestTag(Purge, TEXT("Cache"));
+	FEFHttpOperation::Start(Purge, [State](const FEFHttpResponse& Response)
+	{
+		State->Text = Response;
+		++State->Done;
+	});
+
+	FEFHttpRequest BadVerb = UEFHttpLibrary::MakeCustomVerbHttpRequest(TEXT("https://a.test/cache"), TEXT("NOT A VERB"));
+	BadVerb.bLogFailuresAsWarnings = false;
+	FEFHttpOperation::Start(BadVerb, [State](const FEFHttpResponse& Response)
+	{
+		State->BadVerb = Response;
+		++State->Done;
+	});
+
+	// Cancelling by tag stops only the tagged requests.
+	UEFHttpSubsystem* Http = NewObject<UEFHttpSubsystem>();
+	const FEFHttpRequest Slow = UEFHttpLibrary::AddRequestTag(UEFHttpLibrary::MakeHttpRequest(TEXT("https://a.test/slow")), TEXT("Level"));
+	for (int32 Index = 0; Index < 2; ++Index)
+	{
+		Http->Send(Slow, [State](const FEFHttpResponse& Response) { State->TaggedResults.Add(Response.Result); });
+	}
+	Http->Send(UEFHttpLibrary::MakeHttpRequest(TEXT("https://a.test/slow")), [State](const FEFHttpResponse& Response)
+	{
+		State->Untagged = Response;
+		++State->Done;
+	});
+	TestEqual(TEXT("two running requests carry the tag"), Http->GetActiveRequestCountWithTag(TEXT("Level")), 2);
+	TestEqual(TEXT("cancelling by tag reports two"), Http->CancelRequestsWithTag(TEXT("Level")), 2);
+	TestEqual(TEXT("both tagged callbacks ran"), State->TaggedResults.Num(), 2);
+	TestTrue(TEXT("the tagged requests were cancelled"), State->TaggedResults.Num() == 2
+		&& State->TaggedResults[0] == EEFHttpResult::Cancelled && State->TaggedResults[1] == EEFHttpResult::Cancelled);
+	TestEqual(TEXT("the untagged request still runs"), Http->GetActiveRequestCount(), 1);
+
+	ADD_LATENT_AUTOMATION_COMMAND(FEFWaitUntilCommand(this, TEXT("mocked responses"), [State] { return State->Done == 7; }));
+	ADD_LATENT_AUTOMATION_COMMAND(FFunctionLatentCommand([this, State, Png, Json]()
+	{
+		TestTrue(TEXT("binary request succeeds"), State->Binary.IsSuccess());
+		TestTrue(TEXT("binary body is byte-exact"), State->Binary.BodyBytes == Png);
+		TestTrue(TEXT("an image keeps no text copy"), State->Binary.Body.IsEmpty());
+		TestEqual(TEXT("binary content type"), State->Binary.ContentType, FString(TEXT("image/png")));
+
+		TestTrue(TEXT("custom verb request succeeds"), State->Text.IsSuccess());
+		TestEqual(TEXT("text body"), State->Text.Body, FString(TEXT("purged")));
+		TestEqual(TEXT("text keeps no byte copy"), State->Text.BodyBytes.Num(), 0);
+
+		TestTrue(TEXT("Auto keeps bytes for octet-stream"), State->MislabelledAuto.Body.IsEmpty() && State->MislabelledAuto.BodyBytes.Num() > 0);
+		TestEqual(TEXT("Get Response Text decodes the bytes"), UEFHttpLibrary::GetResponseText(State->MislabelledAuto), Json);
+		FEFJsonObject Parsed;
+		TestTrue(TEXT("Get Response Json reads a bytes-only body"), UEFHttpLibrary::GetResponseJson(State->MislabelledAuto, Parsed));
+		TestEqual(TEXT("Text mode decodes the body"), State->MislabelledText.Body, Json);
+		TestEqual(TEXT("Text mode keeps no bytes"), State->MislabelledText.BodyBytes.Num(), 0);
+		TestEqual(TEXT("TextAndBytes keeps the text"), State->Both.Body, FString(TEXT("hello!")));
+		TestEqual(TEXT("TextAndBytes keeps the bytes"), State->Both.BodyBytes.Num(), 6);
+		TestTrue(TEXT("the response carries the request's tag"), UEFHttpLibrary::ResponseHasTag(State->Text, TEXT("Cache")));
+		const TArray<FEFHttpMockRecordedRequest>& Requests = State->Mock->Get().GetRequests();
+		TestTrue(TEXT("the mock saw PURGE"), Requests.ContainsByPredicate([](const FEFHttpMockRecordedRequest& Request) { return Request.VerbString == TEXT("PURGE"); }));
+
+		TestTrue(TEXT("an invalid custom verb is rejected"), State->BadVerb.Result == EEFHttpResult::InvalidRequest);
+		TestEqual(TEXT("an invalid custom verb is never sent"), State->BadVerb.Attempts, 0);
+
+		TestTrue(TEXT("the untagged request completes"), State->Untagged.IsSuccess());
+		State->Mock.Reset();
+		return true;
+	}));
 
 	return true;
 }

@@ -488,6 +488,8 @@ void FExtendedAtlassianClient::SendPending(TSharedRef<FExtendedAtlassianPendingR
 	HttpRequest.Headers.Add(TEXT("Authorization"), BuildAuthorizationHeader());
 	HttpRequest.Headers.Add(TEXT("User-Agent"), TEXT("UnrealExtendedAtlassian"));
 	HttpRequest.TimeoutSeconds = static_cast<float>(TimeoutSeconds);
+	// Only the JSON text is read, including from error pages.
+	HttpRequest.ResponseBodyMode = EEFHttpResponseBodyMode::Text;
 
 	// Content-Type is sent whenever the caller names one, body or not, so it goes in as a header.
 	// Clearing ContentType stops the foundation adding its JSON default to a body that has none.

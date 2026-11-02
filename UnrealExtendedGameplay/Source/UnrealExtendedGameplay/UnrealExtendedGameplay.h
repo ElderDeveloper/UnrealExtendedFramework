@@ -12,4 +12,8 @@ public:
 	/** IModuleInterface implementation */
 	virtual void StartupModule() override;
 	virtual void ShutdownModule() override;
+
+private:
+	/** Extended.Status reporter for placement sessions. */
+	int32 PlacementStatusHandle = INDEX_NONE;
 };

@@ -1,276 +1,354 @@
-# Modular placement support plan
+# Placement support plan
 
-Draft 2 · 2026-11-01 · Planning only. Supersedes Draft 1's mandatory catalog, controller session, registry, move transaction, RPC and persistence architecture. No runtime implementation or project migration has been performed.
+Draft 3 · 2026-11-01 · Implemented in code (phases 1 to 5, and the guide from phase 6); see [Placement.md](Placement.md) for use and for what is not done yet (automation tests, asset-preview drawing, the PIE, performance and network checks).
 
-Build **placement support** under `UnrealExtendedGameplay/Systems/Placement`: reusable geometry, evaluation and optional preview/session helpers that projects can use without handing over inventory, world lifecycle or game rules. A project may use only the math, use evaluation with its existing preview, or opt into default preview/session helpers. Additional project integration is expected and acceptable.
+Placement support is a toolkit in `UnrealExtendedGameplay` for answering two questions about an object that a player, a script or an AI wants to put somewhere: **where exactly does it go**, and **is it allowed there**. It solves poses, checks rules, draws a preview and runs a local placement session. It does not own inventory, item data, saving, networking or what a placement means to the game. The project keeps those and plugs into the toolkit at the seams described below.
 
-The references are STG Studio's Fab Advanced Placement System and PawnStarzSimulator's native TalesOfTrade placement system. Their different gameplay models must remain possible. All new types and signatures below are proposals; follow [framework architecture](../../ARCHITECTURE.md) and confirm engine APIs during implementation.
+Every piece can be replaced on its own. A project can use only the math, use the evaluator with its own preview, or use the whole stack with its own rules, aim and commit. Project code at the seams is expected; editing the plugin to fit one project is not.
 
-## 1. Findings from both references
+## 1. Targets
 
-### Fab Advanced Placement System
-
-Read-only inspection of the installed pack under `/Game/Assets/Gameplay/STGStudio/AdvancedPlacementSystem/AdvancedPlacement` found:
-
-- `AC_AdvancedPlacement` combines catalog/UI, camera tracing, spawning, placement, rotation, grabbing and network events.
-- `BP_PlacementActor` and its shadow subclass manage placed/preview state, overlaps and snapped-parent/dependent relationships.
-- `DT_PlacementObjects` supplies 16 demo entries with mesh/actor references, categories, offsets, permitted surfaces and overlap-box settings.
-
-These are inspected capabilities, not a new end-to-end or multiplayer test. The pack provides a complete example, but its actor hierarchy, UI and player workflow are not framework requirements. [Fab listing](https://www.fab.com/listings/6cb15549-61b3-43f9-834f-bb5a720e0b37).
-
-### PawnStarzSimulator / TalesOfTrade
-
-Inspected native source in `C:/Users/kemal/Desktop/PawnStarzSimulator`, especially `Plugins/TalesOfTrade/Source/TalesOfTrade/Systems/Placement/` and `Player/Components/TOTPlacementComponent.*`:
-
-| Source | Observed behavior | Reuse boundary |
-| --- | --- | --- |
-| `TOTPlacementMath.*` | Stateless surface classification, surface-plane grid snapping, rotation about a normal, footprint math and bounded zone sampling | Extract independent native helpers without TOT row/trait types |
-| `ValidatePlacement` | Preview and host call the same predicate; result includes measured support and the snapped pose, not just validity | Preserve a shared evaluation path with a canonical returned pose |
-| `UTOTPlacementComponent` | Local ghost, cached held eligibility, independent held free-position/free-rotation modifiers, distance adjustment | Useful optional targeting/input helpers; equipment and input tiers stay project-owned |
-| `ResolveAim` | An accepted shelf target wins; an incompatible shelf can fall through to world placement; previews can differ | Project chooses target priority and operation; no shelf-specific enum in shared core |
-| `TryCommitPreview` | Invalid confirm still consumes Use, preventing accidental equipment use | Input consumption is separate from validity and operation success |
-| `HandlePlaceCommand` | Host resolves SQL ownership/traits, revalidates, atomically changes inventory/placement rows, then spawns a representation | SQL, item identity, commands and transactions stay in TOT |
-| Move/origin/return paths | Move means pickup into inventory followed by placement, with host origin memory for return | A valid project strategy; do not require Draft 1's in-place edit/lock model |
-| `UTOTPlacedItemComponent` | Composes placed state onto different actor types; functionality remains on the actor | Favor composition without requiring this component or its decal base class |
-| Zone components | Non-colliding tagged boxes registered for queries, composed and transformed with buildings | Optional spatial helpers, with consumer-controlled availability/invalidation |
-| Revalidation/proximity code | Revalidates stored rows, distinguishes unavailable zones, handles support-loss wobble/drop/return and spawns around every player's pawn | Project lifecycle policy; shared evaluation never drops items, deletes rows or starts a spawner |
-
-The older `Documents/item_world_placement_design V2.md` explains intent but is not current implementation evidence. Current source, for example, has separate free-position/free-rotation controls and a proximity spawn layer. Source was read; no PawnStarz files, assets or saves were changed or executed.
-
-### Learn from the implementation without copying its assumptions
-
-- The zone-union test uses a capped lattice. It is an approximation, not an exact proof that an entire solid is covered; small gaps can fall between samples.
-- Clearance ignores the supporting actor. General support should allow contact with the supporting surface without exempting unrelated blocking geometry on the same actor.
-- The return-moved command explicitly leaves occupied-origin overlap unchecked. Reusable contracts must allow revalidation, reservation or another fallback, rather than unconditional restoration.
-- Revalidation can remove a row whose definition is missing. Shared support reports missing data and leaves recovery to the consumer; it never deletes application state.
-- TOT marks a preview before `FinishSpawning`/BeginPlay. Tinting an arbitrary gameplay actor after initialization does not make a safe ghost.
-
-## 2. Ownership boundary
-
-**The framework helps answer where and whether a proposed placement fits. The project decides what placement means and applies the operation.**
-
-| Shared placement support | Project-owned behavior |
+| | |
 | --- | --- |
-| Surface frames, snapping, offsets and footprint math | SQL, DataTables, data assets, traits, catalog/search UI and item eligibility |
-| Evaluation pipeline and optional geometry rules | Ownership, combat, trade reservations, unlocks, prices, refunds and inventory transfers |
-| Canonical pose, measured support and reason codes | Spawn, transform edit, pickup/re-place, slot transfer, removal and dependent consequences |
-| Optional ray targeting, preview and local session helper | Input stack, camera/hand setup, modal routing, Folio/Slate/UMG and feedback |
-| Optional regions and anchor primitives | Durable IDs, save schema/migrations, actor streaming, collision/nav and support-loss policy |
-| Intent/evaluation/outcome contracts | RPCs/command dispatcher, authority checks, transactions, deduplication and replication |
+| Engine | Unreal Engine 5.6 and later |
+| Plugin | `UnrealExtendedGameplay`, folder `Source/UnrealExtendedGameplay/Systems/Placement/`; editor parts in `Source/UnrealExtendedGameplayEditor/Placement/` |
+| Game types | Single-player and co-op, listen and dedicated servers, first and third person; other input devices through a custom aim provider |
+| Placement kinds | Free placement on floors, walls and ceilings; grid placement; sockets and slots; uneven ground; moving existing objects |
+| Callers | Players through a session; scripts and AI through the evaluator directly; editor tools through the same evaluator |
 
-A new consumer normally writes a small specification mapper, any targeting/policy customization, a commit adapter and its input/UI glue. No framework code knows `UTOTDatabase`, `FTOTItem`, `UGQSaveSubsystem`, shelves, a particular currency or equipped-item state.
+## 2. What the reference systems teach
 
-### Decisions replaced from Draft 1
+Two existing systems were studied as behaviour references. Neither is a dependency, and nothing is copied from them.
 
-- No required Primary Data Asset catalog or `FPrimaryAssetId` identity; accept resolved project data.
-- No mandatory player-controller component, pawn subclass, placed actor or live actor to evaluate.
-- No universal committed-object registry, runtime GUID generator or save-record schema.
-- No required placement RPC route, server lock system, move transaction or cost-participant protocol.
-- No automatic spawning, inventory mutation, persistence or input binding during evaluation.
-- Anchors, group editing and integrations are optional increments, not prerequisites for the first useful release.
+**Fab Advanced Placement System (STG Studio)** ([listing](https://www.fab.com/listings/6cb15549-61b3-43f9-834f-bb5a720e0b37)). One Blueprint component does everything: catalog and UI, camera trace, spawning, rotation, grab and move, destroy, and network events. Its placement actors track a snapped parent and their dependents; catalog entries carry permitted surfaces (for example horizontal only), spawn offsets and overlap boxes. It shows the feature set games expect, and the cost of fusing it: a project cannot take the trace and the surface check without also taking the catalog, the actor base class and the input keys.
 
-## 3. Independent levels of adoption
+**A native co-op shop game built on this framework.** Its placement code is the source of most rules in this plan:
 
-1. **Math only:** use transform/snapping/footprint helpers; retain the project's evaluator, preview and commands.
-2. **Evaluation:** map project data into a resolved spec; evaluate on client and host; retain existing session/rendering.
-3. **Preview/session helpers:** additionally use local state and default mesh preview; the project still selects targets and commits.
-4. **Optional conveniences:** use data-asset wrappers, regions, anchors or input/interaction adapters where useful.
+- The client preview and the host command call the same validation function, and the result carries the snapped pose and the measured support, not only yes or no.
+- The client sends its pose, the kind of surface it believes it aimed at, and what it believes the object rests on. The host snaps that pose again, measures again with a short probe along the claimed normal, and refuses the command as stale when the measured support differs from the claimed one.
+- A confirm on an invalid spot is still consumed, so the press does not fall through to the equipped item's own use action.
+- Position snapping and rotation snapping are switched off independently: nudging a table off the grid must not also lose its facing.
+- Previews are marked before `FinishSpawning`, so their gameplay never starts.
+- Placed state is a component composed onto different actor types; the actors keep their own behaviour.
+- Placement zones are non-colliding tagged boxes that move with the building they belong to.
+- One target (a shelf) outranks world placement when it accepts the item and lets world placement through when it refuses.
 
-No level silently enables the next. Unconfigured functionality is unavailable/unhandled, never an implicit free-build mode or unconditional permission grant.
+It also shows traps to avoid:
 
-## 4. Source layout and small API
+- Testing coverage by a union of zones on a capped point lattice is an approximation; small gaps fall between the samples.
+- Ignoring the whole supporting actor during the clearance test also ignores unrelated walls of that actor.
+- Returning a moved object to its origin without checking that the origin is still free.
+- Deleting stored placements whose definition is missing, instead of reporting them.
 
-Use the existing `UnrealExtendedGameplay` runtime module and requested Systems folder. Respect its feature layout; public-facing headers are explicit, implementation/tests stay private, and unrelated systems are not reorganized.
+Each consuming project keeps its own mapping notes in its own repository.
+
+## 3. Ownership
+
+The plugin answers where and whether. The project decides what a placement means and carries it out.
+
+| The plugin provides | The project owns |
+| --- | --- |
+| Surface frames, snapping, offsets, footprint and box math | Item data, catalogs, search UI, eligibility |
+| Pose solvers and rules, with built-in ones for geometry | Ownership, prices, unlocks, inventory, combat or trade locks |
+| Canonical pose, measured support, reasons, revisions | Spawning, moving, picking up, slot transfer, removal, dependents |
+| Aim providers, preview renderers, a local session | Input mapping contexts and priorities, camera, modal routing, UI and feedback |
+| Region and anchor components and their query subsystem | Durable IDs, save schema, streaming, collision and navigation of placed actors, support-loss policy |
+| A compact network proposal struct and a commit-handler seam with per-call outcomes | RPCs or command system, authority checks, transactions, de-duplication, replication |
+
+No plugin code knows a project's database, item type, save subsystem, shelves, currency or equipment.
+
+Nothing turns on implicitly. A missing solver, rule list or commit handler is reported as not configured; there is no default free-build mode and no implicit permission.
+
+## 4. Layers
+
+Each layer uses only the layers above it, and a project can stop at any of them.
+
+1. **Math:** stateless functions on vectors, frames and oriented boxes. No world.
+2. **Evaluation:** spec, profile, intent and context; pose solvers and rules; one evaluator. Reads the world, changes nothing.
+3. **Spatial:** region and anchor components and their query subsystem.
+4. **Presentation:** aim providers, preview renderers, debug drawing.
+5. **Session:** the local placement session, modes, cache and commit handlers.
+6. **Adapters and authoring:** Enhanced Input, InteractionSystem, definition assets, editor visualizers and tools.
+
+## 5. Source layout
+
+The Gameplay module is flat (no `Public`/`Private` split) and keeps each feature's tests beside it, as SoftCollision and InteractionSystem do. Placement follows that.
 
 ```text
 Source/UnrealExtendedGameplay/Systems/Placement/
-  Core/          spec/intent/result, pure math and evaluation
-  Rules/         optional geometry rules and project customization
-  Targeting/     optional ray/surface proposal helpers
-  Preview/       renderer contract and default mesh preview
-  Session/       optional local session helper
-  Spatial/       optional tagged regions and anchors
-  Adapters/      optional Enhanced Input / InteractionSystem conveniences
-  Private/       implementation and Tests/
+  Core/       types, tags, EGPlacementMath, the Blueprint math library, the evaluator, network types
+  Solvers/    UEGPlacementPoseSolver and the built-in solvers
+  Rules/      UEGPlacementRule and the built-in rules
+  Profile/    UEGPlacementProfile, UEGPlaceableDefinition, FEGPlacementSpecRow
+  Spatial/    region and anchor components, UEGPlacementSpatialSubsystem
+  Aim/        UEGPlacementAimProvider and the built-in providers
+  Preview/    UEGPlacementPreviewRenderer, the built-in renderers, debug drawing
+  Session/    UEGPlacementSessionComponent, modes, cache, commit handlers
+  Adapters/   Enhanced Input binder, InteractionSystem interaction
+  Tests/      UnrealExtendedGameplay.Placement.* automation tests
 Source/UnrealExtendedGameplayEditor/Placement/
-                 optional authoring validation/visualization
-Docs/Placement.md
-Docs/PlacementPlan.md
+              component visualizers, asset validation, fitting spec boxes from meshes
+Docs/Placement.md       user guide, written with the code
+Docs/PlacementPlan.md   this plan
 ```
 
-| Proposed piece | Contract |
+The folder is called `Aim`, not `Targeting`, so it is not confused with the module's lock-on `Targeting` system.
+
+The runtime module already has the dependencies this needs as public dependencies: `GameplayTags`, `EnhancedInput`, `PhysicsCore` and `ExtendedFoundation`. `FInstancedStruct` is in `CoreUObject`. Editor dependencies go in the editor module's Build.cs only.
+
+## 6. Data model
+
+All data types are reflected from the start (`USTRUCT(BlueprintType)`, `UCLASS(BlueprintType)`), so Blueprint pins never have to change later. Names are proposals; confirm engine APIs while implementing.
+
+### Spec: per item, `FEGPlacementSpec`
+
+What the object is, geometrically. A project builds it from whatever it stores: a DataTable row, a data asset, a database row or native tuning.
+
+| Field | Meaning |
 | --- | --- |
-| `EGPlacementMath` | Stateless native math using geometry/engine primitives; no database, world or actor |
-| `FEGPlacementSpec` | Immutable resolved geometry/constraints, independent of definition storage |
-| `FEGPlacementIntent` | Requested pose/target, independent position/rotation snapping choices, opaque source reference |
-| `FEGPlacementContext` | Explicit world/query access, requester/ignored primitives, support/region availability and read-only project policy |
-| `FEGPlacementEvaluation` | Canonical pose, measured support, pending/valid/invalid state, reason codes and relevant revision/token |
-| `FEGPlacementEvaluator` | One evaluation pipeline; returns facts and performs no commit side effects |
-| `UEGPlacementSessionComponent` | Optional local selection/preview/dispatch state with caller-owned data and commit hook |
-| Preview renderer | Optional Begin/Update/End lifecycle; stock mesh renderer or project replacement |
+| `Shape` | `FEGPlacementShape`: one or more oriented boxes in pivot space. `Footprint` boxes rest on the support; `Clearance` boxes must stay free. Clearance defaults to the footprint |
+| `ContactOffset` | Distance from the pivot to the contact point along the surface normal |
+| `AllowedOrientations` | Bitmask of Floor, Wall and Ceiling |
+| `MaxSlopeDegrees` | Optional; when unset the profile's value applies |
+| `Rotation` | `FEGPlacementRotationPolicy`: align to the surface or to world up, spin step, whether free spin is allowed, a fixed spin |
+| `Grid` | Optional override of the profile's grid step |
+| `Tags` | `FGameplayTagContainer` for rules to match, for example "needs a timber support" or "hangs on hooks" |
+| `ProjectData` | `FInstancedStruct` holding project rules' own per-item data |
+| `Source` | `FEGPlacementHandle`: the project's identity for the item, opaque to the plugin |
 
-Use native functions/delegates for simple seams. Add reflected structs and BlueprintNativeEvent wrappers where consumers need them; do not require a UObject interface for every helper. Internal query pointers do not belong in wire formats.
+Shapes come from data, never from a preview mesh's current bounds. A mapper or the editor's fitting tool may compute them from meshes ahead of time.
 
-The optional session can live on a pawn, controller or other actor with explicit context. Local-player lookup is adapter behavior, never `GetPlayerController(0)` in the solver. Independent views/sessions must not share global preview/input flags. Scripted/headless callers can evaluate without the component.
+Positive uniform scale is supported. Any other transform is refused with a reason, never silently changed.
 
-A passive metadata component or simple mesh actor can be added when useful, but must not become the only integration path. Forward markers, sounds, durable identity, replication and saving remain separate responsibilities.
+`FEGPlacementHandle` is a namespaced string (`Namespace` and `Value`) that holds the project's own ID unchanged. The plugin never generates IDs or converts them, for example SQL IDs to GUIDs. Clients may send handles but never specs: the host resolves the spec from its own data.
 
-### Dependencies
+### Profile: per placement mode, `UEGPlacementProfile`
 
-Reuse Foundation result/async/asset helpers where needed and existing interaction infrastructure for optional adapters. Keep placement contracts in Gameplay; do not expand Foundation without a demonstrated cross-plugin need. No TOT, GQ, Folio, save-plugin or online-provider dependency enters shared placement.
+A `UPrimaryDataAsset`, like `UEGSoftCollisionProfile`; native code can also create one at runtime with `NewObject`. There is one profile per way of placing things, for example "world", "shelf slot" or "portal socket".
 
-Declare modules used by public headers as public dependencies; implementation-only dependencies stay private. Editor dependencies stay in the editor module. A runtime toggle does not make a hard module reference optional.
-
-## 5. Project-resolved data and identity
-
-The minimal spec describes authoritative footprint/clearance geometry, pivot/contact offsets, permitted surfaces/slope, rotation policy and optional grid frame/step. Optional support, region and anchor requirements compose with it. Positive uniform scale is the initial supported transform convention; reject unsupported transforms explicitly rather than silently changing them.
-
-Names, icons, prices, quantities, actor classes and persistent IDs are not required to run geometry. A catalog or inventory UI keeps those in its own model.
-
-Source/definition/support references are opaque project handles. If a common reflected representation is needed, use a namespaced string preserving the exact project value; do not generate a second identity or convert SQL IDs into GUIDs. The project resolves trusted values on authority. A client-supplied full spec is never authoritative item data.
-
-A data-asset wrapper is an optional adapter. TOT maps cached Placeable traits; GQ can map native tuning or a DataTable. Neither duplicates its source of truth for the plugin. Content owners handle cook inclusion and async loading. Session startup may wait for data; geometry never loads synchronously during preview.
-
-## 6. Evaluation pipeline
-
-Proposed API sketch: `EvaluatePlacement(Spec, Intent, Context) -> Evaluation`.
-
-1. Check spec/context readiness, finite values and supported transforms.
-2. Measure/resolve the proposed surface using the supplied query policy.
-3. Build a surface frame, derive spin/orientation, snap in the chosen grid frame and re-ground after snapping as needed.
-4. Apply offsets and optional anchor alignment in a fixed order.
-5. Run enabled support, region, exclusion and clearance checks against the same footprint.
-6. Run project read-only eligibility policies and return a canonical pose, structured reasons and relevant revisions.
-
-Preview draws the returned pose, including a useful invalid pose rather than blinking away. The authoritative project command resolves fresh data and calls the same evaluator, then applies **that** result's pose. Consumers must not independently rebuild the transform. A shared function prevents algorithm drift; different world snapshots can still produce different answers.
-
-Rules are opt-in: there is no compulsory shop boundary, trace channel, slope limit, 25 cm grid or one-level stacking rule. Built-in support covers surface frames, snapping, offsets, authored oriented boxes and optional support/region queries, with project predicates for other needs.
-
-Geometry details:
-
-- Authoritative shapes come from project data, never the ghost's current bounds. Bounds may be precomputed/cached by a mapper.
-- Clearance, interaction focus, pawn blocking and navigation are distinct policies; a focus sphere must not become a clearance footprint.
-- Support-contact tolerance cannot exempt a whole building from collision.
-- Regions can be non-colliding tagged components registered on demand, not physics volumes scanned globally every frame.
-- Exclusion-box overlap requires oriented intersection, including thin blockers. Corner/lattice sampling can miss intersections.
-- Provide single-box containment as a clear primitive. Union sampling, if included, exposes spacing/caps and its approximate nature. Strict union coverage can use a different project/provider predicate.
-- Distinguish unavailable/unloaded region/support data from loaded-but-rejecting geometry. Report pending/unknown so the project chooses fail-closed, retry or later revalidation; never evict a stored object.
-- Evaluation cannot consume items, change collision, spawn actors, mutate data, poll a database or make backend calls.
-
-Cache with explicit invalidation for moving blockers/supports, changed regions, item changes and policy revisions. A stationary aim does not prove a cached placement is still valid.
-
-## 7. Target selection, preview and input
-
-A provider proposes a pose plus optional target/reference. It need not imply a universal operation. Providers can represent camera surfaces, shelf slots, puzzle sockets, pointers, tracked hands or scripted transforms. Projects decide priority, fallback and commit routing.
-
-For TOT, accepted shelf stocking can outrank world placement while a rejecting shelf falls through. That arbitration, the two preview classes and inventory transfer belong to TOT. Shared types must not force `ShelfSlot` onto GQ or other consumers.
-
-The optional ray helper supports distance adjustment and bounded surface search. Whether a floor prop aimed at a wall searches down, and how far, is provider configuration. Free position and free rotation are independent intentions. Optional anchor hysteresis only affects local candidate selection; authority still validates the selected anchor.
-
-The stock ghost is mesh-only and cosmetic: no collision, nav, gameplay ticking, replication, interaction or save participation. Valid/invalid/pending appearance is configurable. Projects can supply an existing safe actor preview; its adapter guarantees inertness before gameplay initialization. Core does not spawn arbitrary gameplay classes and convert them after BeginPlay.
-
-Optional session flow: `Idle → Preparing → Previewing → AwaitingOutcome`. Preparing can be skipped when data is ready; after an outcome the project chooses continue or end. Selection/cancellation invalidates stale load callbacks. The helper never equips, reserves inventory, hides an original actor or deletes a placement.
-
-Projects map Confirm/Cancel/Rotate/AdjustDistance/FreePosition/FreeRotation through their input stack. Optional Enhanced Input glue binds requested actions and releases only its own bindings; it cannot replace a project's mapping-tier or modal policy. Held modifiers clear on release, cancellation and focus loss.
-
-**Handled input is not successful placement.** Replies distinguish NotHandled/Handled from dispatch and mutation outcomes. An invalid confirm can be consumed, preventing TOT's equipment-use fallthrough. Repeat placement is driven by actual project inventory/equipment changes, not an assumed stack count in the plugin.
-
-## 8. Commit, authority and cancellation
-
-The project commit adapter takes the evaluated proposal and dispatches its own operation. It may complete synchronously or return a pending correlation token with an eventual applied/rejected/failed/cancelled result. Dispatch acceptance, local rumble and actor replication are not automatically per-request success acknowledgements.
-
-The consumer is responsible for:
-
-- Trusted requester identity, item data, permissions, ownership, ignore lists and support validation.
-- Authoritative re-evaluation immediately before mutation, including revision/range/line-of-sight checks and any needed reservations.
-- Atomic paying/consuming/creating/storing under its existing transaction model; load required content before consumption.
-- Duplicate/stale commands, disconnection cleanup and authoritative replication. The evaluator introduces no second RPC/command system.
-- Declared acknowledgement/correlation semantics. A legacy denial-only adapter must not fabricate reliable success; add correlation before enabling automatic retries.
-- Unknown outcomes: reconcile a timed-out token before repeating a potentially applied operation.
-
-Optional session completion helpers follow Foundation's per-call exactly-once callback conventions. They do not make distributed project transactions exactly-once. Broadcasts are observer notifications, not substitutes for the initiating operation's result.
-
-### Move and remove remain project strategies
-
-| Strategy | Project work outside shared geometry |
+| Field | Meaning |
 | --- | --- |
-| In-place edit | Claim the actor, retain its original pose during preview, validate destination, change transform and restore temporary state on cancel |
-| Inventory pickup/re-place | Capacity/identity checks, pickup/equip flow, origin memory, repeat placement and explicit return/keep-in-inventory policy |
-| Slot/container transfer | Check compatibility/occupancy and transfer atomically; may use an exact target pose with world rules disabled |
-| Dependent/support editing | Own graph, cycle/capacity checks and block/detach/group-move/wobble/drop/return policy |
+| `Solver` | Instanced `UEGPlacementPoseSolver` |
+| `Rules` | Ordered array of instanced `UEGPlacementRule` |
+| `Query` | Trace channel or collision profile, complex or simple collision, probe distances |
+| `SurfaceBands` | Normal thresholds that separate Floor, Wall and Ceiling |
+| `Grid` | Default step and grid frame (world or support-local) |
+| `DefaultMaxSlopeDegrees`, `ContactTolerance` | Defaults that a spec can override |
+| `SurfaceTagMap` | Physical material to gameplay tag table for surface rules |
+| `bCollectAllReasons` | Run every rule (for UI that lists all problems) or stop at the first failure |
 
-The plugin imposes no universal `BeginMove`. It evaluates destinations for any of these. Clearing a ghost is local cleanup; reversing a pickup or accepted commit is a separate project operation. Pending outcomes must resolve before claiming world restoration. Occupied origins, missing supports and full inventories need explicit outcomes, not unconditional teleportation/deletion.
+### Intent: per call, `FEGPlacementIntent`
 
-No save writer, committed-object registry, proximity spawner, collision/nav reconfiguration, tombstone schema or automatic migration is part of core. Future utilities need demonstrated reuse and their own scoped contracts.
+What the caller asks for:
 
-## 9. Consumer integration sketches
+- a proposed pose, from an aim provider, a script or a client's command;
+- an optional target (`FEGPlacementTarget`: a component, a hit or an anchor);
+- independent `bFreePosition` and `bFreeRotation` flags and a requested spin;
+- the caller's **claims** (`FEGPlacementClaims`): the surface orientation and the support handle it believes are true, and the revisions it saw.
 
-### PawnStarzSimulator / TalesOfTrade
+### Context: per call, `FEGPlacementContext`
 
-Adopt incrementally in `Plugins/TalesOfTrade`; no new gameplay plugin or project migration in this documentation task.
+The world, the requester actor, ignored actors and components, the profile, the evaluation scope (`Preview` or `Authority`), the spatial subsystem to query, and an optional `FInstancedStruct ContextData` for project rules (for example a snapshot of the requester's inventory state). Local-player lookup happens in adapters; the evaluator never calls `GetPlayerController(0)`.
 
-1. Map compatible pure-math calls first, retaining TOT-facing types and tests.
-2. Map cached Placeable traits and world policy into shared evaluation inside `ValidatePlacement`. SQL hydration stays in `UTOTDatabase`; support/region providers use caches or explicit query snapshots rather than new per-frame database reads.
-3. Preserve `UTOTPlacementComponent`, equipment/held state, shelf/world arbitration, distinct ghosts, independent free modifiers, mapping-tier replacement and handled-invalid confirm behavior.
-4. Keep `FTOTCmd_*`, `UTOTCommandDispatcher`, stack splitting, instance identity, rarity/upgrades, `ExecuteAtomic` and ledger events in TOT.
-5. Keep move-origin return, functional actors, support-loss recovery, collision/nav thresholds and co-op proximity spawning project-owned. Fix identified edge cases separately with TOT tests, not silently during extraction.
-6. For a later migration, follow PawnStarz `AGENTS.md` for both Unreal and HTML contracts. Shared SQL remains authored authority; a C++ helper does not automatically update the HTML implementation.
+### Working state and result
 
-### Grandfather's Quarry
+`FEGPlacementState` is what solvers fill in and rules read: the pose, the surface hit, the measured normal and orientation, the slope, the support component, actor and handle, the footprint and clearance boxes in world space, and the matched anchor and regions.
 
-- Start with an opt-in fixture mapping native tuning/DataTable data and using either its own preview or the stock helper.
-- Existing controllers own Enhanced Input, mining/phone gates, aim and Folio presentation. Shared placement does not depend on Folio.
-- Existing interaction providers can request actions without surrendering claim/input ownership. A project command applies transforms or creates selected objects after revalidation.
-- Economy/unlocks and `UGQSaveSubsystem` retain data/schema ownership. Add records only when a concrete editable-object feature needs them; this plan does not invent a furniture economy or new save collection.
-- Preserve portal-rock/socket puzzles, ore GUIDs, interaction IDs and gallery/progress. Any adoption is a deliberate feature migration with regression evidence.
+`FEGPlacementEvaluation` is what callers get back:
 
-### Modularity acceptance gate
+- `Status`: `Valid`, `Invalid` or `Pending`. Pending means data needed for an answer is not available, such as an unloaded region or an asset that is still loading.
+- `Pose`: always set, also when invalid, so a preview shows a red ghost where the player aims instead of blinking out.
+- The surface orientation, the support (component and handle) and the anchor.
+- `Reasons`: an array of `FEGPlacementReason` with a gameplay tag, a display text and the rule that raised it.
+- `ClaimMismatches`: which claims disagreed with what was measured.
+- `Revisions`: the revisions of the support, regions and anchor the answer depended on.
 
-Prove a small actor-transform consumer without an inventory/database and a TOT-shaped consumer using existing IDs, external specs and an externally committed inventory/slot operation. Small native fixtures are sufficient; full project migrations are not a release prerequisite. Neither consumer may patch the shared solver or duplicate item/save state.
+### Reasons and surface kinds are open
 
-## 10. Delivery and validation
+Reasons are gameplay tags, declared natively (`UE_DECLARE_GAMEPLAY_TAG_EXTERN` and `UE_DEFINE_GAMEPLAY_TAG`) under `Extended.Gameplay.Placement.Reason.*`: `NotConfigured`, `InvalidInput`, `UnsupportedTransform`, `NoSurface`, `SurfaceOrientation`, `TooSteep`, `SurfaceTag`, `Blocked`, `Overhang`, `OutsideRegion`, `InExclusion`, `OutOfReach`, `NoLineOfSight`, `SupportRejected`, `AnchorUnavailable`, `ClaimMismatch` and `Stale`, with `Pending.*` children for unavailable data. Projects add reasons under their own tag roots and map tags to text and feedback themselves.
 
-All work below is planned. The first release delivers useful support, not full parity with both games.
+Floor, Wall and Ceiling stay a small enum because they follow from the normal. Finer kinds of surface (shelf, rail, rock wall, timber) are tags: component tags, the profile's physical material table, or a region's tags, checked by a rule.
 
-| Phase | Shared deliverable | Acceptance |
+## 7. Solving and validating
+
+Evaluation is two steps that a caller can run together or separately:
+
+```text
+Evaluate(Profile, Spec, Intent, Context)     = SolvePose, then ValidatePose
+SolvePose(Profile, Spec, Intent, Context)    -> State        (the profile's solver)
+ValidatePose(Profile, Spec, State, Context)  -> Evaluation   (the profile's rules)
+```
+
+All three are available natively (`EGPlacement::Evaluate` and so on) and through a Blueprint function library. A project that gets its pose elsewhere (a slot, a scripted spawn, a solver of its own) calls `ValidatePose` and still gets every rule.
+
+### Pose solvers
+
+`UEGPlacementPoseSolver` is an `Abstract, EditInlineNew, DefaultToInstanced, Blueprintable` class with a BlueprintNativeEvent `Solve`, the same pattern as `UEGSoftCollisionDriver` and `UEGChessFeedbackRenderer`. Built-in solvers:
+
+| Solver | What it does |
+| --- | --- |
+| `Surface` | Probes along the intent's normal, classifies the surface, builds the surface frame, applies the spin, snaps in the grid frame, grounds again after snapping and applies the contact offset |
+| `ExactPose` | Takes the intent's pose unchanged: slots, scripted placement, editor tools |
+| `Anchor` | Snaps to the best compatible anchor near the intent: sockets, hooks, slots |
+| `GroundConform` | Probes under the footprint's corners and centre and fits the contact plane, for uneven ground such as rock floors |
+
+Projects subclass for anything else.
+
+**Solving is idempotent.** Solving the pose that a solve produced gives the same pose, within a fixed tolerance. Grids are defined in a stable frame (the world, or the support component's own frame), never relative to the aim. This is what lets a host solve a client's pose again and land on the ghost's grid cell rather than the neighbouring one.
+
+### Rules
+
+`UEGPlacementRule` uses the same pattern and returns `Pass`, `Fail` (with reasons) or `Pending`. Each rule has a scope (`Preview`, `Authority` or both) and the profile runs them in order. Rules get read-only access to the spec, intent, context and state and must not change the world. Native rules get `const` inputs; for Blueprint rules this is a documented requirement, because the compiler cannot enforce it.
+
+Built-in rules:
+
+| Rule | Checks |
+| --- | --- |
+| `SurfaceOrientation` | The measured orientation is one the spec allows |
+| `Slope` | The slope is within the limit |
+| `SurfaceTags` | Surface tags (component tags, physical material, region) meet the spec's requirements |
+| `Clearance` | Clearance boxes overlap nothing on the configured channel, tested as oriented boxes. Contact with the support is allowed only within `ContactTolerance` of the contact face; the rest of the supporting actor still blocks |
+| `SupportCoverage` | Enough of the footprint rests on support (probe pattern with configurable spacing and minimum fraction), so objects do not hang off edges |
+| `SupportFilter` | Accepts or refuses the support by class, tag or interface: no placing on pawns, on previews, or on a shelf that is stocked rather than decorated |
+| `RegionContainment` | The footprint is inside the required regions |
+| `RegionExclusion` | The footprint touches no exclusion region, tested by exact oriented-box intersection, thin boxes included |
+| `Reach` | Distance from the requester |
+| `LineOfSight` | The requester's view can see the pose |
+| `ClaimMatch` | Authority scope: the claims match the measured facts; otherwise `ClaimMismatch` |
+| `Revision` | Authority scope: the revisions the client saw are still current; otherwise `Stale` |
+
+Project rules (ownership, inventory, combat lock, shop open) subclass `UEGPlacementRule` and read `ProjectData` and `ContextData`.
+
+Results combine as follows: any `Fail` makes the evaluation `Invalid`; otherwise any `Pending` makes it `Pending`; otherwise it is `Valid`. Pending is never treated as valid. The caller decides whether to wait, retry or refuse.
+
+### Geometry precision
+
+- Box against box uses the separating-axis test (15 axes), never corner sampling, so thin blockers and crossing edges are found.
+- A box inside one region box is tested exactly.
+- A box inside a union of regions is tested exactly when the regions and the footprint share a plane, which is the common case of floor zones: the footprint polygon is subtracted from the union of the region polygons in that plane. For regions that do not share a plane the rule samples, with the spacing and sample cap exposed in the profile, and reports the answer as approximate.
+- Clearance, interaction focus, pawn blocking and navigation are separate concerns. A focus or pickup sphere is never used as the clearance shape.
+
+### What evaluation never does
+
+It never consumes items, spawns or moves actors, changes collision, writes data, loads assets synchronously, polls a database or calls a back end. Missing data is reported as Pending or as a reason, never repaired or deleted.
+
+## 8. Spatial: regions and anchors
+
+- **`UEGPlacementRegionComponent`:** a non-colliding scene component holding an oriented box, an include or exclude mode, and tags. It moves with its actor, so a building's shop floor moves with the building.
+- **`UEGPlacementAnchorComponent`:** a socket for exact placement, with a pose, compatible spec tags and a snap radius. Whether it is occupied is project state, asked through a BlueprintNativeEvent on the anchor or through a project rule; the plugin does not track occupancy.
+- **`UEGPlacementSpatialSubsystem`:** a world subsystem. Components register and unregister themselves, and queries by oriented box go through a spatial hash. There are no per-frame actor scans and no physics volumes.
+- **Revisions:** each region and anchor has a revision that changes when its transform, tags or settings change. Supports report a revision through `IEGPlacementSupportInterface`; without it, transform changes count. Revisions drive the session cache and let a host see that something a client evaluated has changed since.
+- **Availability:** unloaded data is not a refusal. A `UEGPlacementAvailabilityProvider`, which projects can replace, tells the subsystem when an area's regions may be missing, and rules then answer Pending. The default asks World Partition whether streaming is complete for the query bounds; worlds without World Partition are always available.
+
+## 9. Aim, preview and session
+
+### Aim providers
+
+`UEGPlacementAimProvider` turns a view into an intent. The caller builds the view (`FEGPlacementView`: origin, direction, requester, optional player controller) from a camera, a motion controller or a script. Built-in providers:
+
+- **`ViewTrace`:** traces from the view with an adjustable distance, plus a bounded surface search; for example, a floor item aimed at a wall searches downwards, over a configurable distance.
+- **`AnchorPick`:** picks an anchor from the view, with hysteresis so the choice does not flicker between two close anchors. Hysteresis only affects the local choice; the host still validates the chosen anchor.
+
+### Modes and arbitration
+
+A session holds an ordered list of `FEGPlacementMode` entries, each with a `ModeTag`, an aim provider, a profile and an `OnInvalid` setting (`Stop` or `FallThrough`). The session evaluates the modes in order: the first valid result wins, a `FallThrough` mode passes to the next one when it is invalid, and a `Stop` mode shows its invalid result. The winning `ModeTag` goes to the commit handler, which routes it, for example "stock the shelf" or "place in the world". Shared types never carry a shelf or slot concept.
+
+### Preview renderers
+
+`UEGPlacementPreviewRenderer` has `Begin`, `Update(Evaluation)` and `End`, and is instanced like the chess feedback renderer. Built-in renderers:
+
+- **`Mesh`:** draws an `FEGPlacementVisual` (static and skeletal meshes with relative transforms and material overrides) with a valid, invalid and pending look, through an override material or material parameters. No collision, no navigation, no replication, and no tick unless it animates.
+- **`ActorClass`:** builds the same visual from an actor class without spawning it. It reads the mesh components of the class default object and of the Blueprint construction script templates, including parent classes and inherited-component overrides, caches the result per class and loads the meshes asynchronously.
+- **Project previews:** a project can supply an actor-based preview. Its adapter makes the actor inert before `FinishSpawning`. The plugin never spawns a gameplay class and then tries to neutralise it after BeginPlay.
+
+Debug drawing, switched with `Extended.Placement.Debug` console variables, shows footprint and clearance boxes, probes, regions, anchors and the current reasons, in game and in the editor viewport.
+
+### Session
+
+`UEGPlacementSessionComponent` is a local helper that can live on a pawn, a controller or any other actor. Each instance is independent: two local players or two views never share preview or input state.
+
+The states are `Idle`, `Preparing`, `Previewing` and `AwaitingOutcome`. After an outcome the project chooses between previewing again (place another) and ending the session. Preparing loads the selection's visual and any soft data with `EFAssets::Preload` and is skipped when everything is loaded; a new selection or a cancel drops stale load callbacks.
+
+The caller starts a session with a selection: spec, visual, source handle and modes. Input arrives as semantic calls (`Confirm`, `Cancel`, `Rotate`, `AdjustDistance`, `SetFreePosition`, `SetFreeRotation`), each returning `Handled` or `NotHandled`. Confirm on an invalid or pending result returns `Handled` and dispatches nothing, so the press never reaches the equipped item. Held modifiers clear on release, on cancel and when the window loses focus. Placing again depends on the project's real inventory or equipment state, never on a count the plugin assumes.
+
+**Cache.** The session keeps the last solve, keyed by the quantized intent, the spec, the profile and the revisions of everything the result depended on, and reuses it while those match. Clearance can change without any revision changing (a pawn walks in), so rule results also expire after a configurable age. Keeping the aim still never keeps a stale answer alive.
+
+The session never equips, reserves inventory, hides an original actor or deletes a placement.
+
+## 10. Commit and authority
+
+The plugin's part of a commit is small and fixed:
+
+- **`UEGPlacementCommitHandler`** (instanced, Blueprintable) has `Commit(Request, OnComplete)`. It answers at once with `Dispatched` or `Refused`, and later calls `OnComplete` exactly once with `Applied`, `Rejected`, `Failed` or `Cancelled`, tracked with `TEFPendingCalls`. A handler that cannot report outcomes says so, and the session then treats dispatch as final without inventing a success.
+- **`FEGPlacementProposal`** is a compact `NetSerialize` struct (quantized pose, mode tag, source handle, claims, revisions, free flags) that a project puts in its own RPC or command. The quantization is finer than any grid step, so solving again stays idempotent.
+- **On the host,** the project resolves the spec from its own data, calls `Evaluate` with `Authority` scope on the received proposal, and applies **that** result's pose. The `ClaimMatch` and `Revision` rules catch a world that changed between aiming and committing.
+- **Built-in handlers** for games that do not need their own: `SpawnActor` spawns a class at the pose where the caller has authority, and `MoveActor` moves an existing actor in place and restores it on cancel. Both refuse with a reason when the caller lacks authority; a networked client routes through the project's own command instead.
+
+Everything else belongs to the project: who the requester is, permissions, transactions and payment, duplicate and stale commands, disconnects, replicating the result, and reconciling an outcome that never arrived before retrying.
+
+### Move and remove
+
+| Strategy | Plugin support | Project work |
 | --- | --- | --- |
-| 0 — Contracts | Minimal spec/context/result and consumer/query/commit seams | Direct evaluator needs no session, actor subclass, catalog asset, save or transport |
-| 1 — Geometry | Math, canonical evaluation and opt-in surface/grid/footprint/clearance rules | Floor/wall/ceiling, rotated shapes and invalid poses tested; no side effects/game dependencies |
-| 2 — Optional helpers | Mesh ghost, local state/outcome handling and semantic actions | Existing previews can bypass helpers; invalid confirm stays handled; cancellation/load/focus races clean up; independent views |
-| 3 — Spatial extensions | Tagged regions and anchors where consumers need them | Unknown versus rejected data; rotated regions, seams, sampling limits, thin blockers and moving supports tested |
-| 4 — Consumer proof | Two different fixtures and adoption guide | Different IDs/storage/move policies remain intact; server re-evaluation and async correlation demonstrated |
-| Later, scoped by need | Data assets, authoring conveniences or input/interaction adapters | Added for actual reuse without mandatory save/network/economy/lifecycle ownership |
+| Move in place | `MoveActor` handler, InteractionSystem move interaction | Claiming the actor; what happens to its dependents |
+| Pick up and place again | Evaluation of the new spot | Inventory, origin memory, return policy |
+| Slot or container transfer | `ExactPose` or `Anchor` solver with world rules left out of the profile | Compatibility, occupancy, atomic transfer |
+| Dependents (objects resting on objects) | The support handle in every result | The graph and the policy: block, detach, move together, drop |
 
-Meaningful native tests belong under feature `Private/Tests`, named `UnrealExtendedGameplay.Placement.*`. Test math separately, then world queries and optional session/adapters. Cover context divergence, same-actor support/wall clearance, stale candidates, destroyed targets, cancelled loads, duplicate outcome callbacks, no-renderer/no-feedback mode and multiple views.
+Returning an object to its origin is a new placement and is evaluated like one. An occupied origin, a missing support or a full inventory gets an explicit outcome, never a teleport or a deletion.
 
-Project tests own SQL/inventory atomicity, saves, movement recovery, network loss/late join and disconnect behavior. Passing shared geometry tests does not prove those application systems. No build/relaunch or editor changes are required for this document.
+## 11. Adapters and authoring
 
-Measure evaluation time, query counts and allocations per active session. Core adds no idle per-object tick, database poll, global actor scan per frame or preview-transform RPC. Load visuals asynchronously and invalidate caches explicitly. Determine CPU/GPU bound status before performance analysis; set numerical budgets from measurements.
+- **Enhanced Input:** `UEGPlacementInputBinder` adds a mapping context at the priority the project chooses and binds the configured actions to a session. It removes only its own bindings and never replaces the project's own context stack or modal rules.
+- **InteractionSystem:** `UEGInteraction_PlacementMove` starts a move session on the interactor for the interacted actor and holds the provider's `Claim` while the move is open. Projects subclass it to pick up instead of moving.
+- **Messages:** sessions announce on the foundation message bus under `Extended.Gameplay.Placement.Event.*` (session started, commit dispatched, outcome, cancelled), with USTRUCT payloads, for listeners such as tutorials or analytics. Listeners never replace the per-call outcome.
+- **Definitions:** `UEGPlaceableDefinition` (a primary data asset with spec, visual and an optional actor class) and `FEGPlacementSpecRow` (a DataTable row) serve projects without their own item data. Projects with their own data map it to a spec and skip these. Cook inclusion of those assets is the owning project's job.
+- **Editor:** component visualizers for regions and anchors; `IsDataValid` on profiles and definitions (missing solver, empty shapes, rules that can never run); a tool that fits footprint and clearance boxes from a static mesh's bounds or simple collision and writes them into the spec; spec boxes drawn in asset previews.
+- **Status:** active sessions, cache hit rate and evaluation time are reported through `FEFServiceStatusRegistry` for `Extended.Status`.
 
-Use framework lint for dependency/descriptor changes. Future native builds and authoring follow each project's approved tools. Unreal asset operations use MCP/Python, never filesystem reads/moves of `.uasset`/`.umap`. Inspect native captures after visible implementation changes; real user saves are not fixtures.
+## 12. Consumer shapes
 
-## 11. Shared checkout and compatibility
+The design is checked against these shapes. Each must work without changing plugin code.
 
-The canonical proposed feature stays in `UnrealExtendedGameplay/Systems/Placement` with `EG` names. Framework consumers currently use different checkout paths: GQ `Plugins/ExtendedFramework` and PawnStarz `Plugins/UnrealExtendedFramework`. This plan is changed only in GQ's framework checkout. Later delivery updates consumer revisions through their normal repository/submodule workflow, rather than maintaining divergent hand-patched implementations.
+| Shape | Uses |
+| --- | --- |
+| Single-player free placement | Session, `ViewTrace`, `Surface` or `GroundConform`, `Mesh` or `ActorClass` preview, `SpawnActor` handler |
+| Sockets and slots | Anchors, `AnchorPick`, `Anchor` or `ExactPose` solver, a project commit handler |
+| Co-op placement from a database-backed inventory | The evaluator on both machines, the project's own spec mapping, its own or the stock preview and session, `FEGPlacementProposal` inside the project's command, a commit handler with deferred outcomes |
+| Several targets with priorities | Modes with `FallThrough` |
+| Moving existing actors | The InteractionSystem interaction with the `MoveActor` handler, or the project's pick-up strategy |
+| Scripted or AI placement | `Evaluate` or `ValidatePose` without a session |
 
-No shared header references TOT/GQ types or their content. Optional authoring wrappers declare their own cook/dependency ownership. Keep shipped reflected APIs compatible and add redirects when required by framework conventions.
+## 13. Build order and checks
 
-**First implementation step:** agree the small spec/evaluation contract against the two fixtures, then implement geometry. Catalogs, persistence, networking and gameplay operations stay with their existing project owners.
+The phases are an order of work, not a reduced first release. The whole plan is built.
 
-## Source references
+| Phase | Builds | Check |
+| --- | --- | --- |
+| 1. Core | Types, tags, math, Blueprint math library | Math tests pass |
+| 2. Evaluation | Solvers, rules, profile, evaluator, proposal struct, debug drawing | Evaluation tests pass; in PIE, debug drawing shows the right pose and reasons on floors, walls, ceilings and slopes |
+| 3. Spatial | Regions, anchors, subsystem, revisions, availability, exact coplanar union | In PIE, placing inside, across and outside rotated regions and at anchors gives the right answers |
+| 4. Presentation and session | Aim providers, renderers including `ActorClass`, session, modes, cache, commit handlers, messages | In PIE, a full place, cancel and place-again loop with each built-in handler |
+| 5. Adapters and authoring | Input binder, interaction, definitions, editor tools, status | In PIE, moving an actor through an interaction; box fitting on a real mesh in the editor |
+| 6. Proof | Performance capture, network run, `Docs/Placement.md` | Every shape in §12 works without plugin changes; a listen-server client places through a project-style command with a deferred outcome |
 
-Framework/project boundaries:
+PIE checks run in an existing level of any consuming project; no check assets are kept.
 
-- [Architecture](../../ARCHITECTURE.md), [interaction system](../Source/UnrealExtendedGameplay/InteractionSystem/EGInteractionSystemComponent.h) and [provider/claims](../Source/UnrealExtendedGameplay/InteractionSystem/EGInteractionProviderComponent.h).
-- [Foundation results](../../UnrealExtendedFoundation/Source/ExtendedFoundation/Public/Result/EFResult.h) and [asset loading](../../UnrealExtendedFoundation/Source/ExtendedFoundation/Public/Assets/EFAssetLoading.h).
-- [GQ UI/framework plan](../../../../Documents/Unreal-Plan.md), [save owner](../../../../Source/GrandfathersQuarry/Story/GQSaveSubsystem.h) and [interactions](../../../../Source/GrandfathersQuarry/World/GQInteractions.h).
+**Tests.** Automation tests cover what is pure and shared by every consumer: the math, the solvers and the rules against a test world, under `Systems/Placement/Tests`, named `UnrealExtendedGameplay.Placement.*`. They include the idempotence property, box-intersection edge cases, region unions, Pending against Invalid, and claim mismatches. Everything else is checked by playing it, once per phase. Project behaviour (inventory, saving, networking, recovery) is tested by the project.
 
-PawnStarz evidence (local inspection links, not plugin dependencies):
+**Performance.** Evaluation cost and query count per active session are measured with Unreal Insights in phase 6, and budgets are set from those numbers. There is no idle per-object tick, no per-frame world scan and no preview-transform RPC.
 
-- [Subsystem contract](C:/Users/kemal/Desktop/PawnStarzSimulator/Plugins/TalesOfTrade/Source/TalesOfTrade/Systems/Placement/TOTPlacementSubsystem.h) and [validation/commands/lifecycle implementation](C:/Users/kemal/Desktop/PawnStarzSimulator/Plugins/TalesOfTrade/Source/TalesOfTrade/Systems/Placement/TOTPlacementSubsystem.cpp).
-- [Math contract](C:/Users/kemal/Desktop/PawnStarzSimulator/Plugins/TalesOfTrade/Source/TalesOfTrade/Systems/Placement/TOTPlacementMath.h) and [math implementation](C:/Users/kemal/Desktop/PawnStarzSimulator/Plugins/TalesOfTrade/Source/TalesOfTrade/Systems/Placement/TOTPlacementMath.cpp).
-- [Player component contract](C:/Users/kemal/Desktop/PawnStarzSimulator/Plugins/TalesOfTrade/Source/TalesOfTrade/Player/Components/TOTPlacementComponent.h) and [target/ghost/input implementation](C:/Users/kemal/Desktop/PawnStarzSimulator/Plugins/TalesOfTrade/Source/TalesOfTrade/Player/Components/TOTPlacementComponent.cpp).
-- [Placed-item composition](C:/Users/kemal/Desktop/PawnStarzSimulator/Plugins/TalesOfTrade/Source/TalesOfTrade/Systems/Placement/TOTPlacedItemComponent.h), [move interaction](C:/Users/kemal/Desktop/PawnStarzSimulator/Plugins/TalesOfTrade/Source/TalesOfTrade/Systems/Placement/TOTInteraction_MovePlaced.cpp), [zone component](C:/Users/kemal/Desktop/PawnStarzSimulator/Plugins/TalesOfTrade/Source/TalesOfTrade/Systems/Placement/TOTPlacementZoneComponent.h) and [zone tests](C:/Users/kemal/Desktop/PawnStarzSimulator/Plugins/TalesOfTrade/Source/TalesOfTrade/Systems/Placement/Tests/TOTPlacementZoneTests.cpp).
-- [PawnStarz project instructions](C:/Users/kemal/Desktop/PawnStarzSimulator/AGENTS.md).
+**Repository checks.** Run `python3 Scripts/lint_repository.py` after Build.cs or descriptor changes. Unreal assets are changed through the editor (MCP or Python), never by moving `.uasset` files on disk.
 
-Fab inspection receipts in GQ: `Saved/PackageResearch/PlacementBloodBatch/system_inspection.json` and `placement_flow.json`. Vendor assets are behavioral references, not shared runtime dependencies.
+## 14. Compatibility
+
+- All names use the `EG` prefix. Reflected types and Blueprint pins stay stable once released; anything that must move gets a `[CoreRedirects]` entry in the plugin's config, as [ARCHITECTURE.md](../../ARCHITECTURE.md) requires.
+- No shared header references a project type or project content.
+- Consumers keep the framework at different checkout paths and revisions and update it through their normal repository workflow, never by hand-patching a copy.
+
+## References
+
+- [Architecture and conventions](../../ARCHITECTURE.md)
+- Instanced strategy and profile patterns this plan follows: [soft collision drivers](../Source/UnrealExtendedGameplay/SoftCollision/Drivers/EGSoftCollisionDriver.h), [soft collision profile](../Source/UnrealExtendedGameplay/SoftCollision/EGSoftCollisionProfile.h), [chess feedback renderer](../Source/UnrealExtendedGameplay/Systems/Minigames/Chess/Feedback/EGChessFeedbackRenderer.h)
+- [Interaction system](../Source/UnrealExtendedGameplay/InteractionSystem/EGInteractionSystemComponent.h) and [provider claims](../Source/UnrealExtendedGameplay/InteractionSystem/EGInteractionProviderComponent.h)
+- Foundation: [results](../../UnrealExtendedFoundation/Source/ExtendedFoundation/Public/Result/EFResult.h), [pending calls](../../UnrealExtendedFoundation/Source/ExtendedFoundation/Public/Async/EFPendingCalls.h), [asset loading](../../UnrealExtendedFoundation/Source/ExtendedFoundation/Public/Assets/EFAssetLoading.h), [message bus](../../UnrealExtendedFoundation/Source/ExtendedFoundation/Public/Messages/EFMessageSubsystem.h), [status](../../UnrealExtendedFoundation/Source/ExtendedFoundation/Public/Status/EFServiceStatus.h)

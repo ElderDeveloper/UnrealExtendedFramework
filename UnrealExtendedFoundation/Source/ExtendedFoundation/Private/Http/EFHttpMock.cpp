@@ -22,6 +22,19 @@ FEFHttpMockTransport& FEFHttpMockTransport::AddResponse(EEFHttpVerb Verb, const 
 	return *this;
 }
 
+FEFHttpMockTransport& FEFHttpMockTransport::AddBinaryResponse(EEFHttpVerb Verb, const FString& UrlContains, int32 Status,
+	const TArray<uint8>& BodyBytes, const FString& ContentType, bool bOnce)
+{
+	TMap<FString, FString> Headers;
+	if (!ContentType.IsEmpty())
+	{
+		Headers.Add(TEXT("Content-Type"), ContentType);
+	}
+	AddResponse(Verb, UrlContains, Status, FString(), Headers, bOnce);
+	Rules.Last().Response.BodyBytes = BodyBytes;
+	return *this;
+}
+
 FEFHttpMockTransport& FEFHttpMockTransport::AddFailure(EEFHttpVerb Verb, const FString& UrlContains, bool bTimeout, bool bOnce)
 {
 	FRule& Rule = Rules.AddDefaulted_GetRef();
@@ -56,6 +69,7 @@ void FEFHttpMockTransport::Send(const FEFHttpRequest& Request, const FString& Fi
 {
 	FEFHttpMockRecordedRequest& Recorded = Requests.AddDefaulted_GetRef();
 	Recorded.Verb = Request.Verb;
+	Recorded.VerbString = EFHttp::GetVerbString(Request);
 	Recorded.Url = FinalUrl;
 	Recorded.Headers = Request.Headers;
 	Recorded.Body = Request.Body;

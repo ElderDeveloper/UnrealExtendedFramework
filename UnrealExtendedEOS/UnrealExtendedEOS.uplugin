@@ -47,10 +47,6 @@
 			"Enabled": true
 		},
 		{
-			"Name": "UnrealExtendedFramework",
-			"Enabled": true
-		},
-		{
 			"Name": "OnlineSubsystem",
 			"Enabled": true
 		},

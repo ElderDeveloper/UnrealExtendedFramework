@@ -16,7 +16,9 @@ enum class EEFHttpVerb : uint8
 	Patch,
 	Delete,
 	Head,
-	Options
+	Options,
+	/** Any other verb, named by FEFHttpRequest::CustomVerb (for example PURGE or PROPFIND). */
+	Custom
 };
 
 /** How a request ended. */
@@ -37,6 +39,26 @@ enum class EEFHttpResult : uint8
 	InvalidRequest
 };
 
+/**
+ * Which forms of the response body a request keeps. Keeping only the form you read halves the
+ * memory a large download takes: text costs two bytes per character on top of the raw bytes.
+ */
+UENUM(BlueprintType)
+enum class EEFHttpResponseBodyMode : uint8
+{
+	/**
+	 * Body for text content types (text/*, JSON, XML, JavaScript, form data, any type with a charset,
+	 * or no Content-Type at all); BodyBytes for everything else, such as images and octet-stream files.
+	 */
+	Auto,
+	/** Body only. Use it for text a server labels as binary, e.g. a JSON file served as octet-stream. */
+	Text,
+	/** BodyBytes only. */
+	Bytes,
+	/** Both Body and BodyBytes. */
+	TextAndBytes
+};
+
 /** Everything needed to send one HTTP request. */
 USTRUCT(BlueprintType)
 struct EXTENDEDFOUNDATION_API FEFHttpRequest
@@ -49,6 +71,13 @@ struct EXTENDEDFOUNDATION_API FEFHttpRequest
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Http")
 	EEFHttpVerb Verb = EEFHttpVerb::Get;
+
+	/**
+	 * The verb sent when Verb is Custom, e.g. "PURGE". Letters, digits, '-' and '_' only; it is sent
+	 * upper-cased. Custom requests are never retried unless bAllowRetryForNonIdempotentVerbs is set.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Http", meta = (EditCondition = "Verb == EEFHttpVerb::Custom", EditConditionHides))
+	FString CustomVerb;
 
 	/** Request headers. Names are matched without regard to case. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Http")
@@ -69,6 +98,10 @@ struct EXTENDEDFOUNDATION_API FEFHttpRequest
 	/** Content-Type sent with a non-empty Body or BodyBytes, unless Headers already sets one. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Http")
 	FString ContentType = TEXT("application/json");
+
+	/** Which forms of the response body to keep: Body (text), BodyBytes, or both. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Http", AdvancedDisplay)
+	EEFHttpResponseBodyMode ResponseBodyMode = EEFHttpResponseBodyMode::Auto;
 
 	/** Seconds to wait for the whole request. 0 uses the engine's default. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Http", meta = (ClampMin = "0", Units = "Seconds"))
@@ -99,6 +132,13 @@ struct EXTENDEDFOUNDATION_API FEFHttpRequest
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Http", AdvancedDisplay)
 	bool bLogFailuresAsWarnings = true;
+
+	/**
+	 * Labels for telling requests apart. They come back on the response, and UEFHttpSubsystem can
+	 * cancel or count the running requests that carry one. Never sent to the server.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Http", AdvancedDisplay)
+	TArray<FName> Tags;
 };
 
 /** The outcome of a request: the final attempt's response, or why there was none. */
@@ -114,8 +154,19 @@ struct EXTENDEDFOUNDATION_API FEFHttpResponse
 	UPROPERTY(BlueprintReadOnly, Category = "Http")
 	int32 StatusCode = 0;
 
+	/**
+	 * The response body decoded as UTF-8 text. Empty when the request's ResponseBodyMode kept only
+	 * BodyBytes; Get Response Text reads either.
+	 */
 	UPROPERTY(BlueprintReadOnly, Category = "Http")
 	FString Body;
+
+	/**
+	 * The response body exactly as received, for images, files and other content that is not text.
+	 * Empty when the request's ResponseBodyMode kept only Body.
+	 */
+	UPROPERTY(BlueprintReadOnly, Category = "Http")
+	TArray<uint8> BodyBytes;
 
 	/** Response headers. Names are matched without regard to case; repeated headers are joined with ", ". */
 	UPROPERTY(BlueprintReadOnly, Category = "Http")
@@ -139,6 +190,10 @@ struct EXTENDEDFOUNDATION_API FEFHttpResponse
 	/** Seconds from the call to completion, including retry delays. */
 	UPROPERTY(BlueprintReadOnly, Category = "Http", meta = (Units = "Seconds"))
 	float ElapsedSeconds = 0.f;
+
+	/** The request's tags. */
+	UPROPERTY(BlueprintReadOnly, Category = "Http")
+	TArray<FName> Tags;
 
 	bool IsSuccess() const { return Result == EEFHttpResult::Success; }
 };

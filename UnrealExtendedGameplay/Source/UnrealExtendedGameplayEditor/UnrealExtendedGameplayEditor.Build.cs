@@ -15,7 +15,8 @@ public class UnrealExtendedGameplayEditor : ModuleRules
 				"CoreUObject",
 				"Engine",
 				"AnimationModifiers",
-				// The curve modifier writes what FEGTurnInPlaceSolver::BuildYawTrack computes.
+				// The curve modifier writes what FEGTurnInPlaceSolver::BuildYawTrack computes; the
+				// placement editor library takes placement specs and visuals.
 				"UnrealExtendedGameplay",
 			}
 		);
@@ -24,6 +25,9 @@ public class UnrealExtendedGameplayEditor : ModuleRules
 			new string[]
 			{
 				"AnimationBlueprintLibrary",
+				// Placement component visualizers and transactions.
+				"UnrealEd",
+				"GameplayTags",
 			}
 		);
 	}
