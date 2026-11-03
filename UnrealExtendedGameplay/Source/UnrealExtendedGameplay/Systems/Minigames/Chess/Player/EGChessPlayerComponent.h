@@ -138,6 +138,14 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Chess")
 	void RequestLeave();
 
+	/**
+	 * Back, as a game's Escape means it: closes the promotion picker, prompt or menu that is open, and with
+	 * none open asks to stand up (RequestLeave). For a host whose own back key never reaches the table's
+	 * Cancel or Leave actions. False when not seated.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Chess")
+	bool RequestBack();
+
 	/** Asks "Resign?" first. */
 	UFUNCTION(BlueprintCallable, Category = "Chess")
 	void RequestResign();

@@ -1572,6 +1572,31 @@ void UEGChessPlayerComponent::RequestLeave()
 	ServerLeaveSeat();
 }
 
+bool UEGChessPlayerComponent::RequestBack()
+{
+	if (!ActiveTable)
+	{
+		return false;
+	}
+	if (PromotionWidget)
+	{
+		CancelPromotion();
+	}
+	else if (PromptWidget)
+	{
+		AnswerPrompt(OpenPromptKind, false);
+	}
+	else if (MenuWidget)
+	{
+		CloseMenu();
+	}
+	else
+	{
+		RequestLeave();
+	}
+	return true;
+}
+
 void UEGChessPlayerComponent::RequestResign()
 {
 	if (CanResign())
