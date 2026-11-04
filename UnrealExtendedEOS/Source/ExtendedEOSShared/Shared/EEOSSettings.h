@@ -7,6 +7,7 @@
 #include "EEOSTypes.h"
 #include "EEOSSettings.generated.h"
 
+class USoundBase;
 
 /**
  * Developer settings for Epic Online Services configuration.
@@ -170,6 +171,40 @@ public:
 	UPROPERTY(config, EditAnywhere, BlueprintReadOnly, Category = "Voice",
 		meta = (DisplayName = "Start Muted"))
 	bool bStartMuted = false;
+
+	/**
+	 * Play other players' voices through the audio engine instead of EOS's own 2D output. EOS hands over
+	 * each player's received audio separately; every player gets a mono audio bus, and their voice point
+	 * (UEEOSVoiceChatComponent on their pawn) plays Voice Sound from where it stands with that bus as the
+	 * Voice Bus Parameter. Distance, spatialization, effects, sound class and submix sends then all come from
+	 * the sound. Needs Voice Sound: without one, EOS keeps playing voice itself.
+	 */
+	UPROPERTY(config, EditAnywhere, BlueprintReadOnly, Category = "Voice|Audio Engine",
+		meta = (DisplayName = "Route Voice Through Audio Engine"))
+	bool bRouteVoiceThroughAudioEngine = false;
+
+	/**
+	 * The sound that plays one player's voice, normally a MetaSound Source with an Audio Bus input named
+	 * Voice Bus Parameter feeding an "Audio Bus Reader (1)" node. It must keep playing on its own: no
+	 * One-Shot interface, and virtualization set to Play When Silent so it is not dropped out of range.
+	 * A voice point's own Voice Sound overrides it.
+	 */
+	UPROPERTY(config, EditAnywhere, BlueprintReadOnly, Category = "Voice|Audio Engine",
+		meta = (DisplayName = "Voice Sound", EditCondition = "bRouteVoiceThroughAudioEngine"))
+	TSoftObjectPtr<USoundBase> VoiceSound;
+
+	/** The Voice Sound's Audio Bus input that receives the speaking player's bus. */
+	UPROPERTY(config, EditAnywhere, BlueprintReadOnly, Category = "Voice|Audio Engine",
+		meta = (DisplayName = "Voice Bus Parameter", EditCondition = "bRouteVoiceThroughAudioEngine"))
+	FName VoiceBusParameterName = TEXT("VoiceBus");
+
+	/**
+	 * Audio held back before a player's voice starts, in milliseconds. EOS delivers received audio in
+	 * uneven chunks; this is the cushion that keeps them from crackling. More is smoother, less is quicker.
+	 */
+	UPROPERTY(config, EditAnywhere, BlueprintReadOnly, Category = "Voice|Audio Engine",
+		meta = (DisplayName = "Voice Buffer (ms)", ClampMin = "10.0", ClampMax = "500.0", Units = "ms", EditCondition = "bRouteVoiceThroughAudioEngine"))
+	float VoiceBufferMilliseconds = 60.0f;
 
 
 	// ── P2P Settings ─────────────────────────────────────────────────────────

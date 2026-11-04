@@ -12,6 +12,10 @@
 class IVoiceChatUser;
 class IEOSPlatformHandle;
 struct FEEOSVoiceCaptureState;
+class FEEOSVoiceReceiveRouter;
+class UAudioBus;
+class UAudioComponent;
+class USoundBase;
 class FUniqueNetId;
 struct FVoiceChatResult;
 class UWorld;
@@ -281,6 +285,39 @@ public:
 	/** Remove all volume contributions from a source object and re-apply aggregates. */
 	void ClearPlayerVolumeContributions(const UObject* Source);
 
+	// ── Audio Engine Playback ────────────────────────────────────────────────
+	// With UEEOSSettings::bRouteVoiceThroughAudioEngine and a Voice Sound, other players' voices play through
+	// the audio engine instead of EOS's own 2D output. Each player's received audio fills a mono audio bus,
+	// and the voice point on that player's pawn plays the Voice Sound reading it, from where it stands. Mutes
+	// still stop a player at EOS; the listener's per-player scale and the output volume are applied on the way
+	// into the bus, and EOS keeps every player at full volume. Proximity contributions are not used.
+
+	/** True while received voice plays through the audio engine rather than EOS's own 2D output. */
+	UFUNCTION(BlueprintPure, Category = "EOS|Voice")
+	bool IsVoiceRoutedThroughAudioEngine() const { return bVoiceRoutingActive; }
+
+	/** The project's Voice Sound, or null while routing is off. */
+	USoundBase* GetVoiceSound() const;
+
+	/** The Voice Sound's Audio Bus input. */
+	FName GetVoiceBusParameterName() const;
+
+	/**
+	 * The mono audio bus carrying UserId's received voice, for a voice point that plays it; null while routing
+	 * is off. While a claim holds, the subsystem's own 2D playback leaves that player to the claimant.
+	 */
+	UAudioBus* ClaimVoiceBus(const FString& UserId, const UObject* Claimant);
+	void ReleaseVoiceBus(const FString& UserId, const UObject* Claimant);
+
+	/**
+	 * A voice point stands where the local player listens (their own pawn). While one does, a voice that no
+	 * point plays cannot be placed and stays silent; with none (a menu without a pawn), such voices play in 2D.
+	 */
+	void SetLocalListenerPoint(const UObject* Source, bool bPresent);
+
+	/** Routing turned on or off. Game thread. */
+	FSimpleMulticastDelegate OnVoiceRoutingChanged;
+
 	// ── Delegates ────────────────────────────────────────────────────────────
 
 	/** A voice room became active: fired from the engine's channel-joined event (lobby RTC
@@ -387,6 +424,9 @@ private:
 	 *  player muted the value is held in PendingPlayerVolumes instead; bIgnoreMute lands it (just before an unmute). */
 	void ApplyAggregatedVolumeForPlayerInternal(const FString& UserId, bool bIgnoreMute = false);
 
+	/** Re-apply every player with a contribution or a scale, e.g. after login or when routing changes what they mean. */
+	void ApplyAllPlayerVolumes();
+
 	/** Drop contributions from dead sources (components destroyed without EndPlay/unregister)
 	 *  and re-apply the aggregate for EVERY player they touched — a stale contribution must not
 	 *  pin anyone's volume. Runs before each aggregation and periodically from a sweep ticker
@@ -398,6 +438,23 @@ private:
 
 	/** True while any component registration exists — the composed transmit set owns transmission. */
 	bool IsTransmitCompositionActive() const;
+
+	// ── Audio engine playback ────────────────────────────────────────────────
+
+	/** Turn routing on or off to match the settings, the voice user and the world's audio device. */
+	void RefreshVoiceRouting();
+	void BindVoiceRouting();
+	void UnbindVoiceRouting();
+
+	/** UserId's bus, with a stream feeding it on the current audio device. Null without an audio device. */
+	UAudioBus* EnsureVoiceStream(const FString& UserId);
+
+	/** Other players in the joined rooms. */
+	TSet<FString> GetRemoteRoomMembers() const;
+
+	/** Play in 2D the voices nothing else plays, when no local listener point exists; stop the rest. */
+	void RefreshUnplacedVoices();
+	void StopUnplacedVoices();
 
 	// ── State ────────────────────────────────────────────────────────────────
 
@@ -481,6 +538,25 @@ private:
 	TMap<FString, float> AppliedPlayerVolumes;
 	/** Aggregate held back while the engine has the player muted. Pushed just before the unmute, never after it. */
 	TMap<FString, float> PendingPlayerVolumes;
+
+	/** Audio engine playback (see IsVoiceRoutedThroughAudioEngine). The router outlives every render callback it is bound to. */
+	TSharedPtr<FEEOSVoiceReceiveRouter, ESPMode::ThreadSafe> ReceiveRouter;
+	FDelegateHandle MixedRenderHandle;
+	FDelegateHandle UnmixedRenderHandle;
+	bool bVoiceRoutingActive = false;
+	/** What SetOutputVolume asked for. While routed it scales the buses, and EOS stays at full volume. */
+	float RequestedOutputVolume = 1.0f;
+	UPROPERTY(Transient)
+	TObjectPtr<USoundBase> LoadedVoiceSound;
+	/** One bus per player, kept for the subsystem's life so a voice point's bus never goes stale. */
+	UPROPERTY(Transient)
+	TMap<FString, TObjectPtr<UAudioBus>> VoiceBuses;
+	/** The audio device the current streams feed. */
+	uint32 VoiceStreamDeviceId = TNumericLimits<uint32>::Max();
+	TMap<FString, TSet<FObjectKey>> VoiceBusClaims;
+	TSet<FObjectKey> LocalListenerPoints;
+	UPROPERTY(Transient)
+	TMap<FString, TObjectPtr<UAudioComponent>> UnplacedVoiceAudio;
 
 	/** Periodic stale-contribution sweep (see PurgeStaleVolumeContributions). */
 	FTSTicker::FDelegateHandle StaleContributionSweepHandle;

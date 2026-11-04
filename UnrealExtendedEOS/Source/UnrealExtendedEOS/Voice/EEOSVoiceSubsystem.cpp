@@ -4,6 +4,14 @@
 #include "Shared/EEOSNativeOperation.h"
 #include "Sessions/EEOSLobbySubsystem.h"
 #include "EEOSVoiceCaptureState.h"
+#include "EEOSVoiceReceiveRouter.h"
+#include "AudioBusSubsystem.h"
+#include "AudioDevice.h"
+#include "Components/AudioComponent.h"
+#include "Engine/World.h"
+#include "Kismet/GameplayStatics.h"
+#include "Sound/AudioBus.h"
+#include "Sound/SoundBase.h"
 #include "Shared/EEOSSettings.h"
 #include "Shared/EEOSBlueprintLibrary.h"
 #include "OnlineSubsystem.h"
@@ -134,6 +142,7 @@ namespace
 void UEEOSVoiceSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
 	Super::Initialize(Collection);
+	ReceiveRouter = MakeShared<FEEOSVoiceReceiveRouter, ESPMode::ThreadSafe>();
 
 	const UEEOSSettings* Settings = GetEOSSettings();
 	if (Settings && !Settings->bEnableVoiceChat)
@@ -234,6 +243,12 @@ void UEEOSVoiceSubsystem::Deinitialize()
 	// standalone path's Logout leaves all channels internally.
 	TearDownVoiceUser();
 	{ FScopeLock Lock(&CaptureStatesMutex); CaptureStates.Empty(); }
+	// TearDownVoiceUser already unbound the render callbacks. A bus stops on every device when it is destroyed (UAudioBus::BeginDestroy).
+	StopUnplacedVoices();
+	VoiceBuses.Empty();
+	VoiceBusClaims.Empty();
+	LocalListenerPoints.Empty();
+	LoadedVoiceSound = nullptr;
 
 	JoinedRooms.Empty();
 	RoomRefCounts.Empty();
@@ -643,6 +658,8 @@ void UEEOSVoiceSubsystem::TearDownVoiceUser()
 	TalkingRoomsByPlayer.Reset();
 	for (const FString& Room : JoinsToFail) OnVoiceRoomJoinFailed.Broadcast(Room, TEXT("Voice user disconnected."));
 	for (const FString& Room : LeavesToFail) OnVoiceRoomLeaveFailed.Broadcast(Room, TEXT("Voice user disconnected."));
+	// While the voice user is still here to take the render callbacks back.
+	UnbindVoiceRouting();
 	if (!CachedVoiceChatUser)
 	{
 		bVoiceUserLoggedIn = false;
@@ -770,9 +787,15 @@ void UEEOSVoiceSubsystem::HandleVoiceChatLoggedIn(const FString& PlayerName)
 	}
 
 	// Volumes reported before the login completed were held back (the engine cannot take them yet); push them now,
-	// from scratch, since nothing was applied to this login.
+	// from scratch, since nothing was applied to this login. Routing decides first what they mean.
 	AppliedPlayerVolumes.Empty();
 	PendingPlayerVolumes.Empty();
+	RefreshVoiceRouting();
+	ApplyAllPlayerVolumes();
+}
+
+void UEEOSVoiceSubsystem::ApplyAllPlayerVolumes()
+{
 	TSet<FString> PlayersWithVolume;
 	for (const TPair<FObjectKey, TMap<FString, float>>& SourcePair : VolumeContributions)
 	{
@@ -784,6 +807,11 @@ void UEEOSVoiceSubsystem::HandleVoiceChatLoggedIn(const FString& PlayerName)
 	for (const TPair<FString, float>& PlayerScale : PlayerVolumeScales)
 	{
 		PlayersWithVolume.Add(PlayerScale.Key);
+	}
+	// Anyone still holding a pushed volume, so a change of meaning (routing) can restore them.
+	for (const TPair<FString, float>& Applied : AppliedPlayerVolumes)
+	{
+		PlayersWithVolume.Add(Applied.Key);
 	}
 	for (const FString& UserId : PlayersWithVolume)
 	{
@@ -801,6 +829,7 @@ void UEEOSVoiceSubsystem::HandleVoiceChatLoggedOut(const FString& PlayerName)
 	RequestedInputDevice.Reset(); RequestedOutputDevice.Reset();
 	LastSubmittedInputDevice.Reset();
 	ForgetMicrophoneState();
+	RefreshVoiceRouting();
 	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSVoiceSubsystem: Voice chat user '%s' logged out"), *FEEOSNativeOperationLease::SafeField(PlayerName));
 }
 
@@ -812,7 +841,16 @@ void UEEOSVoiceSubsystem::HandleChannelJoined(const FString& ChannelName)
 	// A registered transmit room may just have become live.
 	RecomputeTransmitChannels();
 
+	if (bVoiceRoutingActive)
+	{
+		for (const FString& Member : GetRemoteRoomMembers())
+		{
+			EnsureVoiceStream(Member);
+		}
+	}
+
 	OnVoiceRoomJoined.Broadcast(ChannelName);
+	RefreshUnplacedVoices();
 }
 
 void UEEOSVoiceSubsystem::HandleChannelExited(const FString& ChannelName, const FVoiceChatResult& Reason)
@@ -837,11 +875,17 @@ void UEEOSVoiceSubsystem::HandleChannelExited(const FString& ChannelName, const 
 	}
 
 	OnVoiceRoomLeft.Broadcast(ChannelName);
+	RefreshUnplacedVoices();
 }
 
 void UEEOSVoiceSubsystem::HandlePlayerAdded(const FString& ChannelName, const FString& PlayerName)
 {
+	if (bVoiceRoutingActive && PlayerName != GetLocalVoicePlayerName())
+	{
+		EnsureVoiceStream(PlayerName);
+	}
 	OnPlayerJoinedRoom.Broadcast(ChannelName, PlayerName);
+	RefreshUnplacedVoices();
 }
 
 void UEEOSVoiceSubsystem::HandlePlayerRemoved(const FString& ChannelName, const FString& PlayerName)
@@ -851,6 +895,7 @@ void UEEOSVoiceSubsystem::HandlePlayerRemoved(const FString& ChannelName, const 
 		if (Rooms->Remove(ChannelName) && Rooms->IsEmpty()) OnPlayerTalking.Broadcast(PlayerName, false);
 	}
 	OnPlayerLeftRoom.Broadcast(ChannelName, PlayerName);
+	RefreshUnplacedVoices();
 }
 
 void UEEOSVoiceSubsystem::HandlePlayerTalkingUpdated(const FString& ChannelName, const FString& PlayerName, bool bIsTalking)
@@ -1167,19 +1212,24 @@ void UEEOSVoiceSubsystem::ApplyAggregatedVolumeForPlayerInternal(const FString& 
 		return;
 	}
 
+	// Routed through the audio engine, the voice point's sound places the voice and the listener's scale goes into the
+	// player's bus (SetPlayerVolumeScale), so EOS keeps everyone at full volume: this restores anything pushed before.
+	const bool bRouted = bVoiceRoutingActive;
+
 	// Max-wins across all live contributions. IVoiceChatUser volume is GLOBAL per player —
 	// there is no per-channel receive volume — so overlapping rooms must not fight downward:
 	// the loudest room a player shares with us decides how loud they are.
 	float MaxVolume = -1.f;
 	for (const TPair<FObjectKey, TMap<FString, float>>& SourcePair : VolumeContributions)
 	{
-		if (const float* Contribution = SourcePair.Value.Find(UserId))
+		const float* Contribution = bRouted ? nullptr : SourcePair.Value.Find(UserId);
+		if (Contribution)
 		{
 			MaxVolume = FMath::Max(MaxVolume, *Contribution);
 		}
 	}
 
-	const float* Scale = PlayerVolumeScales.Find(UserId);
+	const float* Scale = bRouted ? nullptr : PlayerVolumeScales.Find(UserId);
 	const float* Applied = AppliedPlayerVolumes.Find(UserId);
 	// No contributions or scale left — restore 1.0, but only if we ever overrode this player.
 	const bool bRestore = MaxVolume < 0.f && !Scale;
@@ -1234,6 +1284,11 @@ void UEEOSVoiceSubsystem::SetPlayerVolumeScale(const FString& UserId, float Scal
 	}
 
 	Scale = FMath::Clamp(Scale, 0.f, 2.f);
+	// Kept by the router whether or not voice is routed yet, so a bus made later starts at this gain.
+	if (ReceiveRouter)
+	{
+		ReceiveRouter->SetPlayerGain(UserId, Scale);
+	}
 	const float* Existing = PlayerVolumeScales.Find(UserId);
 	if (FMath::IsNearlyEqual(Scale, 1.0f))
 	{
@@ -1495,11 +1550,18 @@ bool UEEOSVoiceSubsystem::IsPlayerMuted(const FString& UserId) const
 void UEEOSVoiceSubsystem::SetOutputVolume(float Volume)
 {
 	Volume = FMath::Clamp(Volume, 0.f, 1.f);
-	if (CachedVoiceChatUser && bVoiceUserLoggedIn && (!AppliedOutputVolume.IsSet() || !FMath::IsNearlyEqual(AppliedOutputVolume.GetValue(), Volume)))
+	RequestedOutputVolume = Volume;
+	if (ReceiveRouter)
 	{
-		AppliedOutputVolume = Volume;
-		CachedVoiceChatUser->SetAudioOutputVolume(Volume);
-		UE_LOG(LogExtendedEOS, Log, TEXT("EOSVoiceAudio OutputRequested=%.2f SubmissionMade=1 AcceptedKnown=0 EffectiveGainKnown=0 Adapter=IVoiceChatUser"), Volume);
+		ReceiveRouter->MasterGain.store(Volume);
+	}
+	// Routed through the audio engine, the volume scales the players' buses and EOS's own output stays at full volume.
+	const float DeviceVolume = bVoiceRoutingActive ? 1.0f : Volume;
+	if (CachedVoiceChatUser && bVoiceUserLoggedIn && (!AppliedOutputVolume.IsSet() || !FMath::IsNearlyEqual(AppliedOutputVolume.GetValue(), DeviceVolume)))
+	{
+		AppliedOutputVolume = DeviceVolume;
+		CachedVoiceChatUser->SetAudioOutputVolume(DeviceVolume);
+		UE_LOG(LogExtendedEOS, Log, TEXT("EOSVoiceAudio OutputRequested=%.2f Routed=%d SubmissionMade=1 AcceptedKnown=0 EffectiveGainKnown=0 Adapter=IVoiceChatUser"), Volume, bVoiceRoutingActive);
 	}
 }
 
@@ -1918,6 +1980,9 @@ void UEEOSVoiceSubsystem::HandlePostLoadMapWithWorld(UWorld* /*LoadedWorld*/)
 {
 	// The engine pairs this with every PreLoadMap, failed loads included (UEngine::LoadMap's FPostLoadMapCaller).
 	bInMapLoad = false;
+	// The world (and with it the audio device) may be new, and the 2D voices may have gone with the old level.
+	RefreshVoiceRouting();
+	RefreshUnplacedVoices();
 }
 
 bool UEEOSVoiceSubsystem::TickCadence(float)
@@ -1962,4 +2027,331 @@ bool UEEOSVoiceSubsystem::TickCadence(float)
 		}
 	}
 	return true;
+}
+
+// ── Audio Engine Playback ────────────────────────────────────────────────────
+
+USoundBase* UEEOSVoiceSubsystem::GetVoiceSound() const
+{
+	return bVoiceRoutingActive ? LoadedVoiceSound.Get() : nullptr;
+}
+
+FName UEEOSVoiceSubsystem::GetVoiceBusParameterName() const
+{
+	const UEEOSSettings* Settings = GetEOSSettings();
+	return Settings && !Settings->VoiceBusParameterName.IsNone() ? Settings->VoiceBusParameterName : FName(TEXT("VoiceBus"));
+}
+
+void UEEOSVoiceSubsystem::RefreshVoiceRouting()
+{
+	const UEEOSSettings* Settings = GetEOSSettings();
+	UWorld* World = GetGameInstance() ? GetGameInstance()->GetWorld() : nullptr;
+	FAudioDevice* AudioDevice = World ? World->GetAudioDeviceRaw() : nullptr;
+	bool bWanted = Settings && Settings->bRouteVoiceThroughAudioEngine && !Settings->VoiceSound.IsNull()
+		&& CachedVoiceChatUser && bVoiceUserLoggedIn && AudioDevice && !IsRunningDedicatedServer();
+	if (bWanted && !LoadedVoiceSound)
+	{
+		LoadedVoiceSound = Settings->VoiceSound.LoadSynchronous();
+		if (!LoadedVoiceSound)
+		{
+			UE_LOG(LogExtendedEOS, Warning, TEXT("EEOSVoiceSubsystem: Voice Sound '%s' did not load. EOS keeps playing voice itself."),
+				*Settings->VoiceSound.ToString());
+		}
+	}
+	bWanted = bWanted && LoadedVoiceSound;
+
+	if (bWanted && bVoiceRoutingActive && AudioDevice->DeviceID != VoiceStreamDeviceId)
+	{
+		// Another audio device (a PIE world with its own): the streams fed the old device's buses.
+		ReceiveRouter->RemoveAllStreams();
+		VoiceStreamDeviceId = AudioDevice->DeviceID;
+		for (const FString& Member : GetRemoteRoomMembers())
+		{
+			EnsureVoiceStream(Member);
+		}
+	}
+
+	if (bWanted == bVoiceRoutingActive)
+	{
+		return;
+	}
+	if (bWanted)
+	{
+		BindVoiceRouting();
+	}
+	else
+	{
+		UnbindVoiceRouting();
+	}
+}
+
+void UEEOSVoiceSubsystem::BindVoiceRouting()
+{
+	UWorld* World = GetGameInstance() ? GetGameInstance()->GetWorld() : nullptr;
+	FAudioDevice* AudioDevice = World ? World->GetAudioDeviceRaw() : nullptr;
+	if (!CachedVoiceChatUser || !ReceiveRouter || !AudioDevice)
+	{
+		return;
+	}
+
+	VoiceStreamDeviceId = AudioDevice->DeviceID;
+	ReceiveRouter->bSilenceMix.store(true);
+	MixedRenderHandle = CachedVoiceChatUser->RegisterOnVoiceChatBeforeRecvMixedAudioRenderedDelegate(
+		FOnVoiceChatBeforeRecvAudioRenderedDelegate::FDelegate::CreateSP(ReceiveRouter.ToSharedRef(), &FEEOSVoiceReceiveRouter::HandleMixedAudio));
+	UnmixedRenderHandle = CachedVoiceChatUser->RegisterOnVoiceChatBeforeRecvUnmixedAudioRenderedDelegate(
+		FOnVoiceChatBeforeRecvAudioRenderedDelegate::FDelegate::CreateSP(ReceiveRouter.ToSharedRef(), &FEEOSVoiceReceiveRouter::HandleUnmixedAudio));
+	bVoiceRoutingActive = true;
+	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSVoiceSubsystem: Voice plays through the audio engine (%s, bus parameter '%s')"),
+		*GetPathNameSafe(LoadedVoiceSound), *GetVoiceBusParameterName().ToString());
+
+	SetOutputVolume(RequestedOutputVolume);
+	ApplyAllPlayerVolumes();
+	for (const FString& Member : GetRemoteRoomMembers())
+	{
+		EnsureVoiceStream(Member);
+	}
+	OnVoiceRoutingChanged.Broadcast();
+	RefreshUnplacedVoices();
+}
+
+void UEEOSVoiceSubsystem::UnbindVoiceRouting()
+{
+	// The engine broadcasts these under the lock its unregister takes, so none is running once these return.
+	if (CachedVoiceChatUser)
+	{
+		if (MixedRenderHandle.IsValid())
+		{
+			CachedVoiceChatUser->UnregisterOnVoiceChatBeforeRecvMixedAudioRenderedDelegate(MixedRenderHandle);
+		}
+		if (UnmixedRenderHandle.IsValid())
+		{
+			CachedVoiceChatUser->UnregisterOnVoiceChatBeforeRecvUnmixedAudioRenderedDelegate(UnmixedRenderHandle);
+		}
+	}
+	MixedRenderHandle.Reset();
+	UnmixedRenderHandle.Reset();
+	if (ReceiveRouter)
+	{
+		ReceiveRouter->bSilenceMix.store(false);
+		ReceiveRouter->RemoveAllStreams();
+	}
+	VoiceStreamDeviceId = TNumericLimits<uint32>::Max();
+
+	if (!bVoiceRoutingActive)
+	{
+		return;
+	}
+	bVoiceRoutingActive = false;
+	UE_LOG(LogExtendedEOS, Log, TEXT("EEOSVoiceSubsystem: Voice back on EOS's own output"));
+	StopUnplacedVoices();
+	OnVoiceRoutingChanged.Broadcast();
+
+	// EOS plays the voices again: give it back the output volume and the per-player volumes.
+	if (!bTearingDownVoiceUser && CachedVoiceChatUser && bVoiceUserLoggedIn)
+	{
+		SetOutputVolume(RequestedOutputVolume);
+		ApplyAllPlayerVolumes();
+	}
+}
+
+UAudioBus* UEEOSVoiceSubsystem::EnsureVoiceStream(const FString& UserId)
+{
+	UWorld* World = GetGameInstance() ? GetGameInstance()->GetWorld() : nullptr;
+	FAudioDevice* AudioDevice = World ? World->GetAudioDeviceRaw() : nullptr;
+	UAudioBusSubsystem* BusSubsystem = AudioDevice ? AudioDevice->GetSubsystem<UAudioBusSubsystem>() : nullptr;
+	if (UserId.IsEmpty() || !BusSubsystem || !ReceiveRouter)
+	{
+		return nullptr;
+	}
+
+	TObjectPtr<UAudioBus>& Bus = VoiceBuses.FindOrAdd(UserId);
+	if (!Bus)
+	{
+		Bus = NewObject<UAudioBus>(this, NAME_None, RF_Transient);
+		Bus->AudioBusChannels = EAudioBusChannels::Mono;
+	}
+
+	if (!ReceiveRouter->HasStream(UserId))
+	{
+		const Audio::FAudioBusKey BusKey(Bus->GetUniqueID());
+		BusSubsystem->StartAudioBus(BusKey, FString::Printf(TEXT("EOSVoice_%s"), *UserId), 1, /*bIsAutomatic*/ false);
+
+		const UEEOSSettings* Settings = GetEOSSettings();
+		const float BufferMilliseconds = Settings ? Settings->VoiceBufferMilliseconds : 60.0f;
+		const int32 SampleRate = FMath::Max(1, FMath::RoundToInt32(AudioDevice->GetSampleRate()));
+		const int32 BufferFrames = FMath::Max(1, FMath::RoundToInt32(SampleRate * BufferMilliseconds / 1000.0f));
+		// Sized from the cushion, so the patch holds it and the pushes after it until the mixer drains them.
+		Audio::FPatchInput Patch = BusSubsystem->AddPatchInputForAudioBus(BusKey, BufferFrames, 1);
+		ReceiveRouter->AddStream(UserId, MakeShared<FEEOSVoiceReceiveStream, ESPMode::ThreadSafe>(SampleRate, BufferFrames,
+			[Patch](const float* Samples, const int32 NumSamples) mutable { return Patch.PushAudio(Samples, NumSamples); }));
+	}
+	return Bus;
+}
+
+TSet<FString> UEEOSVoiceSubsystem::GetRemoteRoomMembers() const
+{
+	TSet<FString> Members;
+	const FString LocalPlayerName = GetLocalVoicePlayerName();
+	for (const FString& Room : GetActiveVoiceRooms())
+	{
+		for (const FString& Member : GetPlayersInRoom(Room))
+		{
+			if (!Member.IsEmpty() && Member != LocalPlayerName)
+			{
+				Members.Add(Member);
+			}
+		}
+	}
+	return Members;
+}
+
+UAudioBus* UEEOSVoiceSubsystem::ClaimVoiceBus(const FString& UserId, const UObject* Claimant)
+{
+	if (!bVoiceRoutingActive || UserId.IsEmpty() || !Claimant)
+	{
+		return nullptr;
+	}
+
+	UAudioBus* Bus = EnsureVoiceStream(UserId);
+	if (Bus)
+	{
+		VoiceBusClaims.FindOrAdd(UserId).Add(FObjectKey(Claimant));
+		RefreshUnplacedVoices();
+	}
+	return Bus;
+}
+
+void UEEOSVoiceSubsystem::ReleaseVoiceBus(const FString& UserId, const UObject* Claimant)
+{
+	TSet<FObjectKey>* Claims = VoiceBusClaims.Find(UserId);
+	if (!Claims || Claims->Remove(FObjectKey(Claimant)) == 0)
+	{
+		return;
+	}
+	if (Claims->IsEmpty())
+	{
+		VoiceBusClaims.Remove(UserId);
+	}
+	RefreshUnplacedVoices();
+}
+
+void UEEOSVoiceSubsystem::SetLocalListenerPoint(const UObject* Source, const bool bPresent)
+{
+	if (!Source)
+	{
+		return;
+	}
+
+	const FObjectKey Key(Source);
+	if (bPresent == LocalListenerPoints.Contains(Key))
+	{
+		return;
+	}
+	if (bPresent)
+	{
+		LocalListenerPoints.Add(Key);
+	}
+	else
+	{
+		LocalListenerPoints.Remove(Key);
+	}
+	RefreshUnplacedVoices();
+}
+
+void UEEOSVoiceSubsystem::RefreshUnplacedVoices()
+{
+	if (!bVoiceRoutingActive)
+	{
+		StopUnplacedVoices();
+		return;
+	}
+
+	// Claimants and listener points destroyed without letting go.
+	for (auto It = VoiceBusClaims.CreateIterator(); It; ++It)
+	{
+		for (auto Claim = It->Value.CreateIterator(); Claim; ++Claim)
+		{
+			if (!Claim->ResolveObjectPtr())
+			{
+				Claim.RemoveCurrent();
+			}
+		}
+		if (It->Value.IsEmpty())
+		{
+			It.RemoveCurrent();
+		}
+	}
+	for (auto It = LocalListenerPoints.CreateIterator(); It; ++It)
+	{
+		if (!It->ResolveObjectPtr())
+		{
+			It.RemoveCurrent();
+		}
+	}
+
+	// With the local player standing somewhere, a voice that no point plays has nowhere to come from, as with
+	// EOS's own proximity. With nobody standing anywhere (a menu), it is simply heard.
+	TSet<FString> Unplaced;
+	if (LocalListenerPoints.IsEmpty())
+	{
+		for (const FString& Member : GetRemoteRoomMembers())
+		{
+			if (!VoiceBusClaims.Contains(Member))
+			{
+				Unplaced.Add(Member);
+			}
+		}
+	}
+
+	for (auto It = UnplacedVoiceAudio.CreateIterator(); It; ++It)
+	{
+		UAudioComponent* Audio = It->Value;
+		if (Unplaced.Contains(It->Key) && IsValid(Audio) && Audio->IsPlaying())
+		{
+			continue;
+		}
+		if (IsValid(Audio))
+		{
+			Audio->Stop();
+			Audio->DestroyComponent();
+		}
+		It.RemoveCurrent();
+	}
+
+	UWorld* World = GetGameInstance() ? GetGameInstance()->GetWorld() : nullptr;
+	for (const FString& Member : Unplaced)
+	{
+		if (UnplacedVoiceAudio.Contains(Member))
+		{
+			continue;
+		}
+		UAudioBus* Bus = EnsureVoiceStream(Member);
+		UAudioComponent* Audio = Bus && World
+			? UGameplayStatics::CreateSound2D(World, LoadedVoiceSound, 1.0f, 1.0f, 0.0f, nullptr, /*bPersistAcrossLevelTransition*/ true, /*bAutoDestroy*/ false)
+			: nullptr;
+		if (!Audio)
+		{
+			continue;
+		}
+		// Nowhere to place it: heard as it is, whatever the sound's own attenuation says.
+		Audio->bOverrideAttenuation = true;
+		Audio->AttenuationOverrides.bAttenuate = false;
+		Audio->AttenuationOverrides.bSpatialize = false;
+		Audio->SetObjectParameter(GetVoiceBusParameterName(), Bus);
+		Audio->Play();
+		UnplacedVoiceAudio.Add(Member, Audio);
+	}
+}
+
+void UEEOSVoiceSubsystem::StopUnplacedVoices()
+{
+	for (const TPair<FString, TObjectPtr<UAudioComponent>>& Voice : UnplacedVoiceAudio)
+	{
+		if (IsValid(Voice.Value))
+		{
+			Voice.Value->Stop();
+			Voice.Value->DestroyComponent();
+		}
+	}
+	UnplacedVoiceAudio.Empty();
 }

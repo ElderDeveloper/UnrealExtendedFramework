@@ -69,7 +69,9 @@ public class UnrealExtendedEOS : ModuleRules
 				// The voice component's local capture test (Unreal's own microphone stream).
 				"AudioCapture",
 				"AudioCaptureCore",
-				"AudioMixer"
+				"AudioMixer",
+				// Received voice routed through the audio engine: audio bus patches (UAudioBusSubsystem, FPatchInput).
+				"SignalProcessing"
 			}
 			);
 		

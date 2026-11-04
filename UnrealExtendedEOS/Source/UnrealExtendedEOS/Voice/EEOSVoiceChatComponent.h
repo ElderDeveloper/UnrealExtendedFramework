@@ -11,6 +11,7 @@ class AController;
 class APawn;
 class APlayerState;
 class UAudioComponent;
+class USoundBase;
 class UEEOSVoiceSubsystem;
 class UInputAction;
 class UInputMappingContext;
@@ -236,9 +237,70 @@ public:
 	 * With falloff = proximity (volume decreases with distance from this component). A pawn
 	 * listener with falloff hears only voices it can place: a room member whose voice point does
 	 * not exist on this machine is silent.
+	 * With voice routed through the audio engine (Extended EOS settings) it only places a Voice Sound
+	 * that has no attenuation of its own.
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Voice")
 	TObjectPtr<USoundAttenuation> AttenuationSettings;
+
+	/**
+	 * With voice routed through the audio engine (Extended EOS settings), the sound that plays this point's
+	 * player from where it stands. Empty uses the project's Voice Sound. It reads the player's audio bus
+	 * from the Voice Bus Parameter; distance, effects and sends are the sound's own.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Voice|Playback")
+	TObjectPtr<USoundBase> VoiceSound;
+
+	/**
+	 * While this point's player talks, measure the space around it and hand it to the Voice Sound as two
+	 * float parameters, for echo in close spaces: Enclosure (0 open air, 1 walls and ceiling close on every
+	 * side) and Room Size (mean distance to the surfaces that were hit, in meters).
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Voice|Playback")
+	bool bMeasureSurroundings = false;
+
+	/** What counts as a wall for the measurement. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Voice|Playback", meta = (EditCondition = "bMeasureSurroundings"))
+	TEnumAsByte<ECollisionChannel> SurroundingsTraceChannel = ECC_Visibility;
+
+	/** Surfaces farther away than this count as open air. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Voice|Playback", meta = (ClampMin = "100.0", Units = "cm", EditCondition = "bMeasureSurroundings"))
+	float SurroundingsMaxDistance = 2500.0f;
+
+	/** Time between measurements while the player talks. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Voice|Playback", meta = (ClampMin = "0.05", Units = "s", EditCondition = "bMeasureSurroundings"))
+	float SurroundingsInterval = 0.25f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Voice|Playback", meta = (EditCondition = "bMeasureSurroundings"))
+	FName EnclosureParameterName = TEXT("Enclosure");
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Voice|Playback", meta = (EditCondition = "bMeasureSurroundings"))
+	FName RoomSizeParameterName = TEXT("RoomSize");
+
+	/** The last measurement, 0..1 (see bMeasureSurroundings). */
+	UFUNCTION(BlueprintPure, Category = "Voice|Playback")
+	float GetEnclosure() const { return Enclosure; }
+
+	/** The last measurement in meters (see bMeasureSurroundings). */
+	UFUNCTION(BlueprintPure, Category = "Voice|Playback")
+	float GetRoomSize() const { return RoomSize; }
+
+	/**
+	 * The measurement bMeasureSurroundings makes, at any location: thirteen traces around and above it.
+	 * Enclosure is 0 in the open and nears 1 with walls and a ceiling close on every side; Room Size is
+	 * the mean distance (meters) to what was hit, or MaxDistance when nothing was.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Voice|Playback", meta = (WorldContext = "WorldContextObject"))
+	static void MeasureSpace(const UObject* WorldContextObject, FVector Location, ECollisionChannel TraceChannel, float MaxDistance,
+		const AActor* IgnoredActor, float& OutEnclosure, float& OutRoomSize);
+
+	/**
+	 * The audio component playing this point's player while voice is routed through the audio engine, for
+	 * setting the sound's other parameters. Null while nothing plays here: routing off, the local player's
+	 * own point, or a player whose id has not arrived yet.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Voice|Playback")
+	UAudioComponent* GetVoiceAudioComponent() const { return VoiceAudio; }
 
 	/** How often to recalculate proximity volumes (seconds). Only used when attenuation has falloff. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Voice", meta = (ClampMin = "0.05", ClampMax = "1.0"))
@@ -415,6 +477,33 @@ private:
 
 	/** Player ids this component currently contributes proximity volumes for. */
 	TSet<FString> ContributedPlayers;
+
+	/** Plays this point's player while voice is routed through the audio engine. */
+	UPROPERTY(Transient)
+	TObjectPtr<UAudioComponent> VoiceAudio;
+	/** The player VoiceAudio plays, holding a claim on their bus. */
+	FString VoiceAudioUserId;
+	/** Routed playback is wanted here but cannot start yet (the player's EOS id has not replicated). The tick retries. */
+	bool bVoicePlaybackPending = false;
+	FDelegateHandle VoiceRoutingChangedHandle;
+	bool IsVoiceRouted() const;
+	/** Start, keep or stop VoiceAudio, and report whether this is the local player's listening point. */
+	void RefreshVoicePlayback();
+	void StopVoicePlayback();
+	void HandleVoiceRoutingChanged();
+
+	/** VoiceAudio's player is talking (EOS), which is when the surroundings are measured. */
+	bool bVoiceAudioTalking = false;
+	FTimerHandle SurroundingsTimerHandle;
+	float Enclosure = 0.0f;
+	float RoomSize = 0.0f;
+	bool bSurroundingsMeasured = false;
+	/** Trace around this point and hand the result to VoiceAudio. */
+	void MeasureSurroundings();
+	/** Measure on a timer while VoiceAudio's player talks, and not otherwise. */
+	void RefreshSurroundingsTimer();
+	UFUNCTION()
+	void HandlePlayerTalking(const FString& UserId, bool bIsTalking);
 
 	void Register();
 	void Unregister();

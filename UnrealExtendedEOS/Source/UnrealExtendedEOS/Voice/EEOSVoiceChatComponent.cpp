@@ -11,6 +11,7 @@
 #include "InputMappingContext.h"
 #include "Engine/LocalPlayer.h"
 #include "Framework/Application/SlateApplication.h"
+#include "Engine/Engine.h"
 #include "Engine/GameInstance.h"
 #include "Engine/World.h"
 #include "TimerManager.h"
@@ -23,6 +24,8 @@
 #include "Components/AudioComponent.h"
 #include "Kismet/GameplayStatics.h"
 #include "Shared/EEOSBlueprintLibrary.h"
+#include "Sound/AudioBus.h"
+#include "Sound/SoundBase.h"
 #include "Sound/SoundGroups.h"
 #include "Sound/SoundWaveProcedural.h"
 
@@ -75,6 +78,11 @@ void UEEOSVoiceChatComponent::BeginPlay()
 
 	// Room events are needed before activation: a Current Lobby component learns its room from them.
 	BindRoomEvents();
+	if (UEEOSVoiceSubsystem* VoiceSub = GetVoiceSubsystem())
+	{
+		VoiceRoutingChangedHandle = VoiceSub->OnVoiceRoutingChanged.AddUObject(this, &UEEOSVoiceChatComponent::HandleVoiceRoutingChanged);
+		VoiceSub->OnPlayerTalking.AddUniqueDynamic(this, &UEEOSVoiceChatComponent::HandlePlayerTalking);
+	}
 	EnsureInputMappingRegistered();
 
 	if (bVoiceAutoActivate)
@@ -100,6 +108,12 @@ void UEEOSVoiceChatComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 		FSlateApplication::Get().OnApplicationActivationStateChanged().Remove(AppActiveHandle);
 	Unregister();
 	UnbindRoomEvents();
+	if (UEEOSVoiceSubsystem* VoiceSub = GetVoiceSubsystem())
+	{
+		VoiceSub->OnVoiceRoutingChanged.Remove(VoiceRoutingChangedHandle);
+		VoiceSub->OnPlayerTalking.RemoveDynamic(this, &UEEOSVoiceChatComponent::HandlePlayerTalking);
+	}
+	VoiceRoutingChangedHandle.Reset();
 
 	if (APawn* OwnerPawn = Cast<APawn>(GetOwner()))
 	{
@@ -211,6 +225,7 @@ void UEEOSVoiceChatComponent::Unregister()
 	ContributedPlayers.Empty();
 	bRegistered = false;
 	bIsActive = false;
+	RefreshVoicePlayback();
 }
 
 void UEEOSVoiceChatComponent::MoveToRoom(const FString& NewRoomName)
@@ -304,11 +319,17 @@ void UEEOSVoiceChatComponent::SetAttenuationSettings(USoundAttenuation* NewSetti
 {
 	AttenuationSettings = NewSettings;
 
+	// A routed voice playing here without attenuation of its own is placed by this asset.
+	if (IsValid(VoiceAudio) && VoiceAudio->Sound && !VoiceAudio->Sound->AttenuationSettings)
+	{
+		VoiceAudio->AttenuationSettings = AttenuationSettings;
+	}
+
 	if (bIsActive && CanReceive())
 	{
 		StopProximityTimer();
 
-		if (HasDistanceFalloff())
+		if (HasDistanceFalloff() && !IsVoiceRouted())
 		{
 			StartProximityTimer();
 		}
@@ -359,12 +380,14 @@ void UEEOSVoiceChatComponent::HandleOwnerControllerChanged(APawn* Pawn, AControl
 	UpdateProximityVolumes();
 	ApplyMicrophoneVolume();
 	UpdateLocalCapture();
+	// Possession decides whether this point is where the local player listens or where another player speaks.
+	RefreshVoicePlayback();
 }
 
 void UEEOSVoiceChatComponent::ConfirmActive()
 {
 	bIsActive = true;
-	if (CanReceive() && HasDistanceFalloff()) StartProximityTimer();
+	if (CanReceive() && HasDistanceFalloff() && !IsVoiceRouted()) StartProximityTimer();
 	ApplyMicrophoneVolume();
 }
 
@@ -480,6 +503,17 @@ void UEEOSVoiceChatComponent::UpdateProximityVolumes()
 
 	UWorld* World = GetWorld();
 	if (!World) return;
+
+	// Routed through the audio engine, each voice plays from its own point and the engine does the distance.
+	if (VoiceSub->IsVoiceRoutedThroughAudioEngine())
+	{
+		if (ContributedPlayers.Num() > 0)
+		{
+			VoiceSub->ClearPlayerVolumeContributions(this);
+			ContributedPlayers.Empty();
+		}
+		return;
+	}
 
 	// ── LOCALITY GATE (see the class comment) ────────────────────────────────
 	// Contributions set the LOCAL machine's per-player receive volumes, so every contribution
@@ -794,6 +828,7 @@ void UEEOSVoiceChatComponent::RefreshRoomActivity()
 		ContributedPlayers.Empty();
 	}
 	else if (CanReceive()) UpdateProximityVolumes();
+	RefreshVoicePlayback();
 }
 
 bool UEEOSVoiceChatComponent::SharesActiveRoom(const UEEOSVoiceChatComponent* Other) const
@@ -862,6 +897,213 @@ void UEEOSVoiceChatComponent::TickComponent(float DeltaTime, ELevelTick TickType
 		ToggleMicrophoneMute();
 	bPreviousToggleMuteActionHeld = bToggleMuteActionHeld;
 	RefreshTransmitRegistration();
+	// Nothing announces a remote player's EOS id reaching their pawn, so a point waiting for it checks here.
+	if (bVoicePlaybackPending) RefreshVoicePlayback();
+}
+
+// ── Audio engine playback ────────────────────────────────────────────────────
+
+bool UEEOSVoiceChatComponent::IsVoiceRouted() const
+{
+	const UEEOSVoiceSubsystem* VoiceSub = GetVoiceSubsystem();
+	return VoiceSub && VoiceSub->IsVoiceRoutedThroughAudioEngine();
+}
+
+void UEEOSVoiceChatComponent::HandleVoiceRoutingChanged()
+{
+	StopProximityTimer();
+	if (UEEOSVoiceSubsystem* VoiceSub = GetVoiceSubsystem()) VoiceSub->ClearPlayerVolumeContributions(this);
+	ContributedPlayers.Empty();
+	if (bIsActive && CanReceive() && HasDistanceFalloff() && !IsVoiceRouted())
+	{
+		StartProximityTimer();
+		UpdateProximityVolumes();
+	}
+	// Start over: a sound playing now reads a bus from the routing that just ended.
+	StopVoicePlayback();
+	RefreshVoicePlayback();
+}
+
+void UEEOSVoiceChatComponent::RefreshVoicePlayback()
+{
+	UEEOSVoiceSubsystem* VoiceSub = GetVoiceSubsystem();
+	const bool bRouted = VoiceSub && VoiceSub->IsVoiceRoutedThroughAudioEngine();
+	const APawn* OwnerPawn = Cast<APawn>(GetOwner());
+	const bool bLocalPlayerPoint = OwnerPawn && OwnerPawn->IsLocallyControlled();
+	if (VoiceSub)
+	{
+		// The local player listens from their own point, so voices without a point of their own stay silent.
+		VoiceSub->SetLocalListenerPoint(this, bRouted && bWantsVoice && bLocalPlayerPoint && CanReceive());
+	}
+
+	// A player's voice comes from their own point. This machine's player never hears themselves.
+	const bool bWanted = bRouted && bWantsVoice && bIsActive && CanSend() && !bLocalPlayerPoint;
+	FString UserId = bWanted ? GetOwnerUserId() : FString();
+	if (!UserId.IsEmpty() && UserId == VoiceSub->GetLocalVoicePlayerName())
+	{
+		UserId.Reset();
+	}
+	bVoicePlaybackPending = bWanted && UserId.IsEmpty();
+	if (!UserId.IsEmpty() && UserId == VoiceAudioUserId && IsValid(VoiceAudio))
+	{
+		return;
+	}
+
+	StopVoicePlayback();
+	USoundBase* Sound = UserId.IsEmpty() ? nullptr : VoiceSound ? VoiceSound.Get() : VoiceSub->GetVoiceSound();
+	UAudioBus* Bus = Sound ? VoiceSub->ClaimVoiceBus(UserId, this) : nullptr;
+	if (!Bus)
+	{
+		return;
+	}
+
+	VoiceAudioUserId = UserId;
+	UAudioComponent* Audio = NewObject<UAudioComponent>(GetOwner(), NAME_None, RF_Transient);
+	Audio->bAutoActivate = false;
+	Audio->bAutoDestroy = false;
+	Audio->SetSound(Sound);
+	// The sound's own attenuation places the voice; this point's asset stands in for a sound without one.
+	if (!Sound->AttenuationSettings)
+	{
+		Audio->AttenuationSettings = AttenuationSettings;
+	}
+	Audio->SetupAttachment(this);
+	Audio->RegisterComponent();
+	Audio->SetObjectParameter(VoiceSub->GetVoiceBusParameterName(), Bus);
+	VoiceAudio = Audio;
+	// Measured once before the first word, so it does not start in the wrong space.
+	bVoiceAudioTalking = VoiceSub->IsPlayerTalking(UserId);
+	if (bMeasureSurroundings)
+	{
+		MeasureSurroundings();
+	}
+	Audio->Play();
+	RefreshSurroundingsTimer();
+}
+
+void UEEOSVoiceChatComponent::HandlePlayerTalking(const FString& UserId, const bool bIsTalking)
+{
+	if (VoiceAudioUserId.IsEmpty() || UserId != VoiceAudioUserId)
+	{
+		return;
+	}
+	bVoiceAudioTalking = bIsTalking;
+	RefreshSurroundingsTimer();
+}
+
+void UEEOSVoiceChatComponent::RefreshSurroundingsTimer()
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	FTimerManager& Timers = World->GetTimerManager();
+	const bool bWanted = bMeasureSurroundings && bVoiceAudioTalking && IsValid(VoiceAudio);
+	if (!bWanted)
+	{
+		Timers.ClearTimer(SurroundingsTimerHandle);
+	}
+	else if (!Timers.IsTimerActive(SurroundingsTimerHandle))
+	{
+		// The last measurement may be from before the player walked somewhere else in silence.
+		MeasureSurroundings();
+		Timers.SetTimer(SurroundingsTimerHandle, this, &UEEOSVoiceChatComponent::MeasureSurroundings, FMath::Max(0.05f, SurroundingsInterval), true);
+	}
+}
+
+void UEEOSVoiceChatComponent::MeasureSurroundings()
+{
+	if (!IsValid(VoiceAudio))
+	{
+		return;
+	}
+
+	float NewEnclosure = 0.0f;
+	float NewRoomSize = 0.0f;
+	MeasureSpace(this, GetComponentLocation(), SurroundingsTraceChannel, SurroundingsMaxDistance, GetOwner(), NewEnclosure, NewRoomSize);
+	// Halfway to each new reading: a doorway passed mid-sentence turns the echo, it does not jump.
+	const float Blend = bSurroundingsMeasured ? 0.5f : 1.0f;
+	Enclosure = FMath::Lerp(Enclosure, NewEnclosure, Blend);
+	RoomSize = FMath::Lerp(RoomSize, NewRoomSize, Blend);
+	bSurroundingsMeasured = true;
+	VoiceAudio->SetFloatParameter(EnclosureParameterName, Enclosure);
+	VoiceAudio->SetFloatParameter(RoomSizeParameterName, RoomSize);
+}
+
+void UEEOSVoiceChatComponent::MeasureSpace(const UObject* WorldContextObject, const FVector Location, const ECollisionChannel TraceChannel,
+	const float MaxDistance, const AActor* IgnoredActor, float& OutEnclosure, float& OutRoomSize)
+{
+	OutEnclosure = 0.0f;
+	OutRoomSize = FMath::Max(100.0f, MaxDistance) / 100.0f;
+	UWorld* World = GEngine ? GEngine->GetWorldFromContextObject(WorldContextObject, EGetWorldErrorMode::ReturnNull) : nullptr;
+	if (!World)
+	{
+		return;
+	}
+
+	// Eight rays around, four tilted up and one straight up: walls and a ceiling close a space in, the floor does not.
+	static const TArray<FVector> Directions = []
+	{
+		TArray<FVector> Result;
+		for (int32 Step = 0; Step < 8; ++Step)
+		{
+			Result.Add(FRotator(0.0f, Step * 45.0f, 0.0f).Vector());
+		}
+		for (int32 Step = 0; Step < 4; ++Step)
+		{
+			Result.Add(FRotator(45.0f, 45.0f + Step * 90.0f, 0.0f).Vector());
+		}
+		Result.Add(FVector::UpVector);
+		return Result;
+	}();
+
+	const float Range = FMath::Max(100.0f, MaxDistance);
+	FCollisionQueryParams Params(SCENE_QUERY_STAT(EEOSVoiceSurroundings), /*bTraceComplex*/ false, IgnoredActor);
+	float Closeness = 0.0f;
+	float HitDistance = 0.0f;
+	int32 Hits = 0;
+	for (const FVector& Direction : Directions)
+	{
+		FHitResult Hit;
+		// A ray that starts inside something (a head clipping a wall) says nothing about the space; it would read as a
+		// wall at zero distance and turn the echo all the way up.
+		if (World->LineTraceSingleByChannel(Hit, Location, Location + Direction * Range, TraceChannel, Params) && !Hit.bStartPenetrating)
+		{
+			// A wall at arm's length closes the space far more than one across a hall.
+			Closeness += 1.0f - Hit.Distance / Range;
+			HitDistance += Hit.Distance;
+			++Hits;
+		}
+	}
+
+	OutEnclosure = Closeness / Directions.Num();
+	OutRoomSize = (Hits > 0 ? HitDistance / Hits : Range) / 100.0f;
+}
+
+void UEEOSVoiceChatComponent::StopVoicePlayback()
+{
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(SurroundingsTimerHandle);
+	}
+	bVoiceAudioTalking = false;
+	bSurroundingsMeasured = false;
+	if (IsValid(VoiceAudio))
+	{
+		VoiceAudio->Stop();
+		VoiceAudio->DestroyComponent();
+	}
+	VoiceAudio = nullptr;
+	if (!VoiceAudioUserId.IsEmpty())
+	{
+		if (UEEOSVoiceSubsystem* VoiceSub = GetVoiceSubsystem())
+		{
+			VoiceSub->ReleaseVoiceBus(VoiceAudioUserId, this);
+		}
+		VoiceAudioUserId.Reset();
+	}
 }
 
 void UEEOSVoiceChatComponent::SetInputMode(EEOSVoiceInputMode NewMode)
