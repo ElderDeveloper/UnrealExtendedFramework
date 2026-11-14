@@ -1019,8 +1019,12 @@ public:
 	{
 		if (GEngine)
 		{
-			// r.MotionBlur.Amount ranges from 0.0 to 1.0
-			FString Command = FString::Printf(TEXT("r.MotionBlur.Amount %f"), Value);
+			// r.MotionBlur.Amount >= 0 replaces the amount after every camera and volume has blended, so a
+			// camera that turns blur off for a frame or authors its own amount would be overruled. Release it
+			// (-1) and scale the blended post-process amount instead: 0.5 is the engine's post-process
+			// default, so at default content the slider still reads as the amount.
+			GEngine->Exec(GEngine->GetWorld(), TEXT("r.MotionBlur.Amount -1"));
+			const FString Command = FString::Printf(TEXT("r.MotionBlur.Scale %f"), FMath::Max(0.0f, Value) / 0.5f);
 			GEngine->Exec(GEngine->GetWorld(), *Command);
 			UE_LOG(LogTemp, Log, TEXT("Applied Motion Blur Amount: %.2f"), Value);
 		}
