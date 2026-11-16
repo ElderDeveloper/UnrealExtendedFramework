@@ -8,6 +8,8 @@
 #include "Engine/HitResult.h"
 #include "Engine/StreamableManager.h"
 
+struct FCollisionQueryParams;
+
 #include "EGInteractionComponent.generated.h"
 
 class AController;
@@ -333,6 +335,9 @@ public:
 	float GetHoldProgress() const;
 
 protected:
+	/** Local focus acquisition only; authoritative validation uses fresh queries. */
+	virtual bool TraceFocusLine(FHitResult& OutHit, const FVector& Start, const FVector& End, ECollisionChannel Channel, const FCollisionQueryParams& Params) const;
+
 	/** Creates the prompt widget. Override to route through a HUD or widget stack instead. */
 	virtual void CreatePromptWidget();
 

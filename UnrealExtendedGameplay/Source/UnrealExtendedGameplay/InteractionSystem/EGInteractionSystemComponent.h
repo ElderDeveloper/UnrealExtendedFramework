@@ -253,6 +253,10 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Extended|Interaction System|Debug")
 	bool bDebugLog = false;
 
+protected:
+	/** Local focus acquisition only; authoritative validation uses fresh queries. */
+	virtual bool TraceFocusLine(FHitResult& OutHit, const FVector& Start, const FVector& End, ECollisionChannel Channel, const FCollisionQueryParams& Params) const;
+
 private:
 	friend class FEGInteractionRegressionTest;
 
