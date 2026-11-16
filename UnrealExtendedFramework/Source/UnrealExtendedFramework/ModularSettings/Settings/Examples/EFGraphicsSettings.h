@@ -14,6 +14,7 @@
 #include "HAL/IConsoleManager.h"
 #include "HAL/ThreadingBase.h"
 #include "Internationalization/StringTableRegistry.h"
+#include "Misc/EngineVersionComparison.h"
 #include "EFGraphicsSettings.generated.h"
 
 namespace EFGraphicsSettingsInternal
@@ -99,7 +100,12 @@ namespace EFGraphicsSettingsInternal
 		else if (Group == Effects) { UserSettings->SetVisualEffectQuality(Level); }
 		else if (Group == Foliage) { UserSettings->SetFoliageQuality(Level); }
 		else if (Group == Shading) { UserSettings->SetShadingQuality(Level); }
+#if UE_VERSION_NEWER_THAN_OR_EQUAL(5, 8, 0)
 		else if (Group == Landscape) { UserSettings->SetLandscapeQuality(Level); }
+#else
+		// UGameUserSettings::SetLandscapeQuality (UE 5.8) sets this same field.
+		else if (Group == Landscape) { UserSettings->ScalabilityQuality.SetLandscapeQuality(Level); }
+#endif
 		else { return false; }
 		return true;
 	}

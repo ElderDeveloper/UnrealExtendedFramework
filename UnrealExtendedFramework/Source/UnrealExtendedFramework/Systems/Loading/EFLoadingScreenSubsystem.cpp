@@ -12,6 +12,7 @@
 #include "Engine/Texture2D.h"
 #include "Engine/World.h"
 #include "Materials/MaterialInterface.h"
+#include "Misc/EngineVersionComparison.h"
 #include "MoviePlayer.h"
 #include "UObject/UObjectGlobals.h"
 #include "UnrealExtendedFramework/Systems/Loading/Data/EFLoadingScreenSettings.h"
@@ -360,7 +361,12 @@ void UEFLoadingScreenSubsystem::ResolveMaterialLayers()
 void UEFLoadingScreenSubsystem::MakeMaterialTexturesResident(UMaterialInterface* Material)
 {
 	TArray<UTexture*> Textures;
+#if UE_VERSION_OLDER_THAN(5, 7, 0)
+	// Every quality level and feature level, which is what the UE 5.7 overload does by default.
+	Material->GetUsedTextures(Textures, EMaterialQualityLevel::Num, true, ERHIFeatureLevel::Num, true);
+#else
 	Material->GetUsedTextures(Textures);
+#endif
 
 #if WITH_EDITOR
 	// Before the streaming requests: a texture that is still compiling is not streamed at all.

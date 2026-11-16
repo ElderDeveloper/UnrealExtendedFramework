@@ -11,7 +11,21 @@
 #include "GameFramework/Controller.h"
 #include "GameFramework/Pawn.h"
 #include "GameFramework/PawnMovementComponent.h"
+#include "Misc/EngineVersionComparison.h"
 #include "UnrealExtendedGameplay/SoftCollision/EGRootMotionSource_SoftPush.h"
+
+namespace EGTurnInPlaceMovementSourcePrivate
+{
+	/** The component the character stands on. UE 5.8 generalises movement bases to any object (GetMovementBaseObject). */
+	UPrimitiveComponent* GetBaseComponent(const ACharacter& Character)
+	{
+#if UE_VERSION_NEWER_THAN_OR_EQUAL(5, 8, 0)
+		return Cast<UPrimitiveComponent>(Character.GetMovementBaseObject());
+#else
+		return Character.GetMovementBase();
+#endif
+	}
+}
 
 // ---------------------------------------------------------------------------------------------
 // UEGTurnInPlaceMovementSource
@@ -161,7 +175,7 @@ bool UEGTurnInPlaceCharacterSource::GatherMovement_Implementation(const AActor* 
 
 	if (!Movement->bIgnoreBaseRotation)
 	{
-		if (UPrimitiveComponent* const Base = Cast<UPrimitiveComponent>(Character->GetMovementBaseObject()))
+		if (UPrimitiveComponent* const Base = EGTurnInPlaceMovementSourcePrivate::GetBaseComponent(*Character))
 		{
 			OutInfo.Base = Base;
 			OutInfo.BaseRotation = Base->GetComponentRotation();

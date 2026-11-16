@@ -223,10 +223,11 @@ void FEFAnalyticsHttpSink::Post(const FString& Body, int32 EventCount, const FSt
 	Entry.EventCount = EventCount;
 	Entry.PersistedFile = PersistedFile;
 
-	TWeakPtr<FEFAnalyticsHttpSink> WeakThis = AsShared();
-	const TSharedRef<FEFHttpOperation> Operation = FEFHttpOperation::Start(Request, [WeakThis, Id](const FEFHttpResponse& Response)
+	// Not "WeakThis": up to UE 5.6 that name is a TSharedFromThis member, and shadowing it is an error (C4458).
+	TWeakPtr<FEFAnalyticsHttpSink> WeakSelf = AsShared();
+	const TSharedRef<FEFHttpOperation> Operation = FEFHttpOperation::Start(Request, [WeakSelf, Id](const FEFHttpResponse& Response)
 	{
-		if (const TSharedPtr<FEFAnalyticsHttpSink> This = WeakThis.Pin())
+		if (const TSharedPtr<FEFAnalyticsHttpSink> This = WeakSelf.Pin())
 		{
 			This->HandleResponse(Id, Response);
 		}

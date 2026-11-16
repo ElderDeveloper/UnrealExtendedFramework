@@ -10,6 +10,13 @@
 
 namespace EFJsonPrivate
 {
+	/** The key type of FJsonObject::Values. Engines without UE_JSONOBJECT_LEGACY_STRING_KEYS (before UE 5.8) have no FStringType and key it by FString. */
+#if defined(UE_JSONOBJECT_LEGACY_STRING_KEYS)
+	using FJsonFieldKey = FJsonObject::FStringType;
+#else
+	using FJsonFieldKey = FString;
+#endif
+
 	template <class PrintPolicy>
 	FString SerializeObject(const TSharedRef<FJsonObject>& Object)
 	{
@@ -203,7 +210,7 @@ bool EFJson::ResolvePath(const TSharedPtr<FJsonObject>& Root, const FString& Pat
 				return false;
 			}
 
-			const TSharedPtr<FJsonValue>* Found = (*Object)->Values.Find(FJsonObject::FStringType(*Key));
+			const TSharedPtr<FJsonValue>* Found = (*Object)->Values.Find(EFJsonPrivate::FJsonFieldKey(*Key));
 			if (!Found)
 			{
 				return false;

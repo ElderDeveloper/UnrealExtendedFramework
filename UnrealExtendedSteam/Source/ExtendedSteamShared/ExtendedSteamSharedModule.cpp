@@ -13,9 +13,22 @@
 #include "Misc/ConfigCacheIni.h"
 #include "Status/EFServiceStatus.h"
 #include "Misc/CoreDelegates.h"
+#include "Misc/EngineVersionComparison.h"
 #include "Misc/Parse.h"
 #include "Misc/Paths.h"
 #include "UObject/UObjectGlobals.h"
+
+namespace
+{
+	FSimpleMulticastDelegate& GetPostEngineInitDelegate()
+	{
+#if UE_VERSION_NEWER_THAN_OR_EQUAL(5, 8, 0)
+		return FCoreDelegates::GetOnPostEngineInit();
+#else
+		return FCoreDelegates::OnPostEngineInit;
+#endif
+	}
+}
 
 namespace ESteamSettingsConfig
 {
@@ -75,7 +88,7 @@ void FExtendedSteamSharedModule::StartupModule()
 
 	// Still bound even after an early attempt: it is idempotent, and it retries the case where the
 	// Steam client was not ready yet this early in startup.
-	PostEngineInitHandle = FCoreDelegates::GetOnPostEngineInit().AddRaw(this, &FExtendedSteamSharedModule::HandlePostEngineInit);
+	PostEngineInitHandle = GetPostEngineInitDelegate().AddRaw(this, &FExtendedSteamSharedModule::HandlePostEngineInit);
 
 	// Extended.Status: client and game-server state. Unregistered in ShutdownModule, so capturing
 	// the module is safe.
@@ -120,7 +133,7 @@ void FExtendedSteamSharedModule::ShutdownModule()
 	FEFServiceStatusRegistry::Unregister(EFStatusHandle);
 	EFStatusHandle = 0;
 
-	FCoreDelegates::GetOnPostEngineInit().Remove(PostEngineInitHandle);
+	GetPostEngineInitDelegate().Remove(PostEngineInitHandle);
 
 	ShutdownSteamGameServer();
 	ShutdownSteamClient();

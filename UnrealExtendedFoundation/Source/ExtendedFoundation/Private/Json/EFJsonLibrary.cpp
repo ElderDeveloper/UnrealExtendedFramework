@@ -13,6 +13,13 @@
 
 namespace EFJsonLibraryPrivate
 {
+	/** The key type of FJsonObject::Values. Engines without UE_JSONOBJECT_LEGACY_STRING_KEYS (before UE 5.8) have no FStringType and key it by FString. */
+#if defined(UE_JSONOBJECT_LEGACY_STRING_KEYS)
+	using FJsonFieldKey = FJsonObject::FStringType;
+#else
+	using FJsonFieldKey = FString;
+#endif
+
 	/** The object to write to: the input when it is valid, otherwise a new one. */
 	TSharedPtr<FJsonObject> ObjectForWrite(const FEFJsonObject& JsonObject)
 	{
@@ -48,7 +55,7 @@ namespace EFJsonLibraryPrivate
 
 	const TSharedPtr<FJsonValue>* FindField(const FEFJsonObject& JsonObject, const FString& FieldName)
 	{
-		return JsonObject.Object.IsValid() ? JsonObject.Object->Values.Find(FJsonObject::FStringType(*FieldName)) : nullptr;
+		return JsonObject.Object.IsValid() ? JsonObject.Object->Values.Find(FJsonFieldKey(*FieldName)) : nullptr;
 	}
 
 	/**
@@ -158,7 +165,7 @@ TArray<FString> UEFJsonLibrary::GetFieldNames(const FEFJsonObject& JsonObject)
 	{
 		// The keys are FJsonObject::FStringType, which is not FString in every engine configuration.
 		Names.Reserve(JsonObject.Object->Values.Num());
-		for (const TPair<FJsonObject::FStringType, TSharedPtr<FJsonValue>>& Pair : JsonObject.Object->Values)
+		for (const TPair<EFJsonLibraryPrivate::FJsonFieldKey, TSharedPtr<FJsonValue>>& Pair : JsonObject.Object->Values)
 		{
 			Names.Emplace(*Pair.Key);
 		}

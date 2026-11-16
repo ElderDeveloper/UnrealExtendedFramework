@@ -26,6 +26,7 @@
 #include "Async/Async.h"
 #include "Engine/GameInstance.h"
 #include "Misc/App.h"
+#include "Misc/EngineVersionComparison.h"
 #include "UObject/UObjectGlobals.h"
 #include "UObject/UnrealType.h"
 #include "UnrealExtendedEOS.h"
@@ -2049,6 +2050,17 @@ void UEEOSVoiceSubsystem::RefreshVoiceRouting()
 	FAudioDevice* AudioDevice = World ? World->GetAudioDeviceRaw() : nullptr;
 	bool bWanted = Settings && Settings->bRouteVoiceThroughAudioEngine && !Settings->VoiceSound.IsNull()
 		&& CachedVoiceChatUser && bVoiceUserLoggedIn && AudioDevice && !IsRunningDedicatedServer();
+#if UE_VERSION_OLDER_THAN(5, 7, 0)
+	// Routing places each player's own received audio; IVoiceChatUser hands it out (the unmixed
+	// receive callback) from UE 5.7. Before that EOS keeps playing voice itself.
+	if (bWanted)
+	{
+		static bool bWarned = false;
+		UE_CLOG(!bWarned, LogExtendedEOS, Warning, TEXT("EEOSVoiceSubsystem: Route Voice Through Audio Engine needs UE 5.7 or newer. EOS keeps playing voice itself."));
+		bWarned = true;
+		bWanted = false;
+	}
+#endif
 	if (bWanted && !LoadedVoiceSound)
 	{
 		LoadedVoiceSound = Settings->VoiceSound.LoadSynchronous();
@@ -2087,6 +2099,10 @@ void UEEOSVoiceSubsystem::RefreshVoiceRouting()
 
 void UEEOSVoiceSubsystem::BindVoiceRouting()
 {
+#if UE_VERSION_OLDER_THAN(5, 7, 0)
+	// No unmixed receive callback before UE 5.7; RefreshVoiceRouting never asks for routing there.
+	return;
+#else
 	UWorld* World = GetGameInstance() ? GetGameInstance()->GetWorld() : nullptr;
 	FAudioDevice* AudioDevice = World ? World->GetAudioDeviceRaw() : nullptr;
 	if (!CachedVoiceChatUser || !ReceiveRouter || !AudioDevice)
@@ -2112,11 +2128,13 @@ void UEEOSVoiceSubsystem::BindVoiceRouting()
 	}
 	OnVoiceRoutingChanged.Broadcast();
 	RefreshUnplacedVoices();
+#endif
 }
 
 void UEEOSVoiceSubsystem::UnbindVoiceRouting()
 {
 	// The engine broadcasts these under the lock its unregister takes, so none is running once these return.
+#if UE_VERSION_NEWER_THAN_OR_EQUAL(5, 7, 0)
 	if (CachedVoiceChatUser)
 	{
 		if (MixedRenderHandle.IsValid())
@@ -2128,6 +2146,7 @@ void UEEOSVoiceSubsystem::UnbindVoiceRouting()
 			CachedVoiceChatUser->UnregisterOnVoiceChatBeforeRecvUnmixedAudioRenderedDelegate(UnmixedRenderHandle);
 		}
 	}
+#endif
 	MixedRenderHandle.Reset();
 	UnmixedRenderHandle.Reset();
 	if (ReceiveRouter)

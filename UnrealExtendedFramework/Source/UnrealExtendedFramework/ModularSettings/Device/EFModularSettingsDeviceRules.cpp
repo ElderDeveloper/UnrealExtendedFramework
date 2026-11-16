@@ -7,8 +7,16 @@
 #include "HAL/PlatformMemory.h"
 #include "Internationalization/Regex.h"
 #include "Misc/ConfigCacheIni.h"
+#include "Misc/EngineVersionComparison.h"
+// FStringOutputDevice has its own header in newer engines; before that Containers/UnrealString.h (CoreMinimal) declares it.
+#if __has_include("Misc/StringOutputDevice.h")
 #include "Misc/StringOutputDevice.h"
+#endif
 #include "RHIGlobals.h"
+#if UE_VERSION_OLDER_THAN(5, 8, 0)
+#include "DynamicRHI.h"
+#include "RHIStats.h"
+#endif
 
 DEFINE_LOG_CATEGORY(LogEFDeviceSettings);
 
@@ -106,7 +114,17 @@ FEFDeviceHardwareInfo FEFDeviceHardwareInfo::Gather()
 	{
 		Info.GPUName = FPlatformMisc::GetPrimaryGPUBrand();
 	}
+#if UE_VERSION_NEWER_THAN_OR_EQUAL(5, 8, 0)
 	Info.VideoMemoryMB = static_cast<int64>(GRHIGlobals.GpuInfo.DedicatedVideoMemory / (1024ull * 1024ull));
+#else
+	// FGpuInfo has no DedicatedVideoMemory before UE 5.8; the RHI's memory stats carry it once the RHI exists.
+	if (GDynamicRHI)
+	{
+		FTextureMemoryStats MemoryStats;
+		RHIGetTextureMemoryStats(MemoryStats);
+		Info.VideoMemoryMB = MemoryStats.DedicatedVideoMemory > 0 ? MemoryStats.DedicatedVideoMemory / (1024 * 1024) : 0;
+	}
+#endif
 	Info.SystemMemoryGB = static_cast<int32>(FPlatformMemory::GetConstants().TotalPhysicalGB);
 	return Info;
 }
