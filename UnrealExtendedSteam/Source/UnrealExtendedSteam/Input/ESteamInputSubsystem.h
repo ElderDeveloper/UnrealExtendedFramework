@@ -88,6 +88,25 @@ enum class EESteamControllerPad : uint8
  * Motion sensor snapshot for a controller (mirrors InputMotionData_t). Populated only for
  * controllers with an IMU; calling GetMotionData wakes the IMU until the app closes.
  */
+/**
+ * One DualSense adaptive trigger command for UESteamInputSubsystem::SetDualSenseTriggerEffect, in
+ * Sony's ScePad terms (isteamdualsense.h). Plain C++ so callers can fill it from their own data.
+ * Positions run 0-9 along the pull; strengths and amplitudes 0-8; frequency in Hz.
+ */
+struct UNREALEXTENDEDSTEAM_API FESteamDualSenseTriggerCommand
+{
+	/** 0 off, 1 feedback, 2 weapon, 3 vibration, 4 multiple-position feedback, 5 slope feedback, 6 multiple-position vibration. */
+	uint8 Mode = 0;
+	uint8 Position = 0;
+	uint8 EndPosition = 0;
+	uint8 Strength = 0;
+	uint8 EndStrength = 0;
+	uint8 Amplitude = 0;
+	uint8 Frequency = 0;
+	/** Multiple-position modes: a strength (feedback) or amplitude (vibration) per position. */
+	uint8 Values[10] = {};
+};
+
 USTRUCT(BlueprintType)
 struct UNREALEXTENDEDSTEAM_API FESteamInputMotionData
 {
@@ -372,6 +391,12 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Steam|Input")
 	void SetLEDColor(int64 ControllerHandle, uint8 R, uint8 G, uint8 B, int32 Flags);
+
+	/**
+	 * DualSense adaptive trigger effects (ISteamInput::SetDualSenseTriggerEffect). TriggerMask: 1 = L2,
+	 * 2 = R2, 3 = both; only the masked commands are applied. Needs Steam Input to hold the pad.
+	 */
+	void SetDualSenseTriggerEffect(int64 ControllerHandle, uint8 TriggerMask, const FESteamDualSenseTriggerCommand& L2, const FESteamDualSenseTriggerCommand& R2);
 
 	/**
 	 * Legacy Steam Controller haptic pulse on a single trackpad. Prefer TriggerVibration /

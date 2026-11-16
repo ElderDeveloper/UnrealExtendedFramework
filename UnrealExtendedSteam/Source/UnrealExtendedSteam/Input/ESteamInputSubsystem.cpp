@@ -7,6 +7,7 @@
 #if WITH_EXTENDEDSTEAM_SDK
 THIRD_PARTY_INCLUDES_START
 #include "steam/steam_api.h"
+#include "steam/isteamdualsense.h"
 THIRD_PARTY_INCLUDES_END
 
 namespace
@@ -634,6 +635,60 @@ void UESteamInputSubsystem::SetLEDColor(int64 ControllerHandle, uint8 R, uint8 G
 	{
 		SteamInput()->SetLEDColor(static_cast<InputHandle_t>(ControllerHandle), R, G, B, static_cast<unsigned int>(Flags));
 	}
+#endif
+}
+
+void UESteamInputSubsystem::SetDualSenseTriggerEffect(int64 ControllerHandle, uint8 TriggerMask, const FESteamDualSenseTriggerCommand& L2, const FESteamDualSenseTriggerCommand& R2)
+{
+#if WITH_EXTENDEDSTEAM_SDK
+	if (!bSteamInputInitialized || !IsSteamAvailable() || !SteamInput())
+	{
+		return;
+	}
+
+	auto Fill = [](ScePadTriggerEffectCommand& Command, const FESteamDualSenseTriggerCommand& Source)
+	{
+		Command.mode = static_cast<ScePadTriggerEffectMode>(FMath::Clamp<int32>(Source.Mode, 0, 6));
+		switch (Source.Mode)
+		{
+		case 1:
+			Command.commandData.feedbackParam.position = Source.Position;
+			Command.commandData.feedbackParam.strength = Source.Strength;
+			break;
+		case 2:
+			Command.commandData.weaponParam.startPosition = Source.Position;
+			Command.commandData.weaponParam.endPosition = Source.EndPosition;
+			Command.commandData.weaponParam.strength = Source.Strength;
+			break;
+		case 3:
+			Command.commandData.vibrationParam.position = Source.Position;
+			Command.commandData.vibrationParam.amplitude = Source.Amplitude;
+			Command.commandData.vibrationParam.frequency = Source.Frequency;
+			break;
+		case 4:
+			FMemory::Memcpy(Command.commandData.multiplePositionFeedbackParam.strength, Source.Values, sizeof(Source.Values));
+			break;
+		case 5:
+			Command.commandData.slopeFeedbackParam.startPosition = Source.Position;
+			Command.commandData.slopeFeedbackParam.endPosition = Source.EndPosition;
+			Command.commandData.slopeFeedbackParam.startStrength = Source.Strength;
+			Command.commandData.slopeFeedbackParam.endStrength = Source.EndStrength;
+			break;
+		case 6:
+			Command.commandData.multiplePositionVibrationParam.frequency = Source.Frequency;
+			FMemory::Memcpy(Command.commandData.multiplePositionVibrationParam.amplitude, Source.Values, sizeof(Source.Values));
+			break;
+		default:
+			break;
+		}
+	};
+
+	ScePadTriggerEffectParam Param;
+	FMemory::Memzero(Param);
+	Param.triggerMask = TriggerMask;
+	Fill(Param.command[SCE_PAD_TRIGGER_EFFECT_PARAM_INDEX_FOR_L2], L2);
+	Fill(Param.command[SCE_PAD_TRIGGER_EFFECT_PARAM_INDEX_FOR_R2], R2);
+	SteamInput()->SetDualSenseTriggerEffect(static_cast<InputHandle_t>(ControllerHandle), &Param);
 #endif
 }
 
