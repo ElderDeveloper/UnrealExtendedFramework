@@ -19,6 +19,10 @@
 #include <propsys.h>
 #include <functiondiscoverykeys_devpkey.h>
 #include "Windows/HideWindowsPlatformTypes.h"
+// These pull in <windows.h>, whose RemoveDirectory macro UE's PostWindowsApi.h does not undefine (it does
+// CopyFile, MoveFile and the rest). Left defined, it renames UEFFileLibrary::RemoveDirectory to
+// RemoveDirectoryW in later files of the same unity blob, and the link fails.
+#undef RemoveDirectory
 #endif
 
 namespace
