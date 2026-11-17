@@ -7,6 +7,7 @@
 #include "Common/ProviderLock.h"
 #include "HAL/PlatformFileManager.h"
 #include "TraceServices/ITraceServicesModule.h"
+#include "Misc/EngineVersion.h"
 #include "Misc/EngineVersionComparison.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Parse.h"
@@ -633,7 +634,9 @@ int32 UPerfSentinelAnalyzeCommandlet::Main(const FString& Params)
 	const double SessionDuration = Session->GetDurationSeconds();
 	TSharedRef<FJsonObject> Root = MakeShared<FJsonObject>();
 	Root->SetNumberField(TEXT("schema_version"), 3);
-	Root->SetStringField(TEXT("extractor"), TEXT("PerfSentinelTraceServices-UE5.8"));
+	const FEngineVersion& EngineVersion = FEngineVersion::Current();
+	Root->SetStringField(TEXT("extractor"), FString::Printf(TEXT("PerfSentinelTraceServices-UE%d.%d"),
+		EngineVersion.GetMajor(), EngineVersion.GetMinor()));
 	Root->SetStringField(TEXT("trace"), TracePath);
 	Root->SetNumberField(TEXT("duration_seconds"), SessionDuration);
 	Root->SetNumberField(TEXT("hitch_threshold_ms"), HitchThresholdMs);
@@ -1046,7 +1049,10 @@ int32 UPerfSentinelAnalyzeCommandlet::Main(const FString& Params)
 	bool bHasContextData = false;
 	if (ContextProvider)
 	{
+#if UE_VERSION_NEWER_THAN_OR_EQUAL(5, 8, 0)
 		TraceServices::FProviderReadScopeLock ContextReadScope(*ContextProvider);
+#endif
+		// UE 5.6 checks the analysis session read scope already held by this commandlet.
 		bHasContextData = ContextProvider->HasData();
 		if (bHasContextData && ThreadProvider)
 		{

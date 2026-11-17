@@ -1017,7 +1017,7 @@ void FPerfSentinelRuntimeMonitor::WriteRuntimeContext() const
 	Root->SetStringField(TEXT("build_configuration"), BuildConfigurationToString());
 	Root->SetStringField(TEXT("platform"), FPlatformProperties::PlatformName());
 	Root->SetStringField(TEXT("cpu_brand"), FPlatformMisc::GetCPUBrand());
-	Root->SetStringField(TEXT("gpu_brand"), FPlatformMisc::GetPrimaryGPUBrand());
+	Root->SetStringField(TEXT("gpu_brand"), GDynamicRHI && !GUsingNullRHI ? GRHIAdapterName : FString());
 	Root->SetStringField(TEXT("rhi"), GDynamicRHI ? GDynamicRHI->GetName() : TEXT(""));
 	Root->SetNumberField(TEXT("frame_number"), static_cast<double>(GFrameCounter));
 
