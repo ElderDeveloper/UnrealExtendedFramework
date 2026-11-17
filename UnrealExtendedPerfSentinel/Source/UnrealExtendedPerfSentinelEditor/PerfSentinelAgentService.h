@@ -1,7 +1,7 @@
 // Copyright Kemal Erdem YILMAZ. All Rights Reserved.
 #pragma once
 #include "CoreMinimal.h"
-#include "PerfSentinelAgentToolset.h"
+#include "PerfSentinelAgentTypes.h"
 
 class FJsonObject;
 

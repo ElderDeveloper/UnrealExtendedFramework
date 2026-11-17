@@ -18,9 +18,7 @@ public:
 private:
 	TSharedRef<SDockTab> SpawnReportTab(const FSpawnTabArgs& Args);
 	void HandleAnalysisCompleted(bool bSucceeded, const FPerfSentinelProcessResult& Result, const FString& Error);
-	void RegisterAgentToolset();
 
 	TUniquePtr<FPerfSentinelEditorMenu> EditorMenu;
 	FDelegateHandle AnalysisCompletedHandle;
-	FDelegateHandle AgentRegistrationHandle;
 };

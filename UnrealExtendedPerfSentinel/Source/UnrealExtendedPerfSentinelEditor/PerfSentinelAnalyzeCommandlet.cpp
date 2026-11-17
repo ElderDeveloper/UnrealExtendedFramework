@@ -7,6 +7,7 @@
 #include "Common/ProviderLock.h"
 #include "HAL/PlatformFileManager.h"
 #include "TraceServices/ITraceServicesModule.h"
+#include "Misc/EngineVersionComparison.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Parse.h"
 #include "Misc/Paths.h"
@@ -25,7 +26,9 @@
 #include "TraceServices/Model/Memory.h"
 #include "TraceServices/Model/Modules.h"
 #include "TraceServices/Model/NetProfiler.h"
+#if UE_VERSION_NEWER_THAN_OR_EQUAL(5, 8, 0)
 #include "TraceServices/Model/ObjectProvider.h"
+#endif
 #include "TraceServices/Model/Screenshot.h"
 #include "TraceServices/Model/StackSamples.h"
 #include "TraceServices/Model/TasksProfiler.h"
@@ -67,6 +70,27 @@ TSharedRef<FJsonObject> MakeCoverageEntry(bool bAvailable, int64 Count = -1)
 		Entry->SetNumberField(TEXT("count"), static_cast<double>(Count));
 	}
 	return Entry;
+}
+
+/** Coverage for a provider this engine's TraceServices does not have: not the same as an empty capture. */
+TSharedRef<FJsonObject> MakeUnsupportedCoverageEntry()
+{
+	TSharedRef<FJsonObject> Entry = MakeCoverageEntry(false);
+	Entry->SetStringField(TEXT("status"), TEXT("not_applicable"));
+	return Entry;
+}
+
+const TraceServices::ITimingProfilerTimerReader& TimerReaderOf(const TraceServices::ITimingProfilerProvider& Provider)
+{
+#if UE_VERSION_NEWER_THAN_OR_EQUAL(5, 8, 0)
+	return Provider.GetTimerReader();
+#else
+	// Before 5.8 the reader is only handed to a callback; 5.8's own GetTimerReader() fallback keeps it the same way.
+	const TraceServices::ITimingProfilerTimerReader* Reader = nullptr;
+	Provider.ReadTimers([&Reader](const TraceServices::ITimingProfilerTimerReader& Out) { Reader = &Out; });
+	check(Reader);
+	return *Reader;
+#endif
 }
 
 struct FHitchFrame
@@ -708,7 +732,7 @@ int32 UPerfSentinelAnalyzeCommandlet::Main(const FString& Params)
 							Item->SetNumberField(TEXT("thread_id"), Thread.Id);
 							Item->SetStringField(TEXT("thread"), Thread.Name ? Thread.Name : TEXT(""));
 							Item->SetNumberField(TEXT("timer_id"), Event.TimerIndex);
-							const TraceServices::FTimingProfilerTimer* Timer = TimingProvider->GetTimerReader().GetTimer(Event.TimerIndex);
+							const TraceServices::FTimingProfilerTimer* Timer = TimerReaderOf(*TimingProvider).GetTimer(Event.TimerIndex);
 							Item->SetStringField(TEXT("timer"), Timer && Timer->Name ? Timer->Name : TEXT("<unknown>"));
 							Item->SetNumberField(TEXT("start_seconds"), ClippedStart);
 							Item->SetNumberField(TEXT("end_seconds"), ClippedEnd);
@@ -762,7 +786,7 @@ int32 UPerfSentinelAnalyzeCommandlet::Main(const FString& Params)
 							Item->SetNumberField(TEXT("timeline_index"), GpuTimeline.Key);
 							Item->SetStringField(TEXT("thread"), GpuTimeline.Value);
 							Item->SetNumberField(TEXT("timer_id"), Event.TimerIndex);
-							const TraceServices::FTimingProfilerTimer* Timer = TimingProvider->GetTimerReader().GetTimer(Event.TimerIndex);
+							const TraceServices::FTimingProfilerTimer* Timer = TimerReaderOf(*TimingProvider).GetTimer(Event.TimerIndex);
 							Item->SetStringField(TEXT("timer"), Timer && Timer->Name ? Timer->Name : TEXT("<unknown>"));
 							Item->SetNumberField(TEXT("start_seconds"), ClippedStart);
 							Item->SetNumberField(TEXT("end_seconds"), ClippedEnd);
@@ -1051,10 +1075,11 @@ int32 UPerfSentinelAnalyzeCommandlet::Main(const FString& Params)
 	Root->SetArrayField(TEXT("context_switches"), ContextSwitches);
 	Coverage->SetObjectField(TEXT("context_switches"), MakeCoverageEntry(bHasContextData, ContextSwitches.Num()));
 
-	const TraceServices::IStackSamplesProvider* StackSamplesProvider = TraceServices::ReadStackSamplesProvider(*Session);
-	TMap<uint32, TSharedPtr<FJsonObject>> StackFrameByTimer;
 	TArray<TSharedPtr<FJsonValue>> StackFrames;
 	TArray<TSharedPtr<FJsonValue>> StackSampleEvents;
+#if UE_VERSION_NEWER_THAN_OR_EQUAL(5, 8, 0)
+	const TraceServices::IStackSamplesProvider* StackSamplesProvider = TraceServices::ReadStackSamplesProvider(*Session);
+	TMap<uint32, TSharedPtr<FJsonObject>> StackFrameByTimer;
 	if (StackSamplesProvider)
 	{
 		TraceServices::FProviderReadScopeLock StackSamplesReadScope(*StackSamplesProvider);
@@ -1108,9 +1133,13 @@ int32 UPerfSentinelAnalyzeCommandlet::Main(const FString& Params)
 			}
 		});
 	}
+	Coverage->SetObjectField(TEXT("stack_samples"), MakeCoverageEntry(StackSamplesProvider != nullptr, StackSampleEvents.Num()));
+#else
+	// Before UE 5.8 the stack samples provider only holds raw per-thread addresses, with no frames or timelines.
+	Coverage->SetObjectField(TEXT("stack_samples"), MakeUnsupportedCoverageEntry());
+#endif
 	Root->SetArrayField(TEXT("stack_frames"), StackFrames);
 	Root->SetArrayField(TEXT("stack_sample_events"), StackSampleEvents);
-	Coverage->SetObjectField(TEXT("stack_samples"), MakeCoverageEntry(StackSamplesProvider != nullptr, StackSampleEvents.Num()));
 
 	const TraceServices::IMemoryProvider* MemoryProvider = TraceServices::ReadMemoryProvider(*Session);
 	TArray<TSharedPtr<FJsonValue>> MemoryTags;
@@ -1165,25 +1194,32 @@ int32 UPerfSentinelAnalyzeCommandlet::Main(const FString& Params)
 			const int32 LastIndex = AllocationsProvider->GetTimelineNumPoints() - 1;
 			uint64 FirstBytes = 0, LastBytes = 0, PeakBytes = 0;
 			int64 Count = 0;
-			AllocationsProvider->EnumerateTimeline(TraceServices::IAllocationsProvider::ETimelineU64::MaxTotalAllocatedMemory, 0, LastIndex,
-				[&](double Time, double Duration, uint64 Value)
-				{
-					(void)Time; (void)Duration;
-					if (Count == 0) { FirstBytes = Value; } LastBytes = Value; PeakBytes = FMath::Max(PeakBytes, Value); ++Count;
-				});
+			auto AddPoint = [&](double Time, double Duration, uint64 Value)
+			{
+				(void)Time; (void)Duration;
+				if (Count == 0) { FirstBytes = Value; } LastBytes = Value; PeakBytes = FMath::Max(PeakBytes, Value); ++Count;
+			};
+#if UE_VERSION_NEWER_THAN_OR_EQUAL(5, 7, 0)
+			AllocationsProvider->EnumerateTimeline(TraceServices::IAllocationsProvider::ETimelineU64::MaxTotalAllocatedMemory, 0, LastIndex, AddPoint);
+#else
+			AllocationsProvider->EnumerateMaxTotalAllocatedMemoryTimeline(0, LastIndex, AddPoint);
+#endif
 			AllocationSummary->SetNumberField(TEXT("first_bytes"), static_cast<double>(FirstBytes));
 			AllocationSummary->SetNumberField(TEXT("last_bytes"), static_cast<double>(LastBytes));
 			AllocationSummary->SetNumberField(TEXT("peak_bytes"), static_cast<double>(PeakBytes));
 			AllocationSummary->SetNumberField(TEXT("growth_bytes"), static_cast<double>(LastBytes) - static_cast<double>(FirstBytes));
+#if UE_VERSION_NEWER_THAN_OR_EQUAL(5, 8, 0)
 			AllocationSummary->SetBoolField(TEXT("has_allocation_events"), AllocationsProvider->HasAllocationEvents());
+#endif
 		}
 	}
 	Root->SetObjectField(TEXT("allocation_summary"), AllocationSummary);
 	Coverage->SetObjectField(TEXT("allocations"), MakeCoverageEntry(bAllocationsInitialized));
 
-	const TraceServices::IObjectProvider* ObjectProvider = TraceServices::ReadObjectProvider(*Session);
 	TArray<TSharedPtr<FJsonValue>> ObjectSnapshots;
 	TArray<TSharedPtr<FJsonValue>> ObjectClasses;
+#if UE_VERSION_NEWER_THAN_OR_EQUAL(5, 8, 0)
+	const TraceServices::IObjectProvider* ObjectProvider = TraceServices::ReadObjectProvider(*Session);
 	if (ObjectProvider)
 	{
 		TraceServices::FProviderReadScopeLock ObjectReadScope(*ObjectProvider);
@@ -1239,9 +1275,13 @@ int32 UPerfSentinelAnalyzeCommandlet::Main(const FString& Params)
 			});
 		}
 	}
+	Coverage->SetObjectField(TEXT("objects"), MakeCoverageEntry(ObjectProvider != nullptr, ObjectSnapshots.Num()));
+#else
+	// TraceServices has no object provider before UE 5.8.
+	Coverage->SetObjectField(TEXT("objects"), MakeUnsupportedCoverageEntry());
+#endif
 	Root->SetArrayField(TEXT("object_snapshots"), ObjectSnapshots);
 	Root->SetArrayField(TEXT("object_classes"), ObjectClasses);
-	Coverage->SetObjectField(TEXT("objects"), MakeCoverageEntry(ObjectProvider != nullptr, ObjectSnapshots.Num()));
 
 	ExtractNetworkEvidence(*Session, SessionDuration, HitchFrames, Root, Coverage);
 

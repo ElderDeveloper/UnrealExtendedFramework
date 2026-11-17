@@ -3,7 +3,7 @@
 	"Version": 2,
 	"VersionName": "1.0.0",
 	"FriendlyName": "Unreal Extended Perf Sentinel",
-	"Description": "Extended Framework performance tracing, deterministic UE 5.8 extraction, regression gates, and evidence-backed reports.",
+	"Description": "Extended Framework performance tracing, deterministic trace extraction, regression gates, and evidence-backed reports.",
 	"Category": "Extended",
 	"CreatedBy": "Kemal Erdem YILMAZ",
 	"CreatedByURL": "",
@@ -22,6 +22,7 @@
 		{
 			"Name": "ToolsetRegistry",
 			"Enabled": true,
+			"Optional": true,
 			"TargetAllowList": ["Editor"]
 		}
 	],
