@@ -87,17 +87,19 @@ namespace EFUpscalerInternal
 	static void SetFSREnabled(bool bEnabled)
 	{
 #if WITH_FSR
-		IConsoleVariable* CVarEnableFSR = nullptr;
+		// Not named CVarEnableFSR: the FSR plugin's FFXFSRSettings.h declares a global of that name, and
+		// hiding it is C4459 (a shadowing error in UE 5 modules).
+		IConsoleVariable* EnableCVar = nullptr;
 #if WITH_FSR_GENERIC
-		CVarEnableFSR = IConsoleManager::Get().FindConsoleVariable(TEXT("r.FidelityFX.FSR.Enabled"));
+		EnableCVar = IConsoleManager::Get().FindConsoleVariable(TEXT("r.FidelityFX.FSR.Enabled"));
 #elif WITH_FSR4
-		CVarEnableFSR = IConsoleManager::Get().FindConsoleVariable(TEXT("r.FidelityFX.FSR4.Enabled"));
+		EnableCVar = IConsoleManager::Get().FindConsoleVariable(TEXT("r.FidelityFX.FSR4.Enabled"));
 #elif WITH_FSR3
-		CVarEnableFSR = IConsoleManager::Get().FindConsoleVariable(TEXT("r.FidelityFX.FSR3.Enabled"));
+		EnableCVar = IConsoleManager::Get().FindConsoleVariable(TEXT("r.FidelityFX.FSR3.Enabled"));
 #endif
-		if (CVarEnableFSR)
+		if (EnableCVar)
 		{
-			CVarEnableFSR->Set(bEnabled ? 1 : 0);
+			EnableCVar->Set(bEnabled ? 1 : 0);
 		}
 #endif
 	}

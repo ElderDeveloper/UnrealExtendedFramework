@@ -47,6 +47,11 @@
 			"Optional": true
 		},
 		{
+			"Name": "FSR",
+			"Enabled": true,
+			"Optional": true
+		},
+		{
 			"Name": "EnhancedInput",
 			"Enabled": true
 		},
