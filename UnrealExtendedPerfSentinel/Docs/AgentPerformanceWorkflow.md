@@ -20,7 +20,7 @@ Perf Sentinel is an evidence entry point for performance and network investigati
 
 ## Agent tools
 
-Discover the native toolset by name: `UnrealExtendedPerfSentinelEditor.PerfSentinelAgentToolset`. The editor module depends on ToolsetRegistry; packaged Game recording has no dependency on the editor toolset. Discover exact reflected schemas before calling functions through `unreal.ToolsetRegistry.execute_tool` or MCP.
+Discover the native toolset by name: `UnrealExtendedPerfSentinelEditor.PerfSentinelAgentToolset`. The toolset and the investigation skill need Unreal's ToolsetRegistry plugin, which ships from UE 5.8: on 5.8 and later the editor module depends on it, and on older engines (5.6) neither is built, while capture, analysis, the report view and the console commands work as usual. Packaged Game recording has no dependency on the editor toolset. Discover exact reflected schemas before calling functions through `unreal.ToolsetRegistry.execute_tool` or MCP.
 
 Report query calls return an envelope with `SchemaVersion`, `RequestId`, `Operation`, `State`, `bSuccess`, `Error`, and `ResultJson`. Queued/running success means admission, not completed analysis. Poll `GetQueryStatus(RequestId)` in a later round-trip, and parse `ResultJson` after completion. Errors can also include a structured failure result. Do not block the editor waiting for a query.
 

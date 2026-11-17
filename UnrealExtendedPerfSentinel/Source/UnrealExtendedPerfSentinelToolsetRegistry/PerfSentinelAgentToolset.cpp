@@ -2,9 +2,24 @@
 #include "PerfSentinelAgentToolset.h"
 #include "PerfSentinelAgentService.h"
 #include "Dom/JsonObject.h"
+#include "Misc/CoreDelegates.h"
+#include "ToolsetRegistry/UToolsetRegistry.h"
 
 namespace
 {
+FDelegateHandle DeferredRegistrationHandle;
+
+void RegisterNow()
+{
+	if (IsRunningCommandlet() || !UToolsetRegistry::IsAvailable()) { return; }
+	if (!UToolsetRegistry::IsToolsetClassRegistered(UPerfSentinelAgentToolset::StaticClass()))
+	{
+		UToolsetRegistry::RegisterToolsetClass(UPerfSentinelAgentToolset::StaticClass());
+	}
+	// Native UAgentSkill subclasses are discovered from their source-defined CDOs.
+	GetDefault<UPerfSentinelInvestigationSkill>();
+}
+
 TSharedRef<FJsonObject> SessionParameters(const FString& SessionId)
 {
 	TSharedRef<FJsonObject> Result = MakeShared<FJsonObject>();
@@ -86,4 +101,17 @@ UPerfSentinelInvestigationSkill::UPerfSentinelInvestigationSkill()
 		"7. RecommendCapture proposes the smallest missing-evidence collection. Prefer LightweightBaseline, then targeted networking/hitch/load/memory profiles. Explicitly report launch requirements, capture overhead and external EOS/RTC/SDK coverage gaps.\n"
 		"8. StartCapture/StopCapture/AnalyzeLastCapture are available only for user-authorized collection. ConfigureCaptureContext sets the next run/role/build while idle. Capture owns only its recorder, analysis runs asynchronously, and tools never relaunch the editor. Poll status rather than assuming completion.\n"
 		"Do not replace missing evidence with generic performance guesses or promise that a capture covers uninstrumented transports. Keep conclusions actionable and cite the supporting measured rows.\n");
+}
+
+void PerfSentinelAgentToolset::Register()
+{
+	if (UToolsetRegistry::IsAvailable()) { RegisterNow(); }
+	else if (!DeferredRegistrationHandle.IsValid()) { DeferredRegistrationHandle = FCoreDelegates::GetOnPostEngineInit().AddStatic(&RegisterNow); }
+}
+
+void PerfSentinelAgentToolset::Unregister()
+{
+	FCoreDelegates::GetOnPostEngineInit().Remove(DeferredRegistrationHandle);
+	DeferredRegistrationHandle.Reset();
+	if (UToolsetRegistry::IsAvailable()) { UToolsetRegistry::UnregisterToolsetClass(UPerfSentinelAgentToolset::StaticClass()); }
 }

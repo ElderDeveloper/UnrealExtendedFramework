@@ -11,6 +11,7 @@
 #include "Engine/NetDriver.h"
 #include "Engine/World.h"
 #include "HAL/PlatformProcess.h"
+#include "Misc/EngineVersionComparison.h"
 
 namespace
 {
@@ -105,7 +106,10 @@ TSharedRef<FJsonObject> FPerfSentinelNetworkSampler::SampleConnection(UNetConnec
 	}
 	PreviousConnections.Add(Key, Current);
 	if (FMath::IsFinite(Connection->AvgLag) && Connection->AvgLag > 0.0f) { Root->SetNumberField(TEXT("avg_rtt_ms"), Connection->AvgLag * 1000.0); }
+#if UE_VERSION_NEWER_THAN_OR_EQUAL(5, 8, 0)
+	// UNetConnection has no raw ping before UE 5.8; the field is then absent, not zero.
 	if (FMath::IsFinite(Connection->RawPingInSeconds) && Connection->RawPingInSeconds > 0.0) { Root->SetNumberField(TEXT("raw_ping_ms"), Connection->RawPingInSeconds * 1000.0); }
+#endif
 	const float Jitter = Connection->GetAverageJitterInMS();
 	if (FMath::IsFinite(Jitter) && Jitter >= 0.0f) { Root->SetNumberField(TEXT("jitter_ms"), Jitter); }
 	Root->SetStringField(TEXT("ping_semantics"), TEXT("native_ack_rtt_may_exclude_remote_frame_time"));

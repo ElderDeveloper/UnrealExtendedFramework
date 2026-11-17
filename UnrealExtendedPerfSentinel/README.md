@@ -4,6 +4,10 @@ Capture an Unreal Insights trace together with runtime sidecars, then analyze it
 
 The native investigation skill is discoverable through Unreal's `AgentSkillToolset`. It teaches the overview → coverage → metrics → evidence → comparison workflow, including missing-data and clock rules. See [Agent performance workflow](Docs/AgentPerformanceWorkflow.md) for the contract, tool API, instrumentation, limits, and implementation checklist.
 
+## Engine versions
+
+The plugin builds on UE 5.6 and 5.8. Some pieces need 5.8: the agent toolset and skill (Unreal's ToolsetRegistry), the `raw_ping_ms` network field, and the analyzer's object snapshots and stack samples (TraceServices' object provider and stack frames). On older engines those are left out: the agent toolset is not built, and the report marks `objects` and `stack_samples` coverage `not_applicable` rather than empty.
+
 ## Capture a useful play session
 
 1. Use separate server/client processes for multiplayer investigations. Each process records its own capture; one client's capture cannot describe every server connection.
