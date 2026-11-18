@@ -540,8 +540,9 @@ bool UEEOSLobbySubsystem::CreateLobby(int32 MaxMembers, bool bIsPublic, bool bUs
 	if (!AcquireLobbyMembership(TEXT("CreateLobby"))) return false;
 	FOnlineSessionSettings Settings;
 	Settings.NumPublicConnections = MaxMembers;
-	Settings.bShouldAdvertise = bIsPublic; Settings.bUsesPresence = true;
-	Settings.bAllowJoinInProgress = true; Settings.bAllowJoinViaPresence = true;
+	const bool bCanAdvertisePresence = GetEOSReadiness().bHasEpicAccount;
+	Settings.bShouldAdvertise = bIsPublic; Settings.bUsesPresence = bCanAdvertisePresence;
+	Settings.bAllowJoinInProgress = true; Settings.bAllowJoinViaPresence = bCanAdvertisePresence;
 	Settings.bAllowInvites = true; Settings.bUseLobbiesIfAvailable = true;
 	Settings.bUseLobbiesVoiceChatIfAvailable = bUseVoiceChat;
 	const UEEOSSettings* Defaults = GetEOSSettings();

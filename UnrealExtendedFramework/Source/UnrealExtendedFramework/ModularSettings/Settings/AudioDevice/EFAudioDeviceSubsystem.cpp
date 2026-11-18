@@ -1070,6 +1070,10 @@ EEFAudioDeviceSelectionResult UEFAudioDeviceSubsystem::SelectDevice(const FStrin
 	}
 
 #if PLATFORM_WINDOWS
+	// The mixer opens on the system default. Reapplying that selection during startup would restart its live stream.
+	if (DeviceType == EEFAudioDeviceType::Output && IsDefaultDeviceId(NormalizedDeviceID) && IsDefaultDeviceId(ActiveOutputDeviceID))
+		return EEFAudioDeviceSelectionResult::Success;
+
 	WindowsMeterCache.Reset();
 	if (DeviceType == EEFAudioDeviceType::Input
 		&& (DeviceInfo->Backend == EEFAudioDeviceBackend::WindowsCoreAudio || DeviceInfo->Backend == EEFAudioDeviceBackend::PlatformDefault))

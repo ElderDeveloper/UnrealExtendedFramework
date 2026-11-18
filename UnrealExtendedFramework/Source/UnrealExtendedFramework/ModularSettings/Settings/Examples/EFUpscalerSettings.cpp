@@ -496,7 +496,7 @@ void UEFUpscalerDLSSRRSetting::Apply_Implementation()
 	const FString ActiveUpscaler = EFUpscalerInternal::GetActiveUpscalerFromSubsystem(this);
 	const bool bDLSSSelected = ActiveUpscaler == TEXT("DLSS");
 	const bool bEnableDLSS = bDLSSSelected && Value;
-	const bool bEnableRR = bEnableDLSS && UDLSSLibrary::IsDLSSRRSupported();
+	const bool bEnableRR = bEnableDLSS && IsDLSSRayReconstructionAvailable();
 
 	UDLSSLibrary::EnableDLSS(bEnableDLSS);
 	UDLSSLibrary::EnableDLSSRR(bEnableRR);
@@ -515,7 +515,7 @@ void UEFUpscalerDLSSRRSetting::Apply_Implementation()
 		}
 		else
 		{
-			UE_LOG(LogTemp, Warning, TEXT("Enabled DLSS but DLSS Ray Reconstruction is not supported on this hardware"));
+			UE_LOG(LogTemp, Log, TEXT("Enabled DLSS Super Resolution"));
 		}
 	}
 	else
@@ -528,7 +528,9 @@ void UEFUpscalerDLSSRRSetting::Apply_Implementation()
 bool UEFUpscalerDLSSRRSetting::IsDLSSRayReconstructionAvailable()
 {
 #if WITH_DLSS
-	return EFUpscalerInternal::AreUpscalerModulesLoaded() && UDLSSLibrary::IsDLSSRRSupported();
+	const IConsoleVariable* RayTracing = IConsoleManager::Get().FindConsoleVariable(TEXT("r.RayTracing"));
+	return EFUpscalerInternal::AreUpscalerModulesLoaded() && RayTracing && RayTracing->GetBool()
+		&& UDLSSLibrary::IsDLSSRRSupported();
 #else
 	return false;
 #endif
