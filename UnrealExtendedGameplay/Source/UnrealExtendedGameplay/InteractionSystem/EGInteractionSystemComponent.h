@@ -254,6 +254,8 @@ public:
 	bool bDebugLog = false;
 
 protected:
+	/** The uncached ray used for focus and for the server's independent hit check. */
+	virtual bool TraceInteractionLine(FHitResult& OutHit, const FVector& Start, const FVector& End, ECollisionChannel Channel, const FCollisionQueryParams& Params) const;
 	/** Local focus acquisition only; authoritative validation uses fresh queries. */
 	virtual bool TraceFocusLine(FHitResult& OutHit, const FVector& Start, const FVector& End, ECollisionChannel Channel, const FCollisionQueryParams& Params) const;
 

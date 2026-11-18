@@ -753,7 +753,7 @@ bool UEGInteractionSystemComponent::ValidateServerRequest(UEGInteractionProvider
 		}
 
 		FHitResult TraceHit;
-		const bool bHit = World->LineTraceSingleByChannel(TraceHit, ViewLocation, TraceEnd, TraceChannel, Params);
+		const bool bHit = TraceInteractionLine(TraceHit, ViewLocation, TraceEnd, TraceChannel, Params);
 		if (!bHit || TraceHit.GetActor() != Target)
 		{
 			UE_CLOG(bDebugLog, LogEGInteractionSystem, Warning, TEXT("[%s] Rejected: %s is occluded or not where the client said"), *GetNameSafe(GetOwner()), *GetNameSafe(Target));
@@ -891,6 +891,11 @@ bool UEGInteractionSystemComponent::HasLineOfSight(const FVector& ViewLocation, 
 }
 
 bool UEGInteractionSystemComponent::TraceFocusLine(FHitResult& OutHit, const FVector& Start, const FVector& End, ECollisionChannel Channel, const FCollisionQueryParams& Params) const
+{
+	return TraceInteractionLine(OutHit, Start, End, Channel, Params);
+}
+
+bool UEGInteractionSystemComponent::TraceInteractionLine(FHitResult& OutHit, const FVector& Start, const FVector& End, ECollisionChannel Channel, const FCollisionQueryParams& Params) const
 {
 	const UWorld* World = GetWorld();
 	return World && World->LineTraceSingleByChannel(OutHit, Start, End, Channel, Params);
