@@ -8,6 +8,9 @@
 #include "EFAudioDeviceSubsystem.generated.h"
 
 class IVoiceChatUser;
+#if PLATFORM_WINDOWS
+struct FEFAudioWindowsMeterCache;
+#endif
 
 UENUM(BlueprintType)
 enum class EEFAudioDeviceType : uint8
@@ -200,6 +203,7 @@ private:
 	void StartDeviceMonitoring();
 	void StopDeviceMonitoring();
 	void CheckDeviceConnectivity();
+	void ApplyMonitoredDeviceSnapshot(const TArray<FEFAudioDeviceInfo>& PlatformDevices);
 
 	void AcquireVoiceChatUser();
 	void ReleaseVoiceChatUser();
@@ -261,4 +265,11 @@ private:
 	int32 InputLevelCaptureRetryAttempts = 0;
 	TArray<float> OutputAnalysisFrequencies;
 	bool bIsOutputAnalysisActive = false;
+#if PLATFORM_WINDOWS
+	/** One value-only CoreAudio snapshot may be in flight. Manual refreshes invalidate its generation. */
+	bool bWindowsDeviceSnapshotInFlight = false;
+	uint64 WindowsDeviceSnapshotGeneration = 0;
+	/** Game-thread COM interfaces only; peak values are read afresh on every query. */
+	TSharedPtr<FEFAudioWindowsMeterCache> WindowsMeterCache;
+#endif
 };

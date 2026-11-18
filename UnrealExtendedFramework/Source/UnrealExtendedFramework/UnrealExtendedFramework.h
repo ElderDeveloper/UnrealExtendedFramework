@@ -23,6 +23,9 @@ public:
 	/** IModuleInterface implementation */
 	virtual void StartupModule() override;
 	virtual void ShutdownModule() override;
+	// Audio device monitoring can still own worker/completion code after its subsystem deinitializes.
+	// Keep that code loaded when the editor replaces this module, as it does at normal shutdown.
+	virtual bool SupportsDynamicReloading() override { return false; }
 
 	/** Id of the string table holding the plugin's player-facing text: LOCTABLE("ExtendedFramework", Key). */
 	static constexpr const TCHAR* StringTableId = TEXT("ExtendedFramework");

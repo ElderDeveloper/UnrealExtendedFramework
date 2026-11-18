@@ -6,11 +6,16 @@
 #include "Engine/GameInstance.h"
 #include "Engine/World.h"
 #include "AudioMixerBlueprintLibrary.h"
+#include "Async/Async.h"
+#include "ProfilingDebugging/CpuProfilerTrace.h"
 #include "TimerManager.h"
 #include "UnrealExtendedFramework.h"
 #include "Voice.h"
 #include "VoiceChat.h"
 #include "Interfaces/VoiceCapture.h"
+#if PLATFORM_WINDOWS && WITH_DEV_AUTOMATION_TESTS
+#include "Misc/AutomationTest.h"
+#endif
 
 #if PLATFORM_WINDOWS
 #include "Windows/AllowWindowsPlatformTypes.h"
@@ -18,11 +23,56 @@
 #include <mmdeviceapi.h>
 #include <propsys.h>
 #include <functiondiscoverykeys_devpkey.h>
+#include "Microsoft/COMPointer.h"
 #include "Windows/HideWindowsPlatformTypes.h"
 // These pull in <windows.h>, whose RemoveDirectory macro UE's PostWindowsApi.h does not undefine (it does
 // CopyFile, MoveFile and the rest). Left defined, it renames UEFFileLibrary::RemoveDirectory to
 // RemoveDirectoryW in later files of the same unity blob, and the link fails.
 #undef RemoveDirectory
+#endif
+
+#if PLATFORM_WINDOWS
+/** The meter interfaces stay in the same game-thread apartment until invalidation/deinitialization. */
+struct FEFAudioWindowsMeterCache
+{
+	struct FEndpoint
+	{
+		TComPtr<IMMDevice> Device;
+		TComPtr<IAudioMeterInformation> Meter;
+	};
+
+	~FEFAudioWindowsMeterCache()
+	{
+		check(IsInGameThread());
+		Endpoints.Empty();
+		Enumerator = nullptr;
+		if (bOwnsApartment) CoUninitialize();
+	}
+
+	bool EnsureEnumerator()
+	{
+		check(IsInGameThread());
+		if (!bApartmentReady)
+		{
+			const HRESULT Result = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+			if (FAILED(Result) && Result != RPC_E_CHANGED_MODE) return false;
+			bOwnsApartment = SUCCEEDED(Result);
+			bApartmentReady = true;
+		}
+		if (!Enumerator.IsValid())
+		{
+			CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL, IID_PPV_ARGS(&Enumerator));
+		}
+		return Enumerator.IsValid();
+	}
+
+	bool TryReadPeak(const FEFAudioDeviceInfo& DeviceInfo, EEFAudioDeviceType DeviceType, float& OutPeak);
+
+	TComPtr<IMMDeviceEnumerator> Enumerator;
+	TMap<FString, FEndpoint> Endpoints;
+	bool bOwnsApartment = false;
+	bool bApartmentReady = false;
+};
 #endif
 
 namespace
@@ -65,6 +115,26 @@ namespace
 	}
 
 #if PLATFORM_WINDOWS
+	struct FWindowsAudioDeviceSnapshot
+	{
+		TArray<FEFAudioDeviceInfo> Devices;
+		bool bOutputComplete = false;
+		bool bInputComplete = false;
+
+		void RetainIncompleteFlows(const TArray<FEFAudioDeviceInfo>& Previous)
+		{
+			const auto IsIncomplete = [this](const FEFAudioDeviceInfo& Device)
+			{
+				return Device.DeviceType == EEFAudioDeviceType::Input ? !bInputComplete : !bOutputComplete;
+			};
+			Devices.RemoveAll(IsIncomplete);
+			for (const FEFAudioDeviceInfo& Device : Previous)
+			{
+				if (Device.Backend == EEFAudioDeviceBackend::WindowsCoreAudio && IsIncomplete(Device)) Devices.Add(Device);
+			}
+		}
+	};
+
 	FString GetWindowsDeviceId(IMMDevice* Device)
 	{
 		LPWSTR RawDeviceID = nullptr;
@@ -153,37 +223,136 @@ namespace
 		return ResolvedDeviceID;
 	}
 
-	float GetWindowsEndpointPeakLevel(IMMDeviceEnumerator* DeviceEnumerator, const FEFAudioDeviceInfo& DeviceInfo, EEFAudioDeviceType DeviceType)
+	/** Every COM interface and its apartment stay on the calling thread. No UObject is accessed here. */
+	FWindowsAudioDeviceSnapshot ReadWindowsAudioDevices()
 	{
-		const FString EndpointID = ResolveWindowsEndpointId(DeviceEnumerator, DeviceInfo, DeviceType);
-		if (EndpointID.IsEmpty())
+		TRACE_CPUPROFILER_EVENT_SCOPE(EFAudioDevices_WindowsEnumeration);
+		FWindowsAudioDeviceSnapshot Snapshot;
+		const HRESULT CoInitializeResult = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+		const bool bShouldUninitializeCOM = SUCCEEDED(CoInitializeResult);
+		if (FAILED(CoInitializeResult) && CoInitializeResult != RPC_E_CHANGED_MODE)
 		{
-			return -1.0f;
+			return Snapshot;
 		}
 
-		IMMDevice* EndpointDevice = nullptr;
-		if (FAILED(DeviceEnumerator->GetDevice(*EndpointID, &EndpointDevice)) || !EndpointDevice)
+		IMMDeviceEnumerator* DeviceEnumerator = nullptr;
+		const HRESULT Result = CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL, IID_PPV_ARGS(&DeviceEnumerator));
+		if (SUCCEEDED(Result) && DeviceEnumerator)
 		{
-			return -1.0f;
+			auto EnumerateEndpoints = [&Snapshot, DeviceEnumerator](EDataFlow DataFlow, EEFAudioDeviceType DeviceType)
+			{
+				FString DefaultEndpointID;
+				IMMDevice* DefaultEndpoint = nullptr;
+				const HRESULT DefaultResult = DeviceEnumerator->GetDefaultAudioEndpoint(DataFlow, eConsole, &DefaultEndpoint);
+				// No default is a valid state, including after the last endpoint is unplugged.
+				bool bDefaultKnown = DefaultResult == HRESULT_FROM_WIN32(ERROR_NOT_FOUND);
+				if (SUCCEEDED(DefaultResult) && DefaultEndpoint)
+				{
+					DefaultEndpointID = GetWindowsDeviceId(DefaultEndpoint);
+					bDefaultKnown = !DefaultEndpointID.IsEmpty();
+					DefaultEndpoint->Release();
+				}
+
+				IMMDeviceCollection* DeviceCollection = nullptr;
+				if (FAILED(DeviceEnumerator->EnumAudioEndpoints(DataFlow, DEVICE_STATE_ACTIVE, &DeviceCollection)) || !DeviceCollection)
+				{
+					return false;
+				}
+
+				UINT DeviceCount = 0;
+				bool bComplete = SUCCEEDED(DeviceCollection->GetCount(&DeviceCount));
+				for (UINT DeviceIndex = 0; DeviceIndex < DeviceCount; ++DeviceIndex)
+				{
+					IMMDevice* Device = nullptr;
+					if (FAILED(DeviceCollection->Item(DeviceIndex, &Device)) || !Device)
+					{
+						bComplete = false;
+						continue;
+					}
+
+					const FString DeviceID = GetWindowsDeviceId(Device);
+					if (DeviceID.IsEmpty())
+					{
+						bComplete = false;
+					}
+					else
+					{
+						FEFAudioDeviceInfo& DeviceInfo = Snapshot.Devices.AddDefaulted_GetRef();
+						DeviceInfo.DeviceName = GetWindowsDeviceName(Device, DeviceID);
+						DeviceInfo.DeviceID = DeviceID;
+						DeviceInfo.bIsDefaultDevice = DeviceID == DefaultEndpointID;
+						DeviceInfo.bIsInputDevice = DeviceType == EEFAudioDeviceType::Input;
+						DeviceInfo.bIsConnected = true;
+						DeviceInfo.bCanBeSelected = true;
+						DeviceInfo.DeviceType = DeviceType;
+						DeviceInfo.Backend = EEFAudioDeviceBackend::WindowsCoreAudio;
+						DeviceInfo.BackendName = TEXT("Windows CoreAudio");
+					}
+					Device->Release();
+				}
+
+				DeviceCollection->Release();
+				return bComplete && bDefaultKnown;
+			};
+
+			Snapshot.bOutputComplete = EnumerateEndpoints(eRender, EEFAudioDeviceType::Output);
+			Snapshot.bInputComplete = EnumerateEndpoints(eCapture, EEFAudioDeviceType::Input);
+			DeviceEnumerator->Release();
 		}
 
-		IAudioMeterInformation* MeterInformation = nullptr;
-		const HRESULT ActivateResult = EndpointDevice->Activate(__uuidof(IAudioMeterInformation), CLSCTX_ALL, nullptr, reinterpret_cast<void**>(&MeterInformation));
-		if (FAILED(ActivateResult) || !MeterInformation)
+		if (bShouldUninitializeCOM)
 		{
-			EndpointDevice->Release();
-			return -1.0f;
+			CoUninitialize();
 		}
-
-		float PeakValue = 0.0f;
-		const HRESULT PeakResult = MeterInformation->GetPeakValue(&PeakValue);
-		MeterInformation->Release();
-		EndpointDevice->Release();
-
-		return SUCCEEDED(PeakResult) ? PeakValue : -1.0f;
+		return Snapshot;
 	}
 #endif
 }
+
+#if PLATFORM_WINDOWS
+bool FEFAudioWindowsMeterCache::TryReadPeak(const FEFAudioDeviceInfo& DeviceInfo,
+	EEFAudioDeviceType DeviceType, float& OutPeak)
+{
+	check(IsInGameThread());
+	OutPeak = 0.f;
+	for (int32 Attempt = 0; Attempt < 2; ++Attempt)
+	{
+		// Only initial backend failure uses the platform/voice fallback; a failed endpoint query stays zero.
+		if (!EnsureEnumerator()) return Attempt > 0;
+		// The default is resolved live, rather than keeping yesterday's endpoint until the next monitor poll.
+		const FString EndpointID = ResolveWindowsEndpointId(Enumerator.Get(), DeviceInfo, DeviceType);
+		FEndpoint* Endpoint = EndpointID.IsEmpty() ? nullptr : Endpoints.Find(EndpointID);
+		if (!Endpoint && !EndpointID.IsEmpty())
+		{
+			FEndpoint Created;
+			if (SUCCEEDED(Enumerator->GetDevice(*EndpointID, &Created.Device)) && Created.Device.IsValid()
+				&& SUCCEEDED(Created.Device->Activate(__uuidof(IAudioMeterInformation), CLSCTX_ALL, nullptr,
+					reinterpret_cast<void**>(&Created.Meter))) && Created.Meter.IsValid())
+			{
+				Endpoint = &Endpoints.Add(EndpointID, MoveTemp(Created));
+			}
+		}
+		if (Endpoint)
+		{
+			// Do not keep a pointer into the map across COM calls that could pump a device notification.
+			const FEndpoint ActiveEndpoint = *Endpoint;
+			DWORD State = 0;
+			float Peak = 0.f;
+			if (SUCCEEDED(ActiveEndpoint.Device->GetState(&State)) && (State & DEVICE_STATE_ACTIVE)
+				&& SUCCEEDED(ActiveEndpoint.Meter->GetPeakValue(&Peak)))
+			{
+				OutPeak = Peak;
+				return true;
+			}
+		}
+		// Device loss or a disconnected COM server invalidates interfaces, not the last measured level.
+		// One fresh activation retries this query; persistent failure keeps the old zero-level result.
+		Endpoints.Empty();
+		Enumerator = nullptr;
+	}
+	return true;
+}
+#endif
 
 void UEFAudioDeviceSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
@@ -203,6 +372,11 @@ void UEFAudioDeviceSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 
 void UEFAudioDeviceSubsystem::Deinitialize()
 {
+	bIsInitialized = false;
+#if PLATFORM_WINDOWS
+	++WindowsDeviceSnapshotGeneration;
+	WindowsMeterCache.Reset();
+#endif
 	StopDeviceMonitoring();
 	StopInputLevelCaptureRetry();
 	StopOutputAnalysis();
@@ -214,7 +388,6 @@ void UEFAudioDeviceSubsystem::Deinitialize()
 	ActiveOutputDeviceID = DefaultDeviceId;
 	ActiveInputDeviceID = DefaultDeviceId;
 	LastError.Reset();
-	bIsInitialized = false;
 
 	Super::Deinitialize();
 }
@@ -361,6 +534,7 @@ float UEFAudioDeviceSubsystem::GetDeviceLevel(EEFAudioDeviceType DeviceType, con
 
 float UEFAudioDeviceSubsystem::GetDeviceLevelRaw(EEFAudioDeviceType DeviceType, const FString& DeviceID)
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(EFAudioDevices_QueryLevel);
 	const FString PreferredDeviceID = ResolvePreferredDeviceID(DeviceType, DeviceID);
 	const FEFAudioDeviceInfo* DeviceInfo = FindDevice(PreferredDeviceID, DeviceType);
 	if (!DeviceInfo)
@@ -374,27 +548,15 @@ float UEFAudioDeviceSubsystem::GetDeviceLevelRaw(EEFAudioDeviceType DeviceType, 
 	}
 
 #if PLATFORM_WINDOWS
-	HRESULT CoInitializeResult = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
-	const bool bShouldUninitializeCOM = SUCCEEDED(CoInitializeResult);
-	if (SUCCEEDED(CoInitializeResult) || CoInitializeResult == RPC_E_CHANGED_MODE)
+	check(IsInGameThread());
+	if (!WindowsMeterCache.IsValid()) WindowsMeterCache = MakeShared<FEFAudioWindowsMeterCache>();
+	// Hold the interfaces through this call even if a future reentrant device event resets the owner cache.
+	const TSharedPtr<FEFAudioWindowsMeterCache> MeterCache = WindowsMeterCache;
+	const FEFAudioDeviceInfo MeterDevice = *DeviceInfo;
+	float PeakLevel = 0.f;
+	if (MeterCache->TryReadPeak(MeterDevice, DeviceType, PeakLevel))
 	{
-		IMMDeviceEnumerator* DeviceEnumerator = nullptr;
-		if (SUCCEEDED(CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL, IID_PPV_ARGS(&DeviceEnumerator))) && DeviceEnumerator)
-		{
-			const float PeakLevel = GetWindowsEndpointPeakLevel(DeviceEnumerator, *DeviceInfo, DeviceType);
-			DeviceEnumerator->Release();
-			if (bShouldUninitializeCOM)
-			{
-				CoUninitialize();
-			}
-
-			return PeakLevel >= 0.0f ? PeakLevel : 0.0f;
-		}
-
-		if (bShouldUninitializeCOM)
-		{
-			CoUninitialize();
-		}
+		return PeakLevel >= 0.0f ? PeakLevel : 0.0f;
 	}
 #endif
 
@@ -539,6 +701,11 @@ UWorld* UEFAudioDeviceSubsystem::ResolveWorld() const
 
 void UEFAudioDeviceSubsystem::RefreshDeviceCache(bool bBroadcastChanges)
 {
+#if PLATFORM_WINDOWS
+	// Initial/manual refresh remains immediate. An older monitoring result must not replace it.
+	++WindowsDeviceSnapshotGeneration;
+	WindowsMeterCache.Reset();
+#endif
 	const TArray<FEFAudioDeviceInfo> PreviousDevices = BuildAllDevices();
 
 	OutputDevices.Empty();
@@ -585,18 +752,57 @@ void UEFAudioDeviceSubsystem::StopDeviceMonitoring()
 
 void UEFAudioDeviceSubsystem::CheckDeviceConnectivity()
 {
+#if PLATFORM_WINDOWS
+	if (!bIsInitialized || bWindowsDeviceSnapshotInFlight) return;
+	bWindowsDeviceSnapshotInFlight = true;
+	const uint64 Generation = WindowsDeviceSnapshotGeneration;
+	const TWeakObjectPtr<UEFAudioDeviceSubsystem> WeakThis(this);
+	Async(EAsyncExecution::ThreadPool, [WeakThis, Generation]()
+	{
+		FWindowsAudioDeviceSnapshot Snapshot = ReadWindowsAudioDevices();
+		AsyncTask(ENamedThreads::GameThread, [WeakThis, Generation, Snapshot = MoveTemp(Snapshot)]() mutable
+		{
+			if (UEFAudioDeviceSubsystem* Self = WeakThis.Get())
+			{
+				Self->bWindowsDeviceSnapshotInFlight = false;
+				if (Self->bIsInitialized && Self->WindowsDeviceSnapshotGeneration == Generation)
+				{
+					if (!Snapshot.bOutputComplete || !Snapshot.bInputComplete)
+					{
+						Snapshot.RetainIncompleteFlows(Self->BuildAllDevices());
+					}
+					Self->ApplyMonitoredDeviceSnapshot(Snapshot.Devices);
+				}
+			}
+		});
+	});
+#else
+	ApplyMonitoredDeviceSnapshot({});
+#endif
+}
+
+void UEFAudioDeviceSubsystem::ApplyMonitoredDeviceSnapshot(const TArray<FEFAudioDeviceInfo>& PlatformDevices)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(EFAudioDevices_ApplyMonitoredSnapshot);
 	const TArray<FEFAudioDeviceInfo> PreviousDevices = BuildAllDevices();
 
 	OutputDevices.Empty();
 	InputDevices.Empty();
 	AcquireVoiceChatUser();
 	EnumerateVoiceChatDevices();
+#if PLATFORM_WINDOWS
+	for (const FEFAudioDeviceInfo& DeviceInfo : PlatformDevices) AddOrUpdateDevice(DeviceInfo);
+#else
 	EnumeratePlatformDevices();
+#endif
 	AddPlatformDefaultFallbacks();
 
 	const TArray<FEFAudioDeviceInfo> CurrentDevices = BuildAllDevices();
 	if (!AreDeviceListsEquivalent(PreviousDevices, CurrentDevices))
 	{
+#if PLATFORM_WINDOWS
+		WindowsMeterCache.Reset();
+#endif
 		BroadcastDisconnectedDevices(PreviousDevices, CurrentDevices);
 		OnAudioDevicesChanged.Broadcast(CurrentDevices);
 	}
@@ -864,6 +1070,7 @@ EEFAudioDeviceSelectionResult UEFAudioDeviceSubsystem::SelectDevice(const FStrin
 	}
 
 #if PLATFORM_WINDOWS
+	WindowsMeterCache.Reset();
 	if (DeviceType == EEFAudioDeviceType::Input
 		&& (DeviceInfo->Backend == EEFAudioDeviceBackend::WindowsCoreAudio || DeviceInfo->Backend == EEFAudioDeviceBackend::PlatformDefault))
 	{
@@ -973,6 +1180,9 @@ void UEFAudioDeviceSubsystem::HandleCompletedOutputDeviceSwap(const FSwapAudioOu
 {
 	if (SwapResult.Result == ESwapAudioOutputDeviceResultState::Success)
 	{
+#if PLATFORM_WINDOWS
+		WindowsMeterCache.Reset();
+#endif
 		ActiveOutputDeviceID = SwapResult.RequestedDeviceId.IsEmpty() ? DefaultDeviceId : NormalizeDeviceId(SwapResult.RequestedDeviceId);
 		if (const FEFAudioDeviceInfo* DeviceInfo = FindDevice(ActiveOutputDeviceID, EEFAudioDeviceType::Output))
 		{
@@ -1230,110 +1440,45 @@ void UEFAudioDeviceSubsystem::SetLastError(const FString& ErrorMessage)
 #if PLATFORM_WINDOWS
 void UEFAudioDeviceSubsystem::EnumerateWindowsCoreAudioDevices()
 {
-	HRESULT CoInitializeResult = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
-	const bool bShouldUninitializeCOM = SUCCEEDED(CoInitializeResult);
-	if (FAILED(CoInitializeResult) && CoInitializeResult != RPC_E_CHANGED_MODE)
-	{
-		return;
-	}
+	const FWindowsAudioDeviceSnapshot Snapshot = ReadWindowsAudioDevices();
+	for (const FEFAudioDeviceInfo& DeviceInfo : Snapshot.Devices) AddOrUpdateDevice(DeviceInfo);
+}
+#endif
 
-	IMMDeviceEnumerator* DeviceEnumerator = nullptr;
-	HRESULT Result = CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL, IID_PPV_ARGS(&DeviceEnumerator));
-	if (SUCCEEDED(Result) && DeviceEnumerator)
-	{
-		struct FWindowsEndpointEnumeration
-		{
-			static FString GetDeviceId(IMMDevice* Device)
-			{
-				LPWSTR RawDeviceID = nullptr;
-				if (FAILED(Device->GetId(&RawDeviceID)) || !RawDeviceID)
-				{
-					return FString();
-				}
+#if PLATFORM_WINDOWS && WITH_DEV_AUTOMATION_TESTS
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEFAudioPartialSnapshotTest, "UnrealExtendedFramework.AudioDevices.PartialSnapshot",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
-				FString DeviceID(RawDeviceID);
-				CoTaskMemFree(RawDeviceID);
-				return DeviceID;
-			}
+bool FEFAudioPartialSnapshotTest::RunTest(const FString&)
+{
+	FEFAudioDeviceInfo Microphone;
+	Microphone.DeviceType = EEFAudioDeviceType::Input;
+	Microphone.DeviceID = TEXT("microphone");
+	Microphone.Backend = EEFAudioDeviceBackend::WindowsCoreAudio;
+	FEFAudioDeviceInfo Speaker = Microphone;
+	Speaker.DeviceType = EEFAudioDeviceType::Output;
+	Speaker.DeviceID = TEXT("speaker");
+	FEFAudioDeviceInfo Voice = Microphone;
+	Voice.Backend = EEFAudioDeviceBackend::UnrealVoiceChat;
+	const TArray<FEFAudioDeviceInfo> Previous{ Microphone, Speaker, Voice };
 
-			static FString GetDeviceName(IMMDevice* Device, const FString& FallbackName)
-			{
-				IPropertyStore* PropertyStore = nullptr;
-				if (FAILED(Device->OpenPropertyStore(STGM_READ, &PropertyStore)) || !PropertyStore)
-				{
-					return FallbackName;
-				}
+	FWindowsAudioDeviceSnapshot Snapshot;
+	Snapshot.bOutputComplete = true; // Last speaker unplugged while one microphone query failed.
+	Snapshot.Devices.Emplace_GetRef(Microphone).DeviceID = TEXT("partial input");
+	Snapshot.RetainIncompleteFlows(Previous);
+	if (!TestEqual(TEXT("A confirmed empty output list and a partial input leave one endpoint"), Snapshot.Devices.Num(), 1)) return false;
+	TestEqual(TEXT("The previous Windows microphone is preserved"), Snapshot.Devices[0].DeviceID, Microphone.DeviceID);
 
-				PROPVARIANT FriendlyName;
-				PropVariantInit(&FriendlyName);
-				FString DeviceName = FallbackName;
-				if (SUCCEEDED(PropertyStore->GetValue(PKEY_Device_FriendlyName, &FriendlyName)) && FriendlyName.vt == VT_LPWSTR && FriendlyName.pwszVal)
-				{
-					DeviceName = FriendlyName.pwszVal;
-				}
-
-				PropVariantClear(&FriendlyName);
-				PropertyStore->Release();
-				return DeviceName;
-			}
-		};
-
-		auto EnumerateEndpoints = [this, DeviceEnumerator](EDataFlow DataFlow, EEFAudioDeviceType DeviceType)
-		{
-			FString DefaultEndpointID;
-			IMMDevice* DefaultEndpoint = nullptr;
-			if (SUCCEEDED(DeviceEnumerator->GetDefaultAudioEndpoint(DataFlow, eConsole, &DefaultEndpoint)) && DefaultEndpoint)
-			{
-				DefaultEndpointID = FWindowsEndpointEnumeration::GetDeviceId(DefaultEndpoint);
-				DefaultEndpoint->Release();
-			}
-
-			IMMDeviceCollection* DeviceCollection = nullptr;
-			if (FAILED(DeviceEnumerator->EnumAudioEndpoints(DataFlow, DEVICE_STATE_ACTIVE, &DeviceCollection)) || !DeviceCollection)
-			{
-				return;
-			}
-
-			UINT DeviceCount = 0;
-			DeviceCollection->GetCount(&DeviceCount);
-			for (UINT DeviceIndex = 0; DeviceIndex < DeviceCount; ++DeviceIndex)
-			{
-				IMMDevice* Device = nullptr;
-				if (FAILED(DeviceCollection->Item(DeviceIndex, &Device)) || !Device)
-				{
-					continue;
-				}
-
-				const FString DeviceID = FWindowsEndpointEnumeration::GetDeviceId(Device);
-				if (!DeviceID.IsEmpty())
-				{
-					FEFAudioDeviceInfo DeviceInfo;
-					DeviceInfo.DeviceName = FWindowsEndpointEnumeration::GetDeviceName(Device, DeviceID);
-					DeviceInfo.DeviceID = DeviceID;
-					DeviceInfo.bIsDefaultDevice = DeviceID == DefaultEndpointID;
-					DeviceInfo.bIsInputDevice = DeviceType == EEFAudioDeviceType::Input;
-					DeviceInfo.bIsConnected = true;
-					DeviceInfo.bCanBeSelected = true;
-					DeviceInfo.DeviceType = DeviceType;
-					DeviceInfo.Backend = EEFAudioDeviceBackend::WindowsCoreAudio;
-					DeviceInfo.BackendName = GetBackendName(DeviceInfo.Backend);
-					AddOrUpdateDevice(DeviceInfo);
-				}
-
-				Device->Release();
-			}
-
-			DeviceCollection->Release();
-		};
-
-		EnumerateEndpoints(eRender, EEFAudioDeviceType::Output);
-		EnumerateEndpoints(eCapture, EEFAudioDeviceType::Input);
-		DeviceEnumerator->Release();
-	}
-
-	if (bShouldUninitializeCOM)
-	{
-		CoUninitialize();
-	}
+	Snapshot.Devices.Reset();
+	Snapshot.bOutputComplete = false;
+	Snapshot.bInputComplete = true;
+	FEFAudioDeviceInfo NewMicrophone = Microphone;
+	NewMicrophone.DeviceID = TEXT("new microphone");
+	Snapshot.Devices.Add(NewMicrophone);
+	Snapshot.RetainIncompleteFlows(Previous);
+	if (!TestEqual(TEXT("A failed speaker query still allows microphone changes"), Snapshot.Devices.Num(), 2)) return false;
+	TestEqual(TEXT("Fresh input survives"), Snapshot.Devices[0].DeviceID, NewMicrophone.DeviceID);
+	TestEqual(TEXT("Previous output survives"), Snapshot.Devices[1].DeviceID, Speaker.DeviceID);
+	return !HasAnyErrors();
 }
 #endif
