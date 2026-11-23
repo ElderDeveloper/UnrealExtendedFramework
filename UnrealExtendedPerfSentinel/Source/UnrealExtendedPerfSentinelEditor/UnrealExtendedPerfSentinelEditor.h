@@ -18,7 +18,14 @@ public:
 private:
 	TSharedRef<SDockTab> SpawnReportTab(const FSpawnTabArgs& Args);
 	void HandleAnalysisCompleted(bool bSucceeded, const FPerfSentinelProcessResult& Result, const FString& Error);
+	/** Switches the editor's "Use Less CPU when in Background" off for a capture and back afterwards (in memory only). */
+	void HandleCaptureActiveChanged(bool bCapturing);
+	/** The editor is exiting: puts the setting back while UObjects exist and before the editor saves its settings. */
+	void HandleEditorPreExit();
 
 	TUniquePtr<FPerfSentinelEditorMenu> EditorMenu;
 	FDelegateHandle AnalysisCompletedHandle;
+	FDelegateHandle CaptureActiveChangedHandle;
+	FDelegateHandle EditorPreExitHandle;
+	bool bRestoreBackgroundThrottle = false;
 };

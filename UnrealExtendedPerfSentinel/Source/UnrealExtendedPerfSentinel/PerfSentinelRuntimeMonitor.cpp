@@ -3,6 +3,7 @@
 #include "PerfSentinelRuntimeMonitor.h"
 
 #include "PerfSentinelSettings.h"
+#include "PerfSentinelEventRecorder.h"
 #include "PerfSentinelNetworkSampler.h"
 #include "PerfSentinelTelemetry.h"
 #include "PerfSentinelCollector.h"
@@ -14,10 +15,20 @@
 #include "Components/ActorComponent.h"
 #include "Components/PrimitiveComponent.h"
 #include "Components/Widget.h"
+#include "ContentStreaming.h"
 #include "DynamicRHI.h"
+#include "GenericPlatform/GenericPlatformDriver.h"
+#include "HAL/IConsoleManager.h"
 #include "ImageUtils.h"
+#include "Misc/CommandLine.h"
+#include "PipelineStateCache.h"
 #include "RenderTimer.h"
 #include "RHIGlobals.h"
+#include "RHIStats.h"
+#if WITH_EDITOR
+#include "AssetCompilingManager.h"
+#include "ShaderCompiler.h"
+#endif
 #include "ProfilingDebugging/MiscTrace.h"
 #include "UObject/UObjectGlobals.h"
 #include "Dom/JsonObject.h"
@@ -29,6 +40,7 @@
 #include "Engine/World.h"
 #include "EngineUtils.h"
 #include "HAL/FileManager.h"
+#include "HAL/PlatformApplicationMisc.h"
 #include "HAL/PlatformMemory.h"
 #include "HAL/PlatformFileManager.h"
 #include "HAL/PlatformTime.h"
@@ -43,6 +55,7 @@
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
 #include "UnrealClient.h"
+#include "UObject/UObjectArray.h"
 #include "UObject/UObjectIterator.h"
 
 namespace
@@ -130,6 +143,8 @@ void AddWorldCounterFields(const UWorld* World, const TSharedRef<FJsonObject>& R
 
 	if (World)
 	{
+		// Components are counted through their actors. Walking TObjectIterator<UActorComponent> visits every
+		// UObject in the process and stalled the game thread for 10+ ms each second in editor captures.
 		for (TActorIterator<AActor> It(const_cast<UWorld*>(World)); It; ++It)
 		{
 			++ActorCount;
@@ -137,24 +152,21 @@ void AddWorldCounterFields(const UWorld* World, const TSharedRef<FJsonObject>& R
 			{
 				++TickingActorCount;
 			}
-		}
-
-		for (TObjectIterator<UActorComponent> It; It; ++It)
-		{
-			const UActorComponent* Component = *It;
-			if (!Component || Component->GetWorld() != World)
+			for (const UActorComponent* Component : It->GetComponents())
 			{
-				continue;
-			}
-
-			++ComponentCount;
-			if (Component->IsComponentTickEnabled())
-			{
-				++TickingComponentCount;
-			}
-			if (Cast<UPrimitiveComponent>(Component))
-			{
-				++PrimitiveComponentCount;
+				if (!Component)
+				{
+					continue;
+				}
+				++ComponentCount;
+				if (Component->IsComponentTickEnabled())
+				{
+					++TickingComponentCount;
+				}
+				if (Component->IsA<UPrimitiveComponent>())
+				{
+					++PrimitiveComponentCount;
+				}
 			}
 		}
 
@@ -175,11 +187,8 @@ void AddWorldCounterFields(const UWorld* World, const TSharedRef<FJsonObject>& R
 		}
 	}
 
-	int32 UObjectCount = 0;
-	for (TObjectIterator<UObject> It; It; ++It)
-	{
-		++UObjectCount;
-	}
+	// Live slots in the global object array: O(1), where counting with TObjectIterator walks every object.
+	const int32 UObjectCount = GUObjectArray.GetObjectArrayNumMinusAvailable();
 
 	Root->SetNumberField(TEXT("actor_count"), ActorCount);
 	Root->SetNumberField(TEXT("ticking_actor_count"), TickingActorCount);
@@ -187,6 +196,7 @@ void AddWorldCounterFields(const UWorld* World, const TSharedRef<FJsonObject>& R
 	Root->SetNumberField(TEXT("ticking_component_count"), TickingComponentCount);
 	Root->SetNumberField(TEXT("primitive_component_count"), PrimitiveComponentCount);
 	Root->SetNumberField(TEXT("uobject_count"), UObjectCount);
+	Root->SetStringField(TEXT("uobject_count_source"), TEXT("object_array_live_slots"));
 	Root->SetNumberField(TEXT("loaded_streaming_level_count"), LoadedStreamingLevelCount);
 	Root->SetNumberField(TEXT("visible_streaming_level_count"), VisibleStreamingLevelCount);
 	Root->SetStringField(TEXT("world_inventory_status"), TEXT("observed"));
@@ -200,6 +210,107 @@ void AddMemoryFields(const TSharedRef<FJsonObject>& Root)
 	Root->SetNumberField(TEXT("memory_available_physical_bytes"), static_cast<double>(MemoryStats.AvailablePhysical));
 	Root->SetNumberField(TEXT("memory_used_virtual_bytes"), static_cast<double>(MemoryStats.UsedVirtual));
 	Root->SetNumberField(TEXT("memory_peak_used_virtual_bytes"), static_cast<double>(MemoryStats.PeakUsedVirtual));
+}
+
+/** CPU use, video memory, texture streaming budget and the queues that stall frames when they drain synchronously. */
+void AddEngineLoadFields(const TSharedRef<FJsonObject>& Root)
+{
+	const FCPUTime CpuTime = FPlatformTime::GetCPUTime();
+	// Process CPU over the engine's last update interval: relative to all logical cores, and to one core.
+	Root->SetNumberField(TEXT("process_cpu_percent"), CpuTime.CPUTimePctRelative);
+	Root->SetNumberField(TEXT("process_cpu_one_core_percent"), CpuTime.CPUTimePct);
+
+	if (GDynamicRHI && !GUsingNullRHI)
+	{
+		FTextureMemoryStats TextureStats;
+		RHIGetTextureMemoryStats(TextureStats);
+		if (TextureStats.DedicatedVideoMemory > 0) { Root->SetNumberField(TEXT("gpu_dedicated_video_memory_bytes"), static_cast<double>(TextureStats.DedicatedVideoMemory)); }
+		if (TextureStats.TotalGraphicsMemory > 0) { Root->SetNumberField(TEXT("gpu_total_graphics_memory_bytes"), static_cast<double>(TextureStats.TotalGraphicsMemory)); }
+		Root->SetNumberField(TEXT("gpu_streaming_texture_bytes"), static_cast<double>(TextureStats.StreamingMemorySize));
+		Root->SetNumberField(TEXT("gpu_nonstreaming_texture_bytes"), static_cast<double>(TextureStats.NonStreamingMemorySize));
+		Root->SetNumberField(TEXT("gpu_texture_pool_bytes"), static_cast<double>(TextureStats.TexturePoolSize));
+	}
+
+	if (IStreamingManager::HasShutdown() == false)
+	{
+		const IRenderAssetStreamingManager& Streaming = IStreamingManager::Get().GetRenderAssetStreamingManager();
+		// Positive over-budget means textures and meshes are held at lower mips than wanted (blur, and streaming churn).
+		Root->SetNumberField(TEXT("streaming_pool_bytes"), static_cast<double>(Streaming.GetPoolSize()));
+		Root->SetNumberField(TEXT("streaming_required_pool_bytes"), static_cast<double>(Streaming.GetRequiredPoolSize()));
+		Root->SetNumberField(TEXT("streaming_max_ever_required_bytes"), static_cast<double>(Streaming.GetMaxEverRequired()));
+		Root->SetNumberField(TEXT("streaming_over_budget_bytes"), static_cast<double>(Streaming.GetMemoryOverBudget()));
+	}
+
+	Root->SetNumberField(TEXT("async_packages_loading"), GetNumAsyncPackages());
+	Root->SetNumberField(TEXT("pso_precache_requests_active"), static_cast<double>(PipelineStateCache::NumActivePrecacheRequests()));
+#if WITH_EDITOR
+	// Editor only: shaders and assets (textures, meshes) still compiling block a frame when something needs them now.
+	Root->SetNumberField(TEXT("shader_jobs_remaining"), GShaderCompilingManager ? GShaderCompilingManager->GetNumRemainingJobs() : -1);
+	Root->SetNumberField(TEXT("asset_compiles_remaining"), FAssetCompilingManager::Get().GetNumRemainingAssets());
+#endif
+}
+
+/** Settings that change what frame times mean: caps, sync, resolution, upscaling and the costly renderer features. */
+void AddCaptureSettingsFields(const TSharedRef<FJsonObject>& Root)
+{
+	TSharedRef<FJsonObject> Hardware = MakeShared<FJsonObject>();
+	Hardware->SetNumberField(TEXT("physical_cores"), FPlatformMisc::NumberOfCores());
+	Hardware->SetNumberField(TEXT("logical_cores"), FPlatformMisc::NumberOfCoresIncludingHyperthreads());
+	Hardware->SetNumberField(TEXT("total_physical_memory_gb"), FPlatformMemory::GetConstants().TotalPhysicalGB);
+	Hardware->SetStringField(TEXT("os_version"), FPlatformMisc::GetOSVersion());
+	if (GDynamicRHI && !GUsingNullRHI)
+	{
+		const FGPUDriverInfo Driver = FPlatformMisc::GetGPUDriverInfo(GRHIAdapterName);
+		if (Driver.IsValid())
+		{
+			Hardware->SetStringField(TEXT("gpu_driver_version"), Driver.UserDriverVersion);
+			Hardware->SetStringField(TEXT("gpu_driver_internal_version"), Driver.InternalDriverVersion);
+			Hardware->SetStringField(TEXT("gpu_driver_date"), Driver.DriverDate);
+		}
+		FTextureMemoryStats TextureStats;
+		RHIGetTextureMemoryStats(TextureStats);
+		if (TextureStats.DedicatedVideoMemory > 0) { Hardware->SetNumberField(TEXT("gpu_dedicated_video_memory_bytes"), static_cast<double>(TextureStats.DedicatedVideoMemory)); }
+	}
+	Root->SetObjectField(TEXT("hardware"), Hardware);
+
+	TSharedRef<FJsonObject> Frame = MakeShared<FJsonObject>();
+	if (GEngine)
+	{
+		Frame->SetBoolField(TEXT("smooth_frame_rate"), GEngine->bSmoothFrameRate);
+		Frame->SetBoolField(TEXT("fixed_frame_rate"), GEngine->bUseFixedFrameRate);
+		Frame->SetNumberField(TEXT("fixed_frame_rate_fps"), GEngine->FixedFrameRate);
+		Frame->SetNumberField(TEXT("max_tick_rate_fps"), GEngine->GetMaxTickRate(0.0f, false));
+	}
+	Frame->SetBoolField(TEXT("fixed_time_step"), FApp::UseFixedTimeStep());
+	Root->SetObjectField(TEXT("frame_pacing"), Frame);
+
+	// Read by name so a missing variable (plugin not loaded, other engine version) is simply absent.
+	static const TCHAR* const VariableNames[] = {
+		TEXT("t.MaxFPS"), TEXT("r.VSync"), TEXT("r.VSyncEditor"), TEXT("t.IdleWhenNotForeground"),
+		TEXT("r.ScreenPercentage"), TEXT("r.SecondaryScreenPercentage.GameViewport"), TEXT("r.DynamicRes.OperationMode"),
+		TEXT("r.AntiAliasingMethod"), TEXT("r.TemporalAA.Upscaler"), TEXT("r.NGX.DLSS.Enable"), TEXT("r.Streamline.DLSSG.Enable"),
+		TEXT("r.DynamicGlobalIlluminationMethod"), TEXT("r.ReflectionMethod"), TEXT("r.Lumen.HardwareRayTracing"),
+		TEXT("r.RayTracing"), TEXT("r.Shadow.Virtual.Enable"), TEXT("r.Nanite"), TEXT("r.VolumetricFog"),
+		TEXT("r.MotionBlurQuality"), TEXT("r.Streaming.PoolSize"), TEXT("r.Streaming.LimitPoolSizeToVRAM"),
+		TEXT("r.ShaderPipelineCache.Enabled"), TEXT("r.PSOPrecaching"),
+		TEXT("sg.ResolutionQuality"), TEXT("sg.ViewDistanceQuality"), TEXT("sg.AntiAliasingQuality"), TEXT("sg.ShadowQuality"),
+		TEXT("sg.GlobalIlluminationQuality"), TEXT("sg.ReflectionQuality"), TEXT("sg.PostProcessQuality"), TEXT("sg.TextureQuality"),
+		TEXT("sg.EffectsQuality"), TEXT("sg.FoliageQuality"), TEXT("sg.ShadingQuality"), TEXT("sg.LandscapeQuality"),
+		TEXT("gc.TimeBetweenPurgingPendingKillObjects"), TEXT("gc.IncrementalBeginDestroyEnabled"), TEXT("s.AsyncLoadingThreadEnabled"),
+		TEXT("net.Iris.UseIrisReplication"), TEXT("net.MaxNetTickRate"), TEXT("net.UseAdaptiveNetUpdateFrequency"),
+		TEXT("p.NetUsePackedMovementRPCs"), TEXT("net.AllowPIESeamlessTravel"),
+	};
+	TSharedRef<FJsonObject> Variables = MakeShared<FJsonObject>();
+	for (const TCHAR* Name : VariableNames)
+	{
+		if (const IConsoleVariable* Variable = IConsoleManager::Get().FindConsoleVariable(Name))
+		{
+			Variables->SetStringField(Name, Variable->GetString());
+		}
+	}
+	Root->SetObjectField(TEXT("console_variables"), Variables);
+	Root->SetStringField(TEXT("command_line"), FString(FCommandLine::Get()).Left(2048));
+	Root->SetBoolField(TEXT("is_editor"), GIsEditor);
 }
 
 void WriteJsonObjectToFile(const FString& Path, const TSharedRef<FJsonObject>& Object)
@@ -226,6 +337,22 @@ FString SlateVisibilityToString(ESlateVisibility Visibility)
 FPerfSentinelRuntimeMonitor::FPerfSentinelRuntimeMonitor()
 {
 	NetworkSampler = MakeUnique<FPerfSentinelNetworkSampler>();
+	EventRecorder = MakeUnique<FPerfSentinelEventRecorder>();
+}
+
+FString FPerfSentinelRuntimeMonitor::GetEventsPath() const
+{
+	return EventRecorder ? EventRecorder->GetPath() : FString();
+}
+
+int32 FPerfSentinelRuntimeMonitor::GetEventCount() const
+{
+	return EventRecorder ? EventRecorder->GetEventCount() : 0;
+}
+
+int32 FPerfSentinelRuntimeMonitor::GetDroppedEventCount() const
+{
+	return EventRecorder ? EventRecorder->GetDroppedEventCount() : 0;
 }
 
 FPerfSentinelRuntimeMonitor::~FPerfSentinelRuntimeMonitor()
@@ -285,7 +412,9 @@ void FPerfSentinelRuntimeMonitor::Activate(const FString& InSessionBaseName, con
 	TelemetryWriter.Reset(IFileManager::Get().CreateFileWriter(*TelemetryEventsPath));
 	if (!TelemetryWriter) { UE_LOG(LogPerfSentinel, Warning, TEXT("RuntimeMonitor: Cannot open telemetry stream: %s"), *TelemetryEventsPath); }
 	TelemetryCursor = 0;
-	LastTelemetryDroppedRows = 0;
+	// Rows the history dropped before this capture are not this capture's loss: report only drops after activation.
+	TelemetryDroppedAtStart = FPerfSentinelTelemetry::Get().GetUnreadDroppedRows();
+	LastTelemetryDroppedRows = TelemetryDroppedAtStart;
 	LastCollectorSampleSeconds = -TNumericLimits<double>::Max();
 	if (Settings && Settings->bCollectFrameSamples)
 	{
@@ -324,9 +453,24 @@ void FPerfSentinelRuntimeMonitor::Activate(const FString& InSessionBaseName, con
 	LastRuntimeCounterTimeSeconds = -TNumericLimits<double>::Max();
 	LastLeakSnapshotTimeSeconds = -TNumericLimits<double>::Max();
 	CaptureStartPlatformSeconds = FPlatformTime::Seconds();
+	// The first per-class snapshot walks every UObject (~17 ms in the editor). Take it two seconds in, not on the
+	// first frame, so it does not pile onto the trace start-up frames.
+	LastLeakSnapshotTimeSeconds = CaptureStartPlatformSeconds - (Settings ? FMath::Max(0.5, static_cast<double>(Settings->LeakSnapshotIntervalSeconds)) : 30.0) + 2.0;
 	GarbageCollectionCount = 0;
 	LastGarbageCollectPlatformSeconds = -1.0;
+	bSkipNextFrameSample = true;
+	bUnfocused = false;
+	UnfocusedStartSeconds = 0.0;
+	UnfocusedTotalSeconds = 0.0;
+	UnfocusedIntervalCount = 0;
+	if (Settings && Settings->bRecordEngineEvents && EventRecorder)
+	{
+		FString EventsPath = FPaths::Combine(SpikeOutputDirectory, FString::Printf(TEXT("%s_events.ndjson"), *SessionBaseName));
+		FPaths::NormalizeFilename(EventsPath);
+		EventRecorder->Start(EventsPath, CaptureStartPlatformSeconds);
+	}
 	bActive = true;
+	UpdateFocusState(CaptureStartPlatformSeconds);
 
 	// Force the engine stats system to collect per-frame scope data so spike-frame cost can be attributed.
 	bStatHarvestEnabled = Settings && Settings->bHarvestRuntimeStats && FPerfSentinelStatHarvester::IsAvailable();
@@ -385,6 +529,14 @@ void FPerfSentinelRuntimeMonitor::Deactivate()
 
 	if (bActive)
 	{
+		if (bUnfocused)
+		{
+			EndUnfocused(FPlatformTime::Seconds());
+		}
+		if (EventRecorder)
+		{
+			EventRecorder->Stop(FPlatformTime::Seconds());
+		}
 		FlushTelemetry(true);
 		FlushSpikeWindows(true);
 		WriteGameStats();
@@ -425,7 +577,19 @@ void FPerfSentinelRuntimeMonitor::HandleEndFrame()
 	}
 
 	const float FrameTimeMs = FApp::GetDeltaTime() * 1000.0f;
-	RecordFrameSample(*Settings);
+	UpdateFocusState(FPlatformTime::Seconds());
+	if (EventRecorder && EventRecorder->IsRecording())
+	{
+		EventRecorder->Tick(GetPerfSentinelWorld(), FPlatformTime::Seconds());
+	}
+	if (bSkipNextFrameSample)
+	{
+		bSkipNextFrameSample = false;
+	}
+	else
+	{
+		RecordFrameSample(*Settings);
+	}
 	if (FPlatformTime::Seconds() - LastCollectorSampleSeconds >= FMath::Max(0.1, static_cast<double>(Settings->CollectorIntervalSeconds)))
 	{
 		const double CollectorSeconds = FPlatformTime::Seconds();
@@ -435,10 +599,52 @@ void FPerfSentinelRuntimeMonitor::HandleEndFrame()
 	FlushTelemetry(false);
 	FlushSpikeWindows(false);
 
-	if (FrameTimeMs >= Settings->ScreenshotSpikeThresholdMs)
+	// Collection comes first: spike handling only runs when asked for, and never while another
+	// application has focus, where slow frames come from the OS and throttling rather than the game.
+	if (Settings->bRecordSpikeEvents && !bUnfocused && FrameTimeMs >= Settings->ScreenshotSpikeThresholdMs)
 	{
 		CaptureSpike(FrameTimeMs, false);
 	}
+}
+
+void FPerfSentinelRuntimeMonitor::UpdateFocusState(double NowSeconds)
+{
+	const bool bForeground = FPlatformApplicationMisc::IsThisApplicationForeground();
+	if (!bForeground && !bUnfocused)
+	{
+		BeginUnfocused(NowSeconds);
+	}
+	else if (bForeground && bUnfocused)
+	{
+		EndUnfocused(NowSeconds);
+	}
+}
+
+void FPerfSentinelRuntimeMonitor::BeginUnfocused(double NowSeconds)
+{
+	bUnfocused = true;
+	UnfocusedStartSeconds = NowSeconds;
+	++UnfocusedIntervalCount;
+	TRACE_BOOKMARK(TEXT("PerfSentinel.Unfocused.Begin"));
+	TRACE_BEGIN_REGION(TEXT("PerfSentinel Unfocused"));
+	if (EventRecorder)
+	{
+		EventRecorder->RecordFocusChange(false, NowSeconds);
+	}
+	UE_LOG(LogPerfSentinel, Log, TEXT("RuntimeMonitor: Another application has focus; frames are marked unfocused until focus returns."));
+}
+
+void FPerfSentinelRuntimeMonitor::EndUnfocused(double NowSeconds)
+{
+	bUnfocused = false;
+	UnfocusedTotalSeconds += FMath::Max(0.0, NowSeconds - UnfocusedStartSeconds);
+	TRACE_END_REGION(TEXT("PerfSentinel Unfocused"));
+	TRACE_BOOKMARK(TEXT("PerfSentinel.Unfocused.End"));
+	if (EventRecorder)
+	{
+		EventRecorder->RecordFocusChange(true, NowSeconds);
+	}
+	UE_LOG(LogPerfSentinel, Log, TEXT("RuntimeMonitor: Focus returned after %.1f s."), NowSeconds - UnfocusedStartSeconds);
 }
 
 void FPerfSentinelRuntimeMonitor::RecordFrameSample(const UPerfSentinelSettings& Settings)
@@ -449,6 +655,10 @@ void FPerfSentinelRuntimeMonitor::RecordFrameSample(const UPerfSentinelSettings&
 	Sample.AppSeconds = FApp::GetCurrentTime();
 	Sample.FrameNumber = static_cast<int64>(GFrameCounter);
 	Sample.FrameTimeMs = FApp::GetDeltaTime() * 1000.0f;
+	Sample.IdleMs = static_cast<float>(FApp::GetIdleTime() * 1000.0);
+	Sample.bForeground = !bUnfocused;
+	Sample.DrawCalls = GNumDrawCallsRHI[0];
+	Sample.PrimitivesDrawn = GNumPrimitivesDrawnRHI[0];
 	FillThreadTimings(Sample);
 
 	if (Settings.bCollectFrameSamples)
@@ -519,6 +729,7 @@ void FPerfSentinelRuntimeMonitor::AppendRuntimeCounters(const FFrameSample& Samp
 	Root->SetNumberField(TEXT("render_thread_ms"), Sample.RenderThreadMs);
 	Root->SetNumberField(TEXT("rhi_thread_ms"), Sample.RhiThreadMs);
 	Root->SetNumberField(TEXT("gpu_ms"), Sample.GpuMs);
+	Root->SetBoolField(TEXT("app_foreground"), Sample.bForeground);
 
 	// Garbage-collection tracking (cheap, every counter line) for leak analysis.
 	Root->SetNumberField(TEXT("gc_count"), GarbageCollectionCount);
@@ -533,6 +744,11 @@ void FPerfSentinelRuntimeMonitor::AppendRuntimeCounters(const FFrameSample& Samp
 	}
 	AddWorldCounterFields(World, Root);
 	AddMemoryFields(Root);
+	AddEngineLoadFields(Root);
+	if (World)
+	{
+		Root->SetNumberField(TEXT("streaming_levels_loading"), World->GetNumStreamingLevelsBeingLoaded());
+	}
 
 	// Heavy per-class breakdown + streaming-level contents on a slower cadence to limit overhead.
 	const UPerfSentinelSettings* Settings = UPerfSentinelSettings::Get();
@@ -602,7 +818,8 @@ void FPerfSentinelRuntimeMonitor::FlushTelemetry(bool bFinal)
 			Coverage->SetStringField(TEXT("timebase"), TEXT("process_platform_seconds"));
 			Coverage->SetNumberField(TEXT("platform_seconds"), FPlatformTime::Seconds());
 			Coverage->SetNumberField(TEXT("capture_elapsed_seconds"), FPlatformTime::Seconds() - CaptureStartPlatformSeconds);
-			Coverage->SetNumberField(TEXT("dropped_or_expired_rows"), static_cast<double>(DroppedRows));
+			Coverage->SetNumberField(TEXT("dropped_or_expired_rows"), static_cast<double>(DroppedRows - FMath::Min(DroppedRows, TelemetryDroppedAtStart)));
+			Coverage->SetStringField(TEXT("dropped_semantics"), TEXT("telemetry rows evicted unread since capture start"));
 			Coverage->SetStringField(TEXT("interpretation"), TEXT("history_retention_or_capacity_not_network_packet_loss"));
 			WriteJsonLine(TelemetryWriter.Get(), Coverage);
 			LastTelemetryDroppedRows = DroppedRows;
@@ -646,14 +863,12 @@ void FPerfSentinelRuntimeMonitor::AddPerClassBreakdownFields(const UWorld* World
 			{
 				ActorClassCounts.FindOrAdd(Class->GetFName())++;
 			}
-		}
-
-		for (TObjectIterator<UActorComponent> It; It; ++It)
-		{
-			const UActorComponent* Component = *It;
-			if (Component && Component->GetWorld() == World && Component->GetClass())
+			for (const UActorComponent* Component : It->GetComponents())
 			{
-				ComponentClassCounts.FindOrAdd(Component->GetClass()->GetFName())++;
+				if (Component && Component->GetClass())
+				{
+					ComponentClassCounts.FindOrAdd(Component->GetClass()->GetFName())++;
+				}
 			}
 		}
 	}
@@ -1040,8 +1255,14 @@ void FPerfSentinelRuntimeMonitor::WriteRuntimeContext() const
 		Root->SetNumberField(TEXT("system_resolution_height"), GSystemResolution.ResY);
 	}
 
+	if (World)
+	{
+		Root->SetStringField(TEXT("net_mode"), World->GetNetMode() == NM_Client ? TEXT("client")
+			: (World->GetNetMode() == NM_ListenServer ? TEXT("listen_server") : (World->GetNetMode() == NM_DedicatedServer ? TEXT("dedicated_server") : TEXT("standalone"))));
+	}
 	AddWorldCounterFields(World, Root);
 	AddMemoryFields(Root);
+	AddCaptureSettingsFields(Root);
 	WriteJsonObjectToFile(RuntimeContextPath, Root);
 }
 
@@ -1269,6 +1490,10 @@ TSharedRef<FJsonObject> FPerfSentinelRuntimeMonitor::BuildFrameSampleObject(cons
 	Root->SetNumberField(TEXT("render_thread_ms"), Sample.RenderThreadMs);
 	Root->SetNumberField(TEXT("rhi_thread_ms"), Sample.RhiThreadMs);
 	Root->SetNumberField(TEXT("gpu_ms"), Sample.GpuMs);
+	Root->SetNumberField(TEXT("idle_ms"), Sample.IdleMs);
+	if (Sample.DrawCalls >= 0) { Root->SetNumberField(TEXT("draw_calls"), Sample.DrawCalls); }
+	if (Sample.PrimitivesDrawn >= 0) { Root->SetNumberField(TEXT("primitives"), Sample.PrimitivesDrawn); }
+	Root->SetBoolField(TEXT("app_foreground"), Sample.bForeground);
 	return Root;
 }
 

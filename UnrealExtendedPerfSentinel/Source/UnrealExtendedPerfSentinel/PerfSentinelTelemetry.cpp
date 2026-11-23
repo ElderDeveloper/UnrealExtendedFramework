@@ -192,11 +192,12 @@ void FPerfSentinelTelemetry::Prune(double NowSeconds)
 		|| NowSeconds - History[RemoveCount].PlatformSeconds > EffectiveRetention || RetainedBytes > 8 * 1024 * 1024))
 	{
 		RetainedBytes -= History[RemoveCount].Bytes;
+		// Only rows no reader has copied are lost; expiry after a read is how a bounded history works.
+		(History[RemoveCount].Sequence > HighestReadSequence ? DroppedRows : ExpiredAfterReadRows) += 1;
 		++RemoveCount;
 	}
 	if (RemoveCount > 0)
 	{
-		DroppedRows += RemoveCount;
 		History.RemoveAt(0, RemoveCount, EAllowShrinking::No);
 	}
 }
@@ -247,6 +248,13 @@ void FPerfSentinelTelemetry::ReadSince(uint64& Cursor, int32 MaxRows, TArray<TSh
 		OutRows.Add(MakeShared<FJsonObject>(*Row.Event));
 		Cursor = Row.Sequence;
 	}
+	HighestReadSequence = FMath::Max(HighestReadSequence, Cursor);
+}
+
+uint64 FPerfSentinelTelemetry::GetUnreadDroppedRows() const
+{
+	FScopeLock Lock(&Mutex);
+	return DroppedRows;
 }
 
 TSharedRef<FJsonObject> FPerfSentinelTelemetry::GetCoverage() const
@@ -261,6 +269,8 @@ TSharedRef<FJsonObject> FPerfSentinelTelemetry::GetCoverage() const
 	Result->SetNumberField(TEXT("retained_rows"), History.Num());
 	Result->SetNumberField(TEXT("estimated_retained_bytes"), static_cast<double>(RetainedBytes));
 	Result->SetNumberField(TEXT("dropped_or_expired_rows"), static_cast<double>(DroppedRows));
+	Result->SetStringField(TEXT("dropped_or_expired_rows_semantics"), TEXT("evicted_before_any_reader_copied_them"));
+	Result->SetNumberField(TEXT("expired_after_read_rows"), static_cast<double>(ExpiredAfterReadRows));
 	Result->SetStringField(TEXT("http_observation"), TEXT("adapter_required_single_cast_global_delegates_are_not_overwritten"));
 	Result->SetStringField(TEXT("transport_scope"), TEXT("explicit_integrations_payload_costs_wire_bytes_only_when_measured"));
 	return Result;

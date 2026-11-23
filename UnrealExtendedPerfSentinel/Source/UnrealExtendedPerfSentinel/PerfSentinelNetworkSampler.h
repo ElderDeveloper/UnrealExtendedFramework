@@ -5,6 +5,7 @@
 
 class FJsonObject;
 class UNetConnection;
+class UNetDriver;
 class UPerfSentinelSettings;
 
 /** Bounded game-thread snapshots of native gameplay transport counters. Never records addresses or account IDs. */
@@ -23,7 +24,7 @@ private:
 		uint32 OutNotified = 0;
 	};
 	int32 GetObjectId(const UObject* Object);
-	TSharedRef<FJsonObject> SampleConnection(UNetConnection* Connection, bool bServerConnection, double Seconds, int32 MaxChannels);
+	TSharedRef<FJsonObject> SampleConnection(UNetDriver* Driver, UNetConnection* Connection, bool bServerConnection, double Seconds, int32 MaxChannels);
 	TMap<TWeakObjectPtr<UObject>, int32> ObjectIds;
 	TMap<TWeakObjectPtr<UNetConnection>, FConnectionSample> PreviousConnections;
 	int32 NextObjectId = 0;

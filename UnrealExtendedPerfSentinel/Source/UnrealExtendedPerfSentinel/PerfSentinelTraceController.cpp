@@ -5,8 +5,10 @@
 #include "PerfSentinelRuntimeMonitor.h"
 #include "PerfSentinelSettings.h"
 #include "PerfSentinelTelemetry.h"
+#include "ProfilingDebugging/MiscTrace.h"
 #include "ProfilingDebugging/TraceAuxiliary.h"
 #include "Net/Core/Trace/NetTrace.h"
+#include "HAL/IConsoleManager.h"
 
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
@@ -169,6 +171,11 @@ bool FPerfSentinelTraceController::StartCapture(const FString& ScenarioName)
 	}
 
 	CaptureState = EPerfSentinelCaptureState::Capturing;
+	// The file starts with the trace system's buffered tail from before this call. The analyzer
+	// drops everything before this bookmark so earlier editor activity is not counted as the capture.
+	// The platform time next to it anchors every sidecar row (platform seconds) onto trace time.
+	CurrentSession.CaptureStartBookmarkPlatformSeconds = FPlatformTime::Seconds();
+	TRACE_BOOKMARK(TEXT("PerfSentinel.CaptureStart"));
 	FPerfSentinelTelemetry::Get().SetCaptureContext(CurrentSession.SessionId, CurrentSession.RunId, CurrentSession.ProcessRole,
 		CurrentSession.ClockOffsetMilliseconds, CurrentSession.ClockUncertaintyMilliseconds);
 
@@ -185,9 +192,23 @@ bool FPerfSentinelTraceController::StartCapture(const FString& ScenarioName)
 			static_cast<float>(Settings->DefaultCaptureDurationSeconds));
 	}
 
+	if (Settings->bKeepFullSpeedWhenUnfocused)
+	{
+		SetKeepFullSpeedWhenUnfocused(true);
+	}
+	CaptureActiveChanged.Broadcast(true);
+
 	UE_LOG(LogPerfSentinel, Log, TEXT("StartCapture: Trace capture started."));
 	UE_LOG(LogPerfSentinel, Log, TEXT("  Scenario: %s"), *CurrentSession.ScenarioName);
 	UE_LOG(LogPerfSentinel, Log, TEXT("  Trace:    %s"), *CurrentSession.TracePath);
+	if (AutoStopHandle.IsValid())
+	{
+		UE_LOG(LogPerfSentinel, Log, TEXT("  Stops by itself after %d seconds (Auto Stop Capture)."), Settings->DefaultCaptureDurationSeconds);
+	}
+	else
+	{
+		UE_LOG(LogPerfSentinel, Log, TEXT("  Runs until PerfSentinel.StopCapture or the Stop menu entry."));
+	}
 
 	return true;
 }
@@ -204,12 +225,17 @@ bool FPerfSentinelTraceController::StopCapture()
 	CancelAutoStop();
 
 	UE_LOG(LogPerfSentinel, Log, TEXT("StopCapture: Stopping trace writer."));
+	CurrentSession.CaptureStopBookmarkPlatformSeconds = FPlatformTime::Seconds();
+	TRACE_BOOKMARK(TEXT("PerfSentinel.CaptureStop"));
 	if (!StopTraceFile())
 	{
 		UE_LOG(LogPerfSentinel, Error, TEXT("StopCapture: Trace writer did not report an active output to stop."));
 		CaptureState = EPerfSentinelCaptureState::Capturing;
 		return false;
 	}
+
+	SetKeepFullSpeedWhenUnfocused(false);
+	CaptureActiveChanged.Broadcast(false);
 
 	if (RuntimeMonitor)
 	{
@@ -262,6 +288,11 @@ bool FPerfSentinelTraceController::StopCapture()
 		{
 			CurrentSession.GameStatsPath = RuntimeMonitor->GetGameStatsPath();
 		}
+		const FString EventsPath = RuntimeMonitor->GetEventsPath();
+		if (!EventsPath.IsEmpty() && FPaths::FileExists(EventsPath))
+		{
+			CurrentSession.EventsPath = EventsPath;
+		}
 	}
 
 	WriteMetadataSidecar();
@@ -286,6 +317,29 @@ bool FPerfSentinelTraceController::HandleAutoStop(float DeltaTime)
 		StopCapture();
 	}
 	return false;
+}
+
+void FPerfSentinelTraceController::SetKeepFullSpeedWhenUnfocused(bool bEnable)
+{
+	// Game builds: idle when another window has focus. The editor's own background throttle is a
+	// UnrealEd setting, so the editor module handles it through OnCaptureActiveChanged.
+	IConsoleVariable* IdleWhenNotForeground = IConsoleManager::Get().FindConsoleVariable(TEXT("t.IdleWhenNotForeground"));
+	if (bEnable)
+	{
+		if (IdleWhenNotForeground && !PreviousIdleWhenNotForeground.IsSet())
+		{
+			PreviousIdleWhenNotForeground = IdleWhenNotForeground->GetInt();
+			IdleWhenNotForeground->Set(0, ECVF_SetByCode);
+		}
+	}
+	else if (PreviousIdleWhenNotForeground.IsSet())
+	{
+		if (IdleWhenNotForeground)
+		{
+			IdleWhenNotForeground->Set(PreviousIdleWhenNotForeground.GetValue(), ECVF_SetByCode);
+		}
+		PreviousIdleWhenNotForeground.Reset();
+	}
 }
 
 void FPerfSentinelTraceController::CancelAutoStop()
@@ -561,7 +615,33 @@ void FPerfSentinelTraceController::WriteMetadataSidecar() const
 	{
 		Root->SetNumberField(TEXT("suppressed_spike_count"), RuntimeMonitor->GetSuppressedSpikeCount());
 		Root->SetNumberField(TEXT("worst_suppressed_frame_ms"), RuntimeMonitor->GetWorstSuppressedFrameMs());
+		Root->SetNumberField(TEXT("unfocused_seconds"), RuntimeMonitor->GetUnfocusedSeconds());
+		Root->SetNumberField(TEXT("unfocused_interval_count"), RuntimeMonitor->GetUnfocusedIntervalCount());
+		Root->SetNumberField(TEXT("event_rows"), RuntimeMonitor->GetEventCount());
+		Root->SetNumberField(TEXT("dropped_event_rows"), RuntimeMonitor->GetDroppedEventCount());
 	}
+	// Clock anchors: trace seconds of a bookmark minus these platform seconds is the sidecar-to-trace offset.
+	// The stop anchor checks it; both are taken on the game thread within microseconds of the bookmark.
+	if (CurrentSession.CaptureStartBookmarkPlatformSeconds >= 0.0)
+	{
+		Root->SetNumberField(TEXT("capture_start_bookmark_platform_seconds"), CurrentSession.CaptureStartBookmarkPlatformSeconds);
+	}
+	if (CurrentSession.CaptureStopBookmarkPlatformSeconds >= 0.0)
+	{
+		Root->SetNumberField(TEXT("capture_stop_bookmark_platform_seconds"), CurrentSession.CaptureStopBookmarkPlatformSeconds);
+	}
+	if (!CurrentSession.EventsPath.IsEmpty())
+	{
+		Root->SetStringField(TEXT("events_file"), CurrentSession.EventsPath);
+	}
+	// Trace bookmarks that bound the analysed population: frames outside CaptureStart..CaptureStop or
+	// between Unfocused.Begin and Unfocused.End are left out of the frame statistics.
+	TSharedRef<FJsonObject> Markers = MakeShared<FJsonObject>();
+	Markers->SetStringField(TEXT("capture_start"), TEXT("PerfSentinel.CaptureStart"));
+	Markers->SetStringField(TEXT("capture_stop"), TEXT("PerfSentinel.CaptureStop"));
+	Markers->SetStringField(TEXT("unfocused_begin"), TEXT("PerfSentinel.Unfocused.Begin"));
+	Markers->SetStringField(TEXT("unfocused_end"), TEXT("PerfSentinel.Unfocused.End"));
+	Root->SetObjectField(TEXT("capture_markers"), Markers);
 
 	if (!CurrentSession.FallbackStatsPath.IsEmpty())
 	{
@@ -621,7 +701,11 @@ void FPerfSentinelTraceController::WriteMetadataSidecar() const
 	SettingsObject->SetNumberField(TEXT("max_spike_events"), Settings->MaxSpikeEvents);
 	SettingsObject->SetBoolField(TEXT("write_full_object_inventory"), Settings->bWriteFullObjectInventory);
 	SettingsObject->SetBoolField(TEXT("native_trace_extraction"), Settings->bEnableNativeTraceExtraction);
+	SettingsObject->SetBoolField(TEXT("auto_stop_capture"), Settings->bAutoStopCapture);
 	SettingsObject->SetNumberField(TEXT("default_capture_duration_seconds"), Settings->DefaultCaptureDurationSeconds);
+	SettingsObject->SetBoolField(TEXT("keep_full_speed_when_unfocused"), Settings->bKeepFullSpeedWhenUnfocused);
+	SettingsObject->SetBoolField(TEXT("record_spike_events"), Settings->bRecordSpikeEvents);
+	SettingsObject->SetBoolField(TEXT("record_engine_events"), Settings->bRecordEngineEvents);
 	SettingsObject->SetBoolField(TEXT("verify_stat_coverage"), Settings->bVerifyStatUnitAndGpuTraceCoverage);
 	SettingsObject->SetBoolField(TEXT("collect_stat_unit_fallback"), Settings->bCollectStatUnitFallback);
 	SettingsObject->SetBoolField(TEXT("collect_stat_gpu_fallback"), Settings->bCollectStatGpuFallback);

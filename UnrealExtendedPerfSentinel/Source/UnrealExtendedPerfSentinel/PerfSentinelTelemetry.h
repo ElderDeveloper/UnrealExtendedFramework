@@ -62,6 +62,8 @@ public:
 	bool Record(const TSharedRef<FJsonObject>& Event);
 	/** Copies retained rows newer than Cursor. A cursor of zero retrieves bounded pre-capture history. */
 	void ReadSince(uint64& Cursor, int32 MaxRows, TArray<TSharedPtr<FJsonObject>>& OutRows, uint64& OutDroppedRows);
+	/** Rows evicted (capacity, age, byte budget) before any reader copied them. Rows that age out after being read are not loss. */
+	uint64 GetUnreadDroppedRows() const;
 	TSharedRef<FJsonObject> GetCoverage() const;
 
 private:
@@ -76,7 +78,11 @@ private:
 	mutable FCriticalSection Mutex;
 	TArray<FHistoryRow> History;
 	uint64 NextSequence = 0;
+	/** Evicted before any ReadSince copied them. */
 	uint64 DroppedRows = 0;
+	/** Aged out after a reader already copied them: expected for a bounded history, not loss. */
+	uint64 ExpiredAfterReadRows = 0;
+	uint64 HighestReadSequence = 0;
 	int64 RetainedBytes = 0;
 	int32 Capacity = 2048;
 	double RetentionSeconds = 30.0;

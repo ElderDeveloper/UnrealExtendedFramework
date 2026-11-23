@@ -77,6 +77,14 @@ struct UNREALEXTENDEDPERFSENTINEL_API FPerfSentinelTraceSession
 	double StartedPlatformSeconds = 0.0;
 	double ClockOffsetMilliseconds = 0.0;
 	double ClockUncertaintyMilliseconds = -1.0;
+	/**
+	 * FPlatformTime::Seconds() taken next to the PerfSentinel.CaptureStart and CaptureStop bookmarks. Trace time and
+	 * platform time share one clock, so (bookmark trace time - this value) maps every sidecar row onto trace time.
+	 */
+	double CaptureStartBookmarkPlatformSeconds = -1.0;
+	double CaptureStopBookmarkPlatformSeconds = -1.0;
+	/** Discrete engine events sidecar; empty when not recorded. */
+	FString EventsPath;
 
 	UPROPERTY(BlueprintReadOnly, Category = "PerfSentinel")
 	FDateTime StartedAt = FDateTime::MinValue();

@@ -209,7 +209,7 @@ bool FPerfSentinelPythonRunner::RunAnalysis(
 	{
 		OutResult.GeneratedFiles.Add(NetworkSummary);
 	}
-	for (const TCHAR* AgentArtifact : { TEXT("agent_overview.json"), TEXT("evidence_index.json"), TEXT("metric_catalog.json") })
+	for (const TCHAR* AgentArtifact : { TEXT("llm_brief.md"), TEXT("llm_brief.json"), TEXT("agent_overview.json"), TEXT("evidence_index.json"), TEXT("metric_catalog.json") })
 	{
 		const FString ArtifactPath = FPaths::Combine(MutableRequest.OutputReportDirectory, AgentArtifact);
 		if (FPaths::FileExists(ArtifactPath)) { OutResult.GeneratedFiles.Add(ArtifactPath); }

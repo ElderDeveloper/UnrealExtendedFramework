@@ -129,7 +129,10 @@ def comparison_readiness(capture_context: dict[str, Any]) -> dict[str, Any]:
                 "build_configuration", "build_target", "engine_build_version")
     unknown = [key for key in required if capture_context.get(key) is None or
                (isinstance(capture_context.get(key), str) and capture_context[key].strip().lower() in {"", "unknown", "unavailable", "none"})]
-    if capture_context.get("peak_connection_workload") is None and capture_context.get("trace_connection_workload") is None:
+    # Connection workload matters for networked roles. A standalone or editor capture without network samples
+    # would otherwise never be comparable at all.
+    networked_role = str(capture_context.get("process_role") or "").lower() not in {"standalone", "editor"}
+    if networked_role and capture_context.get("peak_connection_workload") is None and capture_context.get("trace_connection_workload") is None:
         unknown.append("observed_connection_workload")
     gpu_required = ("gpu_brand", "rhi", "render_resolution")
     gpu_unknown = [key for key in gpu_required if not capture_context.get(key) or str(capture_context.get(key)).strip().lower() in {"unknown", "unavailable", "none"}]
@@ -636,7 +639,9 @@ def persist_agent_contract(database: Path, report: dict[str, Any], bundle: dict[
         fields = ("evidence_id", "session_id", "domain", "collector_id", "table_name", "row_index", "start_seconds", "end_seconds", "timebase", "source_file", "source_line", "asset_path", "instance_id", "occurrence_id", "run_id", "stage", "process_role", "process_id")
         connection.executemany("INSERT INTO evidence_items VALUES (" + ",".join("?" for _ in range(len(fields) + 1)) + ")",
                                (tuple(row.get(field) for field in fields) + (json.dumps(row["row"], ensure_ascii=False, allow_nan=False),) for row in store.rows))
-        for name, columns in {"evidence_domain_time": "session_id,domain,timebase,start_seconds", "evidence_table_time": "session_id,table_name,start_seconds",
+        # Queries filter on domain or table without a session id; the session-leading indexes alone forced full scans.
+        for name, columns in {"evidence_domain": "domain,table_name", "evidence_table": "table_name",
+                              "evidence_domain_time": "session_id,domain,timebase,start_seconds", "evidence_table_time": "session_id,table_name,start_seconds",
                               "evidence_source": "source_file,source_line", "evidence_asset": "asset_path", "evidence_instance": "instance_id",
                               "evidence_occurrence": "run_id,occurrence_id,stage"}.items():
             connection.execute(f"CREATE INDEX idx_{name} ON evidence_items({columns})")

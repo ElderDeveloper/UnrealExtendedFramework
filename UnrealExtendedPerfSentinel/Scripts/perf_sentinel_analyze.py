@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any
 
 from perf_sentinel_contract import atomic_write_json, comparison_readiness, finalize_agent_contract, persist_agent_contract, publish_agent_contract
+from perf_sentinel_brief import compute_time_alignment, write_llm_brief
 
 
 ANALYZER_NAME = "perf_sentinel_analyze.py"
@@ -608,6 +609,19 @@ def parse_timer_statistics(path: Path, log: AnalyzerLog) -> list[dict[str, Any]]
     return timers
 
 
+def timers_from_native(native: dict[str, Any]) -> list[dict[str, Any]]:
+    """Timer rows in the TimerStatistics.csv shape, from the native windowed totals, for the Top Timers table and rules."""
+    rows = []
+    for row in native.get("timing_scope_totals", []) or []:
+        if not isinstance(row, dict) or row.get("kind") != "cpu":
+            continue
+        rows.append({"name": row.get("timer"), "count": int_or_zero(row.get("instance_count")), "total_time_ms": float_or_none(row.get("inclusive_ms")),
+                     "min_time_ms": None, "max_time_ms": float_or_none(row.get("max_inclusive_ms")), "avg_time_ms": float_or_none(row.get("mean_inclusive_ms")),
+                     "exclusive_total_time_ms": float_or_none(row.get("exclusive_ms")), "source": "native_windowed_totals"})
+    rows.sort(key=lambda item: (item["max_time_ms"] or -1.0, item["total_time_ms"] or -1.0), reverse=True)
+    return rows
+
+
 def parse_threads(path: Path, log: AnalyzerLog) -> list[dict[str, Any]]:
     if not path.exists():
         log.write(f"Threads.csv missing: {path}")
@@ -854,8 +868,24 @@ def generate_counter_findings(builder: "FindingBuilder", counters: list[dict[str
 
 def compute_event_self_times(native: dict[str, Any]) -> list[dict[str, Any]]:
     """Compute best-effort self time from nested events in each frame/thread hierarchy."""
-    events = [dict(row) for row in native.get("timing_events", []) if isinstance(row, dict)]
     frames = {int_or_zero(row.get("index")): row for row in native.get("game_frames", []) if isinstance(row, dict)}
+    events: list[dict[str, Any]] = []
+    for row in native.get("timing_events", []):
+        if not isinstance(row, dict):
+            continue
+        frame = frames.get(int_or_zero(row.get("frame_index")))
+        if frame:
+            frame_start = float_or_none(frame.get("start_seconds")) or 0.0
+            frame_end = float_or_none(frame.get("end_seconds")) or frame_start
+            # The native extractor clips scopes to the frame and keeps where they really opened.
+            event_start = float_or_none(row.get("original_scope_start_seconds"))
+            if event_start is None:
+                event_start = float_or_none(row.get("start_seconds"))
+            # A scope opened well before this frame (a scheduler loop or a long wait on its own thread)
+            # overlaps every frame it spans; clamped to the frame it would be credited with all of it.
+            if event_start is not None and event_start < frame_start - max(frame_end - frame_start, 0.0):
+                continue
+        events.append(dict(row))
     groups: dict[tuple[int, str], list[dict[str, Any]]] = {}
     for event in events:
         frame = frames.get(int_or_zero(event.get("frame_index")))
@@ -863,7 +893,10 @@ def compute_event_self_times(native: dict[str, Any]) -> list[dict[str, Any]]:
             start = max(float_or_none(event.get("start_seconds")) or 0.0, float_or_none(frame.get("start_seconds")) or 0.0)
             end = min(float_or_none(event.get("end_seconds")) or start, float_or_none(frame.get("end_seconds")) or start)
             event.update({"start_seconds": start, "end_seconds": max(start, end), "duration_ms": max(0.0, end - start) * 1000.0})
-        key = (int_or_zero(event.get("frame_index")), str(event.get("thread") or ""))
+        # Thread ids, not names: several threads share a name (six "TBB" threads), and GPU queues have no id.
+        thread_id = event.get("thread_id")
+        thread_key = f"id:{int(thread_id)}" if isinstance(thread_id, (int, float)) and thread_id >= 0 else f"{event.get('thread') or ''}#{event.get('timeline_index', '')}"
+        key = (int_or_zero(event.get("frame_index")), thread_key)
         groups.setdefault(key, []).append(event)
 
     for group in groups.values():
@@ -873,7 +906,9 @@ def compute_event_self_times(native: dict[str, Any]) -> list[dict[str, Any]]:
             end = float_or_none(event.get("end_seconds")) or start
             depth = int_or_zero(event.get("depth"))
             child_intervals: list[tuple[float, float]] = []
-            for child in group[index + 1 :]:
+            # Index walk: no copy of the rest of the group per event, and the break below stops at the first later sibling.
+            for child_index in range(index + 1, len(group)):
+                child = group[child_index]
                 child_start = float_or_none(child.get("start_seconds")) or 0.0
                 if child_start >= end:
                     break
@@ -898,6 +933,101 @@ def compute_event_self_times(native: dict[str, Any]) -> list[dict[str, Any]]:
             duration_ms = max(0.0, (end - start) * 1000.0)
             event["self_time_ms"] = round(max(0.0, duration_ms - merged * 1000.0), 6)
     return events
+
+
+CAPTURE_START_BOOKMARK = "PerfSentinel.CaptureStart"
+CAPTURE_STOP_BOOKMARK = "PerfSentinel.CaptureStop"
+UNFOCUSED_BEGIN_BOOKMARK = "PerfSentinel.Unfocused.Begin"
+UNFOCUSED_END_BOOKMARK = "PerfSentinel.Unfocused.End"
+
+
+def apply_capture_window(native: dict[str, Any]) -> dict[str, Any]:
+    """Limit native frames to the capture itself and to time the process had focus.
+
+    A trace file opens with the trace system's buffered tail from before StartCapture, and frames recorded
+    while another application had focus measure OS scheduling and background throttling, not the game.
+    Both are counted and reported, then left out of the frame population every metric, rule and attribution reads.
+    Captures without PerfSentinel bookmarks keep the whole trace.
+    """
+    frames = [row for row in native.get("game_frames", []) if isinstance(row, dict)]
+    bookmarks = sorted(
+        (time, str(row.get("text") or ""))
+        for row in native.get("bookmarks", [])
+        if isinstance(row, dict) and (time := float_or_none(row.get("time_seconds"))) is not None
+    )
+    starts = [time for time, text in bookmarks if text == CAPTURE_START_BOOKMARK]
+    # The buffered history at the head of a trace can hold an earlier capture's markers: this capture is the last start.
+    capture_start = starts[-1] if starts else None
+    stops = [time for time, text in bookmarks if text == CAPTURE_STOP_BOOKMARK and (capture_start is None or time >= capture_start)]
+    capture_stop = stops[-1] if stops else None
+    trace_end = max((float_or_none(row.get("end_seconds")) or 0.0 for row in frames), default=None)
+
+    unfocused: list[tuple[float, float]] = []
+    open_since: float | None = None
+    for time, text in bookmarks:
+        if capture_start is not None and time < capture_start:
+            continue
+        if text == UNFOCUSED_BEGIN_BOOKMARK and open_since is None:
+            open_since = time
+        elif text == UNFOCUSED_END_BOOKMARK and open_since is not None:
+            unfocused.append((open_since, time))
+            open_since = None
+    if open_since is not None:
+        # The trace stops before the monitor can write the closing bookmark.
+        end = capture_stop if capture_stop is not None else trace_end
+        if end is not None and end > open_since:
+            unfocused.append((open_since, end))
+
+    kept: list[dict[str, Any]] = []
+    before = after = unfocused_frames = 0
+    for frame in frames:
+        start = float_or_none(frame.get("start_seconds"))
+        end = float_or_none(frame.get("end_seconds"))
+        if start is None or end is None:
+            kept.append(frame)
+        elif capture_start is not None and start < capture_start:
+            before += 1
+        elif capture_stop is not None and start >= capture_stop:
+            after += 1
+        elif any(start < span_end and end > span_start for span_start, span_end in unfocused):
+            unfocused_frames += 1
+        else:
+            kept.append(frame)
+
+    def analysed(start: float | None, end: float | None) -> bool:
+        if start is None or end is None:
+            return True
+        if (capture_start is not None and start < capture_start) or (capture_stop is not None and start >= capture_stop):
+            return False
+        return not any(start < span_end and end > span_start for span_start, span_end in unfocused)
+
+    native["game_frames"] = kept
+    native["render_frames"] = [row for row in native.get("render_frames", []) if isinstance(row, dict)
+                               and analysed(float_or_none(row.get("start_seconds")), float_or_none(row.get("end_seconds")))]
+    # Rates (hitches per minute) divide by analysed frame time. duration_seconds is process uptime at the end
+    # of the trace (trace time counts from process start), never a capture length, so it is not a fallback.
+    if kept:
+        native["analyzed_duration_seconds"] = sum(float_or_none(row.get("duration_ms")) or 0.0 for row in kept) / 1000.0
+    return {
+        "source": "perfsentinel_bookmarks" if (starts or stops or unfocused) else "whole_trace",
+        "capture_start_seconds": capture_start,
+        "capture_stop_seconds": capture_stop,
+        "timebase": "trace_seconds",
+        "frames_total": len(frames),
+        "frames_analyzed": len(kept),
+        "frames_before_capture": before,
+        "frames_after_capture": after,
+        "frames_unfocused": unfocused_frames,
+        "analyzed_seconds": round(sum(float_or_none(row.get("duration_ms")) or 0.0 for row in kept) / 1000.0, 3),
+        "unfocused_seconds": round(sum(span_end - span_start for span_start, span_end in unfocused), 3),
+        "unfocused_intervals": [{"start_seconds": round(span_start, 6), "end_seconds": round(span_end, 6)} for span_start, span_end in unfocused],
+        "scope_totals_note": "Whole-session scope totals come from the full trace, including time left out here.",
+    }
+
+
+def drop_unfocused_samples(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Runtime frame samples carry app_foreground; older captures without it keep every row."""
+    return [row for row in rows if row.get("app_foreground") is not False]
 
 
 def build_frame_attribution(native: dict[str, Any], hitch_threshold_ms: float) -> list[dict[str, Any]]:
@@ -978,7 +1108,10 @@ def build_coverage_manifest(metadata: dict[str, Any], native: dict[str, Any]) ->
         available = bool(raw.get("available"))
         # TraceServices registers providers even when their channels emitted no events.
         # A present but empty provider is a coverage gap, not a zero-cost measurement.
-        empty = available and raw.get("count") == 0
+        # Some counts are only the exported subset (timing: scopes in slow frames; logs before this extractor
+        # version: warnings; load_time: packages), so zero there means a clean capture, not a missing provider.
+        exported_subset = bool(raw.get("count_is_exported_subset")) or provider in ("timing", "logs", "load_time")
+        empty = available and raw.get("count") == 0 and not exported_subset
         status = "empty" if empty else ("available" if available else ("missing" if requested_here else "not_requested"))
         providers[provider] = {"status": status, "requested_channels": sorted(requested & channels), "count": raw.get("count")}
         if requested_here and status in ("missing", "empty"):
@@ -1010,7 +1143,8 @@ def build_performance_metrics(native: dict[str, Any], fallback_rows: list[dict[s
             for row in normalize_perf_rows(fallback_rows)
             if get_number(row, "frame_time_ms") is not None
         ]
-    duration_seconds = float_or_none(native.get("duration_seconds")) or 0.0
+    # Never native duration_seconds: trace time counts from process start, so it is uptime, not capture length.
+    duration_seconds = float_or_none(native.get("analyzed_duration_seconds")) or 0.0
     if duration_seconds <= 0.0 and frame_values:
         duration_seconds = sum(frame_values) / 1000.0
     hitch_count = sum(1 for value in frame_values if value >= hitch_threshold_ms)
@@ -1370,7 +1504,9 @@ def evaluate_ci_gates(args: argparse.Namespace, metrics: dict[str, Any], regress
             gates.append({"name": f"{metric}_regression_percent", "value": value, "limit": regression_limit,
                           "status": "newly_nonzero" if newly_nonzero else ("measured" if value is not None else "unavailable"),
                           "passed": not newly_nonzero and value is not None and value <= regression_limit})
-    return {"enabled": bool(args.ci), "passed": all(gate["passed"] for gate in gates), "gates": gates}
+    # Without --ci the gates are advisory: report them, but never claim a CI failure that was not requested.
+    all_passed = all(gate["passed"] for gate in gates)
+    return {"enabled": bool(args.ci), "passed": all_passed if args.ci else True, "advisory_all_passed": all_passed, "gates": gates}
 
 
 def write_evidence_database(path: Path, native: dict[str, Any], report: dict[str, Any]) -> None:
@@ -1751,7 +1887,12 @@ def generate_findings(
     ]
     for key, category, title, next_step in thread_rules:
         rows_with_value = [row for row in all_frame_rows if get_number(row, key) is not None]
-        exceeding = [row for row in rows_with_value if float(row[key]) >= hitch_threshold_ms]
+        # A thread cannot spend far longer than the frame it belongs to; such a value is stale state
+        # (the first sample after activation once reported 8175 ms in an 8 ms frame), not a spike.
+        def plausible(row: dict[str, Any]) -> bool:
+            frame = float_or_none(row.get("frame_time_ms"))
+            return frame is None or float(row[key]) <= frame * 2.0 + 50.0
+        exceeding = [row for row in rows_with_value if float(row[key]) >= hitch_threshold_ms and plausible(row)]
         if not exceeding:
             continue
         worst = max(exceeding, key=lambda row: float(row[key]))
@@ -1768,7 +1909,10 @@ def generate_findings(
             suggested_next_step=next_step,
         )
 
-    expensive_timers = [timer for timer in timers if (float_or_none(timer.get("max_time_ms")) or 0) > hitch_threshold_ms]
+    # A scope open for seconds (a scheduler loop such as Houdini's, or a thread's lifetime) is not a frame cost;
+    # whole-session exports also include the trace history from before the capture.
+    expensive_timers = [timer for timer in timers
+                        if hitch_threshold_ms < (float_or_none(timer.get("max_time_ms")) or 0) < 5000.0]
     if expensive_timers:
         top = expensive_timers[:5]
         builder.add(
@@ -1911,6 +2055,9 @@ def render_markdown(report: dict[str, Any]) -> str:
     lines: list[str] = []
     lines.append("# PerfSentinel Findings")
     lines.append("")
+    if (report.get("artifacts") or {}).get("llm_brief_md"):
+        lines.append("Start with `llm_brief.md`: it summarises this capture in priority order (observations, frame time and bound, timeline, hitch causes, per-thread costs, memory, loading, networking).")
+        lines.append("")
     lines.append(f"- Project: {report.get('project') or '-'}")
     lines.append(f"- Scenario: {report.get('scenario') or '-'}")
     lines.append(f"- Trace: `{report['trace'].get('path') or '-'}`")
@@ -1930,6 +2077,20 @@ def render_markdown(report: dict[str, Any]) -> str:
         lines.append(f"- Session / run / role: `{context.get('session_id')}` / `{context.get('run_id')}` / {context.get('process_role')}")
         lines.append(f"- Build ID: `{context.get('build_id')}`; report generation: `{report.get('report_generation_id')}`")
     lines.append("")
+
+    window = report.get("capture_window") or {}
+    if window:
+        lines.append("## Capture Window")
+        lines.append("")
+        if window.get("source") == "whole_trace":
+            lines.append("- This trace has no PerfSentinel capture bookmarks (recorded by an older PerfSentinel), so every frame in the file is analysed, including the trace's buffered history from before the capture started.")
+        else:
+            lines.append(f"- Frames analysed: {window.get('frames_analyzed')} of {window.get('frames_total')} ({float_or_none(window.get('analyzed_seconds')) or 0.0:.1f} s)")
+            lines.append(f"- Before the capture started (trace history): {window.get('frames_before_capture')} frames")
+            lines.append(f"- After the capture stopped: {window.get('frames_after_capture')} frames")
+            lines.append(f"- While another application had focus: {window.get('frames_unfocused')} frames, {float_or_none(window.get('unfocused_seconds')) or 0.0:.1f} s in {len(window.get('unfocused_intervals') or [])} stretch(es)")
+        lines.append("- Frame statistics, hitch rules and frame attribution read only the analysed frames. Whole-session scope totals still cover the full trace.")
+        lines.append("")
 
     coverage = report.get("coverage", {})
     lines.append("## Trace Coverage")
@@ -2020,8 +2181,12 @@ def render_markdown(report: dict[str, Any]) -> str:
         lines.append(f"- Evidence level: {finding.get('evidence_level', 'legacy_unclassified')}")
         if finding.get("rule_id"):
             lines.append(f"- Rule: {finding['rule_id']} v{finding.get('rule_version')} ({finding.get('rule_expression')})")
-        for evidence_id in finding.get("evidence_ids", []):
+        # A long ID list buries the evidence text; findings.json keeps every ID.
+        evidence_ids = finding.get("evidence_ids", [])
+        for evidence_id in evidence_ids[:3]:
             lines.append(f"- Evidence ID: `{evidence_id}`")
+        if len(evidence_ids) > 3:
+            lines.append(f"- Evidence IDs: {len(evidence_ids) - 3} more in findings.json")
         if finding.get("attribution"):
             lines.append(f"- Attribution: {finding.get('attribution')}")
         for evidence in finding.get("evidence", []):
@@ -2240,23 +2405,44 @@ def main() -> int:
         telemetry_path = Path(str(metadata["telemetry_events_file"])).resolve()
     telemetry_events = load_ndjson(telemetry_path, log)
     declared_catalog = load_json_file(Path(str(metadata["collector_catalog_file"])).resolve(), log) if metadata.get("collector_catalog_file") else {}
+    if not trace_time_offset and native:
+        # Spike times are seconds from capture start; the CaptureStart bookmark is that moment in trace time.
+        alignment = compute_time_alignment(native, metadata)
+        if alignment.get("capture_start_trace_seconds") is not None:
+            trace_time_offset = float(alignment["capture_start_trace_seconds"])
     csv_dir = args.out / "csv_export"
+    # The Insights export re-analyses the whole trace to produce timer totals the native extractor already has
+    # (windowed and per thread). Skip it then: it costs as much as the extraction and pushes long captures past
+    # the runner's timeout. Spike windows still need it for their per-spike timing CSVs.
+    native_timing = bool(native.get("timing_scope_totals"))
+    insights_exe = None if native_timing and not spikes else args.insights_exe
     timer_csv, threads_csv, insights_log = export_unreal_insights(
-        args.insights_exe, args.trace, metadata, spikes, args.out, csv_dir, log, trace_time_offset
+        insights_exe, args.trace, metadata, spikes, args.out, csv_dir, log, trace_time_offset
     )
+    if insights_exe is None and args.insights_exe:
+        log.write("Unreal Insights export skipped: native evidence carries the timer totals (windowed and per thread).")
     game_stats_path = build_game_stats(args.out, metadata, spikes, log)
 
-    timers = parse_timer_statistics(timer_csv, log)
-    threads = parse_threads(threads_csv, log)
-    status = "native+exported" if native and timers else ("native" if native else ("exported" if timers else "not_available"))
+    exported_timers = parse_timer_statistics(timer_csv, log)
+    timers = exported_timers or timers_from_native(native)
+    threads = parse_threads(threads_csv, log) or [{"id": row.get("id"), "name": row.get("name"), "group": row.get("group")}
+                                                 for row in native.get("threads", []) if isinstance(row, dict)]
+    status = "native+exported" if native and exported_timers else ("native" if native else ("exported" if exported_timers else "not_available"))
 
-    fallback_rows = load_ndjson(fallback_path, log)
+    fallback_rows = drop_unfocused_samples(load_ndjson(fallback_path, log))
     severe_frame_budget_ms = float((metadata.get("budgets") or {}).get("severe_frame_budget_ms", max(args.hitch_threshold_ms, args.frame_budget_ms * 2.0)))
+    capture_window = apply_capture_window(native) if native else {}
+    if capture_window:
+        log.write(
+            f"capture window ({capture_window['source']}): analysing {capture_window['frames_analyzed']} of {capture_window['frames_total']} frames; "
+            f"left out {capture_window['frames_before_capture']} before capture, {capture_window['frames_after_capture']} after, "
+            f"{capture_window['frames_unfocused']} unfocused ({capture_window['unfocused_seconds']} s)"
+        )
     frame_attribution = build_frame_attribution(native, args.hitch_threshold_ms) if native else []
     coverage = build_coverage_manifest(metadata, native)
     # Spike rows intentionally oversample slow frames. Use full frame samples or
     # the regular fallback stream for percentiles, never append spikes to either.
-    frame_samples = load_ndjson(Path(str(metadata["frame_samples_file"])).resolve(), log) if metadata.get("frame_samples_file") else []
+    frame_samples = drop_unfocused_samples(load_ndjson(Path(str(metadata["frame_samples_file"])).resolve(), log)) if metadata.get("frame_samples_file") else []
     metrics = build_performance_metrics(native, frame_samples or fallback_rows, args.hitch_threshold_ms, counters)
     if metrics["frame_source"] == "runtime_frame_samples" and not frame_samples:
         metrics["frame_source"] = "regular_fallback_samples"
@@ -2358,8 +2544,11 @@ def main() -> int:
         ci_gates=ci_gates,
         network=network,
     )
+    report["capture_window"] = capture_window
     report["scenario_bookmarks"] = [row for row in native.get("bookmarks", []) if isinstance(row, dict)][:200]
-    report["whole_session_scope_costs"] = sorted([row for row in native.get("timing_scope_totals", []) if isinstance(row, dict)],
+    # Scopes that stay open for seconds (scheduler loops, thread lifetimes) would top this table without being frame costs.
+    report["whole_session_scope_costs"] = sorted([row for row in native.get("timing_scope_totals", []) if isinstance(row, dict)
+                                                  and (float_or_none(row.get("max_inclusive_ms")) or 0.0) < 5000.0],
                                                  key=lambda row: float_or_none(row.get("exclusive_ms")) or 0.0, reverse=True)[:100]
     report["whole_session_scope_coverage"] = native.get("timing_scope_summary", {})
     scope_rows = native.get("timing_scope_totals", [])
@@ -2372,15 +2561,34 @@ def main() -> int:
             writer.writerows(row for row in scope_rows if isinstance(row, dict))
         report["artifacts"]["timing_scope_totals_csv"] = str(scope_path)
 
+    events_path = Path(str(metadata["events_file"])).resolve() if metadata.get("events_file") else None
+    engine_events = load_ndjson(events_path, log) if events_path else []
+    try:
+        brief_md, brief_json = write_llm_brief(
+            args.out, report=report, native=native, metadata=metadata, runtime_context=runtime_context,
+            frame_samples=frame_samples or fallback_rows, counters=counters, events=engine_events, network_samples=network_samples,
+            self_events=compute_event_self_times(native) if native else [], capture_window=capture_window,
+            hitch_threshold_ms=args.hitch_threshold_ms, frame_budget_ms=args.frame_budget_ms)
+        report["artifacts"]["llm_brief_md"] = str(brief_md)
+        report["artifacts"]["llm_brief_json"] = str(brief_json)
+        if events_path:
+            report["artifacts"]["engine_events"] = str(events_path)
+        log.write(f"wrote {brief_md}")
+    except Exception as error:  # The brief is a view; never lose the other reports because of it.
+        log.write(f"llm brief failed: {type(error).__name__}: {error}")
+
     findings_json = args.out / "findings.json"
     findings_md = args.out / "findings.md"
     bundle = finalize_agent_contract(report, native, metadata, {
-        "runtime_frame_samples": frame_samples, "regular_fallback_samples": fallback_rows, "runtime_counters": counters,
+        # The fallback stream is the same file as the frame samples in current captures; store it once.
+        "runtime_frame_samples": frame_samples, "regular_fallback_samples": [] if frame_samples and fallback_path and metadata.get("frame_samples_file") and Path(str(metadata["frame_samples_file"])).resolve() == fallback_path else fallback_rows,
+        "runtime_counters": counters,
         "runtime_network_samples": runtime_rows, "runtime_network_drivers": runtime_drivers,
         "network_runtime_connection_summaries": network.get("runtime_connections", []),
         "spikes": spikes, "runtime_context": runtime_context, "telemetry_events": telemetry_events,
         "runtime_collector_catalog": declared_catalog,
-        "timer_statistics": timers, "thread_summary": threads,
+        # Native windowed totals already carry these timers; exported rows collapse by name (three "Frame" timers become one).
+        "timer_statistics": exported_timers if not native_timing else [], "thread_summary": threads,
     })
     temporary_database = evidence_database.with_name(f".evidence.{report['report_generation_id']}.sqlite.tmp")
     try:
@@ -2389,6 +2597,9 @@ def main() -> int:
         temporary_database.replace(evidence_database)
     finally:
         temporary_database.unlink(missing_ok=True)
+    # Metric records live in evidence.sqlite (metric_records) once persisted; embedded they made findings.json
+    # about 11 MB per minute of capture, which the editor's report view parses on the game thread.
+    report["metric_records"] = {"count": len(report.get("metric_records") or []), "stored_in": "evidence.sqlite table metric_records"}
 
     if args.update_baseline and baseline_path and (not args.ci or ci_gates.get("passed", True)):
         baseline_payload = {

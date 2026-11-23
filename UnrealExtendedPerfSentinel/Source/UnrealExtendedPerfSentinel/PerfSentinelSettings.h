@@ -75,9 +75,9 @@ public:
 	UPROPERTY(EditAnywhere, Config, Category = "Collectors", meta = (ClampMin = "1", ClampMax = "300"))
 	float DetailedCollectorIntervalSeconds = 5.0f;
 
-	/** Detailed inventories are opt-in; counts are never interpreted as execution cost. */
+	/** Bounded physics/animation/AI/audio workload counts. Counts are never interpreted as execution cost. */
 	UPROPERTY(EditAnywhere, Config, Category = "Collectors")
-	bool bEnableDetailedCollectors = false;
+	bool bEnableDetailedCollectors = true;
 
 	/** Stop scheduling more collectors after this observed budget. A callback cannot be preempted. */
 	UPROPERTY(EditAnywhere, Config, Category = "Collectors", meta = (ClampMin = "0.1", ClampMax = "50"))
@@ -89,12 +89,20 @@ public:
 	/** Apply PerfSentinel-specific launcher overrides in memory, without changing project config. */
 	static void ApplyCommandLineOverrides();
 
-	/** Automatically stop captures after DefaultCaptureDurationSeconds. */
+	/** Stop captures by themselves after DefaultCaptureDurationSeconds. Off: a capture runs until it is stopped. */
 	UPROPERTY(EditAnywhere, Config, Category = "Capture")
-	bool bAutoStopCapture = true;
+	bool bAutoStopCapture = false;
 
-	UPROPERTY(EditAnywhere, Config, Category = "Capture", meta = (ClampMin = "1", UIMin = "1"))
+	UPROPERTY(EditAnywhere, Config, Category = "Capture", meta = (ClampMin = "1", UIMin = "1", EditCondition = "bAutoStopCapture"))
 	int32 DefaultCaptureDurationSeconds = 60;
+
+	/**
+	 * Keep the process running at full speed while another window has focus during a capture: the editor's
+	 * "Use Less CPU when in Background" and t.IdleWhenNotForeground are switched off and restored when the capture stops.
+	 * Unfocused time is still marked in the trace (PerfSentinel.Unfocused bookmarks and region) and left out of the frame statistics.
+	 */
+	UPROPERTY(EditAnywhere, Config, Category = "Capture")
+	bool bKeepFullSpeedWhenUnfocused = true;
 
 	UPROPERTY(EditAnywhere, Config, Category = "Capture")
 	bool bEnablePackagedBuildConsoleCommands = true;
@@ -122,6 +130,13 @@ public:
 
 	UPROPERTY(EditAnywhere, Config, Category = "Raw Data")
 	bool bWriteGameStats = true;
+
+	/**
+	 * Record discrete engine events into <session>_events.ndjson: garbage collections and their duration, levels added and removed,
+	 * actor spawn/destroy churn per class, viewport resizes, map loads, focus changes, network and travel failures, player logins.
+	 */
+	UPROPERTY(EditAnywhere, Config, Category = "Raw Data")
+	bool bRecordEngineEvents = true;
 
 	/** Lightweight gameplay transport counters are independent of full object inventories and trace verbosity. */
 	UPROPERTY(EditAnywhere, Config, Category = "Networking")
@@ -181,9 +196,9 @@ public:
 	UPROPERTY(EditAnywhere, Config, Category = "Raw Data", meta = (ClampMin = "1", UIMin = "1"))
 	int32 PerClassTopN = 25;
 
-	/** Interval between heavy leak-detection snapshots (per-class breakdowns + streaming contents). */
+	/** Interval between heavy leak-detection snapshots (per-class breakdowns + streaming contents). Each walks every UObject on the game thread. */
 	UPROPERTY(EditAnywhere, Config, Category = "Raw Data", meta = (ClampMin = "0.5", UIMin = "0.5"))
-	float LeakSnapshotIntervalSeconds = 5.0f;
+	float LeakSnapshotIntervalSeconds = 30.0f;
 
 	UPROPERTY(EditAnywhere, Config, Category = "Raw Data", meta = (ClampMin = "0.0", UIMin = "0.0"))
 	float SpikeWindowPreSeconds = 5.0f;
@@ -191,8 +206,16 @@ public:
 	UPROPERTY(EditAnywhere, Config, Category = "Raw Data", meta = (ClampMin = "0.0", UIMin = "0.0"))
 	float SpikeWindowPostSeconds = 2.0f;
 
-	UPROPERTY(EditAnywhere, Config, Category = "Spike Screenshots")
-	bool bCaptureScreenshotOnSpike = true;
+	/**
+	 * Watch for slow frames while capturing and write spike events, spike windows and screenshots.
+	 * Off: the capture only collects; every frame is in the trace and frame samples, and slow frames are found by the analysis.
+	 * PerfSentinel.CaptureSpike still records a manual spike either way.
+	 */
+	UPROPERTY(EditAnywhere, Config, Category = "Spike Detection")
+	bool bRecordSpikeEvents = false;
+
+	UPROPERTY(EditAnywhere, Config, Category = "Spike Screenshots", meta = (EditCondition = "bRecordSpikeEvents"))
+	bool bCaptureScreenshotOnSpike = false;
 
 	UPROPERTY(EditAnywhere, Config, Category = "Spike Screenshots", meta = (ClampMin = "0.0", UIMin = "0.0"))
 	float ScreenshotSpikeThresholdMs = 66.66f;
@@ -220,9 +243,14 @@ public:
 	UPROPERTY(EditAnywhere, Config, Category = "Spike Screenshots", meta = (ClampMin = "1", UIMin = "1"))
 	int32 MaxInFlightScreenshots = 4;
 
-	/** Harvest per-class CPU cost from the engine stats system on spike frames (requires a stats-enabled build). */
-	UPROPERTY(EditAnywhere, Config, Category = "Cost Attribution")
-	bool bHarvestRuntimeStats = true;
+	/**
+	 * Harvest per-class CPU cost from the engine stats system on spike frames (requires a stats-enabled build).
+	 * It keeps the stats system collecting every frame for the whole capture, which adds its own cost; the trace's CPU scopes carry the same timing.
+	 * Known risk: it reads FStatsThreadState from the game thread (the engine documents it as stats-thread only) and waits for the
+	 * stats thread inside the measured frame. Leave it off unless you need it.
+	 */
+	UPROPERTY(EditAnywhere, Config, Category = "Cost Attribution", meta = (EditCondition = "bRecordSpikeEvents"))
+	bool bHarvestRuntimeStats = false;
 
 	/** Number of expensive named scopes to harvest from the stats system per spike frame. */
 	UPROPERTY(EditAnywhere, Config, Category = "Cost Attribution", meta = (ClampMin = "1", UIMin = "1"))

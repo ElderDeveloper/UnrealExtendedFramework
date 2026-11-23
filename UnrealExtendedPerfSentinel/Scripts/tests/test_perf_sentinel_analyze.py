@@ -97,24 +97,27 @@ def native_evidence(frame_scale: float = 1.0) -> dict[str, object]:
 
 
 class PerfSentinelAnalyzerTests(unittest.TestCase):
-    def run_analyzer(self, root: Path, native: dict[str, object], *extra: str) -> subprocess.CompletedProcess[str]:
+    def run_analyzer(self, root: Path, native: dict[str, object], *extra: str, comparable: bool = False) -> subprocess.CompletedProcess[str]:
         trace = root / "capture.utrace"
         metadata = root / "capture.metadata.json"
         native_path = root / "native_evidence.json"
         out = root / "report"
         trace.write_bytes(b"synthetic trace placeholder")
-        metadata.write_text(
-            json.dumps(
-                {
-                    "project": "PerfSentinelTests",
-                    "scenario": "HitchFixture",
-                    "channels": ["frame", "cpu", "gpu", "counters", "bookmark", "task", "file", "loadtime", "log", "contextswitch", "stacksampling", "memory", "metadata", "assetmetadata", "net"],
-                    "required_launch_arguments": ["-trace=default,memory,net"],
-                    "budgets": {"frame_budget_ms": 33.33, "hitch_threshold_ms": 50.0, "severe_frame_budget_ms": 66.66},
-                }
-            ),
-            encoding="utf-8",
-        )
+        fields: dict[str, object] = {
+            "project": "PerfSentinelTests",
+            "scenario": "HitchFixture",
+            "channels": ["frame", "cpu", "gpu", "counters", "bookmark", "task", "file", "loadtime", "log", "contextswitch", "stacksampling", "memory", "metadata", "assetmetadata", "net"],
+            "required_launch_arguments": ["-trace=default,memory,net"],
+            "budgets": {"frame_budget_ms": 33.33, "hitch_threshold_ms": 50.0, "severe_frame_budget_ms": 66.66},
+        }
+        if comparable:
+            # Everything comparison_readiness requires, so a baseline comparison can actually happen.
+            context = root / "runtime_context.json"
+            context.write_text(json.dumps({"map_name": "FixtureMap", "cpu_brand": "FixtureCPU", "gpu_brand": "FixtureGPU", "rhi": "D3D12",
+                                           "platform": "Windows", "viewport_width": 1920, "viewport_height": 1080}), encoding="utf-8")
+            fields.update({"runtime_context_file": str(context), "capture_profile": 1, "process_role": "standalone",
+                           "build_configuration": "Development", "build_target": "Game", "engine_build_version": "fixture-1"})
+        metadata.write_text(json.dumps(fields), encoding="utf-8")
         native_path.write_text(json.dumps(native), encoding="utf-8")
         command = [
             sys.executable,
@@ -143,7 +146,7 @@ class PerfSentinelAnalyzerTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
             report = json.loads((root / "report" / "findings.json").read_text(encoding="utf-8"))
-            self.assertEqual(report["schema_version"], 3)
+            self.assertEqual(report["schema_version"], 4)
             self.assertEqual(report["summary"]["status"], "native")
             self.assertEqual(report["summary"]["worst_frame_ms"], 80.0)
             self.assertTrue(report["coverage"]["complete_for_requested_profile"])
@@ -168,7 +171,7 @@ class PerfSentinelAnalyzerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             baseline = root / "baselines"
-            seed = self.run_analyzer(root, native_evidence(0.5), "--baseline-dir", str(baseline), "--baseline-key", "ci", "--update-baseline")
+            seed = self.run_analyzer(root, native_evidence(0.5), "--baseline-dir", str(baseline), "--baseline-key", "ci", "--update-baseline", comparable=True)
             self.assertEqual(seed.returncode, 0, seed.stdout + seed.stderr)
 
             result = self.run_analyzer(
@@ -185,6 +188,7 @@ class PerfSentinelAnalyzerTests(unittest.TestCase):
                 "0.5",
                 "--max-memory-growth-mb",
                 "10",
+                comparable=True,
             )
             self.assertEqual(result.returncode, 10, result.stdout + result.stderr)
             report = json.loads((root / "report" / "findings.json").read_text(encoding="utf-8"))
@@ -244,11 +248,14 @@ class PerfSentinelAnalyzerTests(unittest.TestCase):
 
     def test_timing_attribution_clips_scope_to_frame(self) -> None:
         native = native_evidence()
-        native["timing_events"] = [{"frame_index": 2, "thread": "Worker", "timer": "LongBackgroundScope", "start_seconds": 0,
+        native["timing_events"] = [{"frame_index": 2, "thread": "Worker", "timer": "LongBackgroundScope", "start_seconds": 2.01,
+                                    "end_seconds": 10, "depth": 0, "duration_ms": 7990},
+                                   {"frame_index": 2, "thread": "Scheduler", "timer": "OpenSinceStartup", "start_seconds": 0,
                                     "end_seconds": 10, "depth": 0, "duration_ms": 10000}]
         attribution = MODULE.build_frame_attribution(native, 50)
-        self.assertAlmostEqual(attribution[0]["top_contributors"][0]["inclusive_ms"], 80.0)
+        self.assertAlmostEqual(attribution[0]["top_contributors"][0]["inclusive_ms"], 70.0)
         self.assertEqual(attribution[0]["dominant_thread"], "Worker")
+        self.assertNotIn("OpenSinceStartup", [row["timer"] for row in attribution[0]["top_contributors"]])
         self.assertIn("does not prove", attribution[0]["attribution_limit"])
 
     def test_spikes_do_not_bias_regular_frame_percentiles(self) -> None:

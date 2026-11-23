@@ -298,7 +298,8 @@ TSharedRef<FJsonObject> FPerfSentinelCollectorRegistry::Sample(double Seconds, c
 		{
 			const double CollectorStarted = FPlatformTime::Seconds();
 			TSharedRef<FJsonObject> Metrics = MakeShared<FJsonObject>();
-			const bool bAvailable = State.Definition.Collect.Execute(Metrics);
+			// A collector registered with a UObject or shared-pointer delegate can go stale; never Execute an unbound one.
+			const bool bAvailable = State.Definition.Collect.IsBound() && State.Definition.Collect.Execute(Metrics);
 			const int32 RemainingRows = FMath::Max(0, FMath::Clamp(Settings.MaxCollectorRows, 1, 4096) - Rows);
 			int32 RetainedRows = 0;
 			bool bPartial = false;

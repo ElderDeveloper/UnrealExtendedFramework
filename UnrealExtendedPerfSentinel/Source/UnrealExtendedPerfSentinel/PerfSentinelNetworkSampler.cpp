@@ -9,6 +9,7 @@
 #include "Engine/Engine.h"
 #include "Engine/NetConnection.h"
 #include "Engine/NetDriver.h"
+#include "Engine/NetworkObjectList.h"
 #include "Engine/World.h"
 #include "HAL/PlatformProcess.h"
 #include "Misc/EngineVersionComparison.h"
@@ -42,7 +43,7 @@ int32 FPerfSentinelNetworkSampler::GetObjectId(const UObject* Object)
 	return ObjectIds.Add(Key, ++NextObjectId);
 }
 
-TSharedRef<FJsonObject> FPerfSentinelNetworkSampler::SampleConnection(UNetConnection* Connection, bool bServerConnection, double Seconds, int32 MaxChannels)
+TSharedRef<FJsonObject> FPerfSentinelNetworkSampler::SampleConnection(UNetDriver* Driver, UNetConnection* Connection, bool bServerConnection, double Seconds, int32 MaxChannels)
 {
 	const TWeakObjectPtr<UNetConnection> Key(Connection);
 	FConnectionSample Current;
@@ -120,6 +121,19 @@ TSharedRef<FJsonObject> FPerfSentinelNetworkSampler::SampleConnection(UNetConnec
 	Root->SetNumberField(TEXT("net_speed_bytes_per_second"), Connection->CurrentNetSpeed);
 	Root->SetNumberField(TEXT("open_channels"), Connection->OpenChannels.Num());
 	Root->SetNumberField(TEXT("child_connections"), Connection->Children.Num());
+	Root->SetBoolField(TEXT("has_player_controller"), Connection->PlayerController != nullptr);
+	if (Driver)
+	{
+		// A connection that has received nothing for seconds is stalling toward a timeout, whatever its averages say.
+		const double DriverTime = Driver->GetElapsedTime();
+		Root->SetNumberField(TEXT("seconds_since_last_receive"), FMath::Max(0.0, DriverTime - Connection->LastReceiveTime));
+		Root->SetNumberField(TEXT("seconds_since_last_send"), FMath::Max(0.0, DriverTime - Connection->LastSendTime));
+		if (!Driver->GetReplicationSystem() && !bServerConnection)
+		{
+			// Legacy replication only: actors this client's connection has dormant (not replicating) on the server.
+			Root->SetNumberField(TEXT("dormant_actors"), Driver->GetNetworkObjectList().GetNumDormantActorsForConnection(Connection));
+		}
+	}
 	Root->SetNumberField(TEXT("total_delayed_rpcs"), Connection->TotalDelayedRPCs);
 	Root->SetNumberField(TEXT("total_delayed_rpc_frames"), Connection->TotalDelayedRPCsFrameCount);
 	int32 OutReliable = 0, Incoming = 0, MaxReliable = 0, ActorChannels = 0, Sampled = 0;
@@ -199,6 +213,15 @@ TSharedRef<FJsonObject> FPerfSentinelNetworkSampler::Sample(double Seconds, cons
 				DriverObject->SetNumberField(TEXT("out_total_packets"), Driver->OutTotalPackets);
 				DriverObject->SetNumberField(TEXT("total_rpcs_called"), Driver->TotalRPCsCalled);
 				DriverObject->SetNumberField(TEXT("total_reliable_bunches_sent"), Driver->OutTotalReliableBunches);
+				DriverObject->SetNumberField(TEXT("max_client_rate"), Driver->MaxClientRate);
+				DriverObject->SetNumberField(TEXT("max_internet_client_rate"), Driver->MaxInternetClientRate);
+				DriverObject->SetBoolField(TEXT("is_server"), Driver->IsServer());
+				if (!Driver->GetReplicationSystem())
+				{
+					// Legacy replication: every replicated actor the driver knows and the ones still being considered (not dormant).
+					DriverObject->SetNumberField(TEXT("network_objects"), Driver->GetNetworkObjectList().GetAllObjects().Num());
+					DriverObject->SetNumberField(TEXT("active_network_objects"), Driver->GetNetworkObjectList().GetActiveObjects().Num());
+				}
 #if DO_ENABLE_NET_TEST
 				const FPacketSimulationSettings& Simulation = Driver->PacketSimulationSettings;
 				TSharedRef<FJsonObject> SimulationObject = MakeShared<FJsonObject>();
@@ -219,7 +242,7 @@ TSharedRef<FJsonObject> FPerfSentinelNetworkSampler::Sample(double Seconds, cons
 					if (ConnectionCount >= MaxConnections) { bTruncated = true; return; }
 					SeenConnections.Add(Connection);
 					++ConnectionCount;
-					ConnectionValues.Add(MakeShared<FJsonValueObject>(SampleConnection(Connection, bServer, Seconds, MaxChannels)));
+					ConnectionValues.Add(MakeShared<FJsonValueObject>(SampleConnection(Driver, Connection, bServer, Seconds, MaxChannels)));
 				};
 				AddConnection(Driver->ServerConnection, true);
 				for (UNetConnection* Connection : Driver->ClientConnections)

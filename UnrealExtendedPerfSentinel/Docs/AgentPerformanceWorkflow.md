@@ -2,6 +2,21 @@
 
 Perf Sentinel is an evidence entry point for performance and network investigations. Collection scope is declared, so an agent can answer from measurements and identify the smallest additional capture needed. Native traces, runtime gauges, and explicit integration telemetry remain separate sources.
 
+## Start here: llm_brief.md
+
+Every analysis writes `llm_brief.md` (and the same content as `llm_brief.json`) in the report folder. Read it before anything else. It is ordered by importance and stays small (about 10–25 KB):
+
+1. Key observations: ranked statements (hitch count and likely causes, frame-time distribution, which thread bound the frames, GC, memory growth, streaming over budget, network stalls, loss, saturation, failures).
+2. Capture: build, map, net mode, hardware (cores, RAM, GPU, VRAM, driver), viewport, frame pacing and the render/network console variables that change what frame times mean, profile, analysed window and sidecar-to-trace clock alignment.
+3. Data coverage: providers with data, providers missing and how to get them (elevated editor for context switches and stack sampling, a relaunch for memory).
+4. Frame time: trace frames plus per-frame game/render/RHI/GPU/idle times, draw calls and primitives, and the share of frames bound by each.
+5. Timeline: fixed buckets with frame stats, hitches, unfocused time and engine events (GC, level streaming, viewport resizes, logins, failures, bookmarks).
+6. Hitches: every slow frame with its likely cause (shader compilation, PSO creation, GC, synchronous load, level streaming, viewport resize, PerfSentinel overhead, OS/present wait, GPU, waits, or unexplained), the scopes and thread times behind it, and nearby events.
+7. Where frame time goes: exclusive time per analysed frame for the game, render and RHI threads, task workers and each GPU queue (`thread_scope_totals`).
+8. Rendering counters, memory and objects (GC durations, class growth), loading/streaming/compile queues, actor spawn churn, and networking per driver and connection (RTT, jitter, bandwidth, loss, saturation, reliable backlog, seconds since last receive, dormancy, RPC rate, network CPU scopes, net stat counters, failures, logins).
+
+"Likely" marks an inference and is followed by its basis. Frames before the capture start and frames recorded while another application had focus are excluded everywhere, and the brief says how many.
+
 ## Implementation checklist
 
 - [x] Native `PerfSentinelAgentToolset` registered with Unreal's ToolsetRegistry, plus a source-defined investigation AgentSkill.

@@ -6,6 +6,7 @@
 #include "PerfSentinelTypes.h"
 
 class FArchive;
+class FPerfSentinelEventRecorder;
 class FPerfSentinelNetworkSampler;
 class UPerfSentinelSettings;
 
@@ -38,6 +39,18 @@ public:
 	/** Platform-time (FPlatformTime::Seconds) captured when the session was activated; used as the offline timebase anchor. */
 	double GetCaptureStartPlatformSeconds() const { return CaptureStartPlatformSeconds; }
 
+	/** Time and number of stretches during which another application had focus. */
+	double GetUnfocusedSeconds() const { return UnfocusedTotalSeconds; }
+	int32 GetUnfocusedIntervalCount() const { return UnfocusedIntervalCount; }
+
+	/** Discrete engine events (GC, level streaming, actor churn, failures, logins); empty when disabled. */
+	FString GetEventsPath() const;
+	int32 GetEventCount() const;
+	int32 GetDroppedEventCount() const;
+
+	/** Appends one condensed JSON object and a newline as UTF-8. Shared by every ndjson sidecar writer. */
+	static void WriteJsonLine(FArchive* Writer, const TSharedRef<class FJsonObject>& Object);
+
 private:
 	struct FFrameSample
 	{
@@ -50,6 +63,12 @@ private:
 		float RenderThreadMs = -1.0f;
 		float RhiThreadMs = -1.0f;
 		float GpuMs = -1.0f;
+		/** Time the engine slept this frame to hold a frame-rate limit (FApp::GetIdleTime), including background throttling. */
+		float IdleMs = 0.0f;
+		/** RHI draw calls and primitives of the last completed RHI frame (GPU 0). */
+		int32 DrawCalls = -1;
+		int32 PrimitivesDrawn = -1;
+		bool bForeground = true;
 	};
 
 	/** Per-class CPU cost accumulated across spike frames from the engine stats system. */
@@ -71,6 +90,10 @@ private:
 	};
 
 	void HandleEndFrame();
+	/** Marks focus changes in the trace (bookmarks and a region) so the analysis can leave unfocused frames out. */
+	void UpdateFocusState(double NowSeconds);
+	void BeginUnfocused(double NowSeconds);
+	void EndUnfocused(double NowSeconds);
 	void RecordFrameSample(const UPerfSentinelSettings& Settings);
 	static void FillThreadTimings(FFrameSample& Sample);
 	void AppendFrameSample(const FFrameSample& Sample) const;
@@ -93,7 +116,6 @@ private:
 	void WriteSpikeEventFile(const FPerfSentinelSpikeSnapshot& Snapshot, float ThresholdMs, const FString& SpikeDirectory) const;
 	TSharedRef<FJsonObject> BuildFrameSampleObject(const FFrameSample& Sample) const;
 	TSharedRef<FJsonObject> BuildSpikeEventObject(const FPerfSentinelSpikeSnapshot& Snapshot, float ThresholdMs) const;
-	static void WriteJsonLine(FArchive* Writer, const TSharedRef<FJsonObject>& Object);
 	FString BuildSpikeDirectory(int32 SpikeIndex, int64 SpikeFrameNumber) const;
 	FString BuildScreenshotPath(const FString& SpikeDirectory) const;
 	FString BuildSpikeWindowPath(const FString& SpikeDirectory) const;
@@ -121,8 +143,10 @@ private:
 	TUniquePtr<FArchive> TelemetryWriter;
 	uint64 TelemetryCursor = 0;
 	uint64 LastTelemetryDroppedRows = 0;
+	uint64 TelemetryDroppedAtStart = 0;
 	double LastCollectorSampleSeconds = -TNumericLimits<double>::Max();
 	TUniquePtr<FPerfSentinelNetworkSampler> NetworkSampler;
+	TUniquePtr<FPerfSentinelEventRecorder> EventRecorder;
 	double LastNetworkSampleSeconds = -TNumericLimits<double>::Max();
 	double LastScreenshotTimeSeconds = -TNumericLimits<double>::Max();
 	double LastSpikeEventTimeSeconds = -TNumericLimits<double>::Max();
@@ -131,6 +155,13 @@ private:
 	double LastRuntimeCounterTimeSeconds = -TNumericLimits<double>::Max();
 	double LastLeakSnapshotTimeSeconds = -TNumericLimits<double>::Max();
 	double CaptureStartPlatformSeconds = 0.0;
+
+	/** The first end-of-frame after activation reports thread times left over from before the capture. */
+	bool bSkipNextFrameSample = false;
+	bool bUnfocused = false;
+	double UnfocusedStartSeconds = 0.0;
+	double UnfocusedTotalSeconds = 0.0;
+	int32 UnfocusedIntervalCount = 0;
 
 	/** Aggregated per-class CPU cost harvested across spike frames (key = scope short name). */
 	TMap<FString, FAggregatedScope> AggregatedScopes;

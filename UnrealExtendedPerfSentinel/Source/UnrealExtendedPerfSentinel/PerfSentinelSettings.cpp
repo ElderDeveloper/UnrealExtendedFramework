@@ -137,6 +137,14 @@ TArray<FString> UPerfSentinelSettings::GetChannelsForCaptureProfile() const
 	TArray<FString> Channels = { TEXT("cpu"), TEXT("frame"), TEXT("gpu"), TEXT("bookmark"), TEXT("region"), TEXT("counters"), TEXT("stats") };
 	switch (CaptureProfile)
 	{
+	case EPerfSentinelCaptureProfile::Standard:
+		// Every channel that can be switched on while the process runs. Memory allocation tracing is the one
+		// provider that has to start with the process (-trace=memory); the MemoryLeak profile covers it.
+		// Context switches and stack sampling come from the OS (ETW on Windows) and only arrive when the process is elevated;
+		// coverage reports them as missing otherwise.
+		Channels.Append({ TEXT("log"), TEXT("net"), TEXT("task"), TEXT("loadtime"), TEXT("file"), TEXT("metadata"), TEXT("assetmetadata"),
+			TEXT("slate"), TEXT("animation"), TEXT("contextswitch"), TEXT("stacksampling") });
+		break;
 	case EPerfSentinelCaptureProfile::HitchDiagnosis:
 		Channels.Append({ TEXT("task"), TEXT("contextswitch"), TEXT("stacksampling") });
 		break;

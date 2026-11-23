@@ -23,6 +23,8 @@ public class UnrealExtendedPerfSentinel : ModuleRules
 
 		PrivateDependencyModuleNames.AddRange(new string[]
 		{
+			// FPlatformApplicationMisc: marks frames recorded while another application has focus.
+			"ApplicationCore",
 			"RenderCore",
 			"RHI",
 			"TraceLog",
