@@ -10,6 +10,7 @@
 #include "GameFramework/MovementComponent.h"
 #include "GameFramework/Pawn.h"
 #include "HAL/IConsoleManager.h"
+#include "Particles/ParticleSystemComponent.h"
 #include "Subsystems/EFSubsystems.h"
 #include "Systems/Pool/EFObjectPoolSettings.h"
 #include "Systems/Pool/EFPoolableInterface.h"
@@ -199,9 +200,17 @@ AActor* UEFObjectPoolSubsystem::SpawnForPool(UClass* Class, const FTransform& Tr
 	TInlineComponentArray<UActorComponent*> Components(Actor);
 	for (UActorComponent* Component : Components)
 	{
-		if (Component && Component->IsActive())
+		if (!Component)
+		{
+			continue;
+		}
+		if (IsComponentRunning(*Component))
 		{
 			State.ActiveComponents.Add(Component);
+		}
+		if (Component->bAutoActivate && Component->IsA<UFXSystemComponent>())
+		{
+			State.AutoActivateEffects.Add(Component);
 		}
 	}
 
@@ -422,6 +431,14 @@ void UEFObjectPoolSubsystem::Activate(AActor* Actor, const FActorState& State)
 	Actor->SetActorHiddenInGame(State.bWasHidden);
 	Actor->SetActorEnableCollision(State.bCollisionWasEnabled);
 	Actor->SetActorTickEnabled(State.bTickWasEnabled);
+	for (const TWeakObjectPtr<UActorComponent>& Weak : State.AutoActivateEffects)
+	{
+		if (UActorComponent* Effect = Weak.Get())
+		{
+			Effect->bAutoActivate = true;
+		}
+	}
+	// A reset: an effect starts from nothing where the actor now is, so a reused trail draws nothing from its last use.
 	for (const TWeakObjectPtr<UActorComponent>& Weak : State.ActiveComponents)
 	{
 		if (UActorComponent* Component = Weak.Get())
@@ -463,11 +480,42 @@ void UEFObjectPoolSubsystem::Deactivate(AActor* Actor)
 				Primitive->SetPhysicsAngularVelocityInDegrees(FVector::ZeroVector);
 			}
 		}
-		if (Component->IsActive())
-		{
-			Component->Deactivate();
-		}
+		ParkComponent(*Component);
 	}
+}
+
+void UEFObjectPoolSubsystem::ParkComponent(UActorComponent& Component)
+{
+	UFXSystemComponent* Effect = Cast<UFXSystemComponent>(&Component);
+	if (!Effect)
+	{
+		if (Component.IsActive())
+		{
+			Component.Deactivate();
+		}
+		return;
+	}
+	// Niagara's is cheap when nothing runs, and it also takes a scalability-culled effect out of the manager that would
+	// wake it. Cascade's completes, and announces it, even when nothing ran.
+	if (Effect->IsActive() || !Effect->IsA<UParticleSystemComponent>())
+	{
+		Effect->DeactivateImmediate();
+	}
+	Effect->SetComponentTickEnabled(false);
+	Effect->bAutoActivate = false;
+}
+
+bool UEFObjectPoolSubsystem::IsComponentRunning(const UActorComponent& Component)
+{
+	if (Component.IsActive())
+	{
+		return true;
+	}
+	// A Niagara effect asked to start before its system was ready is not active yet; its tick, off while it is inactive
+	// otherwise, starts it once the system is. Cascade ticks while inactive.
+	// ponytail: reads Niagara's waiting from its tick, as UEF has no Niagara dependency; an engine that ticked inactive
+	// Niagara components would count them running (add the dependency and ask the component then).
+	return Component.IsA<UFXSystemComponent>() && !Component.IsA<UParticleSystemComponent>() && Component.IsComponentTickEnabled();
 }
 
 void UEFObjectPoolSubsystem::NotifyAcquired(AActor* Actor)

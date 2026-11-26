@@ -85,4 +85,38 @@ bool FEFObjectPoolTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEFObjectPoolParkedEffectTest, "UnrealExtendedFramework.Pool.ParkedEffectStaysStopped",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::ProductFilter)
+
+bool FEFObjectPoolParkedEffectTest::RunTest(const FString& Parameters)
+{
+	EFTest::FScopedGameInstance Game;
+	UWorld* World = Game.GetWorld();
+	UEFObjectPoolSubsystem* Pool = World ? World->GetSubsystem<UEFObjectPoolSubsystem>() : nullptr;
+	if (!TestNotNull(TEXT("game worlds have an object pool"), Pool))
+	{
+		return false;
+	}
+
+	AEFPoolTestEffectActor* Shot = Pool->Acquire<AEFPoolTestEffectActor>(AEFPoolTestEffectActor::StaticClass(), FTransform::Identity);
+	if (!TestNotNull(TEXT("the first acquire spawns"), Shot) || !TestNotNull(TEXT("with its effect"), Shot->Effect.Get()))
+	{
+		return false;
+	}
+	UParticleSystemComponent* Effect = Shot->Effect;
+
+	// Parked, nothing may start the effect: not its own tick (a Niagara system still compiling starts that way), nor an
+	// editor's recompile or a re-register (they start an auto-activating effect).
+	Pool->ReleaseActor(Shot);
+	TestFalse(TEXT("a parked effect is stopped"), Effect->IsActive());
+	TestFalse(TEXT("and does not tick"), Effect->IsComponentTickEnabled());
+	TestFalse(TEXT("and does not auto activate"), Effect->bAutoActivate != 0);
+
+	AEFPoolTestEffectActor* Again = Pool->Acquire<AEFPoolTestEffectActor>(AEFPoolTestEffectActor::StaticClass(), FTransform::Identity);
+	TestTrue(TEXT("the next acquire reuses it"), Again == Shot);
+	TestTrue(TEXT("and gives the effect back its auto activate"), Effect->bAutoActivate != 0);
+	Pool->ReleaseActor(Again);
+	return true;
+}
+
 #endif // WITH_DEV_AUTOMATION_TESTS

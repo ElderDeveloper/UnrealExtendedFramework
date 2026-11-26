@@ -57,7 +57,8 @@ struct UNREALEXTENDEDFRAMEWORK_API FEFPoolStats
  * - Acquire places the actor, shows it, restores its collision and tick and reactivates the
  *   components that were active when it was first spawned, then calls IEFPoolable::OnAcquiredFromPool.
  * - Release calls OnReleasedToPool, then hides it, turns collision and tick off, deactivates its
- *   components, stops movement and physics, detaches it and clears its timers.
+ *   components (an effect at once, see ParkComponent), stops movement and physics, detaches it and
+ *   clears its timers.
  * - LifeSeconds releases the actor automatically, like a pooled SetLifeSpan.
  * - Releasing an actor the pool did not spawn destroys it, so Release is always safe to call.
  * - An actor destroyed while pooled simply leaves the pool.
@@ -115,6 +116,20 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Extended Framework|Pool")
 	TArray<FEFPoolStats> GetPoolStats() const;
 
+	/**
+	 * Parks one component of an actor the pool parks; code that parks a copy of a pooled actor itself (a client's copy
+	 * of a replicated one) calls it too. An effect (UFXSystemComponent) stops at once, particles and all: Deactivate only
+	 * stops it spawning, and an effect is active until its last particle dies, so one whose particles live for ever would
+	 * simulate hidden for as long as it is parked. Nothing but an acquire starts it again: its tick is turned off (it
+	 * starts an effect asked to start before its system was ready, an editor still compiling it) and so is its auto
+	 * activate (an editor's recompile and a re-register start an effect that has it); the acquire gives that back to the
+	 * effects that had it when the actor was made. Any other component is deactivated.
+	 */
+	static void ParkComponent(UActorComponent& Component);
+
+	/** Whether the pool restarts a component on each acquire: active when its actor was made, or an effect waiting for its system to be ready. */
+	static bool IsComponentRunning(const UActorComponent& Component);
+
 protected:
 	virtual bool DoesSupportWorldType(const EWorldType::Type WorldType) const override;
 
@@ -126,8 +141,10 @@ private:
 		bool bWasHidden = false;
 		bool bCollisionWasEnabled = true;
 		bool bTickWasEnabled = true;
-		/** Components active when the actor was first spawned; reactivated on every acquire. */
+		/** Components running when the actor was first spawned (IsComponentRunning); reactivated on every acquire. */
 		TArray<TWeakObjectPtr<UActorComponent>> ActiveComponents;
+		/** Effects that auto activated when the actor was first spawned; a park turns that off, an acquire gives it back. */
+		TArray<TWeakObjectPtr<UActorComponent>> AutoActivateEffects;
 		FTimerHandle LifeTimer;
 	};
 
