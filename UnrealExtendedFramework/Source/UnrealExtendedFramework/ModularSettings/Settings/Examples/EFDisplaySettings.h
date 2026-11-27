@@ -25,7 +25,8 @@ public:
 		SettingTag = FGameplayTag::RequestGameplayTag(TEXT("Settings.Display.DisplayMode"));
 		DisplayName = LOCTABLE("ExtendedFramework", "Settings.DisplayMode");
 		ConfigCategory = TEXT("Display");
-		DefaultValue = TEXT("Windowed");
+		// Borderless, as UGameUserSettings::GetDefaultWindowMode: a first launch and a reset fill the desktop.
+		DefaultValue = TEXT("Borderless");
 
 		Values = {
 			TEXT("Windowed"),
